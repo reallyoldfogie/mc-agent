@@ -1,0 +1,41 @@
+	put in go-mc/bot/ingame.go in handlePacket switch statement
+    
+    	// unknown packets
+	case data.EntityHeadRotation:
+		err = handleEntityHeadRotation(c, p)
+	case data.EntityVelocity:
+		err = handleEntityVelocity(c, p)
+	case data.EntityMetadata:
+		err = handleEntityMetadata(c, p)
+	case data.EntityTeleport:
+		err = handleEntityTeleport(c, p)
+	case EntityUpdateAttributes:
+		err = handleEntityUpdateAttributes(c, p)
+
+
+
+func handleEntityHeadRotation(c *Client, p pk.Packet) (err error) {
+	// fmt.Println("TO DO: Implement EntityHeadRotation packet")
+	return nil
+}
+
+func handleEntityVelocity(c *Client, p pk.Packet) (err error) {
+	// fmt.Println("TO DO: Implement EntityVelocity packet")
+	return nil
+}
+
+func handleEntityMetadata(c *Client, p pk.Packet) (err error) {
+	// fmt.Println("TO DO: Implement EntityHeadRotation packet")
+	return nil
+}
+
+func handleEntityUpdateAttributes(c *Client, p pk.Packet) (err error) {
+	// fmt.Println("TO DO: Implement EntityyUpdateAttributes packet")
+	return nil
+}
+
+func handleEntityTeleport(c *Client, p pk.Packet) (err error) {
+	// fmt.Println("TO DO: Implement EntityTeleport packet")
+	return nil
+}
+

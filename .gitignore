@@ -1,0 +1,88 @@
+# IDE and Editor files
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+CLAUDE.md
+AGENTS.md
+WARP.md
+
+# Go build artifacts
+mc-agent
+mc-agent.exe
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+
+# Legacy implementations 
+  /old/
+  /src/
+
+# Go coverage and test files
+*.coverprofile
+coverage.txt
+coverage.html
+
+# Logs and debug files
+*.log
+logs/
+bot.log
+
+# Temporary files
+/tmp/
+tmp/
+*.tmp
+
+# Credential and authentication files
+*creds*
+*Creds*
+*.credCache*
+.credCacheFile
+.credCacheFile.old
+*_creds.json
+rof_botCreds.json
+
+# Local development files
+.env
+.env.local
+*.local
+
+# OS-specific files
+Thumbs.db
+Desktop.ini
+
+# Data files that might be generated
+data/generated/
+data/cache/
+
+# Manual testing artifacts
+manual_testing/output/
+manual_testing/*.log
+
+# Documentation build artifacts (if any)
+docs/_build/
+docs/.doctrees/
+
+# Go module cache (usually not needed in repo)
+# Uncomment if you want to ignore vendor directory
+# vendor/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Screenshot files from testing
+screenshots/
+*.png
+*.jpg
+*.jpeg
