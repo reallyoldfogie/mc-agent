@@ -22,6 +22,7 @@ mc-agent.exe
 *.out
 bin/
 dist/
+daze
 
 # Legacy implementations 
   /old/

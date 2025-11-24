@@ -39,8 +39,9 @@ import (
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
-	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+
+	"github.com/reallyoldfogie/mc-agent/movement"
 
 	msauth "github.com/maxsupermanhd/go-mc-ms-auth"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -75,6 +76,8 @@ var (
 	blockMgr  mc_versions.BlockMgr
 	soundMgr  mc_versions.SoundMgr
 	packetMgr protocol_models.PacketMgr
+
+	movementExecutor movement.MovementExecutor
 
 	protocolVersion uint
 
@@ -120,6 +123,25 @@ type TrackedEntity struct {
 func init() {
 	flag.Parse()
 
+}
+
+// getBotPosition returns the current bot position and rotation
+func getBotPosition() (x, y, z float64, yaw, pitch float32, initialized bool) {
+	botPosition.mu.RLock()
+	defer botPosition.mu.RUnlock()
+	return botPosition.X, botPosition.Y, botPosition.Z, botPosition.Yaw, botPosition.Pitch, botPosition.initialized
+}
+
+// setBotPosition updates the bot position and rotation
+func setBotPosition(x, y, z float64, yaw, pitch float32) {
+	botPosition.mu.Lock()
+	defer botPosition.mu.Unlock()
+	botPosition.X = x
+	botPosition.Y = y
+	botPosition.Z = z
+	botPosition.Yaw = yaw
+	botPosition.Pitch = pitch
+	botPosition.initialized = true
 }
 
 func main() {
@@ -191,6 +213,14 @@ func main() {
 
 	// Hook into configuration phase to capture registry data
 	setupRegistryDataCapture(client)
+
+	// Initialize movement executor with bot position access helpers
+	movementExecutor = movement.NewMovementExecutor(
+		client,
+		packetMgr,
+		getBotPosition,
+		setBotPosition,
+	)
 
 	player = basic.NewPlayer(client, basic.DefaultSettings, basic.EventsListener{
 		GameStart:    onGameStart,
@@ -659,7 +689,7 @@ func handleRegistryDataPacket(p pk.Packet) error {
 		// Skip NBT data if present (we only need the names)
 		if hasData {
 			// Read and discard the NBT data
-			var nbtData models.NBTField
+			var nbtData protocol_models.NBTField
 			if _, err := nbtData.ReadFrom(reader); err != nil {
 				log.Printf("Warning: Failed to skip NBT data for entry %d (%s): %v", i, entryKey, err)
 				// Continue anyway
@@ -1282,16 +1312,274 @@ var (
 
 func handleChatCommand(cmd string) {
 	cmd = strings.TrimSpace(cmd)
-	switch cmd {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return
+	}
+
+	command := parts[0]
+	args := parts[1:]
+
+	switch command {
 	case "fireBow":
 		go fireBow()
 	case "startTracking":
 		go startTracking()
 	case "stopTracking":
 		stopTracking()
+	case "testMove":
+		go testMove()
+	case "moveTo":
+		if len(args) < 3 {
+			chatHandler.SendMessage("Usage: moveTo <x> <y> <z>")
+			return
+		}
+		go moveToCommand(args[0], args[1], args[2])
+	case "moveForward":
+		if len(args) < 1 {
+			chatHandler.SendMessage("Usage: moveForward <distance>")
+			return
+		}
+		go moveForwardCommand(args[0])
+	case "moveUp":
+		if len(args) < 1 {
+			chatHandler.SendMessage("Usage: moveUp <distance>")
+			return
+		}
+		go moveUpCommand(args[0])
 	default:
 		fmt.Printf("unknown command: [%s]", cmd)
 	}
+}
+
+// testMove performs a simple test movement (move 1 block forward using incremental steps)
+func testMove() {
+	x, y, z, _, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Current position: %.2f, %.2f, %.2f", x, y, z))
+
+	// Move 1 block in the +X direction incrementally
+	targetX := x + 1.0
+	const stepSize = 0.2
+	const stepDelay = 50 * time.Millisecond
+
+	stepCount := int(math.Ceil(1.0 / stepSize))
+
+	for i := 0; i < stepCount; i++ {
+		progress := float64(i+1) / float64(stepCount)
+		if progress > 1.0 {
+			progress = 1.0
+		}
+
+		nextX := x + 1.0*progress
+
+		err := movementExecutor.SendPosition(nextX, y, z, true)
+		if err != nil {
+			chatHandler.SendMessage(fmt.Sprintf("Movement failed: %v", err))
+			fmt.Printf("testMove error: %v\n", err)
+			return
+		}
+
+		time.Sleep(stepDelay)
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Moved to: %.2f, %.2f, %.2f", targetX, y, z))
+	fmt.Printf("testMove: Successfully moved from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f)\n", x, y, z, targetX, y, z)
+}
+
+// moveToCommand moves the bot to specific coordinates using incremental movement
+func moveToCommand(xStr, yStr, zStr string) {
+	var targetX, targetY, targetZ float64
+	var err error
+
+	if targetX, err = parseFloat(xStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid X coordinate: %s", xStr))
+		return
+	}
+	if targetY, err = parseFloat(yStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid Y coordinate: %s", yStr))
+		return
+	}
+	if targetZ, err = parseFloat(zStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid Z coordinate: %s", zStr))
+		return
+	}
+
+	x, y, z, _, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	// Calculate distance
+	dx := targetX - x
+	dy := targetY - y
+	dz := targetZ - z
+	totalDistance := math.Sqrt(dx*dx + dy*dy + dz*dz)
+
+	chatHandler.SendMessage(fmt.Sprintf("Moving from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, targetX, targetY, targetZ, totalDistance))
+
+	// First look at the target
+	err = movementExecutor.LookAt(targetX, targetY, targetZ, true)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Look failed: %v", err))
+		return
+	}
+
+	// Move incrementally to respect server movement speed limits
+	// Walking speed is ~4.3 blocks/second, at 20 TPS that's ~0.215 blocks/tick
+	// We'll use 0.2 blocks per step to be safe
+	const stepSize = 0.2
+	const stepDelay = 50 * time.Millisecond // 20 TPS = 50ms per tick
+
+	stepCount := int(math.Ceil(totalDistance / stepSize))
+	if stepCount == 0 {
+		chatHandler.SendMessage("Already at target position")
+		return
+	}
+
+	fmt.Printf("moveToCommand: Moving in %d steps of %.2f blocks\n", stepCount, stepSize)
+
+	for i := 0; i < stepCount; i++ {
+		// Calculate next position
+		progress := float64(i+1) / float64(stepCount)
+		if progress > 1.0 {
+			progress = 1.0
+		}
+
+		nextX := x + dx*progress
+		nextY := y + dy*progress
+		nextZ := z + dz*progress
+
+		// Send position update
+		err = movementExecutor.SendPosition(nextX, nextY, nextZ, true)
+		if err != nil {
+			chatHandler.SendMessage(fmt.Sprintf("Movement failed at step %d: %v", i+1, err))
+			fmt.Printf("moveToCommand error at step %d: %v\n", i+1, err)
+			return
+		}
+
+		// Wait for next tick
+		time.Sleep(stepDelay)
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Arrived at (%.2f, %.2f, %.2f)", targetX, targetY, targetZ))
+	fmt.Printf("moveToCommand: Successfully moved to (%.2f, %.2f, %.2f)\n", targetX, targetY, targetZ)
+}
+
+// moveForwardCommand moves the bot forward by a given distance using incremental movement
+func moveForwardCommand(distStr string) {
+	distance, err := parseFloat(distStr)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid distance: %s", distStr))
+		return
+	}
+
+	x, y, z, yaw, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	// Calculate forward direction based on yaw
+	// Yaw 0 is south (+Z), 90 is west (-X), 180 is north (-Z), 270 is east (+X)
+	yawRad := float64(yaw) * math.Pi / 180
+	dx := -math.Sin(yawRad) * distance
+	dz := math.Cos(yawRad) * distance
+
+	targetX := x + dx
+	targetZ := z + dz
+
+	chatHandler.SendMessage(fmt.Sprintf("Moving forward %.2f blocks", distance))
+
+	// Move incrementally
+	const stepSize = 0.2
+	const stepDelay = 50 * time.Millisecond
+
+	totalDistance := math.Abs(distance)
+	stepCount := int(math.Ceil(totalDistance / stepSize))
+
+	for i := 0; i < stepCount; i++ {
+		progress := float64(i+1) / float64(stepCount)
+		if progress > 1.0 {
+			progress = 1.0
+		}
+
+		nextX := x + dx*progress
+		nextZ := z + dz*progress
+
+		err = movementExecutor.SendPosition(nextX, y, nextZ, true)
+		if err != nil {
+			chatHandler.SendMessage(fmt.Sprintf("Movement failed: %v", err))
+			fmt.Printf("moveForwardCommand error: %v\n", err)
+			return
+		}
+
+		time.Sleep(stepDelay)
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", targetX, y, targetZ))
+	fmt.Printf("moveForwardCommand: Moved forward %.2f blocks to (%.2f, %.2f, %.2f)\n", distance, targetX, y, targetZ)
+}
+
+// moveUpCommand moves the bot up/down by a given distance using incremental movement
+func moveUpCommand(distStr string) {
+	distance, err := parseFloat(distStr)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid distance: %s", distStr))
+		return
+	}
+
+	x, y, z, _, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	targetY := y + distance
+
+	chatHandler.SendMessage(fmt.Sprintf("Moving %.2f blocks vertically", distance))
+
+	// Move incrementally
+	const stepSize = 0.2
+	const stepDelay = 50 * time.Millisecond
+
+	totalDistance := math.Abs(distance)
+	stepCount := int(math.Ceil(totalDistance / stepSize))
+
+	for i := 0; i < stepCount; i++ {
+		progress := float64(i+1) / float64(stepCount)
+		if progress > 1.0 {
+			progress = 1.0
+		}
+
+		nextY := y + distance*progress
+
+		// OnGround = false when moving up, true when on ground
+		onGround := nextY <= y
+		err = movementExecutor.SendPosition(x, nextY, z, onGround)
+		if err != nil {
+			chatHandler.SendMessage(fmt.Sprintf("Movement failed: %v", err))
+			fmt.Printf("moveUpCommand error: %v\n", err)
+			return
+		}
+
+		time.Sleep(stepDelay)
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", x, targetY, z))
+	fmt.Printf("moveUpCommand: Moved vertically %.2f blocks to (%.2f, %.2f, %.2f)\n", distance, x, targetY, z)
+}
+
+// parseFloat is a helper to parse float64 from string with better error handling
+func parseFloat(s string) (float64, error) {
+	var f float64
+	_, err := fmt.Sscanf(s, "%f", &f)
+	return f, err
 }
 
 func fireBow() error {

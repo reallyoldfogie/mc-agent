@@ -1,6 +1,6 @@
 package player
 
-import "github.com/reallyoldfogie/daze/bot/world/entity"
+import "github.com/reallyoldfogie/mc-agent/bot/world/entity"
 
 type Pos struct {
 	X, Y, Z    float64

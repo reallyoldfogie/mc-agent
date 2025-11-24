@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	data_entity "github.com/Tnze/go-mc/data/entity"
-	"github.com/reallyoldfogie/daze/bot/path"
-	"github.com/reallyoldfogie/daze/bot/world/entity"
-	"github.com/reallyoldfogie/daze/bot/world/entity/player"
+	"github.com/reallyoldfogie/mc-agent/bot/path"
+	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
+	"github.com/reallyoldfogie/mc-agent/bot/world/entity/player"
 )
 
 // FindPlayer -

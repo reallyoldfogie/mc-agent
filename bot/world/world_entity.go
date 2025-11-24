@@ -6,8 +6,8 @@ package world
 // 	e "github.com/Tnze/go-mc/data/entity"
 // 	pk "github.com/Tnze/go-mc/net/packet"
 // 	"github.com/google/uuid"
-// 	"github.com/reallyoldfogie/daze/bot/ptypes"
-// 	"github.com/reallyoldfogie/daze/bot/world/entity"
+// 	"github.com/reallyoldfogie/mc-agent/bot/ptypes"
+// 	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
 // )
 
 // // PlayerEntities returns a list of players on the server within viewing range.

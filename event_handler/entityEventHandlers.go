@@ -4,9 +4,9 @@ package eventHandler
 
 //"github.com/Tnze/go-mc/bot"
 
-// soundid_1_20_3 "github.com/reallyoldfogie/daze/data/soundid/1.20.3"
-// soundid_1_21_1 "github.com/reallyoldfogie/daze/data/soundid/1.21.1"
-// soundid_1_21_3 "github.com/reallyoldfogie/daze/data/soundid/1.21.3"
+// soundid_1_20_3 "github.com/reallyoldfogie/mc-agent/data/soundid/1.20.3"
+// soundid_1_21_1 "github.com/reallyoldfogie/mc-agent/data/soundid/1.21.1"
+// soundid_1_21_3 "github.com/reallyoldfogie/mc-agent/data/soundid/1.21.3"
 
 // func HandleEntityPositionPacket(c *bot.Client, p pk.Packet) error {
 // 	var pu ptypes.EntityPosition

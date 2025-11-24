@@ -3,8 +3,8 @@ package world
 // import (
 // 	// "github.com/Tnze/go-mc/data/block"
 
-// 	"github.com/reallyoldfogie/daze/bot/ptypes"
-// 	"github.com/reallyoldfogie/daze/bot/world/entity"
+// 	"github.com/reallyoldfogie/mc-agent/bot/ptypes"
+// 	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
 // )
 
 // // Chunk store a 256*16*16 area of blocks, sharded on the Y axis into 16
