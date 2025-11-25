@@ -42,6 +42,7 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 
 	"github.com/reallyoldfogie/mc-agent/movement"
+	"github.com/reallyoldfogie/mc-agent/pathfinding"
 
 	msauth "github.com/maxsupermanhd/go-mc-ms-auth"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -78,6 +79,8 @@ var (
 	packetMgr protocol_models.PacketMgr
 
 	movementExecutor movement.MovementExecutor
+	shapeMgr         pathfinding.BlockShapeManager
+	pathFinder       pathfinding.PathFinder
 
 	protocolVersion uint
 
@@ -248,6 +251,18 @@ func main() {
 		SetSlot: onScreenSlotChange,
 		Close:   nil,
 	}, packetMgr)
+
+	// Initialize pathfinding with block shape data
+	// Path to mc-data-gen data directory
+	dataBasePath := "/home/reallyoldfogie/src/github.com/reallyoldfogie/mc-data-gen/data"
+	shapeMgr, err = pathfinding.NewBlockShapeManager(*mcVersion, dataBasePath)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize BlockShapeManager: %v", err)
+		log.Printf("Pathfinding will not be available")
+	} else {
+		pathFinder = pathfinding.NewPathFinder(worldManager, shapeMgr)
+		log.Printf("Pathfinding initialized for version %s", *mcVersion)
+	}
 
 	// Login
 
@@ -1347,6 +1362,14 @@ func handleChatCommand(cmd string) {
 			return
 		}
 		go moveUpCommand(args[0])
+	case "findPath":
+		if len(args) < 3 {
+			chatHandler.SendMessage("Usage: findPath <x> <y> <z>")
+			return
+		}
+		go findPathCommand(args[0], args[1], args[2])
+	case "testPath":
+		go testPathCommand()
 	default:
 		fmt.Printf("unknown command: [%s]", cmd)
 	}
@@ -1580,6 +1603,115 @@ func parseFloat(s string) (float64, error) {
 	var f float64
 	_, err := fmt.Sscanf(s, "%f", &f)
 	return f, err
+}
+
+// parseInt is a helper to parse int from string
+func parseInt(s string) (int, error) {
+	var i int
+	_, err := fmt.Sscanf(s, "%d", &i)
+	return i, err
+}
+
+// testPathCommand tests pathfinding by finding a path 5 blocks north
+func testPathCommand() {
+	if pathFinder == nil {
+		chatHandler.SendMessage("Pathfinding not available")
+		return
+	}
+
+	x, y, z, _, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	// Convert to block coordinates
+	start := pathfinding.V3{X: int(math.Floor(x)), Y: int(math.Floor(y)), Z: int(math.Floor(z))}
+	goal := pathfinding.V3{X: start.X, Y: start.Y, Z: start.Z - 5} // 5 blocks north
+
+	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%d, %d, %d) to (%d, %d, %d)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
+
+	path, err := pathFinder.FindPath(start, goal, 100)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Pathfinding failed: %v", err))
+		fmt.Printf("testPathCommand error: %v\n", err)
+		return
+	}
+
+	if !path.Found {
+		chatHandler.SendMessage("No path found")
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Path found! %d steps, cost %.2f, search time %.2fms", len(path.Steps), path.TotalCost, path.SearchTime))
+
+	// Print first few steps
+	for i, step := range path.Steps {
+		if i >= 3 {
+			chatHandler.SendMessage(fmt.Sprintf("... and %d more steps", len(path.Steps)-3))
+			break
+		}
+		chatHandler.SendMessage(fmt.Sprintf("Step %d: %s to (%d, %d, %d)", i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
+	}
+}
+
+// findPathCommand finds a path to specific coordinates
+func findPathCommand(xStr, yStr, zStr string) {
+	if pathFinder == nil {
+		chatHandler.SendMessage("Pathfinding not available")
+		return
+	}
+
+	var targetX, targetY, targetZ int
+	var err error
+
+	if targetX, err = parseInt(xStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid X coordinate: %s", xStr))
+		return
+	}
+	if targetY, err = parseInt(yStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid Y coordinate: %s", yStr))
+		return
+	}
+	if targetZ, err = parseInt(zStr); err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Invalid Z coordinate: %s", zStr))
+		return
+	}
+
+	x, y, z, _, _, initialized := getBotPosition()
+	if !initialized {
+		chatHandler.SendMessage("Bot position not initialized")
+		return
+	}
+
+	// Convert to block coordinates
+	start := pathfinding.V3{X: int(math.Floor(x)), Y: int(math.Floor(y)), Z: int(math.Floor(z))}
+	goal := pathfinding.V3{X: targetX, Y: targetY, Z: targetZ}
+
+	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%d, %d, %d) to (%d, %d, %d)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
+
+	path, err := pathFinder.FindPath(start, goal, 200)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Pathfinding failed: %v", err))
+		fmt.Printf("findPathCommand error: %v\n", err)
+		return
+	}
+
+	if !path.Found {
+		chatHandler.SendMessage("No path found")
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Path found! %d steps, cost %.2f, search time %.2fms", len(path.Steps), path.TotalCost, path.SearchTime))
+
+	// Print summary of movement types
+	moveCounts := make(map[pathfinding.MovementType]int)
+	for _, step := range path.Steps {
+		moveCounts[step.Movement]++
+	}
+	for moveType, count := range moveCounts {
+		chatHandler.SendMessage(fmt.Sprintf("  %s: %d", moveType, count))
+	}
 }
 
 func fireBow() error {

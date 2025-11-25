@@ -14,6 +14,7 @@ require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
 	github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4
 	github.com/reallyoldfogie/go-mc-bot v0.0.0-00010101000000-000000000000
+	github.com/reallyoldfogie/mc-data-gen/loader v0.0.2
 )
 
 require gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
