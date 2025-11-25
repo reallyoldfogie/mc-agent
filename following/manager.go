@@ -215,6 +215,12 @@ func (fm *followManager) update() error {
 
 	distance := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
 
+	// Always look at the target player (continuous head tracking)
+	// This ensures the bot tracks the player even when stationary or arrived
+	if err := fm.movementExecutor.LookAt(targetX, targetY+1.62, targetZ, true); err != nil {
+		log.Printf("LookAt target player error: %v", err)
+	}
+
 	// Check if we're close enough
 	if distance <= fm.config.StopDistance {
 		if fm.state != StateArrived {
@@ -285,18 +291,19 @@ func (fm *followManager) calculateNewPath(botX, botY, botZ, targetX, targetY, ta
 		goalZ = targetZ - fm.config.TargetDistance
 	}
 
-	// Keep goal at bot's current Y level (horizontal movement only for Phase 3)
+	// Keep goal at bot's current Y level (horizontal movement only for Phase 3/4 without world integration)
 	goalY := botY
 
 	// Convert to block coordinates
+	// For start, use floor to get the block the bot is standing on
 	start := pathfinding.V3{
 		X: int(math.Floor(botX)),
-		Y: int(math.Floor(botY)),
+		Y: int(math.Floor(botY)), // This is the block containing bot's feet
 		Z: int(math.Floor(botZ)),
 	}
 	goal := pathfinding.V3{
 		X: int(math.Floor(goalX)),
-		Y: int(math.Floor(goalY)),
+		Y: int(math.Floor(goalY)), // Keep same Y as bot
 		Z: int(math.Floor(goalZ)),
 	}
 
@@ -339,9 +346,12 @@ func (fm *followManager) followCurrentPath(botX, botY, botZ float64) error {
 	step := fm.currentPath.Steps[fm.pathIndex]
 
 	// Calculate target position (center of block)
-	stepX, stepY, stepZ := float64(step.Position.X), float64(step.Position.Y), float64(step.Position.Z)
+	stepX, stepZ := float64(step.Position.X), float64(step.Position.Z)
 	targetX := stepX + 0.5
-	targetY := stepY
+	// IMPORTANT: Keep bot at current Y level to avoid walking on air
+	// Until we have world integration, we maintain the bot's Y position
+	// The step.Position.Y is used as the "target block", but we move to the bot's actual Y
+	targetY := botY  // Use bot's current Y instead of step Y
 	targetZ := stepZ + 0.5
 
 	// Check if we've reached this step (compare to block center, not corner)
@@ -361,13 +371,22 @@ func (fm *followManager) followCurrentPath(botX, botY, botZ float64) error {
 	// Check for stuck
 	if time.Since(fm.lastMovementTime) > fm.config.StuckThreshold {
 		fm.state = StateStuck
-		fm.sendChatMessage(fmt.Sprintf("Stuck while following %s", fm.targetName))
-		log.Printf("Stuck detected, forcing path recalculation")
-		fm.currentPath = nil // Force recalc next update
+		fm.sendChatMessage(fmt.Sprintf("Stuck while following %s - attempting recovery", fm.targetName))
+		log.Printf("Stuck detected, performing recovery")
+
+		// Aggressive recovery: clear path and stop briefly
+		fm.currentPath = nil
+		fm.pathIndex = 0
+
+		// Reset movement timer to give recovery a chance
+		fm.lastMovementTime = time.Now()
+
 		return nil
 	}
 
 	// Move towards step incrementally (0.2 blocks per update)
+	// (Head tracking is done in main update loop, not here)
+	// MoveTowards will update position but we already set rotation above
 	// This respects server-side movement validation
 	log.Printf("Moving towards (%.1f, %.1f, %.1f) by 0.2 blocks", targetX, targetY, targetZ)
 	newX, newY, newZ, err := fm.movementExecutor.MoveTowards(targetX, targetY, targetZ, 0.2, true)
