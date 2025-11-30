@@ -49,3 +49,49 @@ func SendRotation(client *bot.Client, packetMgr protocol_models.PacketMgr, yaw, 
 		packet.Boolean(onGround),
 	))
 }
+
+// Player command action IDs
+const (
+	ActionStartSneaking     = 0
+	ActionStopSneaking      = 1
+	ActionLeaveBed          = 2
+	ActionStartSprinting    = 3
+	ActionStopSprinting     = 4
+	ActionStartJumpHorse    = 5
+	ActionStopJumpHorse     = 6
+	ActionOpenVehicleInv    = 7
+	ActionStartFlyingElytra = 8
+)
+
+// SendPlayerCommand sends a player command packet (sprint, sneak, etc.)
+// Packet: ServerboundPlayerCommand
+// Fields: EntityID (VarInt), ActionID (VarInt), JumpBoost (VarInt)
+func SendPlayerCommand(client *bot.Client, packetMgr protocol_models.PacketMgr, entityID int32, actionID int32) error {
+	log.Printf("[Movement] Sending ServerboundPlayerCommand: entityID=%d action=%d", entityID, actionID)
+	return client.Conn.WritePacket(packet.Marshal(
+		packetMgr.GetServerboundPacketID("ServerboundPlayerCommand"),
+		packet.VarInt(entityID),
+		packet.VarInt(actionID),
+		packet.VarInt(0), // Jump boost (always 0 for sprint/sneak)
+	))
+}
+
+// SendStartSprinting sends a command to start sprinting
+func SendStartSprinting(client *bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
+	return SendPlayerCommand(client, packetMgr, entityID, ActionStartSprinting)
+}
+
+// SendStopSprinting sends a command to stop sprinting
+func SendStopSprinting(client *bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
+	return SendPlayerCommand(client, packetMgr, entityID, ActionStopSprinting)
+}
+
+// SendStartSneaking sends a command to start sneaking
+func SendStartSneaking(client *bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
+	return SendPlayerCommand(client, packetMgr, entityID, ActionStartSneaking)
+}
+
+// SendStopSneaking sends a command to stop sneaking
+func SendStopSneaking(client *bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
+	return SendPlayerCommand(client, packetMgr, entityID, ActionStopSneaking)
+}

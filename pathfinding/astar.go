@@ -3,29 +3,31 @@ package pathfinding
 import (
 	"container/heap"
 	"fmt"
+	"log"
 	"time"
 
-	"github.com/reallyoldfogie/mc-bot-go/bot/world"
+	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 )
 
 // PathFinder finds paths using A* algorithm
 type PathFinder interface {
 	FindPath(start, goal V3, maxSteps int) (*Path, error)
+	FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64
 }
 
 // pathFinder implements PathFinder
 type pathFinder struct {
-	world          *world.World
-	shapeMgr       BlockShapeManager
+	world             World
+	shapeMgr          BlockShapeManager
 	movementValidator *MovementValidator
 }
 
 // NewPathFinder creates a new A* pathfinder
-func NewPathFinder(w *world.World, shapeMgr BlockShapeManager) PathFinder {
+func NewPathFinder(w World, shapeMgr BlockShapeManager, blockMgr mc_versions.BlockMgr, statePropsLoader *StatePropertyLoader) PathFinder {
 	return &pathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr),
+		movementValidator: NewMovementValidator(w, shapeMgr, blockMgr, statePropsLoader),
 	}
 }
 
@@ -58,7 +60,7 @@ func (h *nodeHeap) Push(x interface{}) {
 	*h = append(*h, item)
 }
 
-func (h *nodeHeap) Pop() interface{} {
+func (h *nodeHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]
@@ -81,6 +83,8 @@ func heuristic(pos, goal V3) float64 {
 	return (dx*dx + dy*dy + dz*dz)
 }
 
+// (Pathfinding from)|(A\*)|(Pathfinding straight line distance)|(\(\d+,?\s?74+,?\s?\d+\))
+
 // FindPath finds a path from start to goal using A* algorithm
 func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 	startTime := time.Now()
@@ -95,6 +99,20 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 			Found:      true,
 			SearchTime: 0,
 		}, nil
+	}
+
+	// Debug: Get possible moves from start to verify we can move
+	startMoves := pf.movementValidator.GetPossibleMoves(start)
+	log.Printf("[A*] Start position (%f,%f,%f) has %d possible moves",
+		start.X, start.Y, start.Z, len(startMoves))
+
+	if len(startMoves) > 0 {
+		log.Printf("[A*] First possible moves from (%f,%f,%f):\n", start.X, start.Y, start.Z)
+		for i := 0; i < len(startMoves); i++ {
+			log.Printf("  - Move %d: %s to (%f,%f,%f) cost=%.2f",
+				i+1, startMoves[i].Movement, startMoves[i].Position.X,
+				startMoves[i].Position.Y, startMoves[i].Position.Z, startMoves[i].Cost)
+		}
 	}
 
 	// Initialize open set (priority queue) and closed set
@@ -180,13 +198,20 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 		}
 	}
 
-	// No path found
+	// No path found - openSet is empty
+	log.Printf("[A*] Pathfinding failed: openSet exhausted after %d steps, closedSet size=%d",
+		stepsProcessed, len(closedSet))
 	return &Path{
 		Found:      false,
 		StartPos:   start,
 		GoalPos:    goal,
 		SearchTime: float64(time.Since(startTime).Milliseconds()),
 	}, fmt.Errorf("path not found: no valid path exists")
+}
+
+// FindGroundBelow delegates to the movement validator to find valid ground
+func (pf *pathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
+	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
 }
 
 // reconstructPath builds the path from the goal node back to the start

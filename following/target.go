@@ -88,7 +88,7 @@ func (ts *TargetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
 // FindNearestPlayer finds the nearest player entity
 func (ts *TargetSelector) FindNearestPlayer() (*TargetInfo, error) {
 	entities := ts.getTrackedEntities()
-	if entities == nil || len(entities) == 0 {
+	if len(entities) == 0 {
 		return nil, fmt.Errorf("no entities tracked")
 	}
 

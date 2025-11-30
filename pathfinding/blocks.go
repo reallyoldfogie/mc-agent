@@ -7,6 +7,11 @@ import (
 	mdl "github.com/reallyoldfogie/mc-data-gen/loader"
 )
 
+// World interface defines the minimal world access needed for pathfinding
+type World interface {
+	GetBlockAt(x, y, z float64) uint32
+}
+
 // BlockShapeManager loads and provides access to block shape data for a specific Minecraft version
 type BlockShapeManager interface {
 	// Core collision
@@ -68,6 +73,17 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 
 	info, ok := bsm.shapeData[key]
 	if !ok {
+		// If exact match not found and props is nil/empty, try to find ANY state for this block
+		// This handles the case where we don't have state properties but need basic block info
+		if len(props) == 0 {
+			for k, v := range bsm.shapeData {
+				if k.BlockID == blockID {
+					// Found a state for this block - use it
+					// (all states of a block should have same solid/passable/dangerous properties)
+					return v
+				}
+			}
+		}
 		// Return empty/air-like info for unknown blocks
 		return mdl.ShapeInfo{Air: true}
 	}

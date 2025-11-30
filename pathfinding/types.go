@@ -4,19 +4,19 @@ import "math"
 
 // V3 represents a 3D integer position (block coordinates)
 type V3 struct {
-	X, Y, Z int
+	X, Y, Z float64
 }
 
 // DistanceTo calculates 3D Euclidean distance to another position
 func (v V3) DistanceTo(other V3) float64 {
-	dx := float64(other.X - v.X)
-	dy := float64(other.Y - v.Y)
-	dz := float64(other.Z - v.Z)
+	dx := other.X - v.X
+	dy := other.Y - v.Y
+	dz := other.Z - v.Z
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
 // ManhattanDistance calculates Manhattan distance to another position
-func (v V3) ManhattanDistance(other V3) int {
+func (v V3) ManhattanDistance(other V3) float64 {
 	dx := v.X - other.X
 	dy := v.Y - other.Y
 	dz := v.Z - other.Z
@@ -33,7 +33,7 @@ func (v V3) ManhattanDistance(other V3) int {
 }
 
 // Add returns a new position offset by the given amounts
-func (v V3) Add(dx, dy, dz int) V3 {
+func (v V3) Add(dx, dy, dz float64) V3 {
 	return V3{X: v.X + dx, Y: v.Y + dy, Z: v.Z + dz}
 }
 
@@ -46,16 +46,16 @@ func (v V3) ToFloat64() (x, y, z float64) {
 type MovementType int
 
 const (
-	Traverse        MovementType = iota // Walk on same level
-	Ascend                              // Jump up one block
-	Descend                             // Drop down (1-3 blocks)
-	Jump2                               // Jump across 2-block gap
-	DiagonalTraverse                    // Walk diagonally on same level
-	DiagonalAscend                      // Jump up diagonally
-	Swim                                // Move through water
-	Climb                               // Climb ladder/vine
-	SwimUp                              // Swim upward in water
-	SwimDown                            // Swim downward in water
+	Traverse         MovementType = iota // Walk on same level
+	Ascend                               // Jump up one block
+	Descend                              // Drop down (1-3 blocks)
+	Jump2                                // Jump across 2-block gap
+	DiagonalTraverse                     // Walk diagonally on same level
+	DiagonalAscend                       // Jump up diagonally
+	Swim                                 // Move through water
+	Climb                                // Climb ladder/vine
+	SwimUp                               // Swim upward in water
+	SwimDown                             // Swim downward in water
 )
 
 // String returns the name of the movement type
