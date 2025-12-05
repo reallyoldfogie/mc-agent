@@ -25,8 +25,9 @@ dist/
 daze
 
 # Legacy implementations 
-  /old/
-  /src/
+/old/
+/src/
+/code-archive/ 
 
 # Go coverage and test files
 *.coverprofile
@@ -42,6 +43,10 @@ bot.log
 /tmp/
 tmp/
 *.tmp
+/cmd/skin-demo/data
+/cmd/skin-demo/skin-demo
+*.mcpr
+.agentStop
 
 # Credential and authentication files
 *creds*
