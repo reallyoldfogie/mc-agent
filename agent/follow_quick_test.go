@@ -4,28 +4,46 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/following"
+	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/stretchr/testify/require"
 )
 
 type quickFollowMgr struct {
 	started string
 	active  bool
 	stopped bool
+	state   following.FollowState
 }
 
-func (q *quickFollowMgr) Start(name string) error { q.started = name; q.active = true; return nil }
-func (q *quickFollowMgr) Stop() error             { q.stopped = true; q.active = false; return nil }
-func (q *quickFollowMgr) IsActive() bool          { return q.active }
-func (q *quickFollowMgr) GetStatus() string       { return "ok" }
+func (q *quickFollowMgr) Start(name string) error    { q.started = name; q.active = true; return nil }
+func (q *quickFollowMgr) Stop() error                { q.stopped = true; q.active = false; return nil }
+func (q *quickFollowMgr) IsActive() bool             { return q.active }
+func (q *quickFollowMgr) GetStatus() string          { return "ok" }
+func (q *quickFollowMgr) GetPath() *pathfinding.Path { return nil }
+func (q *quickFollowMgr) GetState() following.FollowState {
+	return q.state
+}
+func (q *quickFollowMgr) SetState(s following.FollowState) {
+	q.state = s
+}
 
 func TestFollowQuick_StartAndStopMessages(t *testing.T) {
-	a, _ := New(Config{Address: "x"})
-	_ = a.Init(context.Background())
-	fc := &fakeChat{}
-	a.SetChat(fc)
-	fm := &quickFollowMgr{}
-	a.SetFollowManager(fm)
+	agentInt, err := New(Config{Address: "x"})
+	require.NoError(t, err)
 
-	a.handleChatCommand("follow Alex")
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	fc := &fakeChat{}
+	agent.SetChat(fc)
+	fm := &quickFollowMgr{}
+	agent.SetFollowManager(fm)
+
+	agent.handleChatCommand("follow Alex")
 	if fm.started != "Alex" {
 		t.Fatalf("expected Start called with Alex")
 	}
@@ -34,7 +52,7 @@ func TestFollowQuick_StartAndStopMessages(t *testing.T) {
 	}
 
 	// stop when active
-	a.handleChatCommand("stopFollow")
+	agent.handleChatCommand("stopFollow")
 	if !fm.stopped {
 		t.Fatalf("expected Stop called")
 	}
@@ -44,7 +62,7 @@ func TestFollowQuick_StartAndStopMessages(t *testing.T) {
 
 	// stop when inactive
 	before := len(fc.msgs)
-	a.handleChatCommand("stopFollow")
+	agent.handleChatCommand("stopFollow")
 	if len(fc.msgs) == before || fc.msgs[len(fc.msgs)-1] != "Not currently following anyone" {
 		t.Fatalf("expected 'Not currently following anyone', got %#v", fc.msgs)
 	}

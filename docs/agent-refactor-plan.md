@@ -33,11 +33,12 @@
 - `cmd/mc-agent/main.go`: Thin CLI using flags to build `agent.Config`, start/stop the agent.
 
 ### Public API
-- `type Agent struct { ... }`
-- `func New(cfg Config) (*Agent, error)`
-- `func (a *Agent) Init(ctx context.Context) error` // set up deps, handlers, registries
-- `func (a *Agent) Start(ctx context.Context) error` // connect/login, start background tasks
-- `func (a *Agent) Close(ctx context.Context) error` // graceful shutdown, stop tasks
+- `type Agent interface { ... }`
+- `type agent struct { ... }`
+- `func New(cfg Config) (Agent, error)`
+- `func (a *agent) Init(ctx context.Context) error` // set up deps, handlers, registries
+- `func (a *agent) Start(ctx context.Context) error` // connect/login, start background tasks
+- `func (a *agent) Close(ctx context.Context) error` // graceful shutdown, stop tasks
 - Optional helper methods (for tests/tools): `SendChat`, `GetPosition`, `FollowTarget`, `TrackedEntities`, etc.
 
 ### Config and Dependency Injection
@@ -112,9 +113,46 @@
 - Able to spawn multiple `Agent` instances in tests without interference.
 
 ## Work Breakdown
-- Phase 1: Package skeleton, Config, Agent struct, lifecycle stubs.
-- Phase 2: Port helpers and tracking; implement cleanup loop.
-- Phase 3: Port event handlers; register wiring in `Init`.
-- Phase 4: Pathfinding/following integration behind feature toggles.
-- Phase 5: CLI bootstrap and documentation updates.
-- Phase 6: Tests (unit, fakes, integration) and polish.
+- ✅ Phase 1: Package skeleton, Config, Agent struct, lifecycle stubs.
+- ✅ Phase 2: Port helpers and tracking; implement cleanup loop.
+- ✅ Phase 3: Port event handlers; register wiring in `Init`.
+- ✅ Phase 4: Pathfinding/following integration behind feature toggles.
+- ✅ Phase 5: CLI bootstrap and documentation updates.
+- ✅ Phase 6: Tests (unit, fakes, integration) and polish.
+
+## Additional Features Implemented
+Beyond the original plan, the following features were added:
+
+### Recipe System (`agent/recipes*.go`)
+- Parse Update Recipes packets (property sets, stonecutter, slot displays)
+- Export recipes as JSON for inspection
+- Comprehensive test coverage (5 test files)
+- See [RECIPES.md](RECIPES.md) for documentation
+
+### Bow Commands (`agent/bowCommands.go`)
+- Physics-based ballistic calculation for bow aiming
+- Commands: `fireBow`, `fireBowAt <x> <y> <z>`
+- Gravity and drag simulation matching Minecraft physics
+- Standalone testing utility (`cmd/targetBow/`)
+- See [BOW_COMMANDS.md](BOW_COMMANDS.md) for documentation
+
+### Testing Framework (`testing/`)
+- Docker-based integration testing
+- Navigation tests (flat, pathfinding, vertical)
+- Follow behavior tests
+- RCON-based world manipulation
+- ReplayMod recording for all tests
+- See [testing/README.md](../testing/README.md) for guide
+
+### Bug Fixes and Improvements
+- Player chat packet handling (type mismatch fix)
+- Declare Commands packet parsing
+- Enhanced logging for game loop
+- Context cancellation on HandleGame errors
+- See [PLAYERCHAT_INVESTIGATION.md](PLAYERCHAT_INVESTIGATION.md)
+
+## Migration Status
+- **Legacy Code**: `main.go` moved to `cmd/legacy/main.go` (deprecated)
+- **Production Entry Point**: `cmd/agent/main.go`
+- **Package Location**: `github.com/reallyoldfogie/mc-agent/agent`
+- **Backward Compatibility**: Full CLI flag parity maintained

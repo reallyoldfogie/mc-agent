@@ -6,7 +6,7 @@ import (
 
 // OnScreenSlotChange logs slot changes. If SlotResolver and ItemManager are set,
 // it also prints decoded item info.
-func (a *Agent) OnScreenSlotChange(id, index int) error {
+func (a *agent) OnScreenSlotChange(id, index int) error {
 	if a.slots == nil || a.itemMgr == nil {
 		log.Printf("Screen slot change: screenID=%d index=%d", id, index)
 		return nil

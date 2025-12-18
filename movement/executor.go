@@ -49,6 +49,8 @@ type movementExecutor struct {
 	// Track sprint/sneak state to avoid redundant packets
 	isSprinting bool
 	isSneaking  bool
+	// Optional callback for packet interception (e.g., replay mirror)
+	onPacketSent func(pkt interface{})
 }
 
 // NewMovementExecutor creates a new MovementExecutor
@@ -67,7 +69,14 @@ func NewMovementExecutor(
 		getBotEntityID: getBotEntityID,
 		isSprinting:    false,
 		isSneaking:     false,
+		onPacketSent:   nil,
 	}
+}
+
+// SetPacketCallback sets an optional callback that will be invoked with each packet before it's sent.
+// This is useful for replay mirroring or packet logging.
+func (me *movementExecutor) SetPacketCallback(callback func(pkt interface{})) {
+	me.onPacketSent = callback
 }
 
 func (me *movementExecutor) IsSneaking() bool {
@@ -83,7 +92,7 @@ func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
-		err = SendPosition(me.client, me.packetMgr, x, y, z, onGround)
+		err = SendPositionWithCallback(me.client, me.packetMgr, x, y, z, onGround, me.onPacketSent)
 	}
 
 	if err == nil {
@@ -99,7 +108,7 @@ func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch 
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
-		err = SendPositionAndRotation(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround)
+		err = SendPositionAndRotationWithCallback(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround, me.onPacketSent)
 	}
 
 	if err == nil {
@@ -114,7 +123,7 @@ func (me *movementExecutor) SendRotation(yaw, pitch float32, onGround bool) erro
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
-		err = SendRotation(me.client, me.packetMgr, yaw, pitch, onGround)
+		err = SendRotationWithCallback(me.client, me.packetMgr, yaw, pitch, onGround, me.onPacketSent)
 	}
 
 	if err == nil {

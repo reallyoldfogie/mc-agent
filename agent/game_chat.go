@@ -14,36 +14,36 @@ import (
 // when player/chat/world subsystems are injected.
 
 // onGameStart handles game start events (to be wired via player events).
-func (a *Agent) onGameStart() {
+func (a *agent) onGameStart() {
 	if a.chat != nil {
 		_ = a.chat.SendMessage("Hello, world")
 	}
 }
 
 // Exported wrappers for wiring in external packages (basic.EventsListener signatures)
-func (a *Agent) HandleGameStart() error { a.onGameStart(); return nil }
-func (a *Agent) HandleDisconnect(reason chat.Message) error {
+func (a *agent) HandleGameStart() error { a.onGameStart(); return nil }
+func (a *agent) HandleDisconnect(reason chat.Message) error {
 	a.onDisconnect(reason.String())
 	return nil
 }
-func (a *Agent) HandleHealthChange(health float32, food int32, saturation float32) error {
+func (a *agent) HandleHealthChange(health float32, food int32, saturation float32) error {
 	a.onHealthChange(health, food, saturation)
 	return nil
 }
-func (a *Agent) HandleDeath() error { a.onDeath(); return nil }
+func (a *agent) HandleDeath() error { a.onDeath(); return nil }
 
 // onDisconnect handles graceful disconnect processing.
-func (a *Agent) onDisconnect(reason string) {
+func (a *agent) onDisconnect(reason string) {
 	log.Printf("Disconnected: %s", reason)
 }
 
 // onHealthChange handles player health changes.
-func (a *Agent) onHealthChange(health float32, food int32, saturation float32) {
+func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
 	log.Printf("Health: %.2f, Food: %d, Saturation: %.2f", health, food, saturation)
 }
 
 // onDeath handles player death events.
-func (a *Agent) onDeath() {
+func (a *agent) onDeath() {
 	log.Printf("Died and respawn scheduled")
 	// Auto-respawn after 5 seconds when respawner is set
 	a.mu.Lock()
@@ -58,12 +58,12 @@ func (a *Agent) onDeath() {
 }
 
 // onTeleported handles local player teleport events.
-func (a *Agent) onTeleported(x, y, z float64, yaw, pitch float32) {
+func (a *agent) onTeleported(x, y, z float64, yaw, pitch float32) {
 	a.setPosition(x, y, z, yaw, pitch)
 }
 
 // HandleTeleported is a wrapper matching basic.EventsListener.Teleported signature.
-func (a *Agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error {
+func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error {
 	a.setPosition(x, y, z, yaw, pitch)
 	if a.teleport != nil {
 		_ = a.teleport.AcceptTeleportation(pk.VarInt(teleportID))
@@ -72,7 +72,7 @@ func (a *Agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, te
 }
 
 // SendChat sends a chat message via the chat subsystem when available.
-func (a *Agent) SendChat(message string) error {
+func (a *agent) SendChat(message string) error {
 	if a.chat == nil {
 		return nil
 	}
@@ -80,48 +80,70 @@ func (a *Agent) SendChat(message string) error {
 }
 
 // OnSystemChat handles system chat messages from the server.
-func (a *Agent) OnSystemChat(c chat.Message, overlay bool) error {
+func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 	log.Printf("System Chat: %#v, Overlay: %v", c, overlay)
 	return nil
 }
 
+// extractCommandFromMessage checks if a chat message is directed at this bot
+// using the >>>botName<<< flag pattern and returns the command text if found.
+func (a *agent) extractCommandFromMessage(msg chat.Message) (string, bool) {
+	botName := ""
+	if a.client != nil {
+		botName = a.client.Name()
+	}
+	if botName == "" {
+		return "", false
+	}
+	flag := ">>>" + botName + "<<<"
+
+	// Check main text field first
+	if after, ok := strings.CutPrefix(msg.Text, flag); ok {
+		return strings.TrimSpace(after), true
+	}
+
+	// Check With segments
+	for _, with := range msg.With {
+		if after, ok := strings.CutPrefix(with.Text, flag); ok {
+			return strings.TrimSpace(after), true
+		}
+	}
+
+	return "", false
+}
+
 // OnPlayerChat handles player chat messages.
-func (a *Agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message, validated bool) error {
+func (a *agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message, validated bool) error {
 	prefix := ""
 	if !validated {
 		prefix = "[Not Secure] "
 	}
 	log.Printf("%sPlayer: %v", prefix, msg)
 
-	// Only react to messages directed at this bot using the >>>name<<< flag pattern.
-	botName := ""
-	if a.client != nil {
-		botName = a.client.Name()
-	}
-	if botName == "" {
+	// Check if message contains a command for this bot
+	text, ok := a.extractCommandFromMessage(msg)
+	if !ok {
 		return nil
 	}
-	flag := ">>>" + botName + "<<<"
 
-	// Find the portion after the flag in any With segment.
-	text := ""
-	for _, with := range msg.With {
-		if after, ok := strings.CutPrefix(with.Text, flag); ok {
-			text = strings.TrimSpace(after)
-			break
-		}
-	}
-	if text == "" {
-		return nil
-	}
-	// Acknowledge and handle command.
-	_ = a.SendChat("Received: " + text)
+	// Acknowledge and handle command
+	_ = a.SendChat("Chat Received: " + text)
 	a.handleChatCommand(text)
 	return nil
 }
 
-// OnDisguisedChat handles disguised chat messages.
-func (a *Agent) OnDisguisedChat(msg chat.Message) error {
+// OnDisguisedChat handles disguised chat messages (e.g., from RCON /say).
+func (a *agent) OnDisguisedChat(msg chat.Message) error {
 	log.Printf("Disguised: %v", msg)
+
+	// Check if message contains a command for this bot
+	text, ok := a.extractCommandFromMessage(msg)
+	if !ok {
+		return nil
+	}
+
+	// Acknowledge and handle command
+	_ = a.SendChat("Received: " + text)
+	a.handleChatCommand(text)
 	return nil
 }

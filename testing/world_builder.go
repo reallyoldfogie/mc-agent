@@ -1,6 +1,5 @@
 package testing
 
-import "github.com/reallyoldfogie/mc-agent/pathfinding"
 
 // BlockRegistry provides block state ID lookup for world building
 // This is a simplified interface - real implementation would use mc-protocol-go BlockManager
@@ -14,9 +13,6 @@ type WorldBuilder struct {
 	blockRegistry BlockRegistry
 }
 
-func newWorld() pathfinding.World {
-	return &MockWorld{}
-}
 
 // NewWorldBuilder creates a new world builder
 // If blockRegistry is nil, you must use SetBlockDirect() with state IDs

@@ -1,6 +1,10 @@
 package pathfinding
 
-import "math"
+import (
+	"fmt"
+	"math"
+	"strings"
+)
 
 // V3 represents a 3D integer position (block coordinates)
 type V3 struct {
@@ -129,4 +133,52 @@ type Path struct {
 	GoalPos    V3
 	Found      bool
 	SearchTime float64 // Time in milliseconds
+}
+
+// LogSummary returns a formatted summary of the path for logging
+func (p *Path) LogSummary() string {
+	if !p.Found {
+		return "Path: NOT FOUND"
+	}
+	
+	straightLineDist := p.StartPos.DistanceTo(p.GoalPos)
+	return fmt.Sprintf("Path: %d steps, cost=%.2f, search=%.1fms, straight-line=%.1f blocks",
+		len(p.Steps), p.TotalCost, p.SearchTime, straightLineDist)
+}
+
+// LogDetails returns detailed step-by-step path information for debugging
+func (p *Path) LogDetails() string {
+	if !p.Found {
+		return "Path: NOT FOUND"
+	}
+	
+	var sb strings.Builder
+	sb.WriteString(p.LogSummary())
+	sb.WriteString("\n")
+	
+	// Log first few and last few steps to avoid excessive output
+	maxStepsToShow := 10
+	if len(p.Steps) <= maxStepsToShow*2 {
+		// Show all steps if path is short
+		for i, step := range p.Steps {
+			sb.WriteString(fmt.Sprintf("  Step %d: %s to (%.0f, %.0f, %.0f) cost=%.2f\n",
+				i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z, step.Cost))
+		}
+	} else {
+		// Show first N steps
+		for i := 0; i < maxStepsToShow; i++ {
+			step := p.Steps[i]
+			sb.WriteString(fmt.Sprintf("  Step %d: %s to (%.0f, %.0f, %.0f) cost=%.2f\n",
+				i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z, step.Cost))
+		}
+		sb.WriteString(fmt.Sprintf("  ... (%d steps omitted) ...\n", len(p.Steps)-maxStepsToShow*2))
+		// Show last N steps
+		for i := len(p.Steps) - maxStepsToShow; i < len(p.Steps); i++ {
+			step := p.Steps[i]
+			sb.WriteString(fmt.Sprintf("  Step %d: %s to (%.0f, %.0f, %.0f) cost=%.2f\n",
+				i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z, step.Cost))
+		}
+	}
+	
+	return sb.String()
 }

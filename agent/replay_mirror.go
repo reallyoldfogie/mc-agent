@@ -40,6 +40,7 @@ type replayMovementMirror struct {
 	properties       []profileProperty
 	fetchedProps     bool
 	spawned          bool
+	loginSeen        bool // tracks if LOGIN packet has been recorded
 	skinProvider     SkinProvider
 
 	lastX, lastY, lastZ float64
@@ -100,6 +101,22 @@ func (m *replayMovementMirror) SetEntityType(entityType int32) {
 		// Spawn our entity now that we know the type.
 		m.spawned = true
 		m.writeAddEntity(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch)
+	}
+	m.mu.Unlock()
+}
+
+// NotifyLoginSeen signals that the LOGIN packet has been recorded to the replay.
+// This allows the MovementMirror to maintain correct packet ordering: LOGIN must
+// come before PlayerInfo packets for ReplayMod compatibility.
+func (m *replayMovementMirror) NotifyLoginSeen() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.loginSeen = true
+	// Now that LOGIN has been recorded, we can safely emit PlayerInfo if needed
+	if m.entityID != 0 && m.name != "" {
+		m.ensurePlayerInfoLocked()
 	}
 	m.mu.Unlock()
 }
@@ -265,7 +282,10 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32,
 	}
 
 	// Ensure tab list entry exists once we know our id/name/uuid.
-	m.ensurePlayerInfoLocked()
+	// Only emit after LOGIN packet has been recorded to maintain correct packet order.
+	if m.loginSeen {
+		m.ensurePlayerInfoLocked()
+	}
 
 	if !m.spawned && m.entityType != 0 {
 		log.Printf("[ReplayMirror] Spawning bot entity at (%.2f, %.2f, %.2f) entityID=%d", x, y, z, m.entityID)
@@ -277,22 +297,25 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32,
 	m.lastYaw, m.lastPitch = yaw, pitch
 	m.onGround = onGround
 
-	teleport := pk.Marshal(
-		m.cbidTeleport,
-		pk.VarInt(m.entityID),
-		pk.Double(x),
-		pk.Double(y),
-		pk.Double(z),
-		pk.Byte(angleToByte(yaw)),
-		pk.Byte(angleToByte(pitch)),
-		pk.Boolean(onGround),
-	)
-	payload := make([]byte, len(teleport.Data))
-	copy(payload, teleport.Data)
-	_ = m.rec.RecordNow(int32(teleport.ID), payload)
+	// Only emit teleport packets after the entity has been spawned
+	// DISABLE AS THINGS PROPERLY RENDER IN THE VIEW WITHOUT IT, AND AN EXCEPTION IS THROWN WITH IT (2025-12-18 10:23A).
+	// if m.spawned {
+	// 	teleport := pk.Marshal(
+	// 		m.cbidTeleport,
+	// 		pk.VarInt(m.entityID),
+	// 		pk.Double(x),
+	// 		pk.Double(y),
+	// 		pk.Double(z),
+	// 		pk.Byte(angleToByte(yaw)),
+	// 		pk.Byte(angleToByte(pitch)),
+	// 		pk.Boolean(onGround),
+	// 	)
+	// 	_ = m.rec.RecordNow(int32(teleport.ID), teleport.Data)
+	// }
 }
 
 func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float32) {
+	// Build add entity packet - pk.Marshal already produces Data WITHOUT packet ID
 	add := pk.Marshal(
 		m.cbidAddEnt,
 		pk.VarInt(m.entityID),
@@ -309,9 +332,7 @@ func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float3
 		pk.Short(0),  // velY
 		pk.Short(0),  // velZ
 	)
-	payload := make([]byte, len(add.Data))
-	copy(payload, add.Data)
-	_ = m.rec.RecordNow(int32(add.ID), payload)
+	_ = m.rec.RecordNow(int32(add.ID), add.Data)
 }
 
 func angleToByte(f float32) byte {
@@ -327,8 +348,13 @@ func (m *replayMovementMirror) ensurePlayerInfo() {
 }
 
 func (m *replayMovementMirror) ensurePlayerInfoLocked() {
-	log.Printf("ensurePlayerInfoLocked: entityID=%d name=%q sent=%v", m.entityID, m.name, m.playerInfoSent)
+	log.Printf("ensurePlayerInfoLocked: entityID=%d name=%q sent=%v loginSeen=%v", m.entityID, m.name, m.playerInfoSent, m.loginSeen)
 	if m.playerInfoSent || m.rec == nil {
+		return
+	}
+	// Don't emit PlayerInfo until after LOGIN packet has been recorded.
+	// ReplayMod expects LOGIN packet first to establish player entity ID.
+	if !m.loginSeen {
 		return
 	}
 	// Try to fetch textures if we don't already have properties.

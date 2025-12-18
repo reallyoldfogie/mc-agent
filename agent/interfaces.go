@@ -45,6 +45,7 @@ type MovementMirror interface {
 	SetEntityMeta(entityID int32, name string, uuid [16]byte)
 	SetEntityType(entityType int32)
 	HandlePlayerInfo(pk.Packet)
+	NotifyLoginSeen() // signals that LOGIN packet has been recorded
 }
 
 // EventBus registers and dispatches packet handlers.

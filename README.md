@@ -10,11 +10,15 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 - **Microsoft Authentication**: Secure authentication via Microsoft accounts with credential caching
 - **Replay Recording**: Full ReplayMod .mcpr recording with bot visibility and skin texture embedding
 - **Skin Management**: Automatic download and extraction of Minecraft client skins with caching
+- **Recipe System**: Parse and export server recipes (property sets, stonecutter, slot displays)
+- **Bow Firing**: Physics-based ballistic calculation for accurate bow aiming
 - **Packet Logging**: Comprehensive logging of all received packets for debugging and analysis
 - **Entity Tracking**: Real-time tracking of players and entities with position updates
+- **Player Following**: Intelligent pathfinding-based following with obstacle avoidance
 - **Chat Commands**: Bot responds to commands via chat with `>>>ROF_bot<<<` prefix
 - **Event-Driven Architecture**: Clean separation of concerns with manager-based design
 - **Version-Agnostic Protocol Handling**: Uses version managers for protocol differences
+- **Integration Testing**: Docker-based testing framework for navigation and following behavior
 
 ## Quick Start
 
@@ -74,9 +78,10 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `follow <player>` | Start following a player by name (requires path data) |
 | `stopFollow` | Stop following |
 | `followStatus` | Show follow status |
-| `startTracking` | (stub) Will track nearest player (coming soon) |
-| `stopTracking` | (stub) Stop tracking (coming soon) |
-| `fireBow` | (stub) Fire equipped bow (coming soon) |
+| `startTracking` | Track nearest player with periodic updates |
+| `stopTracking` | Stop tracking |
+| `fireBow` | Fire equipped bow (basic) |
+| `fireBowAt <x> <y> <z>` | Fire bow at target coordinates with ballistic calculation |
 
 Example:
 ```
@@ -203,11 +208,50 @@ The bot includes a complete ReplayMod recording system that captures gameplay se
 
 Generated `.mcpr` files can be opened in Minecraft with ReplayMod installed for cinematic playback, debugging, and analysis.
 
+## Advanced Features
+
+### Recipe System
+
+The bot can parse and store the server's `Update Recipes` packet, which includes:
+- **Property Sets**: Item groups (e.g., `minecraft:wood` containing all wood types)
+- **Stonecutter Recipes**: Input items and their possible stonecutter outputs
+- **Slot Displays**: Complex item display types (tags, stacks, smithing trims, composites)
+
+**API Access:**
+```go
+// Get last Update Recipes payload
+payload, ok := agent.LastUpdateRecipes()
+
+// Export as JSON for inspection
+json, ok, err := agent.ExportLastUpdateRecipesAsJSON(true)
+```
+
+See [docs/RECIPES.md](docs/RECIPES.md) for detailed documentation.
+
+### Bow Firing with Ballistics
+
+The bot includes physics-based bow aiming that calculates pitch, yaw, and power to hit targets:
+- Simulates arrow trajectory (gravity, drag)
+- Iterates through pitch/power combinations to find optimal shot
+- Accounts for bot eye height and target position
+
+**Commands:**
+- `>>>bot<<< fireBow` - Fire bow in current direction
+- `>>>bot<<< fireBowAt 100 64 200` - Aim and fire at coordinates
+
+**Ballistics Algorithm:**
+- Initial speed: `3.1 * powerFactor` (0.1-1.0)
+- Gravity: 0.05 blocks/tick²
+- Drag: 0.99/tick
+- Simulation: 400 ticks max
+
+See [docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md) for implementation details.
+
 ## Planned Features
 
 ### Player Following (Implemented, ongoing polish)
 
-The bot will be able to follow players using intelligent pathfinding. See [FOLLOW_PLAYER_PLAN.md](FOLLOW_PLAYER_PLAN.md) for the comprehensive implementation plan.
+The bot can follow players using intelligent pathfinding. See [FOLLOW_PLAYER_PLAN.md](FOLLOW_PLAYER_PLAN.md) for the comprehensive implementation plan.
 
 **Capabilities:**
 - Follow specific player by name

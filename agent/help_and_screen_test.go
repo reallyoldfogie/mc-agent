@@ -6,14 +6,20 @@ import (
 	"log"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHelpListsLegacyCommands(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
 	fc := &fakeChat{}
-	a.SetChat(fc)
-	a.handleChatCommand("help")
+	agent.SetChat(fc)
+	agent.handleChatCommand("help")
 	if len(fc.msgs) == 0 {
 		t.Fatalf("no help message")
 	}
@@ -38,15 +44,21 @@ type fakeItemMgr struct{ name string }
 func (f fakeItemMgr) GetItemNameByID(id int) string { return f.name }
 
 func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.SetSlotResolver(fakeSlotResolver{itemID: 5, count: 3, ok: true})
-	a.SetItemManager(fakeItemMgr{name: "TestItem"})
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.SetSlotResolver(fakeSlotResolver{itemID: 5, count: 3, ok: true})
+	agent.SetItemManager(fakeItemMgr{name: "TestItem"})
 	var buf bytes.Buffer
 	prev := log.Writer()
 	log.SetOutput(&buf)
 	defer log.SetOutput(prev)
-	if err := a.OnScreenSlotChange(0, 0); err != nil {
+	if err := agent.OnScreenSlotChange(0, 0); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()

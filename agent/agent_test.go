@@ -7,6 +7,7 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeCBPacketMgr struct {
@@ -98,13 +99,13 @@ func (f *fakeClient) HandleGame(context.Context) error                          
 func (f *fakeClient) WritePacket(p pk.Packet) error                                    { return nil }
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
-	a, err := New(Config{Address: "127.0.0.1:25565"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
 
 	// Inject fakes
-	a.packetMgr = fakeCBPacketMgr{ids: map[string]protocol_models.ClientboundPacketID{
+	agent.packetMgr = fakeCBPacketMgr{ids: map[string]protocol_models.ClientboundPacketID{
 		"ClientboundAddEntity":        1,
 		"ClientboundMoveEntityPosRot": 2,
 		"ClientboundMoveEntityPos":    3,
@@ -112,9 +113,9 @@ func TestInitRegistersCoreHandlers(t *testing.T) {
 		"ClientboundRemoveEntities":   5,
 	}}
 	bus := &fakeEventBus{}
-	a.client = &fakeClient{bus: bus}
+	agent.client = &fakeClient{bus: bus}
 
-	if err := a.Init(context.Background()); err != nil {
+	if err := agent.Init(context.Background()); err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 	// We expect at least the core entity handlers to be registered (others may exist)
@@ -130,23 +131,24 @@ func TestInitRegistersCoreHandlers(t *testing.T) {
 }
 
 func TestCleanupRemovedEntities(t *testing.T) {
-	a, err := New(Config{Address: "127.0.0.1:25565"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	a.entities = map[int32]*trackedEntity{
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	agent.entities = map[int32]*trackedEntity{
 		10: {EntityID: 10, Removed: true, RemovedAt: time.Now().Add(-EntityRemovalGracePeriod - time.Second)},
 		11: {EntityID: 11, Removed: true, RemovedAt: time.Now()},
 		12: {EntityID: 12, Removed: false},
 	}
-	a.cleanupRemovedEntities()
-	if _, ok := a.entities[10]; ok {
+	agent.cleanupRemovedEntities()
+	if _, ok := agent.entities[10]; ok {
 		t.Errorf("entity 10 should be purged")
 	}
-	if _, ok := a.entities[11]; !ok {
+	if _, ok := agent.entities[11]; !ok {
 		t.Errorf("entity 11 should remain")
 	}
-	if _, ok := a.entities[12]; !ok {
+	if _, ok := agent.entities[12]; !ok {
 		t.Errorf("entity 12 should remain")
 	}
 }

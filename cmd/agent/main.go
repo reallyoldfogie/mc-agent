@@ -78,7 +78,7 @@ var (
 	address     = flag.String("address", "127.0.0.1:25565", "The server address")
 	name        = flag.String("name", "Daze", "The player's name")
 	playerID    = flag.String("uuid", "", "The player's UUID")
-	mcVersion   = flag.String("version", "1.21.5", "target MC version")
+	mcVersion   = flag.String("version", "", "target MC version (empty = auto-detect from server)")
 	offline     = flag.Bool("offline", false, "use offline mode")
 	accessToken = flag.String("token", "", "AccessToken - offline mode only")
 	mcDataPath  = flag.String("data-path", "", "Path to mc-data-gen data directory")
@@ -127,7 +127,7 @@ func main() {
 		SkinProvider:      skinProvider,
 	}
 
-	// Auto-detect server version if not specified
+	// Auto-detect server version if not specified, otherwise resolve protocol from version
 	if cfg.Version == "" {
 		v, proto, err := rof_utils.CheckServerVersion(cfg.Address, 0)
 		if err != nil {
@@ -135,6 +135,15 @@ func main() {
 		}
 		cfg.Version = v
 		cfg.ProtocolVersion = proto
+		log.Printf("Auto-detected server version %s (protocol %d)", v, proto)
+	} else {
+		// Version specified: resolve protocol from version string
+		if proto, ok := mc_versions.VersionProtocol[cfg.Version]; ok {
+			cfg.ProtocolVersion = proto
+			log.Printf("Using specified version %s (protocol %d)", cfg.Version, proto)
+		} else {
+			log.Fatalf("unsupported version: %s", cfg.Version)
+		}
 	}
 
 	// Resolve packet manager for version (best effort).
@@ -283,6 +292,7 @@ func main() {
 					followCfg := following.DefaultFollowConfig()
 					followMgr := following.NewFollowManager(targetSelector, pathFinder, moveExec, a.GetPosition, a.SendChat, followCfg)
 					a.SetFollowManager(followMgr)
+					a.SetTargetSelector(targetSelector)
 				}
 			}
 		}

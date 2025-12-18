@@ -10,7 +10,7 @@ import (
 )
 
 // packetLogger returns a generic packet handler that writes JSON logs to a.logw.
-func (a *Agent) packetLogger() PacketHandler {
+func (a *agent) packetLogger() PacketHandler {
 	ver := a.cfg.Version
 	proto := a.cfg.ProtocolVersion
 	return PacketHandler{
