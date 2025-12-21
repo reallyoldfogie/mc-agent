@@ -91,33 +91,41 @@ func (me *movementExecutor) MoveTowards(targetX, targetY, targetZ float64, dista
 		return 0, 0, 0, fmt.Errorf("bot position not initialized")
 	}
 
-	// Calculate direction vector
+	// Calculate direction vector (horizontal only to prevent walking on air)
 	dx := targetX - botX
 	dy := targetY - botY
 	dz := targetZ - botZ
 
-	// Calculate current distance to target
-	currentDist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	// Calculate horizontal distance (X-Z plane only)
+	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 
-	// If we're already at target or closer than requested distance, don't move
-	if currentDist <= 0.01 {
+	// If we're already at target horizontally, don't move
+	if horizontalDist <= 0.01 {
+		// But we might need to adjust Y if there's a vertical difference
+		if math.Abs(dy) > 0.01 {
+			// For now, maintain current Y to prevent walking on air
+			// TODO: When world integration is ready, check if we need to step up/down
+			return botX, botY, botZ, nil
+		}
 		return botX, botY, botZ, nil
 	}
 
-	// Normalize direction vector
-	dx /= currentDist
-	dy /= currentDist
-	dz /= currentDist
+	// Normalize horizontal direction vector
+	dxNorm := dx / horizontalDist
+	dzNorm := dz / horizontalDist
 
-	// Calculate movement distance (don't overshoot target)
-	moveDistance := math.Min(distance, currentDist)
+	// Calculate movement distance (don't overshoot target horizontally)
+	moveDistance := math.Min(distance, horizontalDist)
 
-	// Calculate new position
-	newX = botX + dx*moveDistance
-	newY = botY + dy*moveDistance
-	newZ = botZ + dz*moveDistance
+	// Calculate new position (horizontal movement only)
+	newX = botX + dxNorm*moveDistance
+	newY = botY // Maintain current Y to avoid walking on air
+	newZ = botZ + dzNorm*moveDistance
 
-	// Send position and rotation update
+	// Keep existing rotation (yaw and pitch) - caller should set rotation via LookAt if needed
+	// This allows the bot to look at target while walking towards a different position
+
+	// Send position and rotation update (keeping current rotation)
 	err = me.SendPositionAndRotation(newX, newY, newZ, yaw, pitch, onGround)
 	return newX, newY, newZ, err
 }
