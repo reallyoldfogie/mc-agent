@@ -14,11 +14,17 @@ import (
 	"time"
 )
 
+const defaultDataURL = "https://github.com/reallyoldfogie/mc-data-gen/tree/master/data"
+
 // ResolveDataPath determines if input is a URL or local path.
 // If URL: downloads and caches the data, returns path to cached data
 // If local path: validates it exists and returns the path
 // If empty: returns defaultPath
 func ResolveDataPath(input string, cacheDir string, defaultPath string) (string, error) {
+	if input == "" {
+		input = defaultDataURL
+	}
+
 	// Use default if input is empty
 	if input == "" {
 		input = defaultPath

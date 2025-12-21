@@ -1,0 +1,96 @@
+package agent
+
+import (
+	"bytes"
+	"context"
+	"testing"
+
+	pk "github.com/Tnze/go-mc/net/packet"
+)
+
+// helper to append field bytes to a buffer
+func appendField(buf *bytes.Buffer, f pk.FieldEncoder) {
+	_, _ = f.WriteTo(buf)
+}
+
+func TestOnClientboundPosition_Absolute(t *testing.T) {
+	a, _ := New(Config{Address: "127.0.0.1:25565"})
+	_ = a.Init(context.Background())
+
+	var (
+		TeleportID pk.VarInt = 5
+		X          pk.Double = 1
+		Y          pk.Double = 2
+		Z          pk.Double = 3
+		DX         pk.Double = 0
+		DY         pk.Double = 0
+		DZ         pk.Double = 0
+		Yaw        pk.Float  = 10
+		Pitch      pk.Float  = 20
+		Flags      pk.VarInt = 0
+	)
+	var buf bytes.Buffer
+	appendField(&buf, TeleportID)
+	appendField(&buf, X)
+	appendField(&buf, Y)
+	appendField(&buf, Z)
+	appendField(&buf, DX)
+	appendField(&buf, DY)
+	appendField(&buf, DZ)
+	appendField(&buf, Yaw)
+	appendField(&buf, Pitch)
+	appendField(&buf, Flags)
+	p := pk.Packet{Data: buf.Bytes()}
+
+	if err := a.onClientboundPosition(p); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	x, y, z, yaw, pitch, ok := a.GetPosition()
+	if !ok {
+		t.Fatalf("position not initialized")
+	}
+	if x != 1 || y != 2 || z != 3 {
+		t.Fatalf("unexpected pos: %v %v %v", x, y, z)
+	}
+	if yaw != 10 || pitch != 20 {
+		t.Fatalf("unexpected rot: %v %v", yaw, pitch)
+	}
+}
+
+func TestOnRegistryData(t *testing.T) {
+	a, _ := New(Config{Address: "127.0.0.1:25565"})
+	_ = a.Init(context.Background())
+
+	var (
+		id    pk.String  = "minecraft:entity_type"
+		count pk.VarInt  = 2
+		e0    pk.String  = "minecraft:foo"
+		e1    pk.String  = "minecraft:bar"
+		has0  pk.Boolean = false
+		has1  pk.Boolean = false
+	)
+	var buf bytes.Buffer
+	appendField(&buf, id)
+	appendField(&buf, count)
+	appendField(&buf, e0)
+	appendField(&buf, has0)
+	appendField(&buf, e1)
+	appendField(&buf, has1)
+	p := pk.Packet{Data: buf.Bytes()}
+
+	if err := a.onRegistryData(p); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	reg := a.GetRegistry("minecraft:entity_type")
+	if reg == nil || !reg.IsReady() {
+		t.Fatalf("registry not ready")
+	}
+	zeroName, ok := reg.GetNameByID(0)
+	if !ok || zeroName != "minecraft:foo" {
+		t.Fatalf("unexpected id 0 name: %v %t", zeroName, ok)
+	}
+	oneName, ok := reg.GetNameByID(1)
+	if !ok || oneName != "minecraft:bar" {
+		t.Fatalf("unexpected id 1 name: %v %t", oneName, ok)
+	}
+}

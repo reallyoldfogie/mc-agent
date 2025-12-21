@@ -1,5 +1,7 @@
 github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e h1:1kpZRcut6hymfTvCAZteOW4an/vwMyi9NNeDh0V/MDY=
 github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e/go.mod h1:vp949nHNUK5KVwSuadpN1vp7c1zvkPEniM08PQv1FcY=
+github.com/gofrs/uuid v4.4.0+incompatible h1:3qXRTX8/NbyulANqlc0lchS1gqAVxRgsuW1YrTJupqA=
+github.com/gofrs/uuid v4.4.0+incompatible/go.mod h1:b2aQJv3Z4Fp6yNu3cdSllBxTCLRxnplIgP/c0N/04lM=
 github.com/google/uuid v1.3.0 h1:t6JiXgmwXMjEs8VusXIJk2BXHsn+wx8BZdTaoZ5fu7I=
 github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
@@ -7,5 +9,6 @@ github.com/iancoleman/strcase v0.2.0 h1:05I4QRnGpI0m37iZQRuskXh+w77mr6Z41lwQzuHL
 github.com/iancoleman/strcase v0.2.0/go.mod h1:iwCmte+B7n89clKwxIoIXy/HfoL7AsD47ZCWhYzw7ho=
 github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4 h1:YjCEWKIMKvuPtSW7v2c3Q/WWXyz5SUQ6Cib9xr55+Go=
 github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4/go.mod h1:nUJqyBOVWiWm1XHwFpvFhLewsX2vKpp3zEFYpcIbQIc=
+github.com/reallyoldfogie/mc-data-gen/loader v0.0.3/go.mod h1:CG/tCLZ5NpGVnT05ezX0wJJ2Pl/SxnhOd2xh4skMmmg=
 gopkg.in/natefinch/lumberjack.v2 v2.2.1 h1:bBRl1b0OH9s/DuPhuXpNl+VtCaJXFZ5/uEFST95x9zc=
 gopkg.in/natefinch/lumberjack.v2 v2.2.1/go.mod h1:YD8tP3GAjkrDg1eZH7EGmyESg/lsYskCTPBJVb9jqSc=

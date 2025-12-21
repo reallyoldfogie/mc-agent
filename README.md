@@ -1,13 +1,15 @@
 # mc-agent
 
-A Minecraft Java Edition bot/agent written in Go that connects to servers, handles game state, and responds to chat commands.  
+A Minecraft Java Edition bot/agent written in Go that connects to servers, handles game state, and responds to chat commands.
 
-**Inspiration taken from github.com/Tnze/mc-go/bot.**
+The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent/agent`), and the CLI lives at `cmd/mc-agent`. This refactor enables integration tests and multiple agent instances in one process.
 
 ## Features
 
 - **Multi-Version Support**: Compatible with Minecraft 1.21.1 through 1.21.10
 - **Microsoft Authentication**: Secure authentication via Microsoft accounts with credential caching
+- **Replay Recording**: Full ReplayMod .mcpr recording with bot visibility and skin texture embedding
+- **Skin Management**: Automatic download and extraction of Minecraft client skins with caching
 - **Packet Logging**: Comprehensive logging of all received packets for debugging and analysis
 - **Entity Tracking**: Real-time tracking of players and entities with position updates
 - **Chat Commands**: Bot responds to commands via chat with `>>>ROF_bot<<<` prefix
@@ -27,13 +29,13 @@ A Minecraft Java Edition bot/agent written in Go that connects to servers, handl
 ```bash
 git clone https://github.com/reallyoldfogie/mc-agent.git
 cd mc-agent
-go build -o mc-agent main.go
+go build -o mc-agent ./cmd/mc-agent
 ```
 
 ### Running the Bot
 
 ```bash
-# Connect to a server with default settings
+# Connect to a server with default settings (auto-detects version if -version not set)
 ./mc-agent
 
 # Connect to a specific server
@@ -56,23 +58,30 @@ go build -o mc-agent main.go
 | `-address` | string | `127.0.0.1:25565` | Server address and port |
 | `-name` | string | `Daze` | Bot's player name |
 | `-uuid` | string | (generated) | Player UUID |
-| `-version` | string | `1.21.5` | Target Minecraft version |
+| `-version` | string | `1.21.5` | Target Minecraft version (leave empty to auto-detect) |
 | `-offline` | bool | `false` | Use offline mode (no authentication) |
 | `-token` | string | (cached) | Access token for offline mode |
 
 ## Chat Commands
 
-The bot responds to commands in chat prefixed with `>>>ROF_bot<<<`:
+The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>ROF_bot<<<`). Examples:
 
 | Command | Description |
 |---------|-------------|
-| `fireBow` | Fires equipped bow (experimental) |
-| `startTracking` | Continuously look at nearest player |
-| `stopTracking` | Stop tracking players |
+| `help` | Show available commands |
+| `pos` | Print current position |
+| `say <text>` | Echo text back to chat |
+| `follow <player>` | Start following a player by name (requires path data) |
+| `stopFollow` | Stop following |
+| `followStatus` | Show follow status |
+| `startTracking` | (stub) Will track nearest player (coming soon) |
+| `stopTracking` | (stub) Stop tracking (coming soon) |
+| `fireBow` | (stub) Fire equipped bow (coming soon) |
 
-**Example:**
+Example:
 ```
->>>ROF_bot<<< startTracking
+>>>ROF_bot<<< follow Steve
+>>>ROF_bot<<< pos
 ```
 
 ## Architecture
@@ -90,15 +99,16 @@ The bot uses an event-driven architecture with specialized managers:
 
 ```
 mc-agent/
-├── main.go                # Main bot executable
+├── cmd/mc-agent/main.go   # Thin CLI bootstrap
+├── agent/                 # Reusable agent package (lifecycle, handlers, tracking)
 ├── go.mod                 # Go module definition
 │
 ├── bot/                   # Bot extensions and wrappers
-│   ├── path/              # Pathfinding (planned)
+│   ├── path/              # Pathfinding (legacy adapters)
 │   ├── ptypes/            # Custom packet types
 │   └── world/             # World state tracking
 │
-├── event_handler/         # Entity event handlers
+├── event_handler/         # Legacy entity event handlers (reference)
 ├── models/                # Data models
 ├── utils/                 # Utility functions
 ├── data/                  # Static data files
@@ -112,6 +122,7 @@ The project integrates with several local repositories:
 - **[mc-bot-go](https://github.com/reallyoldfogie/mc-bot-go)** - Bot framework (forked from Tnze/go-mc)
 - **[mc-protocol-go](https://github.com/reallyoldfogie/mc-protocol-go)** - Version-specific protocol management
 - **[mc-data-gen](https://github.com/reallyoldfogie/mc-data-gen)** - Block collision and shape data
+- **[mc-replay-go](https://github.com/reallyoldfogie/mc-replay-go)** - ReplayMod .mcpr recording and playback
 
 ## Configuration
 
@@ -126,18 +137,79 @@ To use offline mode:
 
 ### Logging
 
-Packets are automatically logged to `./logs/` with rotation:
+Packets are automatically logged to `./logs/` with rotation (via lumberjack):
 - Format: JSON with packet ID, name, data, and timestamp
 - Rotation: 10MB max file size, 3 backups, 28-day retention
 - Compression: Old logs are gzip compressed
 
+### Skin Management
+
+The bot includes a comprehensive skin management system that can download and extract player skins from the Minecraft client jar.
+
+**Features:**
+- Automatic download of Minecraft client jar for any version
+- Extraction of all 18 default player skins (9 slim + 9 wide models)
+- Smart caching to avoid re-downloading
+- Load skins by name or get random skins
+- Fallback to Mojang's session servers for player-specific skins
+
+**Available skins:** alex, ari, efe, kai, makena, noor, steve, sunny, zuri (in both slim and wide models)
+
+See [docs/SKINS.md](docs/SKINS.md) for detailed documentation.
+
+**Try the demo:**
+```bash
+cd cmd/skin-demo
+go build .
+./skin-demo -list              # List all available skins
+./skin-demo -skin steve         # Load Steve skin
+./skin-demo -skin alex -model slim  # Load slim Alex skin
+```
+
+### Replay Recording
+
+The bot includes a complete ReplayMod recording system that captures gameplay sessions in `.mcpr` format for later playback in the ReplayMod.
+
+**Features:**
+- Records all clientbound packets to ReplayMod-compatible `.mcpr` files
+- Bot appears as a visible entity in replays with correct position and rotation
+- Automatic skin texture embedding for accurate player rendering
+- Supports both legacy and modern file formats (1.20.2+ with login/config phases)
+- Configurable output path and metadata
+
+**Usage:**
+```bash
+# Enable replay recording
+./mc-agent -address server:25565 -replay
+
+# Custom output file
+./mc-agent -address server:25565 -replay -replay-out my-session.mcpr
+
+# Custom generator metadata
+./mc-agent -address server:25565 -replay -replay-generator "MyBot v1.0"
+```
+
+**Replay flags:**
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-replay` | bool | `false` | Enable ReplayMod recording |
+| `-replay-out` | string | `session.mcpr` | Output file path for replay |
+| `-replay-generator` | string | `mc-agent` | Generator metadata string |
+
+**Technical details:**
+- Movement mirroring: Converts serverbound movement packets to synthetic clientbound packets so the bot appears in replays
+- Texture embedding: Fetches player skin properties and embeds them in PlayerInfo packets
+- Fallback support: Can reuse textures from existing `.mcpr` files when offline
+
+Generated `.mcpr` files can be opened in Minecraft with ReplayMod installed for cinematic playback, debugging, and analysis.
+
 ## Planned Features
 
-### Player Following (Ready for Implementation)
+### Player Following (Implemented, ongoing polish)
 
 The bot will be able to follow players using intelligent pathfinding. See [FOLLOW_PLAYER_PLAN.md](FOLLOW_PLAYER_PLAN.md) for the comprehensive implementation plan.
 
-**Planned capabilities:**
+**Capabilities:**
 - Follow specific player by name
 - Navigate around obstacles
 - Handle water, ladders, and complex terrain
@@ -149,13 +221,13 @@ The bot will be able to follow players using intelligent pathfinding. See [FOLLO
 ### Building from Source
 
 ```bash
-go build -o mc-agent main.go
+go build -o mc-agent ./cmd/mc-agent
 ```
 
 ### Running in Development
 
 ```bash
-go run main.go -address "localhost:25565"
+go run ./cmd/mc-agent -address "localhost:25565"
 ```
 
 ### Documentation

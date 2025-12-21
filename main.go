@@ -1,15 +1,9 @@
-// Daze is a basic bot example that join a server as client with these features:
-// - Say "Hello, world" when game started.
-// - Just standing there and do nothing.
-// - Receive chat message and print it.
-// - Receive player list and store it in memory.
-// - Receive chunk data and load/unload them.
-// - Receive inventory items and print them.
-// - Automatically reborn after 5 seconds of death.
+// Deprecated: use cmd/agent/main.go instead. This file will be removed in future versions.
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,9 +11,13 @@ import (
 	"io"
 	"log"
 	"math"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	//"github.com/mattn/go-colorable"
@@ -27,8 +25,10 @@ import (
 	"github.com/Tnze/go-mc/chat"
 	"github.com/Tnze/go-mc/data/registryid"
 	pk "github.com/Tnze/go-mc/net/packet"
-	"github.com/davecgh/go-spew/spew"
+	gfrs_uuid "github.com/gofrs/uuid"
+	"github.com/google/uuid"
 
+	agentpkg "github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
 	"github.com/reallyoldfogie/mc-bot-go/bot/msg"
@@ -37,8 +37,13 @@ import (
 	"github.com/reallyoldfogie/mc-bot-go/bot/world"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 
+	v1215_clientbound "github.com/reallyoldfogie/mc-protocol-go/data/1.21.5/play/clientbound"
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+
+	"github.com/reallyoldfogie/mc-replay-go/adapters"
+	mcpr "github.com/reallyoldfogie/mc-replay-go/mcpr"
+	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 
 	"github.com/reallyoldfogie/mc-agent/following"
 	"github.com/reallyoldfogie/mc-agent/movement"
@@ -56,6 +61,9 @@ const (
 
 	// EntityCleanupInterval is how often to check for expired removed entities
 	EntityCleanupInterval = 10 * time.Second
+
+	// StopFileName is the sentinel file that triggers a graceful shutdown when present
+	StopFileName = ".agentStop"
 )
 
 var (
@@ -68,6 +76,13 @@ var (
 	mcDataGenPath    = flag.String("data-path", "", "Path to mc-data-gen data directory (default: ../mc-data-gen/data)")
 	mcProtocolGoPath = flag.String("protocol-path", "", "Path to mc-protocol-go directory (default: ../mc-protocol-go)")
 	// authFile    = flag.String("auth", "", "json file containing auth credentials")
+
+	// Replay flags
+	replayEnabled   = flag.Bool("replay", false, "Enable ReplayMod recording (.mcpr)")
+	replayOut       = flag.String("replay-out", "session.mcpr", "Replay output file path")
+	replayGenerator = flag.String("replay-generator", "mc-agent", "Replay generator string")
+	skinCacheDir    = flag.String("skin-cache", "skins", "Directory to cache player/default skins")
+	skinNetEnabled  = flag.Bool("skin-net", false, "Allow network skin fetches from Mojang (default off)")
 )
 
 var (
@@ -90,6 +105,12 @@ var (
 
 	protocolVersion uint
 
+	// Global pointer to the active replay recorder (if any) so signal handlers
+	// outside the replay init block can finalize the archive.
+	replayRecGlobal    *recorder.Recorder
+	replayMirrorGlobal agentpkg.MovementMirror
+	skinProvider       agentpkg.SkinProvider
+
 	// Bot position tracking
 	botPosition struct {
 		mu          sync.RWMutex
@@ -108,12 +129,6 @@ var (
 	trackedEntities struct {
 		mu       sync.RWMutex
 		entities map[int32]*TrackedEntity
-	}
-
-	bundledPackets struct {
-		mu      sync.RWMutex
-		packets []pk.Packet
-		active  bool
 	}
 
 	// Custom registry storage for registries not in Tnze/go-mc
@@ -181,6 +196,15 @@ func setBotEntityID(id int32) {
 	defer botEntityID.mu.Unlock()
 	botEntityID.id = id
 	log.Printf("Bot entity ID set to: %d", id)
+}
+
+// sendPacketWithReplayMirror sends a packet to the server and also notifies the replay mirror if active
+func sendPacketWithReplayMirror(pkt pk.Packet) error {
+	// Notify replay mirror of the packet (for movement packets)
+	if replayMirrorGlobal != nil {
+		replayMirrorGlobal.HandleServerbound(pkt)
+	}
+	return client.Conn.WritePacket(pkt)
 }
 
 // getTrackedEntities returns a copy of tracked entities for following package
@@ -260,10 +284,72 @@ func cleanupRemovedEntities() {
 	}
 }
 
+// watchStopFile polls for the stop file and triggers shutdown when it appears
+func watchStopFile(ctx context.Context, cancel context.CancelFunc) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := os.Stat(StopFileName); err == nil {
+				log.Printf("Stop file %s detected; initiating shutdown", StopFileName)
+				removeStopFileIfExists()
+				cancel()
+				return
+			} else if !errors.Is(err, os.ErrNotExist) {
+				log.Printf("Error checking stop file %s: %v", StopFileName, err)
+			}
+		}
+	}
+}
+
+// removeStopFileIfExists removes the stop file and logs any errors
+func removeStopFileIfExists() {
+	if err := os.Remove(StopFileName); err == nil {
+		log.Printf("Removed stop file %s", StopFileName)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		log.Printf("Error removing stop file %s: %v", StopFileName, err)
+	}
+}
+
+// isNetClosing returns true when the underlying error indicates the connection is closing.
+func isNetClosing(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && opErr.Err != nil && strings.Contains(opErr.Err.Error(), "use of closed network connection") {
+		return true
+	}
+
+	return false
+}
+
+// TO DO: Rewrite client/player/etc. to use packetMgr instead of tnze bot (mc-bot-go) (in progress)
 func main() {
-	// TO DO: Rewrite client/player/etc. to use packetMgr instead of tnze bot (mc-bot-go) (in progress)
+	// Global OS signal context for graceful shutdown
+	sigCtx, sigStop := signal.NotifyContext(context.Background(),
+		os.Interrupt,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT,
+		syscall.SIGABRT,
+	)
+	defer sigStop()
+
+	go watchStopFile(sigCtx, sigStop)
 
 	var auth bot.Auth
+	var authUUIDBytes [16]byte
 
 	if !*offline {
 		cid := "88650e7e-efee-4857-b9a9-cf580a00ef43" // MS app ID from msauth mod documentation.  Should really use my own - being lazy right now.
@@ -280,12 +366,23 @@ func main() {
 			Name: mauth.Name,
 			UUID: mauth.UUID,
 		}
+		if parsed, err := uuid.Parse(mauth.UUID); err == nil {
+			copy(authUUIDBytes[:], parsed[:])
+		}
 	} else {
+		if *playerID == "" && *name != "" {
+			*playerID = gfrs_uuid.NewV5(gfrs_uuid.NamespaceOID, "OfflinePlayer:"+*name).String()
+		} else {
+			panic("Offline mode requires a name to derive UUID from, or an explict UUID	")
+		}
 		fmt.Printf("Offline mode => setting bot.Auth to {name: %s, UUID: %s, AsTk: %s}\n", *name, *playerID, *accessToken)
 		auth = bot.Auth{
 			Name: *name,
 			UUID: *playerID,
 			AsTk: *accessToken,
+		}
+		if parsed, err := uuid.Parse(*playerID); err == nil {
+			copy(authUUIDBytes[:], parsed[:])
 		}
 	}
 	var err error
@@ -297,11 +394,16 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		log.Printf("mcVersion: %s protocolVersion: %d\n", *mcVersion, protocolVersion)
+	} else {
+		log.Printf("Using specified mcVersion: %s\n", *mcVersion)
 	}
 
-	if _, ok = mc_versions.VersionProtocol[*mcVersion]; !ok {
+	if protocolVersion, ok = mc_versions.VersionProtocol[*mcVersion]; !ok {
 		panic(fmt.Sprintf("unsupported version %v", *mcVersion))
 	}
+
+	log.Printf("Using protocol version %d for mcVersion %s\n", protocolVersion, *mcVersion)
 
 	packetMgr = mc_versions.GetPacketMgrForVersion(*mcVersion)
 	blockMgr = mc_versions.GetBlockMgrForVersion(*mcVersion)
@@ -328,7 +430,12 @@ func main() {
 		getBotEntityID,
 	)
 
-	player = basic.NewPlayer(client, basic.DefaultSettings, basic.EventsListener{
+	// Create custom settings with increased render distance
+	customSettings := basic.DefaultSettings
+	customSettings.ViewDistance = 32 // Maximum render distance (2-32)
+	customSettings.Locale = "en_us"
+
+	player = basic.NewPlayer(client, customSettings, basic.EventsListener{
 		GameStart:    onGameStart,
 		Disconnect:   onDisconnect,
 		HealthChange: onHealthChange,
@@ -363,7 +470,8 @@ func main() {
 		"../mc-data-gen/data",
 	)
 	if err != nil {
-		log.Fatalf("Failed to resolve mc-data-gen data path: %v", err)
+		log.Printf("[ERROR] Failed to resolve mc-data-gen data path: %v", err)
+		return
 	}
 
 	protocolBasePath := *mcProtocolGoPath
@@ -406,11 +514,78 @@ func main() {
 		log.Printf("Follow system initialized")
 	}
 
+	// Skin provider used for embedding textures into replays.
+	skinProvider = agentpkg.NewSkinFetcher(agentpkg.SkinFetcherConfig{
+		AllowNetwork: *skinNetEnabled,
+		CacheRoot:    *skinCacheDir,
+		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
+	})
+
+	// Optional: record clientbound packets to ReplayMod (.mcpr) — register BEFORE login to capture JoinGame
+	if *replayEnabled {
+		fileFormatVersion := 13
+		if protocolVersion >= 764 { // 1.20.2+ requires LOGIN/CONFIG stages in MCPR
+			fileFormatVersion = mcpr.CurrentFileFormatVersion
+		}
+		rec, err := recorder.NewFile(*replayOut, mcpr.Meta{
+			Protocol:          int(protocolVersion),
+			MCVersion:         *mcVersion,
+			FileFormatVersion: fileFormatVersion,
+			Generator:         *replayGenerator,
+			ServerName:        *address,
+		})
+		if err != nil {
+			log.Printf("[replay] init failed: %v", err)
+		} else {
+			log.Printf("[replay] initialized")
+			replayRecGlobal = rec
+			replayMirrorGlobal = agentpkg.NewReplayMovementMirror(rec, packetMgr, skinProvider)
+
+			client.Events.AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec)})
+		}
+	}
+
 	// Login
 
-	err = client.JoinServerWithOptions(*address, bot.JoinOptions{ProtocolVersion: protocolVersion})
+	// Set player entity type for replay mirror
+	// In Minecraft 1.21+, entity_type registry is not sent during configuration phase,
+	// so we get it from the protocol data instead
+	if replayMirrorGlobal != nil {
+		playerEntityType := packetMgr.GetEntityTypeID("minecraft:player")
+		if playerEntityType == -1 {
+			log.Printf("[Registry] WARNING: minecraft:player not found in protocol data, using fallback")
+			playerEntityType = 148 // Fallback for safety (1.21.5 value)
+		}
+		log.Printf("[Registry] Setting player entity type to %d (minecraft:player)", playerEntityType)
+		replayMirrorGlobal.SetEntityType(playerEntityType)
+	}
+
+	err = client.JoinServerWithOptions(sigCtx, *address, bot.JoinOptions{
+		ProtocolVersion: protocolVersion,
+		ReplayRecorder:  replayRecGlobal,
+		MovementMirror:  replayMirrorGlobal,
+		RegistryDataCallback: func(registryID string, entries map[string]int32) {
+			log.Printf("[Registry] Received registry: %s with %d entries", registryID, len(entries))
+			// Handle entity type registry to set player entity type for movement mirror
+			// Note: In Minecraft 1.21+, this registry may not be sent during configuration
+			if registryID == "minecraft:entity_type" && replayMirrorGlobal != nil {
+				if playerTypeID, ok := entries["minecraft:player"]; ok {
+					log.Printf("[Registry] Setting player entity type to %d from registry", playerTypeID)
+					replayMirrorGlobal.SetEntityType(playerTypeID)
+				} else {
+					log.Printf("[Registry] WARNING: minecraft:player not found in entity_type registry")
+				}
+			}
+		},
+	})
 	if err != nil {
-		log.Fatal(err)
+		if replayRecGlobal != nil {
+			_ = replayRecGlobal.Close()
+		} else {
+			log.Printf("replayRecGlobal is nil!!!")
+		}
+		log.Printf("[ERROR] failed to join server: %#v", err.Error())
+		return
 	}
 
 	// Start entity cleanup goroutine to permanently remove soft-deleted entities after grace period
@@ -571,6 +746,11 @@ func main() {
 				log.Printf("Tracking entity %d (type %d) at (%.2f, %.2f, %.2f)", EntityID, EntityType, X, Y, Z)
 			}
 
+			// Capture our own entity type for replay mirror
+			if int32(EntityID) == getBotEntityID() && replayMirrorGlobal != nil {
+				replayMirrorGlobal.SetEntityType(int32(EntityType))
+			}
+
 			return nil
 		},
 	}
@@ -705,18 +885,72 @@ func main() {
 		Priority: 100,
 		F: func(p pk.Packet) error {
 			// ClientboundLogin packet structure:
-			// EntityID (Int), IsHardcore (Boolean), Dimensions (Array), MaxPlayers (VarInt), ...
-			var entityID pk.Int
-			if err := p.Scan(&entityID); err != nil {
-				log.Printf("Error scanning ClientboundLogin for entity ID: %v", err)
-				return nil // Don't fail, just log
+			parsedPacket, err := packetMgr.GetClientboundPacketByID(packetMgr.GetClientboundPacketID("ClientboundLogin"))
+			if err != nil {
+				log.Printf("Error retrieving ClientboundLogin packet structure: %v", err)
+				return nil
 			}
 
-			setBotEntityID(int32(entityID))
+			err = parsedPacket.Scan(p)
+			if err != nil {
+				log.Printf("Error scanning ClientboundLogin packet: %v", err)
+				return nil
+			}
+
+			if loginInfo, ok := parsedPacket.(*v1215_clientbound.Login); ok {
+				// Successfully parsed ClientboundLogin packet
+				entityID := loginInfo.EntityId
+				setBotEntityID(int32(entityID))
+				if replayRecGlobal != nil {
+					// Do NOT set selfId to the bot's entity ID - this would hide the bot in replays.
+					// ReplayMod uses selfId=-1 for standard recordings where all players are visible.
+					// The movement mirror will make the bot visible via synthetic packets.
+					// replayRecGlobal.SetSelfID(int(entityID))  // REMOVED: This was hiding the bot in ReplayMod viewer
+					replayRecGlobal.SetSelfID(-1)
+				}
+				if replayMirrorGlobal != nil {
+					replayMirrorGlobal.SetEntityMeta(int32(entityID), *name, authUUIDBytes)
+					// Entity type is set via registry callback during configuration phase
+				}
+				fmt.Printf("View distance after login: %d chunks\n", loginInfo.ViewDistance)
+				return nil
+			}
+
+			// EntityID (Int), IsHardcore (Boolean), Dimensions (Array), MaxPlayers (VarInt), ...
+			// var entityID pk.Int
+			// if err := p.Scan(&entityID); err != nil {
+			// 	log.Printf("Error scanning ClientboundLogin for entity ID: %v", err)
+			// 	return nil // Don't fail, just log
+			// }
+
+			// setBotEntityID(int32(entityID))
+			// if replayRecGlobal != nil {
+			// 	// Do NOT set selfId to the bot's entity ID - this would hide the bot in replays.
+			// 	// ReplayMod uses selfId=-1 for standard recordings where all players are visible.
+			// 	// The movement mirror will make the bot visible via synthetic packets.
+			// 	// replayRecGlobal.SetSelfID(int(entityID))  // REMOVED: This was hiding the bot in ReplayMod viewer
+			// 	replayRecGlobal.SetSelfID(-1)
+			// }
+			// if replayMirrorGlobal != nil {
+			// 	replayMirrorGlobal.SetEntityMeta(int32(entityID), *name, authUUIDBytes)
+			// 	// Entity type is set via registry callback during configuration phase
+			// }
 			return nil
 		},
 	}
 	client.Events.AddListener(handleBotLogin)
+	// Mirror player info to capture server-provided UUID/name for replay
+	var handleBotPlayerInfo = bot.PacketHandler{
+		ID:       packetMgr.GetClientboundPacketID("ClientboundPlayerInfo"),
+		Priority: 90,
+		F: func(p pk.Packet) error {
+			if replayMirrorGlobal != nil {
+				replayMirrorGlobal.HandlePlayerInfo(p)
+			}
+			return nil
+		},
+	}
+	client.Events.AddListener(handleBotPlayerInfo)
 
 	// Custom ClientboundPosition handler for 1.21.5+ with new packet structure
 	// Priority 63 to run before basic.Player's handler (priority 64)
@@ -764,6 +998,21 @@ func main() {
 			log.Printf("Bot position updated via ClientboundPosition (flags=0x%X): X=%.2f, Y=%.2f, Z=%.2f, Yaw=%.2f, Pitch=%.2f (Delta: %.2f, %.2f, %.2f)",
 				Flags, botPosition.X, botPosition.Y, botPosition.Z, botPosition.Yaw, botPosition.Pitch, DX, DY, DZ)
 
+			// Notify replay mirror of position update by creating a synthetic serverbound packet
+			if replayMirrorGlobal != nil {
+				syntheticPacket := pk.Marshal(
+					packetMgr.GetServerboundPacketID("ServerboundMovePlayerPosRot"),
+					pk.Double(botPosition.X),
+					pk.Double(botPosition.Y),
+					pk.Double(botPosition.Z),
+					pk.Float(botPosition.Yaw),
+					pk.Float(botPosition.Pitch),
+					pk.Boolean(true), // onGround
+				)
+				replayMirrorGlobal.HandleServerbound(syntheticPacket)
+				log.Printf("[Replay] Notified replay mirror of bot position (from ClientboundPosition)")
+			}
+
 			botPosition.mu.Unlock()
 
 			// Accept the teleportation
@@ -780,27 +1029,89 @@ func main() {
 	client.Events.AddListener(handleRemoveEntities)
 	// client.Events.AddListener(handleSetEntityData)
 
+	// Handler for server view distance updates
+	var handleUpdateViewDistance = bot.PacketHandler{
+		ID:       packetMgr.GetClientboundPacketID("ClientboundUpdateViewDistance"),
+		Priority: 64,
+		F: func(p pk.Packet) error {
+			var viewDistance pk.VarInt
+			if err := p.Scan(&viewDistance); err != nil {
+				log.Printf("Error scanning UpdateViewDistance packet: %v", err)
+				return nil
+			}
+			log.Printf("[Server] View distance set to %d chunks (client requested: %d)", viewDistance, customSettings.ViewDistance)
+			return nil
+		},
+	}
+	client.Events.AddListener(handleUpdateViewDistance)
+
+	// Handler for server simulation distance updates
+	var handleSimulationDistance = bot.PacketHandler{
+		ID:       packetMgr.GetClientboundPacketID("ClientboundSimulationDistance"),
+		Priority: 64,
+		F: func(p pk.Packet) error {
+			var simDistance pk.VarInt
+			if err := p.Scan(&simDistance); err != nil {
+				log.Printf("Error scanning SimulationDistance packet: %v", err)
+				return nil
+			}
+			log.Printf("[Server] Simulation distance set to %d chunks", simDistance)
+			return nil
+		},
+	}
+	client.Events.AddListener(handleSimulationDistance)
+
 	log.Println("Login success")
 
 	fmt.Println("Starting game loop")
 	// JoinGame
-	for {
-		var err error
-		if err = client.HandleGame(); err == nil {
-			panic("HandleGame should never return nil")
-		}
+	go func() {
+		// use a for loop so bad packet handling doesn't kill the agent.
+		// HandleGame is basically an infinite loop that only returns when an error occurs
+	GameLoop:
+		for {
+			select {
+			case <-sigCtx.Done():
+				log.Printf("received sigCtx.Done(). exiting game loop")
+				break GameLoop
+			default:
+				var err error
+				if err = client.HandleGame(sigCtx); err == nil {
+					log.Println("[PANIC] HandleGame should never return nil")
+					return
+				}
 
-		if err2 := new(bot.PacketHandlerError); errors.As(err, err2) {
-			if err := new(DisconnectErr); errors.As(err2, err) {
-				log.Print("Disconnect, reason: ", err.Reason)
-				return
-			} else {
-				// print and ignore the error
-				log.Print(err2)
+				log.Printf("HandleGame returned: %#v\n\n", err)
+				if err2 := new(bot.PacketHandlerError); errors.As(err, err2) {
+					if err := new(DisconnectErr); errors.As(err2, err) {
+						log.Print("Disconnect, reason: ", err.Reason)
+						return
+					} else {
+						// print and ignore the error
+						log.Print(err2)
+					}
+				} else {
+					log.Print(err)
+					return
+				}
 			}
-		} else {
-			log.Fatal(err)
 		}
+	}()
+
+	// Wait for signal and shutdown
+	<-sigCtx.Done()
+	log.Printf("Received signal; shutting down...")
+	removeStopFileIfExists()
+	if replayRecGlobal != nil {
+		log.Printf("[replay] closing recorder")
+		_ = replayRecGlobal.Close()
+		log.Printf("[replay] closed recorder")
+		replayRecGlobal = nil
+	} else {
+		log.Printf("[replay] replayRecGlobal is nil")
+	}
+	if client != nil {
+		_ = client.Close()
 	}
 }
 
@@ -974,22 +1285,12 @@ func onDisguisedMsg(msg chat.Message) error {
 }
 
 func onChunkLoad(pos world.ChunkPos) error {
-	log.Println("[onChunkLoad] Loaded chunk:", pos)
-	// Convert to world.ChunkPos
-
-	if wm, ok := worldManager.(*world.World); ok {
-		log.Printf("Column[%v]: %#v\n", pos, wm.Columns[pos])
-		spew.Dump(wm.Columns[pos])
-	}
+	// Event callback - no logging needed, World already logs periodically
 	return nil
 }
 
 func onChunkUnload(pos world.ChunkPos) error {
-	log.Println("[onChunkUnload] Unload chunk:", pos)
-	// Convert to world.ChunkPos
-	if wm, ok := worldManager.(*world.World); ok {
-		log.Printf("Column[%v]: %#v\n", pos, wm.Columns[pos])
-	}
+	// Event callback - chunk already removed from World
 	return nil
 }
 
@@ -1078,6 +1379,10 @@ func onTeleported(x, y, z float64, yaw, pitch float32, flags byte, teleportID in
 
 	log.Printf("Bot position updated (flags=0x%02X): X=%.2f, Y=%.2f, Z=%.2f, Yaw=%.2f, Pitch=%.2f",
 		flags, botPosition.X, botPosition.Y, botPosition.Z, botPosition.Yaw, botPosition.Pitch)
+
+	// Note: We don't notify the replay mirror here because our custom handleBotPosition
+	// handler (priority 63) runs before this callback and already sends the synthetic packet.
+	// This callback is only for updating our internal botPosition state and accepting the teleport.
 
 	// Accept the teleportation
 	return player.AcceptTeleportation(pk.VarInt(teleportID))
@@ -2173,8 +2478,8 @@ func DoLookAt(targetX, targetY, targetZ float64) error {
 	botPosition.Pitch = pitch
 	botPosition.mu.Unlock()
 
-	// Send rotation packet to server
-	return client.Conn.WritePacket(pk.Marshal(
+	// Send rotation packet to server (and notify replay mirror)
+	return sendPacketWithReplayMirror(pk.Marshal(
 		packetMgr.GetServerboundPacketID("ServerboundMovePlayerRot"),
 		pk.Float(yaw),
 		pk.Float(pitch),

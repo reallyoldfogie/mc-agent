@@ -1,0 +1,25 @@
+package agent
+
+import (
+	"log"
+)
+
+// OnScreenSlotChange logs slot changes. If SlotResolver and ItemManager are set,
+// it also prints decoded item info.
+func (a *Agent) OnScreenSlotChange(id, index int) error {
+	if a.slots == nil || a.itemMgr == nil {
+		log.Printf("Screen slot change: screenID=%d index=%d", id, index)
+		return nil
+	}
+	itemID, count, ok := a.slots.ResolveSlot(id, index)
+	if !ok {
+		log.Printf("Screen slot change: screenID=%d index=%d (empty)", id, index)
+		return nil
+	}
+	name := a.itemMgr.GetItemNameByID(itemID)
+	if name == "" {
+		name = "unknown"
+	}
+	log.Printf("Screen slot change: screenID=%d index=%d -> [%s] x%d (id=%d)", id, index, name, count, itemID)
+	return nil
+}
