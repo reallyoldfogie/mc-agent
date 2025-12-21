@@ -204,28 +204,31 @@ func (mv *MovementValidator) GetPossibleMoves(from V3) []PathStep {
 			})
 		}
 
-		// Try ascend (1 block up)
-		toUp := from.Add(dir.dx, 1, dir.dz)
-		if mv.CanAscend(from, toUp) {
-			moves = append(moves, PathStep{
-				Position: toUp,
-				Movement: Ascend,
-				Cost:     Ascend.BaseCost(),
-			})
-		}
+		// TODO Phase 4: Re-enable vertical movement once we have proper block collision detection
+		// For Phase 3, disable vertical movement to avoid pathfinding through solid blocks
 
-		// Try descend (1-3 blocks down)
-		for dropHeight := 1; dropHeight <= 3; dropHeight++ {
-			toDown := from.Add(dir.dx, -dropHeight, dir.dz)
-			if mv.CanDescend(from, toDown) {
-				moves = append(moves, PathStep{
-					Position: toDown,
-					Movement: Descend,
-					Cost:     Descend.BaseCost(),
-				})
-				break // Only take the first valid drop height
-			}
-		}
+		// // Try ascend (1 block up)
+		// toUp := from.Add(dir.dx, 1, dir.dz)
+		// if mv.CanAscend(from, toUp) {
+		// 	moves = append(moves, PathStep{
+		// 		Position: toUp,
+		// 		Movement: Ascend,
+		// 		Cost:     Ascend.BaseCost(),
+		// 	})
+		// }
+
+		// // Try descend (1-3 blocks down)
+		// for dropHeight := 1; dropHeight <= 3; dropHeight++ {
+		// 	toDown := from.Add(dir.dx, -dropHeight, dir.dz)
+		// 	if mv.CanDescend(from, toDown) {
+		// 		moves = append(moves, PathStep{
+		// 			Position: toDown,
+		// 			Movement: Descend,
+		// 			Cost:     Descend.BaseCost(),
+		// 		})
+		// 		break // Only take the first valid drop height
+		// 	}
+		// }
 	}
 
 	return moves

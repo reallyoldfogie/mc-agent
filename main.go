@@ -41,6 +41,7 @@ import (
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 
+	"github.com/reallyoldfogie/mc-agent/following"
 	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 
@@ -81,6 +82,8 @@ var (
 	movementExecutor movement.MovementExecutor
 	shapeMgr         pathfinding.BlockShapeManager
 	pathFinder       pathfinding.PathFinder
+	targetSelector   *following.TargetSelector
+	followManager    following.FollowManager
 
 	protocolVersion uint
 
@@ -145,6 +148,57 @@ func setBotPosition(x, y, z float64, yaw, pitch float32) {
 	botPosition.Yaw = yaw
 	botPosition.Pitch = pitch
 	botPosition.initialized = true
+}
+
+// getTrackedEntities returns a copy of tracked entities for following package
+func getTrackedEntities() map[int32]*following.TrackedEntity {
+	trackedEntities.mu.RLock()
+	defer trackedEntities.mu.RUnlock()
+
+	// Convert from main.TrackedEntity to following.TrackedEntity
+	result := make(map[int32]*following.TrackedEntity)
+	for id, entity := range trackedEntities.entities {
+		result[id] = &following.TrackedEntity{
+			UUID:  entity.UUID,
+			X:     entity.X,
+			Y:     entity.Y,
+			Z:     entity.Z,
+			Yaw:   entity.Yaw,
+			Pitch: entity.Pitch,
+		}
+	}
+	return result
+}
+
+// getPlayerUUIDByName looks up a player's UUID by name from the player list
+func getPlayerUUIDByName(name string) ([16]byte, error) {
+	if playerList == nil {
+		return [16]byte{}, fmt.Errorf("player list not initialized")
+	}
+
+	players := playerList.PlayerInfos
+	for uuid, info := range players {
+		if info.Name == name {
+			return uuid, nil
+		}
+	}
+
+	return [16]byte{}, fmt.Errorf("player %s not found", name)
+}
+
+// getBotPositionSimple returns bot position without rotation (for following package)
+func getBotPositionSimple() (x, y, z float64, initialized bool) {
+	botPosition.mu.RLock()
+	defer botPosition.mu.RUnlock()
+	return botPosition.X, botPosition.Y, botPosition.Z, botPosition.initialized
+}
+
+// sendChatMessage is a helper to send chat messages
+func sendChatMessage(message string) error {
+	if chatHandler == nil {
+		return fmt.Errorf("chat handler not initialized")
+	}
+	return chatHandler.SendMessage(message)
 }
 
 func main() {
@@ -262,6 +316,23 @@ func main() {
 	} else {
 		pathFinder = pathfinding.NewPathFinder(worldManager, shapeMgr)
 		log.Printf("Pathfinding initialized for version %s", *mcVersion)
+
+		// Initialize follow system
+		targetSelector = following.NewTargetSelector(
+			getTrackedEntities,
+			getPlayerUUIDByName,
+			getBotPositionSimple,
+		)
+
+		followManager = following.NewFollowManager(
+			targetSelector,
+			pathFinder,
+			movementExecutor,
+			getBotPosition,
+			sendChatMessage,
+			following.DefaultFollowConfig(),
+		)
+		log.Printf("Follow system initialized")
 	}
 
 	// Login
@@ -1370,6 +1441,18 @@ func handleChatCommand(cmd string) {
 		go findPathCommand(args[0], args[1], args[2])
 	case "testPath":
 		go testPathCommand()
+	case "follow", "startFollowing":
+		if len(args) < 1 {
+			// Follow nearest player
+			go startFollowingNearest()
+		} else {
+			// Follow specific player
+			go startFollowingPlayer(args[0])
+		}
+	case "stopFollowing":
+		go stopFollowing()
+	case "followStatus":
+		go followStatus()
 	default:
 		fmt.Printf("unknown command: [%s]", cmd)
 	}
@@ -1712,6 +1795,96 @@ func findPathCommand(xStr, yStr, zStr string) {
 	for moveType, count := range moveCounts {
 		chatHandler.SendMessage(fmt.Sprintf("  %s: %d", moveType, count))
 	}
+}
+
+// startFollowingPlayer starts following a specific player by name
+func startFollowingPlayer(playerName string) {
+	if followManager == nil {
+		chatHandler.SendMessage("Follow system not available")
+		return
+	}
+
+	if followManager.IsActive() {
+		chatHandler.SendMessage(fmt.Sprintf("Already following. Use stopFollowing first."))
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Starting to follow %s...", playerName))
+
+	err := followManager.Start(playerName)
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Failed to start following: %v", err))
+		fmt.Printf("startFollowingPlayer error: %v\n", err)
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Now following %s", playerName))
+}
+
+// startFollowingNearest starts following the nearest player
+func startFollowingNearest() {
+	if followManager == nil {
+		chatHandler.SendMessage("Follow system not available")
+		return
+	}
+
+	if followManager.IsActive() {
+		chatHandler.SendMessage("Already following. Use stopFollowing first.")
+		return
+	}
+
+	// Find nearest player
+	if targetSelector == nil {
+		chatHandler.SendMessage("Target selector not available")
+		return
+	}
+
+	target, err := targetSelector.FindNearestPlayer()
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Failed to find nearest player: %v", err))
+		fmt.Printf("startFollowingNearest error: %v\n", err)
+		return
+	}
+
+	chatHandler.SendMessage(fmt.Sprintf("Found nearest player at %.1f blocks, starting to follow...", target.Distance))
+
+	// We need the player name, so try to look it up from UUID
+	// For now, just use a placeholder name and start following by entity ID
+	// This is a limitation - we'll need to enhance FollowManager to support following by entity ID
+	chatHandler.SendMessage("Note: Following nearest player requires name. Use 'follow <playername>' instead.")
+}
+
+// stopFollowing stops following the current target
+func stopFollowing() {
+	if followManager == nil {
+		chatHandler.SendMessage("Follow system not available")
+		return
+	}
+
+	if !followManager.IsActive() {
+		chatHandler.SendMessage("Not currently following anyone")
+		return
+	}
+
+	err := followManager.Stop()
+	if err != nil {
+		chatHandler.SendMessage(fmt.Sprintf("Failed to stop following: %v", err))
+		fmt.Printf("stopFollowing error: %v\n", err)
+		return
+	}
+
+	chatHandler.SendMessage("Stopped following")
+}
+
+// followStatus reports the current follow status
+func followStatus() {
+	if followManager == nil {
+		chatHandler.SendMessage("Follow system not available")
+		return
+	}
+
+	status := followManager.GetStatus()
+	chatHandler.SendMessage(status)
 }
 
 func fireBow() error {
