@@ -47,7 +47,22 @@ const (
 // Sprint and sneak multipliers
 const (
 	SprintMultiplier = 1.3 // Sprint increases horizontal speed by 30%
-	SneakMultiplier  = 0.3 // Sneak reduces horizontal speed to 30%
+	SneakMultiplier  = 0.3 // Sneak reduces horizontal speed to 30% (base, without Swift Sneak enchantment)
+)
+
+// Sneaking mechanics constants
+const (
+	PlayerHeightSneaking = 1.5 // Player height when sneaking (reduced from 1.8 blocks)
+	// Note: Player width remains 0.6 blocks when sneaking
+)
+
+// Swift Sneak enchantment multipliers (future enhancement)
+// When Swift Sneak enchantment is detected on leggings, these replace SneakMultiplier
+const (
+	SwiftSneakI   = 0.45 // Swift Sneak I: 45% speed (1.5x faster than base sneak)
+	SwiftSneakII  = 0.60 // Swift Sneak II: 60% speed (2x faster than base sneak)
+	SwiftSneakIII = 0.75 // Swift Sneak III: 75% speed (2.5x faster than base sneak)
+	// Implementation requires equipment tracking and NBT enchantment parsing
 )
 
 // Projectile physics constants (arrows, snowballs, etc.)
