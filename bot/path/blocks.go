@@ -3,8 +3,8 @@ package path
 // TODO: USE DOWNLOADED BLOCK DATA AND TAGS TO REBUILD THIS FILE, AS WELL AS old/.../block.Block data AND world.BlockStatus (which this file references)
 
 // import (
-// 	"github.com/reallyoldfogie/daze/bot/world"
-// 	"github.com/reallyoldfogie/daze/data/block"
+// 	"github.com/reallyoldfogie/mc-agent/bot/world"
+// 	"github.com/reallyoldfogie/mc-agent/data/block"
 // )
 
 // var (

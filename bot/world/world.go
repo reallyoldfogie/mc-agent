@@ -3,7 +3,7 @@ package world
 // import (
 // 	"sync"
 
-// 	"github.com/reallyoldfogie/daze/bot/world/entity"
+// 	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
 // )
 
 // // World record all of the things in the world where player is at

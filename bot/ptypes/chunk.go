@@ -7,7 +7,7 @@ package ptypes
 
 // 	"github.com/Tnze/go-mc/nbt"
 // 	pk "github.com/Tnze/go-mc/net/packet"
-// 	"github.com/reallyoldfogie/daze/bot/world/entity"
+// 	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
 // )
 
 // // ChunkData is a clientbound packet which describes a chunk.

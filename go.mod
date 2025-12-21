@@ -1,4 +1,4 @@
-module github.com/reallyoldfogie/daze
+module github.com/reallyoldfogie/mc-agent
 
 go 1.24.5
 

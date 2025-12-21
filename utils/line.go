@@ -3,7 +3,7 @@ package utils
 import (
 	"math"
 
-	"github.com/reallyoldfogie/daze/bot/path"
+	"github.com/reallyoldfogie/mc-agent/bot/path"
 )
 
 // Line ...
