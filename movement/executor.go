@@ -25,6 +25,16 @@ type MovementExecutor interface {
 
 	// LookAt rotates the bot to look at target coordinates
 	LookAt(targetX, targetY, targetZ float64, onGround bool) error
+
+	// Sprint control
+	StartSprinting() error
+	StopSprinting() error
+	IsSprinting() bool
+
+	// Sneak control
+	StartSneaking() error
+	StopSneaking() error
+	IsSneaking() bool
 }
 
 // movementExecutor implements MovementExecutor
@@ -34,6 +44,11 @@ type movementExecutor struct {
 	// Reference to bot position tracking (will be passed from main)
 	getBotPosition func() (x, y, z float64, yaw, pitch float32, initialized bool)
 	setBotPosition func(x, y, z float64, yaw, pitch float32)
+	// Reference to bot entity ID (needed for sprint/sneak commands)
+	getBotEntityID func() int32
+	// Track sprint/sneak state to avoid redundant packets
+	isSprinting bool
+	isSneaking  bool
 }
 
 // NewMovementExecutor creates a new MovementExecutor
@@ -42,18 +57,35 @@ func NewMovementExecutor(
 	packetMgr protocol_models.PacketMgr,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
 	setBotPos func(float64, float64, float64, float32, float32),
+	getBotEntityID func() int32,
 ) MovementExecutor {
 	return &movementExecutor{
 		client:         client,
 		packetMgr:      packetMgr,
 		getBotPosition: getBotPos,
 		setBotPosition: setBotPos,
+		getBotEntityID: getBotEntityID,
+		isSprinting:    false,
+		isSneaking:     false,
 	}
+}
+
+func (me *movementExecutor) IsSneaking() bool {
+	return me.isSneaking
+}
+
+func (me *movementExecutor) IsSprinting() bool {
+	return me.isSprinting
 }
 
 // SendPosition sends a position update packet
 func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
-	err := SendPosition(me.client, me.packetMgr, x, y, z, onGround)
+	// Skip packet sending if client is nil (test mode)
+	var err error
+	if me.client != nil {
+		err = SendPosition(me.client, me.packetMgr, x, y, z, onGround)
+	}
+
 	if err == nil {
 		// Update tracked position (keep existing rotation)
 		_, _, _, yaw, pitch, _ := me.getBotPosition()
@@ -64,7 +96,12 @@ func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
 
 // SendPositionAndRotation sends a combined position and rotation update packet
 func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
-	err := SendPositionAndRotation(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround)
+	// Skip packet sending if client is nil (test mode)
+	var err error
+	if me.client != nil {
+		err = SendPositionAndRotation(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround)
+	}
+
 	if err == nil {
 		// Update tracked position and rotation
 		me.setBotPosition(x, y, z, yaw, pitch)
@@ -74,7 +111,12 @@ func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch 
 
 // SendRotation sends a rotation update packet
 func (me *movementExecutor) SendRotation(yaw, pitch float32, onGround bool) error {
-	err := SendRotation(me.client, me.packetMgr, yaw, pitch, onGround)
+	// Skip packet sending if client is nil (test mode)
+	var err error
+	if me.client != nil {
+		err = SendRotation(me.client, me.packetMgr, yaw, pitch, onGround)
+	}
+
 	if err == nil {
 		// Update tracked rotation (keep existing position)
 		x, y, z, _, _, _ := me.getBotPosition()
@@ -99,13 +141,12 @@ func (me *movementExecutor) MoveTowards(targetX, targetY, targetZ float64, dista
 	// Calculate horizontal distance (X-Z plane only)
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 
-	// If we're already at target horizontally, don't move
+	// If we're already at target horizontally, handle vertical movement
 	if horizontalDist <= 0.01 {
-		// But we might need to adjust Y if there's a vertical difference
 		if math.Abs(dy) > 0.01 {
-			// For now, maintain current Y to prevent walking on air
-			// TODO: When world integration is ready, check if we need to step up/down
-			return botX, botY, botZ, nil
+			// Move vertically to match path step (world integration complete)
+			err = me.SendPositionAndRotation(botX, targetY, botZ, yaw, pitch, onGround)
+			return botX, targetY, botZ, err
 		}
 		return botX, botY, botZ, nil
 	}
@@ -117,9 +158,21 @@ func (me *movementExecutor) MoveTowards(targetX, targetY, targetZ float64, dista
 	// Calculate movement distance (don't overshoot target horizontally)
 	moveDistance := math.Min(distance, horizontalDist)
 
-	// Calculate new position (horizontal movement only)
+	// Calculate new position (include vertical movement from pathfinding)
 	newX = botX + dxNorm*moveDistance
-	newY = botY // Maintain current Y to avoid walking on air
+
+	// Smart physics for Y movement:
+	// - Upward or nearly level: move to target Y immediately
+	// - Downward: apply controlled descent (gravity simulation)
+	if dy > 0 || math.Abs(dy) < 0.1 {
+		// Going up or nearly level - move to target Y
+		newY = targetY
+	} else {
+		// Going down - apply controlled descent (max 0.5 blocks per movement tick)
+		fallAmount := min(-dy, 0.5)
+		newY = max(targetY, botY-fallAmount)
+	}
+
 	newZ = botZ + dzNorm*moveDistance
 
 	// Keep existing rotation (yaw and pitch) - caller should set rotation via LookAt if needed
@@ -164,4 +217,60 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 	pitch = float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
 
 	return yaw, pitch
+}
+
+// StartSprinting sends a command to start sprinting
+func (me *movementExecutor) StartSprinting() error {
+	if me.isSprinting {
+		return nil // Already sprinting, no need to send packet
+	}
+
+	entityID := me.getBotEntityID()
+	err := SendStartSprinting(me.client, me.packetMgr, entityID)
+	if err == nil {
+		me.isSprinting = true
+	}
+	return err
+}
+
+// StopSprinting sends a command to stop sprinting
+func (me *movementExecutor) StopSprinting() error {
+	if !me.isSprinting {
+		return nil // Not sprinting, no need to send packet
+	}
+
+	entityID := me.getBotEntityID()
+	err := SendStopSprinting(me.client, me.packetMgr, entityID)
+	if err == nil {
+		me.isSprinting = false
+	}
+	return err
+}
+
+// StartSneaking sends a command to start sneaking
+func (me *movementExecutor) StartSneaking() error {
+	if me.isSneaking {
+		return nil // Already sneaking, no need to send packet
+	}
+
+	entityID := me.getBotEntityID()
+	err := SendStartSneaking(me.client, me.packetMgr, entityID)
+	if err == nil {
+		me.isSneaking = true
+	}
+	return err
+}
+
+// StopSneaking sends a command to stop sneaking
+func (me *movementExecutor) StopSneaking() error {
+	if !me.isSneaking {
+		return nil // Not sneaking, no need to send packet
+	}
+
+	entityID := me.getBotEntityID()
+	err := SendStopSneaking(me.client, me.packetMgr, entityID)
+	if err == nil {
+		me.isSneaking = false
+	}
+	return err
 }

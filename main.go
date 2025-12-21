@@ -26,7 +26,6 @@ import (
 
 	"github.com/Tnze/go-mc/chat"
 	"github.com/Tnze/go-mc/data/registryid"
-	"github.com/Tnze/go-mc/level"
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/davecgh/go-spew/spew"
 
@@ -44,26 +43,30 @@ import (
 	"github.com/reallyoldfogie/mc-agent/following"
 	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	msauth "github.com/maxsupermanhd/go-mc-ms-auth"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// type (
-// 	authCreds struct {
-// 		Username string `json:"username"`
-// 		Password string `json:"password"`
-// 		UserUUID string `json:"userUUID"`
-// 	}
-// )
+const (
+	// EntityRemovalGracePeriod is how long to keep "removed" entities before permanently deleting them
+	// This handles cases where the server sends remove packets but continues sending position updates
+	EntityRemovalGracePeriod = 30 * time.Second
+
+	// EntityCleanupInterval is how often to check for expired removed entities
+	EntityCleanupInterval = 10 * time.Second
+)
 
 var (
-	address     = flag.String("address", "127.0.0.1:25565", "The server address")
-	name        = flag.String("name", "Daze", "The player's name")
-	playerID    = flag.String("uuid", "", "The player's UUID")
-	mcVersion   = flag.String("version", "1.21.5", "target version to connect client to")
-	offline     = flag.Bool("offline", false, "use offline mode")
-	accessToken = flag.String("token", "", "AccessToken - only used in offline mode")
+	address          = flag.String("address", "127.0.0.1:25565", "The server address")
+	name             = flag.String("name", "Daze", "The player's name")
+	playerID         = flag.String("uuid", "", "The player's UUID")
+	mcVersion        = flag.String("version", "1.21.5", "target version to connect client to")
+	offline          = flag.Bool("offline", false, "use offline mode")
+	accessToken      = flag.String("token", "", "AccessToken - only used in offline mode")
+	mcDataGenPath    = flag.String("data-path", "", "Path to mc-data-gen data directory (default: ../mc-data-gen/data)")
+	mcProtocolGoPath = flag.String("protocol-path", "", "Path to mc-protocol-go directory (default: ../mc-protocol-go)")
 	// authFile    = flag.String("auth", "", "json file containing auth credentials")
 )
 
@@ -72,7 +75,7 @@ var (
 	player        *basic.Player
 	playerList    *playerlist.PlayerList
 	chatHandler   *msg.Manager
-	worldManager  *world.World
+	worldManager  pathfinding.World // *world.World
 	screenManager *screen.Manager
 
 	blockMgr  mc_versions.BlockMgr
@@ -95,10 +98,22 @@ var (
 		initialized bool
 	}
 
+	// Bot entity ID (set from ClientboundLogin packet)
+	botEntityID struct {
+		mu sync.RWMutex
+		id int32
+	}
+
 	// Entity tracking for nearby players
 	trackedEntities struct {
 		mu       sync.RWMutex
 		entities map[int32]*TrackedEntity
+	}
+
+	bundledPackets struct {
+		mu      sync.RWMutex
+		packets []pk.Packet
+		active  bool
 	}
 
 	// Custom registry storage for registries not in Tnze/go-mc
@@ -124,6 +139,9 @@ type TrackedEntity struct {
 	X, Y, Z    float64
 	Yaw        int8
 	Pitch      int8
+	// Soft delete tracking - entity marked removed but kept for grace period
+	Removed   bool      // True if server sent remove packet
+	RemovedAt time.Time // When the remove packet was received
 }
 
 func init() {
@@ -148,6 +166,21 @@ func setBotPosition(x, y, z float64, yaw, pitch float32) {
 	botPosition.Yaw = yaw
 	botPosition.Pitch = pitch
 	botPosition.initialized = true
+}
+
+// getBotEntityID returns the bot's entity ID
+func getBotEntityID() int32 {
+	botEntityID.mu.RLock()
+	defer botEntityID.mu.RUnlock()
+	return botEntityID.id
+}
+
+// setBotEntityID sets the bot's entity ID
+func setBotEntityID(id int32) {
+	botEntityID.mu.Lock()
+	defer botEntityID.mu.Unlock()
+	botEntityID.id = id
+	log.Printf("Bot entity ID set to: %d", id)
 }
 
 // getTrackedEntities returns a copy of tracked entities for following package
@@ -201,20 +234,34 @@ func sendChatMessage(message string) error {
 	return chatHandler.SendMessage(message)
 }
 
+// cleanupRemovedEntities periodically removes entities that have been soft-deleted for longer than the grace period
+func cleanupRemovedEntities() {
+	ticker := time.NewTicker(EntityCleanupInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		trackedEntities.mu.Lock()
+
+		now := time.Now()
+		var toDelete []int32
+
+		for id, entity := range trackedEntities.entities {
+			if entity.Removed && now.Sub(entity.RemovedAt) > EntityRemovalGracePeriod {
+				toDelete = append(toDelete, id)
+			}
+		}
+
+		for _, id := range toDelete {
+			delete(trackedEntities.entities, id)
+			log.Printf("Permanently removed entity %d (grace period expired)", id)
+		}
+
+		trackedEntities.mu.Unlock()
+	}
+}
+
 func main() {
 	// TO DO: Rewrite client/player/etc. to use packetMgr instead of tnze bot (mc-bot-go) (in progress)
-
-	// log.SetOutput(colorable.NewColorableStdout())
-
-	// fmt.Printf("checking for authfile (%s)\n", *authFile)
-	// if _, err := os.Stat(*authFile); err == nil || !*offline {
-	// 	fmt.Printf("found authfile, loading creds")
-	// 	credentials, err := loadCredFile(*authFile)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-
-	// 	fmt.Printf("Logging in as %s\n", credentials.Username)
 
 	var auth bot.Auth
 
@@ -222,8 +269,6 @@ func main() {
 		cid := "88650e7e-efee-4857-b9a9-cf580a00ef43" // MS app ID from msauth mod documentation.  Should really use my own - being lazy right now.
 
 		// ms-auth
-		// mauth, err := msauth.GetMCcredentials(credentials.Username, credentials.Password)
-		// mauth, err := msauth.GetMCcredentials(".credCacheFile", credentials.UserUUID)
 		mauth, err := msauth.GetMCcredentials(".credCacheFile", cid) // use cid from msauth README
 		if err != nil {
 			log.Print(err)
@@ -246,9 +291,12 @@ func main() {
 	var err error
 	var ok bool
 
-	*mcVersion, protocolVersion, err = rof_utils.CheckServerVersion(*address, 0)
-	if err != nil {
-		panic(err)
+	// if a version isn't specified, auto-detect the server's version
+	if *mcVersion == "" {
+		*mcVersion, protocolVersion, err = rof_utils.CheckServerVersion(*address, 0)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	if _, ok = mc_versions.VersionProtocol[*mcVersion]; !ok {
@@ -277,6 +325,7 @@ func main() {
 		packetMgr,
 		getBotPosition,
 		setBotPosition,
+		getBotEntityID,
 	)
 
 	player = basic.NewPlayer(client, basic.DefaultSettings, basic.EventsListener{
@@ -307,14 +356,35 @@ func main() {
 	}, packetMgr)
 
 	// Initialize pathfinding with block shape data
-	// Path to mc-data-gen data directory
-	dataBasePath := "/home/reallyoldfogie/src/github.com/reallyoldfogie/mc-data-gen/data"
+	// Resolve mc-data-gen path (supports URLs for download or local paths)
+	dataBasePath, err := utils.ResolveDataPath(
+		*mcDataGenPath,
+		"./data/mc-data-gen-cache",
+		"../mc-data-gen/data",
+	)
+	if err != nil {
+		log.Fatalf("Failed to resolve mc-data-gen data path: %v", err)
+	}
+
+	protocolBasePath := *mcProtocolGoPath
+	if protocolBasePath == "" {
+		protocolBasePath = "../mc-protocol-go"
+	}
+
 	shapeMgr, err = pathfinding.NewBlockShapeManager(*mcVersion, dataBasePath)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize BlockShapeManager: %v", err)
 		log.Printf("Pathfinding will not be available")
 	} else {
-		pathFinder = pathfinding.NewPathFinder(worldManager, shapeMgr)
+		// Load state properties from mc-protocol-go's blocks.json at runtime to avoid compilation OOM
+		statePropsLoader, err := pathfinding.NewStatePropertyLoader(protocolBasePath, *mcVersion)
+		if err != nil {
+			log.Printf("Warning: Failed to load state properties: %v", err)
+			log.Printf("Pathfinding will work with limited state awareness")
+			statePropsLoader = nil // Continue without state properties
+		}
+
+		pathFinder = pathfinding.NewPathFinder(worldManager, shapeMgr, blockMgr, statePropsLoader)
 		log.Printf("Pathfinding initialized for version %s", *mcVersion)
 
 		// Initialize follow system
@@ -324,13 +394,14 @@ func main() {
 			getBotPositionSimple,
 		)
 
+		followConfig := following.DefaultFollowConfig()
 		followManager = following.NewFollowManager(
 			targetSelector,
 			pathFinder,
 			movementExecutor,
 			getBotPosition,
 			sendChatMessage,
-			following.DefaultFollowConfig(),
+			followConfig,
 		)
 		log.Printf("Follow system initialized")
 	}
@@ -341,6 +412,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Start entity cleanup goroutine to permanently remove soft-deleted entities after grace period
+	go cleanupRemovedEntities()
 
 	startTime := time.Now()
 	os.MkdirAll("./logs", 0760)
@@ -394,7 +468,7 @@ func main() {
 			// }
 
 			// fmt.Printf("soundId: %#v\tsoundEvent: %#v\n", SoundID, soundEvent)
-			return onSound(int32(SoundID), int32(SoundCategory), float64(X)/8, float64(Y)/8, float64(Z)/8, float32(Volume), float32(Pitch), int32(Seed))
+			return onSound(int32(SoundID-1), int32(SoundCategory), float64(X)/8, float64(Y)/8, float64(Z)/8, float32(Volume), float32(Pitch), int32(Seed))
 		},
 	}
 
@@ -447,15 +521,34 @@ func main() {
 			trackedEntities.mu.Lock()
 			var uuid [16]byte
 			copy(uuid[:], EntityUUID[:])
-			trackedEntities.entities[int32(EntityID)] = &TrackedEntity{
-				EntityID:   int32(EntityID),
-				EntityType: int32(EntityType),
-				UUID:       uuid,
-				X:          float64(X),
-				Y:          float64(Y),
-				Z:          float64(Z),
-				Yaw:        int8(Yaw),
-				Pitch:      int8(Pitch),
+
+			// Check if entity already exists (possibly marked removed)
+			if existingEntity, exists := trackedEntities.entities[int32(EntityID)]; exists {
+				// Entity respawned - update position and un-remove
+				existingEntity.EntityType = int32(EntityType)
+				existingEntity.UUID = uuid
+				existingEntity.X = float64(X)
+				existingEntity.Y = float64(Y)
+				existingEntity.Z = float64(Z)
+				existingEntity.Yaw = int8(Yaw)
+				existingEntity.Pitch = int8(Pitch)
+				if existingEntity.Removed {
+					existingEntity.Removed = false
+					log.Printf("Entity %d un-removed (respawned)", EntityID)
+				}
+			} else {
+				// New entity - create tracking entry
+				trackedEntities.entities[int32(EntityID)] = &TrackedEntity{
+					EntityID:   int32(EntityID),
+					EntityType: int32(EntityType),
+					UUID:       uuid,
+					X:          float64(X),
+					Y:          float64(Y),
+					Z:          float64(Z),
+					Yaw:        int8(Yaw),
+					Pitch:      int8(Pitch),
+					Removed:    false,
+				}
 			}
 			trackedEntities.mu.Unlock()
 
@@ -500,6 +593,12 @@ func main() {
 				entity.X += float64(DX) / (128 * 32)
 				entity.Y += float64(DY) / (128 * 32)
 				entity.Z += float64(DZ) / (128 * 32)
+
+				// If entity was soft-deleted but we're still receiving updates, un-remove it
+				if entity.Removed {
+					entity.Removed = false
+					log.Printf("Entity %d un-removed (received position update after removal)", EntityID)
+				}
 			}
 			trackedEntities.mu.Unlock()
 			return nil
@@ -527,6 +626,12 @@ func main() {
 				entity.Z += float64(DZ) / (128 * 32)
 				entity.Yaw = int8(Yaw)
 				entity.Pitch = int8(Pitch)
+
+				// If entity was soft-deleted but we're still receiving updates, un-remove it
+				if entity.Removed {
+					entity.Removed = false
+					log.Printf("Entity %d un-removed (received position+rotation update after removal)", EntityID)
+				}
 			}
 			trackedEntities.mu.Unlock()
 			return nil
@@ -555,6 +660,13 @@ func main() {
 				entity.Z = float64(Z)
 				entity.Yaw = int8(Yaw)
 				entity.Pitch = int8(Pitch)
+
+				// If entity was soft-deleted but we're still receiving updates, un-remove it
+				if entity.Removed {
+					entity.Removed = false
+					log.Printf("Entity %d un-removed (received teleport update after removal)", EntityID)
+				}
+
 				log.Printf("Entity %d teleported to (%.2f, %.2f, %.2f)", EntityID, X, Y, Z)
 			}
 			trackedEntities.mu.Unlock()
@@ -573,13 +685,38 @@ func main() {
 
 			trackedEntities.mu.Lock()
 			for _, id := range entityIDs {
-				delete(trackedEntities.entities, int32(id))
-				log.Printf("Stopped tracking entity %d", id)
+				// Soft delete: mark as removed instead of deleting immediately
+				// Keep entity data in case we receive position updates after removal
+				if entity, ok := trackedEntities.entities[int32(id)]; ok {
+					entity.Removed = true
+					entity.RemovedAt = time.Now()
+					log.Printf("Soft-deleted entity %d (will be permanently removed after %v grace period)", id, EntityRemovalGracePeriod)
+				}
 			}
 			trackedEntities.mu.Unlock()
 			return nil
 		},
 	}
+
+	// Custom ClientboundLogin handler to capture bot's entity ID
+	// Priority 100 to run early
+	var handleBotLogin = bot.PacketHandler{
+		ID:       packetMgr.GetClientboundPacketID("ClientboundLogin"),
+		Priority: 100,
+		F: func(p pk.Packet) error {
+			// ClientboundLogin packet structure:
+			// EntityID (Int), IsHardcore (Boolean), Dimensions (Array), MaxPlayers (VarInt), ...
+			var entityID pk.Int
+			if err := p.Scan(&entityID); err != nil {
+				log.Printf("Error scanning ClientboundLogin for entity ID: %v", err)
+				return nil // Don't fail, just log
+			}
+
+			setBotEntityID(int32(entityID))
+			return nil
+		},
+	}
+	client.Events.AddListener(handleBotLogin)
 
 	// Custom ClientboundPosition handler for 1.21.5+ with new packet structure
 	// Priority 63 to run before basic.Player's handler (priority 64)
@@ -697,23 +834,9 @@ func onGameStart() error {
 
 // setupRegistryDataCapture hooks into the configuration phase to capture registry data
 func setupRegistryDataCapture(c *bot.Client) {
-	// Store the original JoinConfiguration function
-	// originalJoinConfig := c.JoinConfiguration
-	// if originalJoinConfig == nil {
-	// 	// Use the default from bot package
-	// 	originalJoinConfig = c.JoinConfiguration
-	// }
-
-	// // Wrap it to capture registry packets
-	// c.JoinConfiguration = func(conn *mcnet.Conn) error {
-	// 	// Call the original configuration handler which will process all config packets
-	// 	// We'll add a listener to intercept RegistryData packets before they're fully processed
-	// 	return originalJoinConfig(conn)
-	// }
-
 	// Add a high-priority event listener for RegistryData packets
 	// This will run during configuration phase
-	client.Events.AddListener(bot.PacketHandler{
+	c.Events.AddListener(bot.PacketHandler{
 		ID:       packetMgr.GetClientboundConfigPacketID("ClientboundConfigRegistryData"),
 		Priority: 100, // High priority to capture before default handler
 		F:        handleRegistryDataPacket,
@@ -809,7 +932,8 @@ func onSystemMsg(c chat.Message, overlay bool) error {
 }
 
 func onPlayerMsg(senderInfo playerlist.PlayerInfo, msg chat.Message, validated bool) error {
-	const rofBotFlag = ">>>ROF_bot<<<"
+	// Use bot's actual login name for command prefix
+	rofBotFlag := fmt.Sprintf(">>>%s<<<", client.Name)
 	var prefix string
 	if !validated {
 		prefix = "[Not Secure] "
@@ -824,8 +948,8 @@ func onPlayerMsg(senderInfo playerlist.PlayerInfo, msg chat.Message, validated b
 		// find raw message...
 		text := ""
 		for _, with := range msg.With {
-			if strings.HasPrefix(with.Text, ">>>ROF_bot<<<") {
-				text = strings.TrimPrefix(with.Text, rofBotFlag)
+			if after, ok := strings.CutPrefix(with.Text, rofBotFlag); ok {
+				text = after
 				break
 			}
 		}
@@ -849,19 +973,43 @@ func onDisguisedMsg(msg chat.Message) error {
 	return nil
 }
 
-func onChunkLoad(pos level.ChunkPos) error {
-	log.Println("Loaded chunk:", pos)
-	log.Printf("%#v\n", worldManager.Columns[pos])
-	spew.Dump(worldManager.Columns[pos])
+func onChunkLoad(pos world.ChunkPos) error {
+	log.Println("[onChunkLoad] Loaded chunk:", pos)
+	// Convert to world.ChunkPos
+
+	if wm, ok := worldManager.(*world.World); ok {
+		log.Printf("Column[%v]: %#v\n", pos, wm.Columns[pos])
+		spew.Dump(wm.Columns[pos])
+	}
 	return nil
 }
 
-func onChunkUnload(pos level.ChunkPos) error {
-	log.Println("Unload chunk:", pos)
-	log.Printf("%#v\n", worldManager.Columns[pos])
+func onChunkUnload(pos world.ChunkPos) error {
+	log.Println("[onChunkUnload] Unload chunk:", pos)
+	// Convert to world.ChunkPos
+	if wm, ok := worldManager.(*world.World); ok {
+		log.Printf("Column[%v]: %#v\n", pos, wm.Columns[pos])
+	}
 	return nil
 }
 
+// TODO: Update to handle additional windows besides just inventory
+//
+//	Currently only handles screen.Inventory containers. Need to handle:
+//	- Chests, Furnaces, Crafting Tables, Enchanting Tables, etc.
+//	- Different window types from screen.Manager.Screens
+//
+// TODO: Remove dependency on mc-go/registryid - it is version-locked and out of date
+//
+//	Need version-agnostic ItemMgr (similar to BlockMgr):
+//	1. Create ItemMgr interface in mc-protocol-go/data/versions
+//	2. Get version-specific item data files from mc-data-gen (mc-protocol-go should do this and expose via ItemMgr)
+//	3. ItemMgr should provide:
+//	   - GetItemByID(id int) -> Item with Name, DisplayName, MaxStackSize, etc.
+//	   - GetItemByName(name string) -> Item
+//	   - Version-specific item registry mapping
+//	4. Replace registryid.Item[slot.ID] with itemMgr.GetItemByID(slot.ID).Name
+//	Similar to how we use blockMgr.GetByID() for blocks
 func onScreenSlotChange(id, index int) error {
 	if id == -2 {
 		log.Printf("Slot: inventory: %v", screenManager.Inventory.Slots[index])
@@ -1709,10 +1857,10 @@ func testPathCommand() {
 	}
 
 	// Convert to block coordinates
-	start := pathfinding.V3{X: int(math.Floor(x)), Y: int(math.Floor(y)), Z: int(math.Floor(z))}
+	start := pathfinding.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
 	goal := pathfinding.V3{X: start.X, Y: start.Y, Z: start.Z - 5} // 5 blocks north
 
-	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%d, %d, %d) to (%d, %d, %d)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
+	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
 	path, err := pathFinder.FindPath(start, goal, 100)
 	if err != nil {
@@ -1734,7 +1882,7 @@ func testPathCommand() {
 			chatHandler.SendMessage(fmt.Sprintf("... and %d more steps", len(path.Steps)-3))
 			break
 		}
-		chatHandler.SendMessage(fmt.Sprintf("Step %d: %s to (%d, %d, %d)", i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
+		chatHandler.SendMessage(fmt.Sprintf("Step %d: %s to (%f, %f, %f)", i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 	}
 }
 
@@ -1745,18 +1893,18 @@ func findPathCommand(xStr, yStr, zStr string) {
 		return
 	}
 
-	var targetX, targetY, targetZ int
+	var targetX, targetY, targetZ float64
 	var err error
 
-	if targetX, err = parseInt(xStr); err != nil {
+	if targetX, err = parseFloat(xStr); err != nil {
 		chatHandler.SendMessage(fmt.Sprintf("Invalid X coordinate: %s", xStr))
 		return
 	}
-	if targetY, err = parseInt(yStr); err != nil {
+	if targetY, err = parseFloat(yStr); err != nil {
 		chatHandler.SendMessage(fmt.Sprintf("Invalid Y coordinate: %s", yStr))
 		return
 	}
-	if targetZ, err = parseInt(zStr); err != nil {
+	if targetZ, err = parseFloat(zStr); err != nil {
 		chatHandler.SendMessage(fmt.Sprintf("Invalid Z coordinate: %s", zStr))
 		return
 	}
@@ -1768,10 +1916,10 @@ func findPathCommand(xStr, yStr, zStr string) {
 	}
 
 	// Convert to block coordinates
-	start := pathfinding.V3{X: int(math.Floor(x)), Y: int(math.Floor(y)), Z: int(math.Floor(z))}
+	start := pathfinding.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
 	goal := pathfinding.V3{X: targetX, Y: targetY, Z: targetZ}
 
-	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%d, %d, %d) to (%d, %d, %d)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
+	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
 	path, err := pathFinder.FindPath(start, goal, 200)
 	if err != nil {
@@ -1805,7 +1953,7 @@ func startFollowingPlayer(playerName string) {
 	}
 
 	if followManager.IsActive() {
-		chatHandler.SendMessage(fmt.Sprintf("Already following. Use stopFollowing first."))
+		chatHandler.SendMessage("Already following. Use stopFollowing first.")
 		return
 	}
 
@@ -1818,7 +1966,25 @@ func startFollowingPlayer(playerName string) {
 		return
 	}
 
+	exitLoop := false
+	for {
+		if exitLoop {
+			break
+		}
+
+		select {
+		case <-time.After(45 * time.Second):
+			chatHandler.SendMessage(fmt.Sprintf("Timeout finding path to %s", playerName))
+			followManager.Stop()
+			return
+		default:
+			if followManager.GetState() == following.StateFollowingPath {
+				exitLoop = true
+			}
+		}
+	}
 	chatHandler.SendMessage(fmt.Sprintf("Now following %s", playerName))
+	log.Printf("[startFollowingPlayer] path = %#v\n", followManager.GetPath())
 }
 
 // startFollowingNearest starts following the nearest player

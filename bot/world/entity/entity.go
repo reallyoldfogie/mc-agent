@@ -1,7 +1,17 @@
 package entity
 
 import (
-	// TODO: REPLACE RELIANCE ON go-mc/data/entity - it is out of date and version specific to whatever version go-mc is on
+	// TODO: REPLACE RELIANCE ON go-mc/data/entity - it is version-locked and out of date
+	//       Need version-agnostic EntityMgr (similar to BlockMgr and ItemMgr):
+	//       1. Create EntityMgr interface in mc-protocol-go/data/versions
+	//       2. Generate version-specific entity data files in mc-data-gen
+	//       3. EntityMgr should provide:
+	//          - GetEntityByID(id int) -> EntityType with Name, Width, Height, Category, etc.
+	//          - GetEntityByName(name string) -> EntityType
+	//          - Version-specific entity registry mapping
+	//          - Entity metadata field types and parsers
+	//       4. Replace entity.Entity references with entityMgr methods
+	//       This will enable proper entity handling across Minecraft versions
 	"github.com/Tnze/go-mc/data/entity"
 	"github.com/google/uuid"
 )

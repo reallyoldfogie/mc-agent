@@ -64,6 +64,7 @@ Desktop.ini
 # Data files that might be generated
 data/generated/
 data/cache/
+data/mc-data-gen-cache/
 
 # Manual testing artifacts
 manual_testing/output/

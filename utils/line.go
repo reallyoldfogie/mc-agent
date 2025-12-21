@@ -3,24 +3,24 @@ package utils
 import (
 	"math"
 
-	"github.com/reallyoldfogie/mc-agent/bot/path"
+	"github.com/reallyoldfogie/mc-agent/pathfinding"
 )
 
 // Line ...
-func Line(pt1, pt2 path.V3) []path.V3 {
+func Line(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
 	return Bresenham3D(pt1, pt2)
 }
 
 // Bresenham3D - converted from Python3 code for generating points on a 3-D line
 // using Bresenham's Algorithm
-func Bresenham3D(pt1, pt2 path.V3) []path.V3 {
-	var xs, ys, zs, p1, p2 int
-	listOfPoints := []path.V3{}
+func Bresenham3D(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
+	var xs, ys, zs, p1, p2 float64
+	listOfPoints := []pathfinding.V3{}
 	// listOfPoints = append(listOfPoints, Block{X: pt1.X, Y: pt1.Y, Z: pt1.Z, BlockType: "minecraft:glowstone"})
 	listOfPoints = append(listOfPoints, pt1)
-	dx := int(math.Abs(float64(pt2.X - pt1.X)))
-	dy := int(math.Abs(float64(pt2.Y - pt1.Y)))
-	dz := int(math.Abs(float64(pt2.Z - pt1.Z)))
+	dx := math.Abs(float64(pt2.X - pt1.X))
+	dy := math.Abs(float64(pt2.Y - pt1.Y))
+	dz := math.Abs(float64(pt2.Z - pt1.Z))
 	if pt2.X > pt1.X {
 		xs = 1
 	} else {
@@ -53,7 +53,7 @@ func Bresenham3D(pt1, pt2 path.V3) []path.V3 {
 			}
 			p1 += 2 * dy
 			p2 += 2 * dz
-			listOfPoints = append(listOfPoints, path.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	} else if dy >= dx && dy >= dz { // Driving axis is Y-axis"
 		p1 = 2*dx - dy
@@ -70,7 +70,7 @@ func Bresenham3D(pt1, pt2 path.V3) []path.V3 {
 			}
 			p1 += 2 * dx
 			p2 += 2 * dz
-			listOfPoints = append(listOfPoints, path.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	} else { // Driving axis is Z-axis"
 		p1 = 2*dy - dz
@@ -87,7 +87,7 @@ func Bresenham3D(pt1, pt2 path.V3) []path.V3 {
 			}
 			p1 += 2 * dy
 			p2 += 2 * dx
-			listOfPoints = append(listOfPoints, path.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	}
 	return listOfPoints
