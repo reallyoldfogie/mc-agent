@@ -8,7 +8,7 @@ import (
 )
 
 // onSoundPacket parses the sound packet and logs it using the sound manager when available.
-func (a *Agent) onSoundPacket(p pk.Packet) error {
+func (a *agent) onSoundPacket(p pk.Packet) error {
 	var (
 		SoundID       pk.VarInt
 		SoundCategory pk.VarInt

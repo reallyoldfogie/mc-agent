@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/stretchr/testify/require"
 )
 
 // helper to append field bytes to a buffer
@@ -14,8 +15,12 @@ func appendField(buf *bytes.Buffer, f pk.FieldEncoder) {
 }
 
 func TestOnClientboundPosition_Absolute(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
 
 	var (
 		TeleportID pk.VarInt = 5
@@ -42,10 +47,10 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 	appendField(&buf, Flags)
 	p := pk.Packet{Data: buf.Bytes()}
 
-	if err := a.onClientboundPosition(p); err != nil {
+	if err := agent.onClientboundPosition(p); err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	x, y, z, yaw, pitch, ok := a.GetPosition()
+	x, y, z, yaw, pitch, ok := agent.GetPosition()
 	if !ok {
 		t.Fatalf("position not initialized")
 	}
@@ -58,8 +63,12 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 }
 
 func TestOnRegistryData(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
 
 	var (
 		id    pk.String  = "minecraft:entity_type"
@@ -78,10 +87,10 @@ func TestOnRegistryData(t *testing.T) {
 	appendField(&buf, has1)
 	p := pk.Packet{Data: buf.Bytes()}
 
-	if err := a.onRegistryData(p); err != nil {
+	if err := agent.onRegistryData(p); err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	reg := a.GetRegistry("minecraft:entity_type")
+	reg := agent.GetRegistry("minecraft:entity_type")
 	if reg == nil || !reg.IsReady() {
 		t.Fatalf("registry not ready")
 	}

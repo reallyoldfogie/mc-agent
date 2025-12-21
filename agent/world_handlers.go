@@ -8,7 +8,7 @@ import (
 )
 
 // onChunkLoad logs chunk load events. In future this can update internal world state.
-func (a *Agent) onChunkLoad(pos worldpkg.ChunkPos) error {
+func (a *agent) onChunkLoad(pos worldpkg.ChunkPos) error {
 	log.Println("[onChunkLoad] Loaded chunk:", pos)
 	// If we later inject and expose a concrete world, we can dump details.
 	// Placeholder: no internal world stored yet.
@@ -17,11 +17,11 @@ func (a *Agent) onChunkLoad(pos worldpkg.ChunkPos) error {
 }
 
 // onChunkUnload logs chunk unload events.
-func (a *Agent) onChunkUnload(pos worldpkg.ChunkPos) error {
+func (a *agent) onChunkUnload(pos worldpkg.ChunkPos) error {
 	log.Println("[onChunkUnload] Unload chunk:", pos)
 	return nil
 }
 
 // Exported wrappers for external wiring
-func (a *Agent) HandleChunkLoad(pos worldpkg.ChunkPos) error   { return a.onChunkLoad(pos) }
-func (a *Agent) HandleChunkUnload(pos worldpkg.ChunkPos) error { return a.onChunkUnload(pos) }
+func (a *agent) HandleChunkLoad(pos worldpkg.ChunkPos) error   { return a.onChunkLoad(pos) }
+func (a *agent) HandleChunkUnload(pos worldpkg.ChunkPos) error { return a.onChunkUnload(pos) }

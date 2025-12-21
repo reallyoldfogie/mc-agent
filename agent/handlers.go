@@ -1,14 +1,19 @@
 package agent
 
 import (
+	"bytes"
+	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/google/uuid"
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
-// coreHandlers returns the minimal set of packet handlers needed for tracking.
-func (a *Agent) coreHandlers() []PacketHandler {
+// handlers returns set of packet handlers needed.
+func (a *agent) handlers() []PacketHandler {
 	if a.packetMgr == nil {
 		return nil
 	}
@@ -73,6 +78,11 @@ func (a *Agent) coreHandlers() []PacketHandler {
 			Priority: 0,
 			F:        a.onSimulationDistance,
 		},
+		{
+			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundDeclareRecipes")),
+			Priority: 0,
+			F:        a.ParseUpdateRecipesPacket,
+		},
 	}
 	// Include config-phase registry capture
 	handlers = append(handlers, a.registryHandlers()...)
@@ -80,7 +90,7 @@ func (a *Agent) coreHandlers() []PacketHandler {
 }
 
 // onAddEntity tracks new or respawned entities.
-func (a *Agent) onAddEntity(p pk.Packet) error {
+func (a *agent) onAddEntity(p pk.Packet) error {
 	var (
 		EntityID   pk.VarInt
 		EntityUUID pk.UUID
@@ -129,7 +139,7 @@ func (a *Agent) onAddEntity(p pk.Packet) error {
 }
 
 // onMoveEntityPosRot updates incremental position and rotation.
-func (a *Agent) onMoveEntityPosRot(p pk.Packet) error {
+func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	var (
 		EntityID   pk.VarInt
 		DX, DY, DZ pk.Short
@@ -154,7 +164,7 @@ func (a *Agent) onMoveEntityPosRot(p pk.Packet) error {
 }
 
 // onMoveEntityPos updates incremental position without rotation.
-func (a *Agent) onMoveEntityPos(p pk.Packet) error {
+func (a *agent) onMoveEntityPos(p pk.Packet) error {
 	var (
 		EntityID   pk.VarInt
 		DX, DY, DZ pk.Short
@@ -177,7 +187,7 @@ func (a *Agent) onMoveEntityPos(p pk.Packet) error {
 }
 
 // onTeleportEntity handles absolute teleports.
-func (a *Agent) onTeleportEntity(p pk.Packet) error {
+func (a *agent) onTeleportEntity(p pk.Packet) error {
 	var (
 		EntityID   pk.VarInt
 		X, Y, Z    pk.Double
@@ -200,7 +210,7 @@ func (a *Agent) onTeleportEntity(p pk.Packet) error {
 }
 
 // onRemoveEntities marks entities as softly removed, allowing grace period before purge.
-func (a *Agent) onRemoveEntities(p pk.Packet) error {
+func (a *agent) onRemoveEntities(p pk.Packet) error {
 	var count pk.VarInt
 	if err := p.Scan(&count); err != nil {
 		return nil
@@ -224,7 +234,7 @@ func (a *Agent) onRemoveEntities(p pk.Packet) error {
 }
 
 // onLogin captures the bot's entity ID.
-func (a *Agent) onLogin(p pk.Packet) error {
+func (a *agent) onLogin(p pk.Packet) error {
 	var entityID pk.Int
 	if err := p.Scan(&entityID); err != nil {
 		return nil
@@ -241,13 +251,15 @@ func (a *Agent) onLogin(p pk.Packet) error {
 			copy(id[:], parsed[:])
 		}
 		a.moveMirror.SetEntityMeta(int32(entityID), a.cfg.Auth.Name, id)
+		// Notify that LOGIN packet has been seen and recorded
+		a.moveMirror.NotifyLoginSeen()
 		// Entity type is set via registry callback during configuration phase
 	}
 	return nil
 }
 
 // onClientboundPosition updates absolute position and applies rotation flags.
-func (a *Agent) onClientboundPosition(p pk.Packet) error {
+func (a *agent) onClientboundPosition(p pk.Packet) error {
 	var (
 		TeleportID pk.VarInt
 		X, Y, Z    pk.Double
@@ -274,6 +286,22 @@ func (a *Agent) onClientboundPosition(p pk.Packet) error {
 		a.posPitch = float32(Pitch)
 	}
 	a.posInitialized = true
+
+	// Notify replay mirror of position update by creating a synthetic serverbound packet
+	// This is critical for bot visibility in replays - the mirror needs movement packets
+	// to trigger entity spawning via emitTeleport()
+	if a.moveMirror != nil && a.packetMgr != nil {
+		syntheticPacket := pk.Marshal(
+			int32(a.packetMgr.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
+			pk.Double(a.posX),
+			pk.Double(a.posY),
+			pk.Double(a.posZ),
+			pk.Float(a.posYaw),
+			pk.Float(a.posPitch),
+			pk.Boolean(true), // onGround
+		)
+		a.moveMirror.HandleServerbound(syntheticPacket)
+	}
 	a.posMu.Unlock()
 
 	// Accept teleport when possible
@@ -287,7 +315,7 @@ func (a *Agent) onClientboundPosition(p pk.Packet) error {
 }
 
 // onUpdateViewDistance handles server-sent view distance updates.
-func (a *Agent) onUpdateViewDistance(p pk.Packet) error {
+func (a *agent) onUpdateViewDistance(p pk.Packet) error {
 	var viewDistance pk.VarInt
 	if err := p.Scan(&viewDistance); err != nil {
 		return nil
@@ -298,7 +326,7 @@ func (a *Agent) onUpdateViewDistance(p pk.Packet) error {
 }
 
 // onSimulationDistance handles server-sent simulation distance updates.
-func (a *Agent) onSimulationDistance(p pk.Packet) error {
+func (a *agent) onSimulationDistance(p pk.Packet) error {
 	var simulationDistance pk.VarInt
 	if err := p.Scan(&simulationDistance); err != nil {
 		return nil
@@ -306,4 +334,209 @@ func (a *Agent) onSimulationDistance(p pk.Packet) error {
 	// Currently just logging for awareness
 	// Could be used to update client state if needed
 	return nil
+}
+
+// ParseUpdateRecipesPacket handles the ClientboundUpdateRecipes packet (also known as DeclaredRecipes).
+// Protocol 1.21.5 (770) format: Property Sets + Stonecutter SingleInputSet entries
+func (a *agent) ParseUpdateRecipesPacket(p pk.Packet) error {
+	log.Printf("[recipes] === Starting Update Recipes Packet Parse ===")
+
+	log.Printf("[recipes] Packet Length: %d bytes", len(p.Data))
+	log.Printf("[recipes] Packet ID: %d", p.ID)
+	log.Printf("[recipes] Raw Packet Data: [%x]", p.Data)
+
+	// Create a streaming reader over packet data
+	r := bytes.NewReader(p.Data)
+	// Parse Property Sets
+	var payload UpdateRecipesPayload
+	var numPropertySets pk.VarInt
+	if _, err := numPropertySets.ReadFrom(r); err != nil {
+		log.Printf("[recipes] ERROR: failed to read property set count: %v", err)
+		return nil
+	}
+	log.Printf("[recipes] Property Sets Count: %d", numPropertySets)
+
+	for i := 0; i < int(numPropertySets); i++ {
+		var propertySetID pk.Identifier
+		if _, err := propertySetID.ReadFrom(r); err != nil {
+			log.Printf("[recipes] ERROR: failed to read property set ID at index %d: %v", i, err)
+			return nil
+		}
+
+		var numItems pk.VarInt
+		if _, err := numItems.ReadFrom(r); err != nil {
+			log.Printf("[recipes] ERROR: failed to read item count for property set %s: %v", propertySetID, err)
+			return nil
+		}
+
+		log.Printf("[recipes] Property Set %d: ID=%s, Items Count=%d", i+1, propertySetID, numItems)
+
+		items := make([]int32, int(numItems))
+		for j := 0; j < int(numItems); j++ {
+			var itemID pk.VarInt
+			if _, err := itemID.ReadFrom(r); err != nil {
+				log.Printf("[recipes] ERROR: failed to read item ID at index %d for property set %s: %v", j, propertySetID, err)
+				return nil
+			}
+			items[j] = int32(itemID)
+		}
+		log.Printf("[recipes]   Items: %v", items)
+		payload.PropertySets = append(payload.PropertySets, PropertySet{ID: fmt.Sprintf("%s", propertySetID), Items: items})
+	}
+
+// Parse Stonecutter entries (format: IDSet + SlotDisplay)
+	var numStonecutterEntries pk.VarInt
+	if _, err := numStonecutterEntries.ReadFrom(r); err != nil {
+		log.Printf("[recipes] ERROR: failed to read stonecutter entry count: %v", err)
+		return nil
+	}
+	log.Printf("[recipes] Stonecutter Entries Count: %d", numStonecutterEntries)
+
+	for i := 0; i < int(numStonecutterEntries); i++ {
+		log.Printf("[recipes] Stonecutter Entry %d:", i+1)
+
+		// Parse IDSet (ingredients)
+		idSet, err := scanIDSet(r)
+		if err != nil {
+			log.Printf("[recipes] ERROR: parsing IDSet for stonecutter entry %d: %v", i+1, err)
+			return nil
+		}
+		log.Printf("[recipes]   Ingredients IDSet mode=%d, ids=%v", idSet.Mode, idSet.IDs)
+
+		// Parse SlotDisplay (result)
+		result, err := a.parseSlotDisplay(r, 1)
+		if err != nil {
+			log.Printf("[recipes] ERROR: parsing slot display for stonecutter entry %d: %v", i+1, err)
+			return nil
+		}
+
+		// For compatibility, convert OLD format to our internal structure
+		// Input: create a composite SlotDisplay from the IDSet
+		// Results: single result from the parsed SlotDisplay
+		var input SlotDisplay
+		switch idSet.Mode {
+		case IDSetEmpty:
+			input = SlotDisplay{Type: SlotDisplayTypeEmpty}
+		case IDSetSingle:
+			if len(idSet.IDs) > 0 {
+				input = SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: idSet.IDs[0]}}
+			}
+		case IDSetList:
+			// Create composite with multiple item options
+			options := make([]SlotDisplay, len(idSet.IDs))
+			for idx, itemID := range idSet.IDs {
+				options[idx] = SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: itemID}}
+			}
+			input = SlotDisplay{Type: SlotDisplayTypeComposite, Composite: options}
+		}
+
+		payload.StonecutterEntries = append(payload.StonecutterEntries, StonecutterEntry{
+			Input:   input,
+			Results: []SlotDisplay{result},
+		})
+	}
+
+	log.Printf("[recipes] === Finished Update Recipes Packet Parse ===")
+	// Store payload
+	a.recipesMu.Lock()
+	a.lastUpdateRecipes = &payload
+	a.recipesMu.Unlock()
+	return nil
+}
+
+// parseSlotDisplay reads and logs a Slot Display structure recursively.
+// Depth controls indentation for nested structures.
+func (a *agent) parseSlotDisplay(r *bytes.Reader, depth int) (SlotDisplay, error) {
+	indent := strings.Repeat("  ", depth)
+	var slotDisplayType pk.VarInt
+	if _, err := slotDisplayType.ReadFrom(r); err != nil {
+		return SlotDisplay{}, err
+	}
+	log.Printf("[recipes]%sSlot Display Type: %d", indent, slotDisplayType)
+
+	switch int(slotDisplayType) {
+	case 0:
+		log.Printf("[recipes]%s(empty)", indent)
+		return SlotDisplay{Type: SlotDisplayTypeEmpty}, nil
+	case 1:
+		log.Printf("[recipes]%s(any_fuel)", indent)
+		return SlotDisplay{Type: SlotDisplayTypeAnyFuel}, nil
+	case 2:
+		// minecraft:item -> item registry VarInt
+		var itemID pk.VarInt
+		if _, err := itemID.ReadFrom(r); err != nil {
+			return SlotDisplay{}, err
+		}
+		log.Printf("[recipes]%sitem: id=%d", indent, itemID)
+		return SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: int32(itemID)}}, nil
+	case 3:
+		// minecraft:item_stack -> Slot
+		var s mcscreen.Slot
+		if _, err := s.ReadFrom(r); err != nil {
+			return SlotDisplay{}, err
+		}
+		if s.Count <= 0 {
+			log.Printf("[recipes]%sitem_stack: empty", indent)
+			return SlotDisplay{Type: SlotDisplayTypeItemStack, ItemStack: &SlotDisplayItemStack{ItemID: 0, Count: 0}}, nil
+		}
+		log.Printf("[recipes]%sitem_stack: id=%d count=%d", indent, s.ID, s.Count)
+		return SlotDisplay{Type: SlotDisplayTypeItemStack, ItemStack: &SlotDisplayItemStack{ItemID: int32(s.ID), Count: int32(s.Count)}}, nil
+	case 4:
+		// minecraft:tag -> Identifier
+		var tag pk.Identifier
+		if _, err := tag.ReadFrom(r); err != nil {
+			return SlotDisplay{}, err
+		}
+		str := fmt.Sprintf("%s", tag)
+		log.Printf("[recipes]%stag: %s", indent, str)
+		return SlotDisplay{Type: SlotDisplayTypeTag, Tag: &str}, nil
+	case 5:
+		// minecraft:smithing_trim -> Base SlotDisplay, Material SlotDisplay, Pattern VarInt
+		log.Printf("[recipes]%ssmithing_trim:", indent)
+		base, err := a.parseSlotDisplay(r, depth+1)
+		if err != nil {
+			return SlotDisplay{}, err
+		}
+		material, err := a.parseSlotDisplay(r, depth+1)
+		if err != nil {
+			return SlotDisplay{}, err
+		}
+		var pattern pk.VarInt
+		if _, err := pattern.ReadFrom(r); err != nil {
+			return SlotDisplay{}, err
+		}
+		log.Printf("[recipes]%s  pattern_id=%d", indent, pattern)
+		return SlotDisplay{Type: SlotDisplayTypeSmithingTrim, SmithingTrim: &SlotDisplaySmithingTrim{Base: base, Material: material, Pattern: int32(pattern)}}, nil
+	case 6:
+		// minecraft:with_remainder -> Ingredient SlotDisplay, Remainder SlotDisplay
+		log.Printf("[recipes]%swith_remainder:", indent)
+		ing, err := a.parseSlotDisplay(r, depth+1)
+		if err != nil {
+			return SlotDisplay{}, err
+		}
+		rem, err := a.parseSlotDisplay(r, depth+1)
+		if err != nil {
+			return SlotDisplay{}, err
+		}
+		return SlotDisplay{Type: SlotDisplayTypeWithRemainder, WithRemainder: &SlotDisplayWithRemainder{Ingredient: ing, Remainder: rem}}, nil
+	case 7:
+		// minecraft:composite -> VarInt count + that many SlotDisplays
+		var count pk.VarInt
+		if _, err := count.ReadFrom(r); err != nil {
+			return SlotDisplay{}, err
+		}
+		log.Printf("[recipes]%scomposite: options=%d", indent, count)
+		options := make([]SlotDisplay, int(count))
+		for i := 0; i < int(count); i++ {
+			opt, err := a.parseSlotDisplay(r, depth+1)
+			if err != nil {
+				return SlotDisplay{}, err
+			}
+			options[i] = opt
+		}
+		return SlotDisplay{Type: SlotDisplayTypeComposite, Composite: options}, nil
+	default:
+		log.Printf("[recipes]%sunknown slot display type: %d", indent, slotDisplayType)
+		return SlotDisplay{Type: SlotDisplayType(slotDisplayType)}, nil
+	}
 }

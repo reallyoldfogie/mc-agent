@@ -2,6 +2,8 @@ package testing
 
 import (
 	"fmt"
+	"log"
+	"testing"
 
 	mdl "github.com/reallyoldfogie/mc-data-gen/loader"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
@@ -240,4 +242,30 @@ func (tl *TestLogger) GetMessages() []string {
 // Clear clears all logged messages
 func (tl *TestLogger) Clear() {
 	tl.messages = nil
+}
+
+// TestLogHelper wraps testing.T and provides dual logging to both test output and agent log file.
+type TestLogHelper struct {
+	t *testing.T
+}
+
+// NewTestLogger creates a new TestLogHelper that writes to both test output and log file.
+func NewTestLogger(t *testing.T) *TestLogHelper {
+	return &TestLogHelper{t: t}
+}
+
+// Logf logs a formatted message to both test output and the agent log file.
+func (h *TestLogHelper) Logf(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	h.t.Helper()
+	h.t.Log(msg)
+	log.Println(msg)
+}
+
+// Log logs a message to both test output and the agent log file.
+func (h *TestLogHelper) Log(args ...any) {
+	msg := fmt.Sprint(args...)
+	h.t.Helper()
+	h.t.Log(msg)
+	log.Println(msg)
 }

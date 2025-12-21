@@ -15,7 +15,13 @@ type TrackedEntity struct {
 }
 
 // TargetSelector finds and validates target players
-type TargetSelector struct {
+type TargetSelector interface {
+	FindPlayerByName(name string) (*TargetInfo, error)
+	FindNearestPlayer() (*TargetInfo, error)
+	GetTargetPosition(entityID int32) (x, y, z float64, exists bool)
+	CalculateDistance(entityID int32) (float64, error)
+}
+type targetSelector struct {
 	getTrackedEntities func() map[int32]*TrackedEntity
 	getPlayerUUID      func(playerName string) ([16]byte, error)
 	getBotPosition     func() (x, y, z float64, initialized bool)
@@ -26,8 +32,8 @@ func NewTargetSelector(
 	getEntities func() map[int32]*TrackedEntity,
 	getPlayerUUID func(string) ([16]byte, error),
 	getBotPos func() (float64, float64, float64, bool),
-) *TargetSelector {
-	return &TargetSelector{
+) TargetSelector {
+	return &targetSelector{
 		getTrackedEntities: getEntities,
 		getPlayerUUID:      getPlayerUUID,
 		getBotPosition:     getBotPos,
@@ -44,7 +50,7 @@ type TargetInfo struct {
 }
 
 // FindPlayerByName finds a player entity by name
-func (ts *TargetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
+func (ts *targetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
 	// Get player UUID from player list
 	uuid, err := ts.getPlayerUUID(name)
 	if err != nil {
@@ -86,7 +92,7 @@ func (ts *TargetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
 }
 
 // FindNearestPlayer finds the nearest player entity
-func (ts *TargetSelector) FindNearestPlayer() (*TargetInfo, error) {
+func (ts *targetSelector) FindNearestPlayer() (*TargetInfo, error) {
 	entities := ts.getTrackedEntities()
 	if len(entities) == 0 {
 		return nil, fmt.Errorf("no entities tracked")
@@ -128,7 +134,7 @@ func (ts *TargetSelector) FindNearestPlayer() (*TargetInfo, error) {
 }
 
 // GetTargetPosition gets the current position of a target entity
-func (ts *TargetSelector) GetTargetPosition(entityID int32) (x, y, z float64, exists bool) {
+func (ts *targetSelector) GetTargetPosition(entityID int32) (x, y, z float64, exists bool) {
 	entities := ts.getTrackedEntities()
 	if entities == nil {
 		return 0, 0, 0, false
@@ -143,7 +149,7 @@ func (ts *TargetSelector) GetTargetPosition(entityID int32) (x, y, z float64, ex
 }
 
 // CalculateDistance calculates distance to target
-func (ts *TargetSelector) CalculateDistance(entityID int32) (float64, error) {
+func (ts *targetSelector) CalculateDistance(entityID int32) (float64, error) {
 	x, y, z, exists := ts.GetTargetPosition(entityID)
 	if !exists {
 		return 0, fmt.Errorf("target entity not found")

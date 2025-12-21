@@ -47,6 +47,9 @@ The agent package migration is **complete**. All functionality from `main.go` ha
 | **Pathfinding** | ✅ | ✅ | mc-data-gen integration |
 | **Following** | ✅ | ✅ | Full feature set |
 | **Chat Commands** | ✅ | ✅ | All commands |
+| **Recipe System** | ❌ | ✅ | **NEW** - Parse Update Recipes |
+| **Bow Firing** | ❌ | ✅ | **NEW** - Ballistic aiming |
+| **Declare Commands** | ❌ | ✅ | **NEW** - Server command tree |
 
 ## Architecture Benefits
 

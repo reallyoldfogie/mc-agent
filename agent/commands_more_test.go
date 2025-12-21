@@ -9,6 +9,7 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	"github.com/stretchr/testify/require"
 )
 
 // fakes for movement and pathfinding
@@ -131,12 +132,18 @@ func (f *fakeClientWriter) WritePacket(p pk.Packet) error    { f.pkts = append(f
 
 // Movement: moveForward 0.1 should send one position packet forward (yaw=0 => +Z)
 func TestCommand_MoveForward_SmallStep(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.UpdatePosition(0, 0, 0, 0, 0)
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.UpdatePosition(0, 0, 0, 0, 0)
 	fm := &fakeMoveExec{}
-	a.SetMovementExecutor(fm)
-	a.handleChatCommand("moveForward 0.1")
+	agent.SetMovementExecutor(fm)
+	agent.handleChatCommand("moveForward 0.1")
 	time.Sleep(70 * time.Millisecond) // allow one step
 	if len(fm.posCalls) == 0 {
 		t.Fatalf("expected a SendPosition call")
@@ -147,31 +154,45 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 	}
 }
 
-// Movement: moveTo small delta should LookAt and SendPosition once
+// Movement: moveTo with target in same block (floor(0.1)=0) should say "Already at target"
 func TestCommand_MoveTo_SmallDelta(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.UpdatePosition(0, 0, 0, 0, 0)
+	agentInt, err := New(Config{Address: "*********:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.UpdatePosition(0, 0, 0, 0, 0)
+	fc := &fakeChat{}
+	agent.SetChat(fc)
 	fm := &fakeMoveExec{}
-	a.SetMovementExecutor(fm)
-	a.handleChatCommand("moveTo 0.1 0 0")
-	time.Sleep(70 * time.Millisecond)
-	if len(fm.lookCalls) == 0 {
-		t.Fatalf("expected LookAt call")
-	}
-	if len(fm.posCalls) == 0 {
-		t.Fatalf("expected SendPosition call")
+	agent.SetMovementExecutor(fm)
+	// Need a fake pathfinder even though we won't use it
+	agent.SetPathFinder(&fakePF{})
+	// moveTo 0.1 0 0 from 0 0 0: floors to same block (0, 0, 0) -> (0, 0, 0)
+	agent.handleChatCommand("moveTo 0.1 0 0")
+	time.Sleep(20 * time.Millisecond)
+	if !containsMsg(fc.msgs, "Already at target position") {
+		t.Fatalf("expected already-at-target message, got %v", fc.msgs)
 	}
 }
 
 // Pathfinding: findPath calls FindPath with integerized coords
 func TestCommand_FindPath(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.UpdatePosition(0, 0, 0, 0, 0)
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.UpdatePosition(0, 0, 0, 0, 0)
 	pf := &fakePF{}
-	a.SetPathFinder(pf)
-	a.handleChatCommand("findPath 1 0 0")
+	agent.SetPathFinder(pf)
+	agent.handleChatCommand("findPath 1 0 0")
 	time.Sleep(10 * time.Millisecond)
 	if !pf.called {
 		t.Fatalf("expected FindPath call")
@@ -183,37 +204,50 @@ func TestCommand_FindPath(t *testing.T) {
 
 // Tracking: startTracking should invoke LookAt on nearest at least once, and stopTracking should stop it
 func TestCommand_StartStopTracking(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.UpdatePosition(0, 0, 0, 0, 0)
+	agentInt, err := New(Config{Address: "*********:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.UpdatePosition(0, 0, 0, 0, 0)
 	// seed entities
-	a.entities = map[int32]*trackedEntity{
+	agent.entities = map[int32]*trackedEntity{
 		1: {EntityID: 1, X: 0, Y: 0, Z: 1}, // near
 		2: {EntityID: 2, X: 0, Y: 0, Z: 10},
 	}
 	fm := &fakeMoveExec{}
-	a.SetMovementExecutor(fm)
-	a.handleChatCommand("startTracking")
+	agent.SetMovementExecutor(fm)
+	agent.handleChatCommand("startTracking")
 	time.Sleep(250 * time.Millisecond)
 	if len(fm.lookCalls) == 0 {
 		t.Fatalf("expected at least one LookAt call")
 	}
-	a.handleChatCommand("stopTracking")
+	agent.handleChatCommand("stopTracking")
 	n := len(fm.lookCalls)
+	// Allow for one more tick that may have been in flight
 	time.Sleep(250 * time.Millisecond)
-	if len(fm.lookCalls) > n {
-		t.Fatalf("expected LookAt calls to stop after stopTracking")
+	if len(fm.lookCalls) > n+1 {
+		t.Fatalf("expected LookAt calls to stop after stopTracking, had %d, now have %d", n, len(fm.lookCalls))
 	}
 }
 
 // FireBow: immediately sends a UseItem packet
 func TestCommand_FireBow_UseItemFirst(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
 	fc := &fakeClientWriter{}
-	a.client = fc
-	a.handleChatCommand("fireBow")
+	agent.client = fc
+	agent.handleChatCommand("fireBow")
 	time.Sleep(20 * time.Millisecond)
 	if len(fc.pkts) == 0 {
 		t.Fatalf("expected at least one packet write")
@@ -224,15 +258,21 @@ func TestCommand_FireBow_UseItemFirst(t *testing.T) {
 }
 
 func TestCommand_FireBow_ShootAfterHold(t *testing.T) {
-	a, _ := New(Config{Address: "127.0.0.1:25565"})
-	_ = a.Init(context.Background())
-	a.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
+	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	require.NoError(t, err)
+
+	agent := agentInt.(*agent)
+
+	err = agent.Init(context.Background())
+	require.NoError(t, err)
+
+	agent.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
 	fc := &fakeClientWriter{}
-	a.client = fc
+	agent.client = fc
 	// shorten
 	bowHoldIterations = 0
 	bowHoldSleep = 1 * time.Millisecond
-	a.handleChatCommand("fireBow")
+	agent.handleChatCommand("fireBow")
 	time.Sleep(20 * time.Millisecond)
 	if len(fc.pkts) < 2 {
 		t.Fatalf("expected multiple packets (use + shoot), got %d", len(fc.pkts))

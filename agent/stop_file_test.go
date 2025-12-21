@@ -20,10 +20,11 @@ func TestStopFileWatcher(t *testing.T) {
 		StopFilePath: stopFile,
 	}
 
-	agent, err := New(cfg)
+	agentInt, err := New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}
+	agent := agentInt.(*agent)
 
 	// Create a context with cancel
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,10 +96,12 @@ func TestStopFileWatcherDisabled(t *testing.T) {
 		StopFilePath: "", // Disabled
 	}
 
-	agent, err := New(cfg)
+	agentInt, err := New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}
+
+	agent := agentInt.(*agent)
 
 	ctx := context.Background()
 	if err := agent.Init(ctx); err != nil {
@@ -128,10 +131,12 @@ func TestRemoveStopFileIfExists(t *testing.T) {
 		Version: "1.21.5",
 	}
 
-	agent, err := New(cfg)
+	agentInt, err := New(cfg)
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}
+
+	agent := agentInt.(*agent)
 
 	// Test removing non-existent file (should not error)
 	agent.removeStopFileIfExists(stopFile)

@@ -12,22 +12,36 @@ import (
 // Packet: ServerboundMovePlayerPos
 // Fields: X (Double), Y (Double), Z (Double), OnGround (Boolean)
 func SendPosition(client *bot.Client, packetMgr protocol_models.PacketMgr, x, y, z float64, onGround bool) error {
+	return SendPositionWithCallback(client, packetMgr, x, y, z, onGround, nil)
+}
+
+// SendPositionWithCallback is like SendPosition but also invokes an optional callback with the packet before sending
+func SendPositionWithCallback(client *bot.Client, packetMgr protocol_models.PacketMgr, x, y, z float64, onGround bool, callback func(interface{})) error {
 	log.Printf("[Movement] Sending ServerboundMovePlayerPos: (%.2f, %.2f, %.2f) onGround=%v", x, y, z, onGround)
-	return client.Conn.WritePacket(packet.Marshal(
+	pkt := packet.Marshal(
 		packetMgr.GetServerboundPacketID("ServerboundMovePlayerPos"),
 		packet.Double(x),
 		packet.Double(y),
 		packet.Double(z),
 		packet.Boolean(onGround),
-	))
+	)
+	if callback != nil {
+		callback(pkt)
+	}
+	return client.Conn.WritePacket(pkt)
 }
 
 // SendPositionAndRotation sends a combined position and rotation update packet to the server
 // Packet: ServerboundMovePlayerPosRot
 // Fields: X (Double), Y (Double), Z (Double), Yaw (Float), Pitch (Float), OnGround (Boolean)
 func SendPositionAndRotation(client *bot.Client, packetMgr protocol_models.PacketMgr, x, y, z float64, yaw, pitch float32, onGround bool) error {
+	return SendPositionAndRotationWithCallback(client, packetMgr, x, y, z, yaw, pitch, onGround, nil)
+}
+
+// SendPositionAndRotationWithCallback is like SendPositionAndRotation but also invokes an optional callback with the packet before sending
+func SendPositionAndRotationWithCallback(client *bot.Client, packetMgr protocol_models.PacketMgr, x, y, z float64, yaw, pitch float32, onGround bool, callback func(interface{})) error {
 	log.Printf("[Movement] Sending ServerboundMovePlayerPosRot: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v", x, y, z, yaw, pitch, onGround)
-	return client.Conn.WritePacket(packet.Marshal(
+	pkt := packet.Marshal(
 		packetMgr.GetServerboundPacketID("ServerboundMovePlayerPosRot"),
 		packet.Double(x),
 		packet.Double(y),
@@ -35,19 +49,32 @@ func SendPositionAndRotation(client *bot.Client, packetMgr protocol_models.Packe
 		packet.Float(yaw),
 		packet.Float(pitch),
 		packet.Boolean(onGround),
-	))
+	)
+	if callback != nil {
+		callback(pkt)
+	}
+	return client.Conn.WritePacket(pkt)
 }
 
 // SendRotation sends a rotation update packet to the server (rotation only, no position)
 // Packet: ServerboundMovePlayerRot
 // Fields: Yaw (Float), Pitch (Float), OnGround (Boolean)
 func SendRotation(client *bot.Client, packetMgr protocol_models.PacketMgr, yaw, pitch float32, onGround bool) error {
-	return client.Conn.WritePacket(packet.Marshal(
+	return SendRotationWithCallback(client, packetMgr, yaw, pitch, onGround, nil)
+}
+
+// SendRotationWithCallback is like SendRotation but also invokes an optional callback with the packet before sending
+func SendRotationWithCallback(client *bot.Client, packetMgr protocol_models.PacketMgr, yaw, pitch float32, onGround bool, callback func(interface{})) error {
+	pkt := packet.Marshal(
 		packetMgr.GetServerboundPacketID("ServerboundMovePlayerRot"),
 		packet.Float(yaw),
 		packet.Float(pitch),
 		packet.Boolean(onGround),
-	))
+	)
+	if callback != nil {
+		callback(pkt)
+	}
+	return client.Conn.WritePacket(pkt)
 }
 
 // Player command action IDs

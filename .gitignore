@@ -23,6 +23,10 @@ mc-agent.exe
 bin/
 dist/
 daze
+main
+main.exe
+list_all_packets
+mc-agent-refactor
 
 # Legacy implementations 
 /old/

@@ -9,13 +9,12 @@ import (
 	"log"
 	"strconv"
 
-	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 )
 
 // handleChatCommand parses and executes simple chat commands.
 // This initial set is minimal and safe; expand as more subsystems migrate.
-func (a *Agent) handleChatCommand(cmd string) {
+func (a *agent) handleChatCommand(cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return
@@ -26,7 +25,7 @@ func (a *Agent) handleChatCommand(cmd string) {
 
 	switch name {
 	case "help":
-		_ = a.SendChat("Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z>, moveForward <distance>, moveUp <distance>, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow")
+		_ = a.SendChat("Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow")
 	case "pos":
 		x, y, z, _, _, ok := a.GetPosition()
 		if !ok {
@@ -44,6 +43,12 @@ func (a *Agent) handleChatCommand(cmd string) {
 			return
 		}
 		go a.cmdMoveTo(args[0], args[1], args[2])
+	case "lineto":
+		if len(args) < 3 {
+			_ = a.SendChat("Usage: lineTo <x> <y> <z> (straight-line, flat world only)")
+			return
+		}
+		go a.cmdLineTo(args[0], args[1], args[2])
 	case "moveforward":
 		if len(args) < 1 {
 			_ = a.SendChat("Usage: moveForward <distance>")
@@ -113,6 +118,30 @@ func (a *Agent) handleChatCommand(cmd string) {
 		a.cmdStopTracking()
 	case "firebow":
 		go a.cmdFireBow()
+	case "firebowat":
+		if len(args) == 0 {
+			a.cmdFireBow()
+		} else if len(args) == 1 {
+			if args[0] == "nearest" {
+				playerInfo, found := a.findNearestPlayer()
+				if found {
+					go a.cmdFireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z)
+					return
+				}
+			} else {
+				if playerInfo, err := a.targetSelector.FindPlayerByName(args[0]); err == nil {
+					go a.cmdFireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z)
+					return
+				} else {
+					_ = a.SendChat("Player not found: " + args[0])
+					return
+				}
+			}
+		}
+		if len(args) < 3 {
+			_ = a.SendChat("Usage: fireBowAt <x> <y> <z> | fireBowAt nearest | fireBowAt <player>")
+			return
+		}
 	default:
 		_ = a.SendChat("Unknown command. Try: help, pos, say")
 	}
@@ -122,7 +151,7 @@ func (a *Agent) handleChatCommand(cmd string) {
 func parseFloat(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
 
 // testMove: move +1 on X in small steps
-func (a *Agent) cmdTestMove() {
+func (a *agent) cmdTestMove() {
 	if a.moveExec == nil {
 		_ = a.SendChat("Movement not available")
 		return
@@ -152,9 +181,10 @@ func (a *Agent) cmdTestMove() {
 	_ = a.SendChat(fmt.Sprintf("Moved to: %.2f, %.2f, %.2f", targetX, y, z))
 }
 
-func (a *Agent) cmdMoveTo(xs, ys, zs string) {
+// cmdLineTo performs straight-line movement (for flat worlds only)
+func (a *agent) cmdLineTo(xs, ys, zs string) {
 	if a.moveExec == nil {
-		_ = a.SendChat("Movement not available")
+		_ = a.SendChat("Movement executor not available")
 		return
 	}
 	tx, err := parseFloat(xs)
@@ -179,7 +209,7 @@ func (a *Agent) cmdMoveTo(xs, ys, zs string) {
 	}
 	dx, dy, dz := tx-x, ty-y, tz-z
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
-	_ = a.SendChat(fmt.Sprintf("Moving from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
+	_ = a.SendChat(fmt.Sprintf("Moving direct from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
 	_ = a.moveExec.LookAt(tx, ty, tz, true)
 	const stepSize = 0.2
 	const stepDelay = 50 * time.Millisecond
@@ -188,7 +218,7 @@ func (a *Agent) cmdMoveTo(xs, ys, zs string) {
 		_ = a.SendChat("Already at target position")
 		return
 	}
-	for i := 0; i < steps; i++ {
+	for i := range steps {
 		prog := float64(i+1) / float64(steps)
 		if prog > 1 {
 			prog = 1
@@ -203,7 +233,171 @@ func (a *Agent) cmdMoveTo(xs, ys, zs string) {
 	_ = a.SendChat(fmt.Sprintf("Arrived at (%.2f, %.2f, %.2f)", tx, ty, tz))
 }
 
-func (a *Agent) cmdMoveForward(ds string) {
+// cmdMoveTo performs pathfinding-based movement with segmentation for long distances
+func (a *agent) cmdMoveTo(xs, ys, zs string) {
+	// Validate coordinates first before checking for subsystems
+	tx, err := parseFloat(xs)
+	if err != nil {
+		_ = a.SendChat("Invalid X coordinate")
+		return
+	}
+	ty, err := parseFloat(ys)
+	if err != nil {
+		_ = a.SendChat("Invalid Y coordinate")
+		return
+	}
+	tz, err := parseFloat(zs)
+	if err != nil {
+		_ = a.SendChat("Invalid Z coordinate")
+		return
+	}
+
+	if a.pathfind == nil {
+		_ = a.SendChat("Pathfinding not available")
+		return
+	}
+	if a.moveExec == nil {
+		_ = a.SendChat("Movement executor not available")
+		return
+	}
+
+	x, y, z, _, _, ok := a.GetPosition()
+	if !ok {
+		_ = a.SendChat("Bot position not initialized")
+		return
+	}
+
+	// Convert to block coordinates for pathfinding
+	finalGoal := pathfinding.V3{
+		X: math.Floor(tx),
+		Y: math.Floor(ty),
+		Z: math.Floor(tz),
+	}
+
+	currentPos := pathfinding.V3{
+		X: math.Floor(x),
+		Y: math.Floor(y),
+		Z: math.Floor(z),
+	}
+
+	// Check if already at target block
+	if currentPos == finalGoal {
+		_ = a.SendChat("Already at target position")
+		return
+	}
+
+	log.Printf("[moveTo] Moving from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
+		currentPos.X, currentPos.Y, currentPos.Z, finalGoal.X, finalGoal.Y, finalGoal.Z)
+
+	// Use segmented pathfinding for long distances
+	const segmentDistance = 20.0  // Pathfind in 20-block segments
+	const waypointDistance = 10.0 // Waypoints every 10 blocks
+
+	for {
+		distToGoal := currentPos.DistanceTo(finalGoal)
+		log.Printf("[moveTo] Distance to goal: %.1f blocks", distToGoal)
+
+		// If close enough, pathfind directly to goal
+		if distToGoal <= segmentDistance {
+			log.Printf("[moveTo] Close to goal, pathfinding directly")
+			if err := a.pathfindAndFollow(currentPos, finalGoal, distToGoal); err != nil {
+				_ = a.SendChat(fmt.Sprintf("Pathfinding failed: %v", err))
+				return
+			}
+			break
+		}
+
+		// For long distances, create intermediate waypoint
+		dx := finalGoal.X - currentPos.X
+		dy := finalGoal.Y - currentPos.Y
+		dz := finalGoal.Z - currentPos.Z
+
+		// Normalize direction and scale to waypoint distance
+		factor := waypointDistance / distToGoal
+		waypoint := pathfinding.V3{
+			X: math.Floor(currentPos.X + dx*factor),
+			Y: math.Floor(currentPos.Y + dy*factor),
+			Z: math.Floor(currentPos.Z + dz*factor),
+		}
+
+		log.Printf("[moveTo] Segmented pathfinding to waypoint (%.0f, %.0f, %.0f)",
+			waypoint.X, waypoint.Y, waypoint.Z)
+		_ = a.SendChat(fmt.Sprintf("Waypoint: (%.0f, %.0f, %.0f)", waypoint.X, waypoint.Y, waypoint.Z))
+
+		// Pathfind to waypoint
+		if err := a.pathfindAndFollow(currentPos, waypoint, waypointDistance); err != nil {
+			_ = a.SendChat(fmt.Sprintf("Waypoint pathfinding failed: %v", err))
+			return
+		}
+
+		// Update current position for next segment
+		x, y, z, _, _, ok = a.GetPosition()
+		if !ok {
+			_ = a.SendChat("Lost position")
+			return
+		}
+		currentPos = pathfinding.V3{
+			X: math.Floor(x),
+			Y: math.Floor(y),
+			Z: math.Floor(z),
+		}
+	}
+
+	_ = a.SendChat(fmt.Sprintf("Arrived at (%.0f, %.0f, %.0f)", finalGoal.X, finalGoal.Y, finalGoal.Z))
+	log.Printf("[moveTo] Successfully reached final goal")
+}
+
+// pathfindAndFollow computes and follows a path from start to goal
+func (a *agent) pathfindAndFollow(start, goal pathfinding.V3, distance float64) error {
+	log.Printf("[pathfindAndFollow] From (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
+		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z)
+
+	// Calculate step limit based on distance
+	maxSteps := int(distance * 100) // Allow 100x distance for complex terrain
+	if maxSteps < 2000 {
+		maxSteps = 2000 // Minimum 2000 steps for short segments
+	}
+
+	path, err := a.pathfind.FindPath(start, goal, maxSteps)
+	if err != nil {
+		log.Printf("[pathfindAndFollow] FindPath error: %v", err)
+		return err
+	}
+
+	if !path.Found {
+		log.Printf("[pathfindAndFollow] No path found")
+		return fmt.Errorf("no path found")
+	}
+
+	log.Printf("[pathfindAndFollow] %s", path.LogSummary())
+	log.Printf("[pathfindAndFollow] Path details:\n%s", path.LogDetails())
+
+	// Follow the path
+	const stepDelay = 100 * time.Millisecond
+	for i, step := range path.Steps {
+		stepX := float64(step.Position.X) + 0.5
+		stepY := float64(step.Position.Y)
+		stepZ := float64(step.Position.Z) + 0.5
+
+		log.Printf("[pathfindAndFollow] Step %d/%d: %s to (%.1f, %.1f, %.1f)",
+			i+1, len(path.Steps), step.Movement, stepX, stepY, stepZ)
+
+		if err := a.moveExec.LookAt(stepX, stepY, stepZ, true); err != nil {
+			log.Printf("[pathfindAndFollow] LookAt failed: %v", err)
+		}
+
+		if err := a.moveExec.SendPosition(stepX, stepY, stepZ, true); err != nil {
+			log.Printf("[pathfindAndFollow] Movement failed: %v", err)
+			return fmt.Errorf("movement failed at step %d: %w", i+1, err)
+		}
+
+		time.Sleep(stepDelay)
+	}
+
+	return nil
+}
+
+func (a *agent) cmdMoveForward(ds string) {
 	if a.moveExec == nil {
 		_ = a.SendChat("Movement not available")
 		return
@@ -243,7 +437,7 @@ func (a *Agent) cmdMoveForward(ds string) {
 	_ = a.SendChat(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", tx, y, tz))
 }
 
-func (a *Agent) cmdMoveUp(ds string) {
+func (a *agent) cmdMoveUp(ds string) {
 	if a.moveExec == nil {
 		_ = a.SendChat("Movement not available")
 		return
@@ -276,7 +470,7 @@ func (a *Agent) cmdMoveUp(ds string) {
 	_ = a.SendChat(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", x, y+dist, z))
 }
 
-func (a *Agent) cmdTestPath() {
+func (a *agent) cmdTestPath() {
 	if a.pathfind == nil {
 		_ = a.SendChat("Pathfinder not available")
 		return
@@ -295,7 +489,7 @@ func (a *Agent) cmdTestPath() {
 	_ = a.SendChat("Test path computed 5 blocks north")
 }
 
-func (a *Agent) cmdFindPath(xs, ys, zs string) {
+func (a *agent) cmdFindPath(xs, ys, zs string) {
 	x, y, z, _, _, ok := a.GetPosition()
 	if !ok {
 		_ = a.SendChat("Bot position not initialized")
@@ -340,7 +534,7 @@ var (
 	bowHoldSleep              = time.Second
 )
 
-func (a *Agent) cmdStartTracking() {
+func (a *agent) cmdStartTracking() {
 	a.trackMu.Lock()
 	if a.trackActive {
 		a.trackMu.Unlock()
@@ -408,7 +602,7 @@ func (a *Agent) cmdStartTracking() {
 	}()
 }
 
-func (a *Agent) cmdStopTracking() {
+func (a *agent) cmdStopTracking() {
 	a.trackMu.Lock()
 	if !a.trackActive {
 		a.trackMu.Unlock()
@@ -421,27 +615,6 @@ func (a *Agent) cmdStopTracking() {
 	_ = a.SendChat("Tracking stopped")
 }
 
-// fireBow via UseItem + PlayerAction
-func (a *Agent) cmdFireBow() {
-	if a.client == nil || a.packetMgr == nil {
-		_ = a.SendChat("Client not ready")
-		return
-	}
-	// Use main hand then simulate action
-	useID := a.packetMgr.GetServerboundPacketID("ServerboundUseItem")
-	_ = a.client.WritePacket(pk.Marshal(useID, pk.VarInt(0), pk.VarInt(1), pk.Float(0), pk.Float(0)))
-	// Hold for some ticks, then shoot
-	go func() {
-		for i := 0; i < bowHoldIterations; i++ {
-			actID := a.packetMgr.GetServerboundPacketID("ServerboundPlayerAction")
-			_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(0), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
-			time.Sleep(bowHoldSleep)
-		}
-		actID := a.packetMgr.GetServerboundPacketID("ServerboundPlayerAction")
-		_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(5), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
-	}()
-}
-
 // nearest player using tracked entities filtered by player list membership
 type nearestInfo struct {
 	EntityID int32
@@ -450,7 +623,7 @@ type nearestInfo struct {
 	X, Y, Z  float64
 }
 
-func (a *Agent) findNearestPlayer() (nearestInfo, bool) {
+func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 	bx, by, bz, ok := a.GetPositionSimple()
 	if !ok {
 		return nearestInfo{}, false
@@ -481,7 +654,7 @@ func (a *Agent) findNearestPlayer() (nearestInfo, bool) {
 }
 
 // Entity stats for chat/log
-func (a *Agent) getEntityStats() map[string]int {
+func (a *agent) getEntityStats() map[string]int {
 	ents := a.snapshotEntities()
 	out := map[string]int{}
 	for _, e := range ents {
@@ -496,7 +669,7 @@ func (a *Agent) getEntityStats() map[string]int {
 	return out
 }
 
-func (a *Agent) formatEntityStats(stats map[string]int) string {
+func (a *agent) formatEntityStats(stats map[string]int) string {
 	if len(stats) == 0 {
 		return "No entities tracked"
 	}
@@ -510,7 +683,7 @@ func (a *Agent) formatEntityStats(stats map[string]int) string {
 }
 
 // follow nearest: legacy behavior prints messages without starting follow
-func (a *Agent) cmdStartFollowingNearest() {
+func (a *agent) cmdStartFollowingNearest() {
 	n, ok := a.findNearestPlayer()
 	if !ok {
 		_ = a.SendChat("Failed to find nearest player")

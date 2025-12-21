@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
@@ -72,15 +73,14 @@ func (h *nodeHeap) Pop() any {
 
 // heuristic calculates the heuristic cost from pos to goal
 // Uses 3D Euclidean distance with Y-axis weight adjustment
+// This is an admissible heuristic (never overestimates) which ensures A* optimality
 func heuristic(pos, goal V3) float64 {
-	dx := float64(goal.X - pos.X)
-	dy := float64(goal.Y - pos.Y)
-	dz := float64(goal.Z - pos.Z)
+	dx := goal.X - pos.X
+	dy := (goal.Y - pos.Y) * 1.5 // Weight Y-axis since vertical movement is more expensive
+	dz := goal.Z - pos.Z
 
-	// Weight Y-axis more since vertical movement is more expensive
-	dy = dy * 1.5
-
-	return (dx*dx + dy*dy + dz*dz)
+	// Return actual Euclidean distance (not squared) for admissible heuristic
+	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
 // (Pathfinding from)|(A\*)|(Pathfinding straight line distance)|(\(\d+,?\s?74+,?\s?\d+\))
@@ -102,8 +102,8 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 	}
 
 	// Debug: Get possible moves from start to verify we can move
-	startMoves := pf.movementValidator.GetPossibleMoves(start)
-	log.Printf("[A*] Start position (%f,%f,%f) has %d possible moves",
+	startMoves := pf.movementValidator.GetPossibleMoves(start, goal)
+	log.Printf("[A*] Start position (%f,%f,%f) has %d possible moves (filtered toward goal)",
 		start.X, start.Y, start.Z, len(startMoves))
 
 	if len(startMoves) > 0 {
@@ -158,14 +158,19 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 			// Reconstruct path
 			path := pf.reconstructPath(current, start, goal)
 			path.SearchTime = float64(time.Since(startTime).Milliseconds())
+			
+			// Log path summary and details
+			log.Printf("[A*] %s", path.LogSummary())
+			log.Printf("[A*] Path details:\n%s", path.LogDetails())
+			
 			return path, nil
 		}
 
 		// Add to closed set
 		closedSet[current.pos] = true
 
-		// Get all possible moves from current position
-		neighbors := pf.movementValidator.GetPossibleMoves(current.pos)
+		// Get all possible moves from current position (filtered toward goal)
+		neighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal)
 
 		for _, neighborStep := range neighbors {
 			neighborPos := neighborStep.Position

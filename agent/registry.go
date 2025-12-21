@@ -45,7 +45,7 @@ func (r *customRegistry) IsReady() bool {
 }
 
 // registryHandlers returns config-phase handlers to capture registry data.
-func (a *Agent) registryHandlers() []PacketHandler {
+func (a *agent) registryHandlers() []PacketHandler {
 	if a.packetMgr == nil {
 		return nil
 	}
@@ -59,7 +59,7 @@ func (a *Agent) registryHandlers() []PacketHandler {
 }
 
 // onRegistryData processes ClientboundConfigRegistryData packets to build registries.
-func (a *Agent) onRegistryData(p pk.Packet) error {
+func (a *agent) onRegistryData(p pk.Packet) error {
 	reader := bytes.NewReader(p.Data)
 
 	var registryID pk.String
@@ -120,7 +120,7 @@ func (a *Agent) onRegistryData(p pk.Packet) error {
 }
 
 // GetRegistry retrieves a custom registry by ID.
-func (a *Agent) GetRegistry(id RegistryID) CustomRegistry {
+func (a *agent) GetRegistry(id RegistryID) CustomRegistry {
 	a.regMu.RLock()
 	defer a.regMu.RUnlock()
 	return a.registries[id]
@@ -128,7 +128,7 @@ func (a *Agent) GetRegistry(id RegistryID) CustomRegistry {
 
 // onRegistryDataCallback handles registry data received during configuration phase.
 // This is invoked by the bot client as each registry is processed.
-func (a *Agent) onRegistryDataCallback(registryID string, entries map[string]int32) {
+func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int32) {
 	// Handle entity type registry to set player entity type for movement mirror
 	if registryID == "minecraft:entity_type" && a.moveMirror != nil {
 		if playerTypeID, ok := entries["minecraft:player"]; ok {

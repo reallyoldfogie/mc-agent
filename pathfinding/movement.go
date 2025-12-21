@@ -83,19 +83,42 @@ func (mv *MovementValidator) CanAscend(from, to V3) bool {
 		return false // Too far
 	}
 
+	// Debug ascend checks for start position (use integer equality since V3 uses float64 for block coords)
+	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
+		log.Printf("[DEBUG CanAscend] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
+			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+	}
+
 	// Check if destination is passable
 	if !mv.isPositionPassable(to) {
+		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
+			log.Printf("[DEBUG CanAscend] FAILED: destination not passable")
+		}
 		return false
 	}
 
 	// Check if there's ground to stand on
 	if !mv.hasGroundSupport(to) {
+		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
+			log.Printf("[DEBUG CanAscend] FAILED: no ground support")
+		}
 		return false
 	}
 
 	// Check if there's headroom to jump
 	jumpSpace := from.Add(0, 2, 0)
-	return mv.isBlockPassable(jumpSpace)
+	if !mv.isBlockPassable(jumpSpace) {
+		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
+			log.Printf("[DEBUG CanAscend] FAILED: no headroom at (%.0f,%.0f,%.0f)",
+				jumpSpace.X, jumpSpace.Y, jumpSpace.Z)
+		}
+		return false
+	}
+	
+	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
+		log.Printf("[DEBUG CanAscend] SUCCESS")
+	}
+	return true
 }
 
 // CanDescend checks if the bot can drop down from 'from' to 'to' (1-3 blocks lower)
@@ -617,9 +640,81 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 	return -1 // No valid ground found
 }
 
+// logTerrainAround logs all blocks around a position for debugging
+func (mv *MovementValidator) logTerrainAround(from V3) {
+	log.Printf("[TERRAIN] === Terrain around (%.0f, %.0f, %.0f) ===", from.X, from.Y, from.Z)
+	
+	// All 8 directions plus center
+	directions := []struct{
+		name string
+		dx, dz float64
+	}{
+		{"CENTER", 0, 0},
+		{"NORTH", 0, -1},
+		{"SOUTH", 0, 1},
+		{"EAST", 1, 0},
+		{"WEST", -1, 0},
+		{"NE", 1, -1},
+		{"SE", 1, 1},
+		{"SW", -1, 1},
+		{"NW", -1, -1},
+	}
+	
+	// For each direction, log blocks from Y-1 to Y+3
+	for _, dir := range directions {
+		x := from.X + dir.dx
+		z := from.Z + dir.dz
+		
+		log.Printf("[TERRAIN] %s (%.0f, %.0f):", dir.name, x, z)
+		for dy := float64(-1); dy <= 3; dy++ {
+			y := from.Y + dy
+			stateID := mv.world.GetBlockAt(x, y, z)
+			
+			var blockName string
+			var passable bool
+			var solid bool
+			
+			if stateID == 0 {
+				blockName = "air"
+				passable = true
+				solid = false
+			} else {
+				blockID := mv.blockMgr.BlockIDByStateID(stateID)
+				block := mv.blockMgr.GetByID(blockID)
+				blockName = block.Name
+				props := mv.propsFromStateID(stateID)
+				passable = mv.shapeMgr.IsPassable(blockName, props)
+				solid = mv.shapeMgr.IsSolid(blockName, props)
+			}
+			
+			var yLabel string
+			switch dy {
+			case -1:
+				yLabel = "Y-1(ground)"
+			case 0:
+				yLabel = "Y  (feet)  "
+			case 1:
+				yLabel = "Y+1(head)  "
+			case 2:
+				yLabel = "Y+2(jump)  "
+			case 3:
+				yLabel = "Y+3        "
+			}
+			
+			log.Printf("  %s: %s (passable=%t, solid=%t)", yLabel, blockName, passable, solid)
+		}
+	}
+}
+
 // GetPossibleMoves returns all valid moves from a given position
-func (mv *MovementValidator) GetPossibleMoves(from V3) []PathStep {
+// Optionally filters moves based on goal to reduce search space (pass zero V3 to disable filtering)
+func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
 	moves := make([]PathStep, 0, 32) // Increased capacity for more move types
+	
+	// Debug: log terrain around start position once
+	if mv.debugCheckCount == 0 {
+		mv.logTerrainAround(from)
+	}
 
 	// Cardinal directions (N, S, E, W)
 	cardinalDirs := []struct {
@@ -767,6 +862,41 @@ func (mv *MovementValidator) GetPossibleMoves(from V3) []PathStep {
 				Cost:     SwimDown.BaseCost(),
 			})
 		}
+	}
+
+	// Prune moves that go too far from goal (if goal is provided)
+	if goal.X != 0 || goal.Y != 0 || goal.Z != 0 {
+		fromDist := from.DistanceTo(goal)
+		filtered := make([]PathStep, 0, len(moves))
+		
+		// Debug: log first call to understand terrain
+		if mv.debugCheckCount < 2 {
+			log.Printf("[GetPossibleMoves] DEBUG from=(%.0f,%.0f,%.0f) goal=(%.0f,%.0f,%.0f) dist=%.1f",
+				from.X, from.Y, from.Z, goal.X, goal.Y, goal.Z, fromDist)
+			log.Printf("[GetPossibleMoves] DEBUG Generated %d moves before pruning:", len(moves))
+			for i, move := range moves {
+				toDist := move.Position.DistanceTo(goal)
+				log.Printf("  Move %d: %s to (%.0f,%.0f,%.0f) distToGoal=%.1f",
+					i+1, move.Movement, move.Position.X, move.Position.Y, move.Position.Z, toDist)
+			}
+		}
+		
+		for _, move := range moves {
+			toDist := move.Position.DistanceTo(goal)
+			// Allow moves that get closer, or slightly farther (for obstacle avoidance)
+			// Allow up to 5 blocks detour to handle obstacles
+			if toDist <= fromDist+5.0 {
+				filtered = append(filtered, move)
+			}
+		}
+		
+		if mv.debugCheckCount < 2 {
+			log.Printf("[GetPossibleMoves] DEBUG After pruning: %d moves (pruned %d)",
+				len(filtered), len(moves)-len(filtered))
+			mv.debugCheckCount++
+		}
+		
+		return filtered
 	}
 
 	return moves

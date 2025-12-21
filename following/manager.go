@@ -81,7 +81,7 @@ type followManager struct {
 	config   FollowConfig
 
 	// Dependencies
-	targetSelector   *TargetSelector
+	targetSelector   TargetSelector
 	pathFinder       pathfinding.PathFinder
 	movementExecutor movement.MovementExecutor
 	getBotPosition   func() (x, y, z float64, yaw, pitch float32, initialized bool)
@@ -90,7 +90,7 @@ type followManager struct {
 
 // NewFollowManager creates a new follow manager
 func NewFollowManager(
-	targetSelector *TargetSelector,
+	targetSelector TargetSelector,
 	pathFinder pathfinding.PathFinder,
 	movementExecutor movement.MovementExecutor,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
@@ -415,7 +415,10 @@ func (fm *followManager) calculateNewPath(botX, botY, botZ, targetX, targetY, ta
 	fm.lastTargetPos.z = targetZ
 	fm.state = StateFollowingPath
 
-	log.Printf("New path calculated: %d steps, cost %.2f", len(path.Steps), path.TotalCost)
+	// Log detailed path information
+	log.Printf("[Follow] %s", path.LogSummary())
+	log.Printf("[Follow] Path details:\n%s", path.LogDetails())
+
 	return nil
 }
 

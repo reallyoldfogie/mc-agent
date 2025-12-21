@@ -100,7 +100,7 @@ var (
 	movementExecutor movement.MovementExecutor
 	shapeMgr         pathfinding.BlockShapeManager
 	pathFinder       pathfinding.PathFinder
-	targetSelector   *following.TargetSelector
+	targetSelector   following.TargetSelector
 	followManager    following.FollowManager
 
 	protocolVersion uint
@@ -541,7 +541,10 @@ func main() {
 			replayRecGlobal = rec
 			replayMirrorGlobal = agentpkg.NewReplayMovementMirror(rec, packetMgr, skinProvider)
 
-			client.Events.AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec)})
+			// Use bundle delimiter filtering to avoid recording unconsumed buffer data
+			// Login phase packets (including Set Compression) are filtered at the bot client level
+			bundleDelimiterID := int32(packetMgr.GetClientboundPacketID("ClientboundBundleDelimiter"))
+			client.Events.AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
 		}
 	}
 
@@ -2003,7 +2006,7 @@ func moveToCommand(xStr, yStr, zStr string) {
 
 	fmt.Printf("moveToCommand: Moving in %d steps of %.2f blocks\n", stepCount, stepSize)
 
-	for i := 0; i < stepCount; i++ {
+	for i := range stepCount {
 		// Calculate next position
 		progress := float64(i+1) / float64(stepCount)
 		if progress > 1.0 {
