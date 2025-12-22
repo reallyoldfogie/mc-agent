@@ -3,6 +3,8 @@ package physics
 import (
 	"fmt"
 	"math"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // World represents a provider of block information for physics simulation.
@@ -26,14 +28,9 @@ type BlockShapeProvider interface {
 	IsClimbable(blockStateID int32) bool
 }
 
-// Inputs represents player control inputs for one physics tick.
-type Inputs struct {
-	ThrottleX, ThrottleZ float64 // Movement direction (-1.0 to +1.0)
-	Yaw, Pitch           float64 // Look direction (degrees)
-	Jump                 bool    // Jump button pressed
-	Sprint               bool    // Sprint button pressed (increases speed by 30%)
-	Sneak                bool    // Sneak button pressed (reduces speed to 30%)
-}
+// Inputs is an alias to models.Inputs for backward compatibility.
+// Use models.Inputs for new code to avoid import cycles.
+type Inputs = models.Inputs
 
 // State tracks the physics state of a player entity.
 // This includes position, velocity, rotation, and ground contact flags.
@@ -92,7 +89,7 @@ func (s *State) SetPosition(pos V3, yaw, pitch float64, onGround bool) {
 	s.Pos = pos
 	s.Yaw = yaw
 	s.Pitch = pitch
-	s.Vel = V3{} // Reset velocity
+	s.Vel = V3{X: 0, Y: 0, Z: 0} // Reset velocity
 	s.onGround = onGround
 	s.collision.vertical = false
 	s.collision.horizontal = false
@@ -101,6 +98,11 @@ func (s *State) SetPosition(pos V3, yaw, pitch float64, onGround bool) {
 // GetPosition returns the current position and rotation.
 func (s *State) GetPosition() (pos V3, yaw, pitch float64, onGround bool) {
 	return s.Pos, s.Yaw, s.Pitch, s.onGround
+}
+
+// GetVelocity returns the current velocity.
+func (s *State) GetVelocity() V3 {
+	return s.Vel
 }
 
 // GetAABB returns the player's current axis-aligned bounding box.

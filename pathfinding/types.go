@@ -2,49 +2,17 @@ package pathfinding
 
 import (
 	"fmt"
-	"math"
 	"strings"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-// V3 represents a 3D integer position (block coordinates)
-type V3 struct {
-	X, Y, Z float64
-}
+// V3 is an alias to models.V3 for backward compatibility.
+// Use models.V3 for new code.
+type V3 = models.V3
 
-// DistanceTo calculates 3D Euclidean distance to another position
-func (v V3) DistanceTo(other V3) float64 {
-	dx := other.X - v.X
-	dy := other.Y - v.Y
-	dz := other.Z - v.Z
-	return math.Sqrt(dx*dx + dy*dy + dz*dz)
-}
-
-// ManhattanDistance calculates Manhattan distance to another position
-func (v V3) ManhattanDistance(other V3) float64 {
-	dx := v.X - other.X
-	dy := v.Y - other.Y
-	dz := v.Z - other.Z
-	if dx < 0 {
-		dx = -dx
-	}
-	if dy < 0 {
-		dy = -dy
-	}
-	if dz < 0 {
-		dz = -dz
-	}
-	return dx + dy + dz
-}
-
-// Add returns a new position offset by the given amounts
-func (v V3) Add(dx, dy, dz float64) V3 {
-	return V3{X: v.X + dx, Y: v.Y + dy, Z: v.Z + dz}
-}
-
-// ToFloat64 converts to float64 coordinates (for movement executor)
-func (v V3) ToFloat64() (x, y, z float64) {
-	return float64(v.X), float64(v.Y), float64(v.Z)
-}
+// V3Sub is an alias to models.V3Sub for backward compatibility.
+var V3Sub = models.V3Sub
 
 // MovementType describes how the bot should move to the next position
 type MovementType int
