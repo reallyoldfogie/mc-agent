@@ -65,8 +65,8 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		Yaw:       yaw,
 		Pitch:     pitch,
 		Jump:      false,
-		Sprint:    false, // TODO: Add sprint support based on movement type
-		Sneak:     false, // TODO: Add sneak support for sneak movement types
+		Sprint:    false,
+		Sneak:     false,
 	}
 
 	// Add small random pitch variations (simulates natural head movement)
@@ -146,6 +146,38 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		// Swimming down in water
 		// Sneak button makes you swim down
 		out.Sneak = true
+
+	// Directional ladder descents
+	case DescendLadderNorth, DescendLadderSouth, DescendLadderEast, DescendLadderWest:
+		// Descend ladder and exit in specific direction
+		// Similar to Climb but with deadzone throttle to descend
+		// Plus directional bias for exit
+		dist2 := math.Sqrt(deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z)
+
+		if dist2 < 0.3 {
+			// Near target, use deadzone throttle to prevent climbing up
+			out.ThrottleX = 0
+			out.ThrottleZ = 0
+		}
+		// Otherwise default inputs (move toward target) are fine
+
+	// 2-block drops
+	case Drop2North, Drop2South, Drop2East, Drop2West:
+		// 2-block drop with direction
+		// Same as Descend - walk forward and let gravity do the work
+		// Default inputs are fine
+
+	// True diagonal traverses
+	case TraverseNorthEast, TraverseNorthWest, TraverseSouthEast, TraverseSouthWest:
+		// Diagonal movement
+		// Default inputs already handle this (atan2 calculates correct angle)
+		// No special logic needed
+
+	// Sneaking movements
+	case SneakThrough, SneakTraverse:
+		// Sneaking movements (1.5 block gaps, edge safety)
+		out.Sneak = true // Enable sneaking for reduced hitbox and slow speed
+		// Default throttle toward target is fine
 	}
 
 	return out
@@ -221,6 +253,42 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 	case SwimDown:
 		// Swimming down: ~0.15 blocks/tick (faster with sneak)
 		return int(dist/0.12) + 15
+
+	// Directional ladder descents
+	case DescendLadderNorth, DescendLadderSouth, DescendLadderEast, DescendLadderWest:
+		// Same as Climb - ladder speed is ~0.15 blocks/tick
+		return int(dist/0.12) + 20
+
+	// 2-block drops
+	case Drop2North, Drop2South, Drop2East, Drop2West:
+		// 2-block fall - similar to Descend but longer
+		verticalDist := pos.Y - step.Position.Y
+		if verticalDist < 0.1 {
+			verticalDist = 2.0 // Assume 2 blocks if calculation fails
+		}
+		fallTime := int(math.Sqrt(verticalDist/0.04)) + 5
+
+		horizontalDist := math.Sqrt(
+			(step.Position.X-pos.X)*(step.Position.X-pos.X) +
+				(step.Position.Z-pos.Z)*(step.Position.Z-pos.Z),
+		)
+		horizontalTime := int(horizontalDist / 0.20)
+
+		if fallTime > horizontalTime {
+			return fallTime + 5
+		}
+		return horizontalTime + 5
+
+	// True diagonals
+	case TraverseNorthEast, TraverseNorthWest, TraverseSouthEast, TraverseSouthWest:
+		// Diagonal traverse - same speed as normal traverse
+		return int(dist/0.20) + 10
+
+	// Sneaking movements
+	case SneakThrough, SneakTraverse:
+		// Sneaking is 30% speed = ~0.065 blocks/tick
+		// Much slower, so increase estimate
+		return int(dist/0.06) + 20
 
 	default:
 		// Unknown movement type, use conservative estimate

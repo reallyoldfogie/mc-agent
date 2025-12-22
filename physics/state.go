@@ -299,6 +299,14 @@ func (s *State) tickPosition(w World) {
 	s.collision.vertical = newVel.Y != s.Vel.Y
 	s.onGround = s.collision.vertical && s.Vel.Y < 0
 
+	// TODO: Edge prevention when sneaking
+	// When s.isSneaking is true and s.onGround is true, prevent movement that would
+	// cause the player to walk off a block edge. This requires:
+	// 1. Check if next position would be over an edge (no block below within step distance)
+	// 2. If so, clamp velocity to keep player on current block
+	// 3. Vanilla Minecraft uses block edge detection at the corners of the player hitbox
+	// This is important for SneakTraverse movement type and building over edges
+
 	// Update velocity
 	s.Vel = newVel
 }
