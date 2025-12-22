@@ -6,11 +6,11 @@ This document outlines the integration of client-side physics simulation from th
 
 **Key Discovery**: mc-agent already has sophisticated projectile physics (`agent/bowCommands.go`) with full ballistic simulation, trajectory optimization, and working implementation. This code will be extracted and generalized in Phase 6 rather than built from scratch.
 
-**Status**: In Progress - Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Complete
+**Status**: In Progress - Phase 1 ✅ Phase 2 ✅ Phase 3 ✅ Phase 4 ✅ Phase 5 (Part 1) ✅ Complete
 **Priority**: HIGH - Foundation for production-quality bot movement
-**Version**: 1.4
+**Version**: 1.5
 **Created**: 2025-12-20
-**Updated**: 2025-12-22 (Phase 4 implementation complete)
+**Updated**: 2025-12-22 (Phase 5 Part 1 - Movement Types & Sneaking)
 
 ---
 
@@ -177,10 +177,43 @@ This document outlines the integration of client-side physics simulation from th
 
 ---
 
-### Phase 5: Enhanced Movement Types - Not Started
+### Phase 5: Enhanced Movement Types ⏳ **IN PROGRESS (Part 1 Complete)**
 
-**Status**: Pending
-**Dependencies**: Phase 4
+**Part 1 Completed**: 2025-12-22
+**Time**: ~3 hours
+**Files Modified**: 3 files, ~100 LOC
+
+**Part 1 Deliverables**:
+- ✅ Added 14 new movement type enums (24 total movement types now)
+- ✅ Sneaking mechanics in physics (dynamic hitbox 1.8 → 1.5 blocks)
+- ✅ Updated completion detection for all new movement types
+
+**New Movement Types Added**:
+1. **Directional Ladder Descents** (4 types): DescendLadderNorth/South/East/West
+2. **2-Block Drops** (4 types): Drop2North/South/East/West
+3. **True Diagonals** (4 types): TraverseNorthEast/NorthWest/SouthEast/SouthWest
+4. **Sneaking Movements** (2 types): SneakThrough, SneakTraverse
+
+**Sneaking Mechanics Implemented**:
+- isSneaking flag in physics.State
+- Dynamic hitbox: GetAABB() returns 1.5 block height when sneaking (vs 1.8 normal)
+- Sneak state updated from input.Sneak each tick
+- Speed multiplier (30%) already implemented in Phase 2
+
+**Completion Detection**:
+- Directional ladder descents use same threshold as Climb
+- 2-block drops use same threshold as Descend
+- True diagonals use default traverse threshold
+- Sneak movements use tighter tolerance (0.15 vs 0.18 horizontal)
+
+**Remaining Work (Part 2)**:
+- Edge prevention when sneaking (prevent walking off blocks)
+- Input generator updates for new movement types
+- Movement validation for new types
+- Pathfinding neighbor generation updates
+- Comprehensive testing
+
+**Status**: Part 1 complete, Part 2 pending
 
 ---
 

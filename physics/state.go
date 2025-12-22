@@ -44,8 +44,9 @@ type State struct {
 	Pitch float64 // Vertical look direction (degrees, -90=up, 0=forward, 90=down)
 
 	// State flags
-	onGround  bool // True if player is standing on solid ground
-	collision struct {
+	onGround   bool // True if player is standing on solid ground
+	isSneaking bool // True if player is sneaking (affects hitbox and edge behavior)
+	collision  struct {
 		vertical   bool // True if vertical (Y) velocity was clamped by collision
 		horizontal bool // True if horizontal (X/Z) velocity was clamped by collision
 	}
@@ -106,10 +107,16 @@ func (s *State) GetVelocity() V3 {
 }
 
 // GetAABB returns the player's current axis-aligned bounding box.
+// Height changes based on sneaking state: 1.8 blocks normally, 1.5 blocks when sneaking.
 func (s *State) GetAABB() AABB {
+	height := s.height
+	if s.isSneaking {
+		height = PlayerHeightSneaking // 1.5 blocks when sneaking
+	}
+
 	return AABB{
 		X: MinMax{Min: s.Pos.X - s.width/2, Max: s.Pos.X + s.width/2},
-		Y: MinMax{Min: s.Pos.Y, Max: s.Pos.Y + s.height},
+		Y: MinMax{Min: s.Pos.Y, Max: s.Pos.Y + height},
 		Z: MinMax{Min: s.Pos.Z - s.width/2, Max: s.Pos.Z + s.width/2},
 	}
 }
@@ -119,6 +126,9 @@ func (s *State) GetAABB() AABB {
 // with collision detection and resolution.
 func (s *State) Tick(input Inputs, w World) error {
 	s.tick++
+
+	// Update sneaking state from inputs
+	s.isSneaking = input.Sneak
 
 	// Calculate ground-based inertia and acceleration
 	inertiaFactor := Inertia

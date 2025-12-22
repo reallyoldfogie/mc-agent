@@ -21,8 +21,14 @@ func IsComplete(currentPos V3, targetStep PathStep) bool {
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
 		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y <= 0.05
 
-	case Climb:
-		// Ladder descent
+	case Drop2North, Drop2South, Drop2East, Drop2West:
+		// 2-block drops (directional)
+		// Same as regular descend but for 2-block falls
+		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
+		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y <= 0.05
+
+	case Climb, DescendLadderNorth, DescendLadderSouth, DescendLadderEast, DescendLadderWest:
+		// Ladder movements (descent or directional descent)
 		// Similar to regular descent but for ladder movement
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
 		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y <= 0.05
@@ -40,6 +46,14 @@ func IsComplete(currentPos V3, targetStep PathStep) bool {
 		// Slightly tighter horizontal tolerance, allow being slightly below target
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
 		return horizontalDist2 < (0.22*0.22) && deltaPos.Y >= -0.065
+
+	case SneakThrough, SneakTraverse:
+		// Sneaking movements (slow, precise)
+		// Tighter tolerance due to slower movement speed
+		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
+		return horizontalDist2 < (0.15*0.15) && // Tighter horizontal (0.15 vs 0.18)
+			deltaPos.Y >= -0.05 && // Tighter vertical range
+			deltaPos.Y <= 0.05
 
 	default:
 		// Default completion threshold for Traverse, Ascend, DiagonalTraverse, etc.
