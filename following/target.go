@@ -4,35 +4,23 @@ import (
 	"fmt"
 	"math"
 	"sync"
+
+	"github.com/google/uuid"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-// TrackedEntity represents a tracked entity (from main.go)
-type TrackedEntity struct {
-	UUID    [16]byte
-	X, Y, Z float64
-	Yaw     int8
-	Pitch   int8
-}
-
-// TargetSelector finds and validates target players
-type TargetSelector interface {
-	FindPlayerByName(name string) (*TargetInfo, error)
-	FindNearestPlayer() (*TargetInfo, error)
-	GetTargetPosition(entityID int32) (x, y, z float64, exists bool)
-	CalculateDistance(entityID int32) (float64, error)
-}
 type targetSelector struct {
-	getTrackedEntities func() map[int32]*TrackedEntity
+	getTrackedEntities func() map[int32]*models.TrackedEntity
 	getPlayerUUID      func(playerName string) ([16]byte, error)
 	getBotPosition     func() (x, y, z float64, initialized bool)
 }
 
 // NewTargetSelector creates a new target selector
 func NewTargetSelector(
-	getEntities func() map[int32]*TrackedEntity,
+	getEntities func() map[int32]*models.TrackedEntity,
 	getPlayerUUID func(string) ([16]byte, error),
 	getBotPos func() (float64, float64, float64, bool),
-) TargetSelector {
+) models.TargetSelector {
 	return &targetSelector{
 		getTrackedEntities: getEntities,
 		getPlayerUUID:      getPlayerUUID,
@@ -40,21 +28,14 @@ func NewTargetSelector(
 	}
 }
 
-// TargetInfo contains information about a selected target
-type TargetInfo struct {
-	EntityID int32
-	UUID     [16]byte
-	Name     string
-	X, Y, Z  float64
-	Distance float64
-}
-
 // FindPlayerByName finds a player entity by name
-func (ts *targetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
+func (ts *targetSelector) FindPlayerByName(name string) (*models.TargetInfo, error) {
 	// Get player UUID from player list
 	uuid, err := ts.getPlayerUUID(name)
+	uuidSource := "player list"
 	if err != nil {
-		return nil, fmt.Errorf("player %s not found in player list: %w", name, err)
+		uuid = deriveOfflineUUID(name)
+		uuidSource = "offline UUID"
 	}
 
 	// Get tracked entities
@@ -76,7 +57,7 @@ func (ts *targetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
 				distance = math.Sqrt(dx*dx + dy*dy + dz*dz)
 			}
 
-			return &TargetInfo{
+			return &models.TargetInfo{
 				EntityID: entityID,
 				UUID:     uuid,
 				Name:     name,
@@ -88,11 +69,18 @@ func (ts *targetSelector) FindPlayerByName(name string) (*TargetInfo, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("player %s not found in tracked entities (may be too far away)", name)
+	return nil, fmt.Errorf("player %s not found in tracked entities (UUID source: %s, may be too far away)", name, uuidSource)
+}
+
+func deriveOfflineUUID(name string) [16]byte {
+	var out [16]byte
+	ns := uuid.NewMD5(uuid.NameSpaceOID, []byte("OfflinePlayer:"+name))
+	copy(out[:], ns[:])
+	return out
 }
 
 // FindNearestPlayer finds the nearest player entity
-func (ts *targetSelector) FindNearestPlayer() (*TargetInfo, error) {
+func (ts *targetSelector) FindNearestPlayer() (*models.TargetInfo, error) {
 	entities := ts.getTrackedEntities()
 	if len(entities) == 0 {
 		return nil, fmt.Errorf("no entities tracked")
@@ -103,7 +91,7 @@ func (ts *targetSelector) FindNearestPlayer() (*TargetInfo, error) {
 		return nil, fmt.Errorf("bot position not initialized")
 	}
 
-	var nearest *TargetInfo
+	var nearest *models.TargetInfo
 	minDistance := math.MaxFloat64
 
 	for entityID, entity := range entities {
@@ -114,7 +102,7 @@ func (ts *targetSelector) FindNearestPlayer() (*TargetInfo, error) {
 
 		if distance < minDistance {
 			minDistance = distance
-			nearest = &TargetInfo{
+			nearest = &models.TargetInfo{
 				EntityID: entityID,
 				UUID:     entity.UUID,
 				Name:     "", // We don't know the name without reverse lookup
@@ -169,23 +157,23 @@ func (ts *targetSelector) CalculateDistance(entityID int32) (float64, error) {
 // SafeTrackedEntities provides thread-safe access to tracked entities
 type SafeTrackedEntities struct {
 	mu       sync.RWMutex
-	entities map[int32]*TrackedEntity
+	entities map[int32]*models.TrackedEntity
 }
 
 // NewSafeTrackedEntities creates a new thread-safe entity tracker
 func NewSafeTrackedEntities() *SafeTrackedEntities {
 	return &SafeTrackedEntities{
-		entities: make(map[int32]*TrackedEntity),
+		entities: make(map[int32]*models.TrackedEntity),
 	}
 }
 
 // Get returns a copy of the entities map
-func (ste *SafeTrackedEntities) Get() map[int32]*TrackedEntity {
+func (ste *SafeTrackedEntities) Get() map[int32]*models.TrackedEntity {
 	ste.mu.RLock()
 	defer ste.mu.RUnlock()
 
 	// Return a copy to avoid concurrent access issues
-	copy := make(map[int32]*TrackedEntity, len(ste.entities))
+	copy := make(map[int32]*models.TrackedEntity, len(ste.entities))
 	for k, v := range ste.entities {
 		entityCopy := *v
 		copy[k] = &entityCopy
@@ -194,7 +182,7 @@ func (ste *SafeTrackedEntities) Get() map[int32]*TrackedEntity {
 }
 
 // Set updates or adds an entity
-func (ste *SafeTrackedEntities) Set(entityID int32, entity *TrackedEntity) {
+func (ste *SafeTrackedEntities) Set(entityID int32, entity *models.TrackedEntity) {
 	ste.mu.Lock()
 	defer ste.mu.Unlock()
 	ste.entities[entityID] = entity

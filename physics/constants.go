@@ -1,12 +1,17 @@
 package physics
 
-import "time"
+import (
+	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
+)
 
 // Player dimension constants
 const (
-	PlayerWidth    = 0.6  // Player collision box width (X/Z axes)
-	PlayerHeight   = 1.8  // Player collision box height (Y axis)
-	PlayerEyeHeight = 1.62 // Eye level offset from feet (for raycasting/look)
+	PlayerWidth          = models.PlayerWidth
+	PlayerHeight         = models.PlayerHeight
+	PlayerEyeHeight      = models.PlayerEyeHeight
+	PlayerHeightSneaking = models.PlayerHeightSneaking
 )
 
 // Movement constants
@@ -40,8 +45,8 @@ const (
 
 // Tick rate constants
 const (
-	TicksPerSecond = 20                       // Minecraft runs at 20 TPS
-	TickDuration   = 50 * time.Millisecond    // 50ms per tick
+	TicksPerSecond = 20                    // Minecraft runs at 20 TPS
+	TickDuration   = 50 * time.Millisecond // 50ms per tick
 )
 
 // Sprint and sneak multipliers
@@ -51,10 +56,7 @@ const (
 )
 
 // Sneaking mechanics constants
-const (
-	PlayerHeightSneaking = 1.5 // Player height when sneaking (reduced from 1.8 blocks)
-	// Note: Player width remains 0.6 blocks when sneaking
-)
+// Note: Player width remains 0.6 blocks when sneaking.
 
 // Swift Sneak enchantment multipliers (future enhancement)
 // When Swift Sneak enchantment is detected on leggings, these replace SneakMultiplier

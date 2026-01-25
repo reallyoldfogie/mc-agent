@@ -17,10 +17,17 @@ import (
 	"time"
 
 	"github.com/moby/moby/client"
+	"gopkg.in/natefinch/lumberjack.v2"
+
 	"github.com/reallyoldfogie/mc-agent/agent"
+	"github.com/reallyoldfogie/mc-agent/models"
+
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/reallyoldfogie/mc-bot-go/utils"
+
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
+
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 )
 
@@ -44,13 +51,40 @@ type TestInstance struct {
 
 // ManagedAgent wraps an agent instance with lifecycle tracking.
 type ManagedAgent struct {
-	Name   string
-	Agent  agent.Agent
-	Config agent.Config
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	mu     sync.Mutex
+	Name      string
+	Agent     models.Agent
+	Config    agent.Config
+	Cam       *ManagedAgent
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	mu        sync.Mutex
+	botClient bot.Client
+}
+
+func (ma *ManagedAgent) BotClient() bot.Client {
+	return ma.botClient
+}
+
+// ScreenManager returns the concrete screen manager for tests that need direct access.
+// For most tests, use the agent's ScreenOperations interface methods instead.
+func (ma *ManagedAgent) ScreenManager() screen.Manager {
+	// Get the screen manager from the agent
+	sm := ma.Agent.GetScreenManager()
+	if sm == nil {
+		return nil
+	}
+	return sm.(screen.Manager)
+}
+
+// GetTrackedEntities returns all tracked entities from the agent
+func (ma *ManagedAgent) GetTrackedEntities() map[int32]agent.TrackedEntityInfo {
+	return ma.Agent.GetTrackedEntities()
+}
+
+// FindNearestEntityByType finds the nearest entity of a specific type to a position
+func (ma *ManagedAgent) FindNearestEntityByType(entityType int32, x, y, z float64) (int32, float64, bool) {
+	return ma.Agent.FindNearestEntityByType(entityType, x, y, z)
 }
 
 // NewFramework creates a new testing framework.
@@ -65,8 +99,28 @@ func NewFramework() (*Framework, error) {
 	}, nil
 }
 
+// clearServerWorldData removes persisted world data from a cached server dir.
+// This keeps downloaded JARs while ensuring tests start from a clean world.
+func clearServerWorldData(cacheDir string) {
+	if cacheDir == "" || os.Getenv("TEST_KEEP_SERVER_DATA") != "" {
+		return
+	}
+
+	worldDirs := []string{"world", "world_nether", "world_the_end"}
+	for _, dir := range worldDirs {
+		path := filepath.Join(cacheDir, dir)
+		if err := os.RemoveAll(path); err != nil {
+			log.Printf("[Framework.StartServer] failed to remove world data %s: %v", path, err)
+		}
+	}
+}
+
 // WorldGenType specifies the terrain generation mode for tests.
 type WorldGenType string
+
+func (w WorldGenType) String() string {
+	return string(w)
+}
 
 const (
 	WorldGenRandom     WorldGenType = "default"    // Random terrain
@@ -74,41 +128,67 @@ const (
 	WorldGenControlled WorldGenType = "controlled" // Flat with programmatic obstacles
 )
 
+type Difficulty string
+
+func (d Difficulty) String() string {
+	return string(d)
+}
+
+const (
+	DifficultyPeaceful Difficulty = "peaceful"
+	DifficultyEasy     Difficulty = "easy"
+	DifficultyNormal   Difficulty = "normal"
+	DifficultyHard     Difficulty = "hard"
+)
+
+type GameMode string
+
+func (g GameMode) String() string {
+	return string(g)
+}
+
+const (
+	GameModeCreative  GameMode = "creative"
+	GameModeSurvival  GameMode = "survival"
+	GameModeAdventure GameMode = "adventure"
+	GameModeSpectator GameMode = "spectator"
+)
+
 // ServerConfig contains configuration for a test server instance.
 type ServerConfig struct {
 	Version              string
-	Difficulty           string       // peaceful, easy, normal, hard
-	GameMode             string       // creative, survival, adventure, spectator
+	Difficulty           Difficulty   // peaceful, easy, normal, hard
+	GameMode             GameMode     // creative, survival, adventure, spectator
 	WorldGen             WorldGenType // World generation type (default: random)
 	PullImage            bool
-	Memory               string // e.g. "1G", "2G" - Java heap size (default: 1G for tests)
+	Memory               string // e.g. "1G", "2G" - Java heap size (default: 512M for tests)
 	CacheDir             string // Cache directory for server JARs (default: ~/.cache/mc-agent-test)
 	ExtraEnv             map[string]string
 	StartTimeout         time.Duration // default 10 minutes
 	SkipMemoryCheck      bool          // Skip memory availability check (not recommended)
-	MinFreeMemoryMB      int           // Minimum free memory required in MB (default: 2048)
+	MinFreeMemoryMB      int           // Minimum free memory required in MB (default: 256)
 	EstimatedMemoryMB    int           // Estimated memory for this server in MB (auto-calculated from Memory field)
-	MemoryCheckRetries   int           // Number of times to retry memory check (default: 3)
-	MemoryCheckRetryWait time.Duration // Wait between retries (default: 5 seconds)
+	MemoryCheckRetries   int           // Number of times to retry memory check (default: 5)
+	MemoryCheckRetryWait time.Duration // Wait between retries (default: 15 seconds)
 }
 
 // DefaultServerConfig returns a sensible default configuration for tests.
-// Uses reduced memory (1G) to prevent OOM on systems with limited RAM.
+// Uses reduced memory (512M) to prevent OOM on systems with limited RAM.
 // Uses random terrain for full integration testing.
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
 		Version:              "1.21.5",
 		Difficulty:           "peaceful",
-		GameMode:             "creative",
+		GameMode:             "survival",
 		WorldGen:             WorldGenRandom, // Random terrain for realistic testing
 		PullImage:            false,          // set to true to pull latest image
-		Memory:               "1G",           // Reduced from default 2G to prevent OOM
+		Memory:               "512M",         // 512MB for Minecraft server
 		StartTimeout:         10 * time.Minute,
-		SkipMemoryCheck:      false,           // Always check memory availability
-		MinFreeMemoryMB:      1024,            //2048,           // Require 2GB free memory minimum
-		EstimatedMemoryMB:    0,               // Auto-calculated from Memory field
-		MemoryCheckRetries:   3,               // Retry 3 times before failing
-		MemoryCheckRetryWait: 5 * time.Second, // Wait 5 seconds between retries
+		SkipMemoryCheck:      false,            // Always check memory availability
+		MinFreeMemoryMB:      256,              // Required free memory buffer
+		EstimatedMemoryMB:    0,                // Auto-calculated from Memory field
+		MemoryCheckRetries:   5,                // Retry 5 times before failing
+		MemoryCheckRetryWait: 15 * time.Second, // Wait 5 seconds between retries
 	}
 }
 
@@ -135,6 +215,13 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		cfg.StartTimeout = 10 * time.Minute
 	}
 
+	// Override: if running against remote host, skip memory check
+	if host := os.Getenv(client.EnvOverrideHost); host != "" {
+		if host != "127.0.0.1" {
+			cfg.SkipMemoryCheck = true
+		}
+	}
+
 	// Check memory availability before starting server (unless skipped)
 	if !cfg.SkipMemoryCheck {
 		if err := f.checkMemoryAvailability(cfg); err != nil {
@@ -149,25 +236,80 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 	if extraEnv == nil {
 		extraEnv = make(map[string]string)
 	}
+	if _, ok := extraEnv["VIEW_DISTANCE"]; !ok {
+		extraEnv["VIEW_DISTANCE"] = "6"
+	}
+	if _, ok := extraEnv["SIMULATION_DISTANCE"]; !ok {
+		extraEnv["SIMULATION_DISTANCE"] = "4"
+	}
 	if cfg.Difficulty != "" {
-		extraEnv["DIFFICULTY"] = cfg.Difficulty
+		extraEnv["DIFFICULTY"] = cfg.Difficulty.String()
 	}
 	if cfg.GameMode != "" {
-		extraEnv["MODE"] = cfg.GameMode
+		extraEnv["MODE"] = cfg.GameMode.String()
 	}
+
+	extraEnv["TYPE"] = "FABRIC" // Use Fabric for tests
+
 	// Apply flat-world configuration if requested
 	if cfg.WorldGen == WorldGenFlat || cfg.WorldGen == WorldGenControlled {
 		// Use the flat world preset: "minecraft:flat"
 		extraEnv["LEVEL_TYPE"] = "flat"
 		// Flat world preset: grass block at y=64 for testing
-		extraEnv["GENERATOR_SETTINGS"] = "{\"layers\":[{\"block\":\"minecraft:grass_block\",\"height\":1},{\"block\":\"minecraft:dirt\",\"height\":3},{\"block\":\"minecraft:stone\",\"height\":60}],\"biome\":\"minecraft:plains\"}"
+		extraEnv["GENERATOR_SETTINGS"] = `{
+			"layers":[
+				{
+					"block":"minecraft:bedrock",
+					"height":1
+				},
+				{
+					"block":"minecraft:stone",
+					"height":59
+				},
+				{
+					"block":
+					"minecraft:dirt",
+					"height":3
+				},			
+				{
+					"block":"minecraft:grass_block",
+					"height":1
+				}
+			],
+			"biome":"minecraft:plains"
+		}`
+
+		// Control structure generation for flat worlds via environment variable
+		// Set MC_AGENT_GENERATE_STRUCTURES=false to disable villages, temples, etc.
+		// Defaults to false (no structures) for predictable flat world testing
+		if _, ok := extraEnv["GENERATE_STRUCTURES"]; !ok {
+			if genStructures := os.Getenv("MC_AGENT_GENERATE_STRUCTURES"); genStructures != "" {
+				extraEnv["GENERATE_STRUCTURES"] = genStructures
+			} else {
+				// Default: disable structures for predictable testing in flat worlds
+				extraEnv["GENERATE_STRUCTURES"] = "false"
+			}
+		}
 	}
 	// Set memory limit to reduce OOM risk
 	if cfg.Memory != "" {
 		extraEnv["MEMORY"] = cfg.Memory
 	}
 	// Optimize JVM for container environments
-	extraEnv["JVM_XX_OPTS"] = "-XX:+UseContainerSupport -XX:MaxRAMPercentage=80.0"
+	// extraEnv["JVM_XX_OPTS"] = "-XX:+UseContainerSupport -XX:MaxRAMPercentage=80.0"
+
+	// if _, ok := os.LookupEnv("JVM_OPTS"); ok {
+	// 	extraEnv["JVM_OPTS"] += " -Dfabric.development=true -Dlog4j2.configurationFile=/data/log4j2.xml"
+	// 	extraEnv["JVM_OPTS"] += " -Dfabric.development=true"
+	// } else {
+	// 	extraEnv["JVM_OPTS"] = "-Dfabric.development=true -Dlog4j2.configurationFile=/data/log4j2.xml"
+	// 	// extraEnv["JVM_OPTS"] = "-Dfabric.development=true"
+	// }
+
+	// extraEnv["LOG_LEVEL"] = "DEBUG" // Enable debug logging for tests
+	// extraEnv["LOG_CONSOLE_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
+	// extraEnv["LOG_FILE_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
+	// extraEnv["LOG_TERMINAL_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
 
 	// Set up cache directory for server JARs to avoid repeated downloads
 	// Use version-specific directory so the container can reuse downloaded JARs
@@ -195,6 +337,8 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		DataDir:    cacheDir, // Use persistent cache for server JARs
 		ExtraEnv:   extraEnv,
 	}
+
+	clearServerWorldData(cacheDir)
 
 	inst, err := f.serverMgr.Start(startCtx, serverCfg)
 	if err != nil {
@@ -310,18 +454,15 @@ func (f *Framework) setupAgentLogging() error {
 		return fmt.Errorf("create log file: %w", err)
 	}
 
-	// Create MultiWriter to write to both file and stdout
-	multiWriter := io.MultiWriter(file, os.Stdout)
-
-	// Set global log output
-	log.SetOutput(multiWriter)
+	// Set global log output to file to avoid buffering logs in test output.
+	log.SetOutput(file)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
 
 	// Store for cleanup
 	f.agentLogFile = file
-	f.agentLogWriter = multiWriter
+	f.agentLogWriter = file
 
-	fmt.Printf("Agent logging enabled: %s (also to console)\n", logFile)
+	fmt.Printf("Agent logging enabled: %s\n", logFile)
 	return nil
 }
 
@@ -347,12 +488,13 @@ type AgentConfig struct {
 	Version           string
 	MCDataGenPath     string
 	MCProtocolGoPath  string
-	EnablePathfinding bool
-	EnableFollowing   bool
+	RegistriesPath    string // Path to registries.json directory (contains data_generator/reports/registries.json)
 	EnableReplay      bool
 	ReplayOutput      string
 	SkinCacheDir      string
 	SkinNetEnabled    bool
+	HPADebugPathBlock string // Explicit block name to use (expects <color>_stained_glass)
+	HPADebugPathColor string // Color name to use when block is not specified
 }
 
 // DefaultAgentConfig returns a sensible default configuration for test agents.
@@ -363,41 +505,107 @@ func DefaultAgentConfig(name, serverAddress, version string) AgentConfig {
 		Version:           version,
 		MCDataGenPath:     "", // Empty = use default (downloads if needed)
 		MCProtocolGoPath:  "", // Not needed for tests
-		EnablePathfinding: true,
-		EnableFollowing:   true,
 		EnableReplay:      false,
 		SkinCacheDir:      "skins",
 		SkinNetEnabled:    false,
+		HPADebugPathBlock: "",
+		HPADebugPathColor: "",
 	}
 }
 
 // SpawnAgent creates and starts a new agent connected to the test server.
+// It also spawns a companion recording agent (<name>Cam) before the main agent.
 func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg AgentConfig) (*ManagedAgent, error) {
+	camCfg := cfg
+	camCfg.Name = camAgentName(cfg.Name)
+	camCfg.EnableReplay = true
+	camCfg.ReplayOutput = camReplayOutput(cfg.ReplayOutput, camCfg.Name)
+
+	cam, err := f.spawnAgentInternal(ctx, inst, camCfg, false)
+	if err != nil {
+		return nil, fmt.Errorf("spawn cam agent %s: %w", camCfg.Name, err)
+	}
+
+	managed, err := f.spawnAgentInternal(ctx, inst, cfg, true)
+	if err != nil {
+		_ = cam.Stop(context.Background())
+		return nil, err
+	}
+	managed.Cam = cam
+	return managed, nil
+}
+
+func camAgentName(base string) string {
+	const suffix = "Cam"
+	const maxLen = 16
+	if len(base)+len(suffix) <= maxLen {
+		return base + suffix
+	}
+	trim := max(maxLen-len(suffix), 0)
+	if len(base) > trim {
+		base = base[:trim]
+	}
+	return base + suffix
+}
+
+func camReplayOutput(base, name string) string {
+	if base == "" {
+		return fmt.Sprintf("./replays/%s_cam.mcpr", name)
+	}
+	const suffix = ".mcpr"
+	if before, ok := strings.CutSuffix(base, suffix); ok {
+		return before + "_cam" + suffix
+	}
+	return base + "_cam"
+}
+
+func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, cfg AgentConfig, addToInstance bool) (*ManagedAgent, error) {
 	// Setup agent logging (redirects log package to file + stdout)
 	// This is done once globally for all agents
 	if err := f.setupAgentLogging(); err != nil {
 		return nil, fmt.Errorf("setup agent logging: %w", err)
 	}
 
+	// Get actual protocol version from server via version negotiation
+	mcVersion, protocolVersion, err := utils.CheckServerVersion(cfg.ServerAddress, 0)
+	if err != nil {
+		return nil, fmt.Errorf("check server version: %w", err)
+	}
+
+	if mcVersion != cfg.Version {
+		log.Printf("[%s] Warning: server version %s differs from agent config version %s", cfg.Name, mcVersion, cfg.Version)
+	}
+
 	// Get packet manager for version
-	packetMgr := mc_versions.GetPacketMgrForVersion(cfg.Version)
+	packetMgr := mc_versions.GetPacketMgrForVersion(mcVersion)
 	if packetMgr == nil {
-		return nil, fmt.Errorf("no packet manager found for version %s", cfg.Version)
+		return nil, fmt.Errorf("no packet manager found for version %s", mcVersion)
+	}
+
+	// Setup receiver packet logging (raw packet captures for debugging)
+	_ = os.MkdirAll("./logs/receiver", 0760)
+	receiverLog := &lumberjack.Logger{
+		Filename:   fmt.Sprintf("./logs/receiver/%s_%s.log", cfg.Name, time.Now().Format("20060102_150405")),
+		MaxSize:    10, // megabytes
+		MaxBackups: 3,
+		MaxAge:     28, // days
+		Compress:   true,
+		LocalTime:  true,
 	}
 
 	// Get block manager for version
-	blockMgr := mc_versions.GetBlockMgrForVersion(cfg.Version)
+	blockMgr := mc_versions.GetBlockMgrForVersion(mcVersion)
 
 	// Get sound manager for version
-	soundMgr := mc_versions.GetSoundMgrForVersion(cfg.Version)
+	soundMgr := mc_versions.GetSoundMgrForVersion(mcVersion)
 
 	// Create bot client (required for agent to actually connect)
 	botClient := bot.NewClient(packetMgr)
-	botClient.Auth = bot.Auth{
-		Name: cfg.Name,
-		UUID: "", // Offline mode - server generates UUID
-		AsTk: "", // Offline mode - no access token
-	}
+	botClient.SetAuth(bot.Auth{
+		Name:        cfg.Name,
+		UUID:        "", // Offline mode - server generates UUID
+		AccessToken: "", // Offline mode - no access token
+	})
 
 	// Create skin provider
 	skinProvider := agent.NewSkinFetcher(agent.SkinFetcherConfig{
@@ -406,29 +614,26 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 	})
 
-	// Get actual protocol version from server via version negotiation
-	_, protocolVersion, err := utils.CheckServerVersion(cfg.ServerAddress, 0)
-	if err != nil {
-		return nil, fmt.Errorf("check server version: %w", err)
-	}
-
 	// Build agent configuration
 	agentCfg := agent.Config{
 		Address:           cfg.ServerAddress,
-		Version:           cfg.Version,
+		Version:           mcVersion,
 		ProtocolVersion:   protocolVersion,
-		Auth:              agent.Auth{Name: cfg.Name, UUID: "", AsTk: ""},
+		Auth:              agent.Auth{Name: cfg.Name, UUID: "", AccessToken: ""},
 		PacketMgr:         packetMgr,
 		BlockMgr:          blockMgr,
 		SoundMgr:          soundMgr,
-		Client:            agent.NewClientFromBot(botClient), // CRITICAL: Must provide client!
+		Client:            botClient, // CRITICAL: Must provide client!
 		MCDataGenPath:     cfg.MCDataGenPath,
 		MCProtocolGoPath:  cfg.MCProtocolGoPath,
-		EnablePathfinding: cfg.EnablePathfinding,
-		EnableFollowing:   cfg.EnableFollowing,
+		RegistriesPath:    cfg.RegistriesPath, // Path to registries.json
 		EnableReplay:      cfg.EnableReplay,
 		ReplayOutput:      cfg.ReplayOutput,
 		SkinProvider:      skinProvider,
+		RCON:              inst.RCON,   // Pass RCON for debug visualization
+		LogWriter:         receiverLog, // Raw packet logging for debugging
+		HPADebugPathBlock: cfg.HPADebugPathBlock,
+		HPADebugPathColor: cfg.HPADebugPathColor,
 	}
 
 	// Create agent
@@ -439,25 +644,45 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 
 	// Create managed agent with lifecycle context
 	agentCtx, agentCancel := context.WithCancel(ctx)
-	managed := &ManagedAgent{
-		Name:   cfg.Name,
-		Agent:  agent,
-		Config: agentCfg,
-		ctx:    agentCtx,
-		cancel: agentCancel,
-		done:   make(chan struct{}),
+
+	// Load ALL registries from registries.json BEFORE Init()
+	// This provides defaults for registries not sent via config packets (e.g., entity_type, menu)
+	// Uses cfg.RegistriesPath if set, otherwise falls back to test download cache
+	registriesPath := cfg.RegistriesPath
+	if registriesPath == "" {
+		// Fallback for tests that don't explicitly set RegistriesPath
+		cwd, err := os.Getwd()
+		if err != nil {
+			log.Printf("Warning: failed to get working directory: %v", err)
+		} else {
+			registriesPath = filepath.Join(cwd, "data", "download-cache", mcVersion)
+		}
 	}
 
-	// Initialize agent
+	if registriesPath != "" {
+		if err := agent.LoadEntityTypesFromRegistry(registriesPath); err != nil {
+			log.Printf("Warning: failed to load registries from %s: %v (hardcoded IDs may be needed)", registriesPath, err)
+		}
+	}
+
+	// Initialize agent (connects to server, goes through config phase)
+	// Config packets will overwrite any registries loaded from file above
 	if err := agent.Init(agentCtx); err != nil {
 		agentCancel()
 		return nil, fmt.Errorf("init agent: %w", err)
 	}
 
-	// Wire up subsystems (required for agents to function properly)
-	if err := wireAgentSubsystems(agent, botClient, packetMgr, blockMgr, cfg); err != nil {
-		agentCancel()
-		return nil, fmt.Errorf("wire subsystems: %w", err)
+	// Wire up minimal test adapters (subsystems are created automatically in agent.Init)
+	wireAgentSubsystems(agent)
+
+	managed := &ManagedAgent{
+		Name:      cfg.Name,
+		Agent:     agent,
+		Config:    agentCfg,
+		ctx:       agentCtx,
+		cancel:    agentCancel,
+		done:      make(chan struct{}),
+		botClient: botClient,
 	}
 
 	// Start agent
@@ -478,9 +703,11 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 	}()
 
 	// Add to test instance
-	inst.mu.Lock()
-	inst.Agents = append(inst.Agents, managed)
-	inst.mu.Unlock()
+	if addToInstance {
+		inst.mu.Lock()
+		inst.Agents = append(inst.Agents, managed)
+		inst.mu.Unlock()
+	}
 
 	return managed, nil
 }
@@ -509,6 +736,14 @@ func (ma *ManagedAgent) Stop(ctx context.Context) error {
 	if err := ma.Agent.Close(closeCtx); err != nil {
 		fmt.Printf("WARNING: Agent %s failed to close cleanly: %v\n", ma.Name, err)
 		return err
+	}
+
+	if ma.Cam != nil {
+		camCtx, camCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := ma.Cam.Stop(camCtx); err != nil {
+			fmt.Printf("WARNING: Cam agent %s failed to stop cleanly: %v\n", ma.Cam.Name, err)
+		}
+		camCancel()
 	}
 	return nil
 }

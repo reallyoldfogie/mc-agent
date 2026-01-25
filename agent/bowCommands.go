@@ -29,17 +29,17 @@ func (a *agent) cmdFireBow() {
 
 	// Use main hand then simulate action
 	useID := a.packetMgr.GetServerboundPacketID("ServerboundUseItem")
-	_ = a.client.WritePacket(pk.Marshal(useID, pk.VarInt(0), pk.VarInt(1), pk.Float(0), pk.Float(0)))
+	_ = a.client.Conn().WritePacket(pk.Marshal(useID, pk.VarInt(0), pk.VarInt(1), pk.Float(0), pk.Float(0)))
 
 	actID := a.packetMgr.GetServerboundPacketID("ServerboundPlayerAction")
 
 	// Hold for some ticks, then shoot
 	go func() {
 		for i := 0; i < bowHoldIterations; i++ {
-			_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(0), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
+			_ = a.client.Conn().WritePacket(pk.Marshal(actID, pk.VarInt(0), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
 			time.Sleep(bowHoldSleep)
 		}
-		_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(5), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
+		_ = a.client.Conn().WritePacket(pk.Marshal(actID, pk.VarInt(5), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
 	}()
 }
 
@@ -71,17 +71,17 @@ func (a *agent) cmdFireBowAt(x, y, z float64) {
 
 	// Use main hand then simulate action
 	useID := a.packetMgr.GetServerboundPacketID("ServerboundUseItem")
-	_ = a.client.WritePacket(pk.Marshal(useID, pk.VarInt(0), pk.VarInt(1), pk.Float(0), pk.Float(0)))
+	_ = a.client.Conn().WritePacket(pk.Marshal(useID, pk.VarInt(0), pk.VarInt(1), pk.Float(0), pk.Float(0)))
 
 	actID := a.packetMgr.GetServerboundPacketID("ServerboundPlayerAction")
 
 	// Hold for some ticks, then shoot
 	go func() {
 		for i := 0; i < bowHoldIterations; i++ {
-			_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(0), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
+			_ = a.client.Conn().WritePacket(pk.Marshal(actID, pk.VarInt(0), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
 			time.Sleep(holdDuration / time.Duration(bowHoldIterations))
 		}
-		_ = a.client.WritePacket(pk.Marshal(actID, pk.VarInt(5), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
+		_ = a.client.Conn().WritePacket(pk.Marshal(actID, pk.VarInt(5), pk.Position{X: 0, Y: 0, Z: 0}, pk.Byte(0), pk.VarInt(0)))
 	}()
 }
 

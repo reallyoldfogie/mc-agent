@@ -200,7 +200,7 @@ Test Configuration:
   Verbosity: Verbose
 
 Running tests...
-Command: go test -tags=integration . -parallel 1 -timeout 60m -v
+Command: go test . -parallel 1 -timeout 60m -v
 
 Memory check: 6144 MB available, 3584 MB required (server: 1536 MB + buffer: 2048 MB) - OK
 Agent logging enabled: ./logs/agents/agents_20251207_143022.log (also to console)

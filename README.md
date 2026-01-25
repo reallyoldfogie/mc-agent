@@ -108,13 +108,18 @@ mc-agent/
 ├── agent/                 # Reusable agent package (lifecycle, handlers, tracking)
 ├── go.mod                 # Go module definition
 │
+├── actions/               # Action registry and command execution
+├── items/                 # Item management, inventory operations, container helpers
+├── models/                # Interfaces, types, and domain models
+├── pathfinding/           # A*, EPEA*, and HPA* pathfinding implementations
+├── physics/               # Physics engine (movement, projectiles, collision)
+├── movement/              # Movement execution and physics-based movement
+├── following/             # Player following system
+├── testing/               # Integration testing framework (Docker-based)
+│
 ├── bot/                   # Bot extensions and wrappers
-│   ├── path/              # Pathfinding (legacy adapters)
-│   ├── ptypes/            # Custom packet types
 │   └── world/             # World state tracking
 │
-├── event_handler/         # Legacy entity event handlers (reference)
-├── models/                # Data models
 ├── utils/                 # Utility functions
 ├── data/                  # Static data files
 └── logs/                  # Packet logs (auto-rotated)
@@ -228,12 +233,42 @@ json, ok, err := agent.ExportLastUpdateRecipesAsJSON(true)
 
 See [docs/RECIPES.md](docs/RECIPES.md) for detailed documentation.
 
+### Physics System
+
+The bot includes a comprehensive physics engine that accurately simulates Minecraft mechanics:
+
+**Core Features:**
+- **Movement Physics**: Accurate player movement with collision detection, gravity, friction
+- **Rotation Rate Limiting**: Anti-cheat compliant rotation (11°/tick yaw, 7°/tick pitch)
+- **Projectile Physics**: Ballistic simulation for arrows, snowballs, eggs, ender pearls, potions, tridents
+- **Fall Damage**: Accurate fall damage calculation with water detection and special blocks
+- **Movement Prediction**: Simulate N ticks ahead for path validation
+- **Collision Avoidance**: Pre-check paths before execution
+- **Item Usage**: Block placement and item usage with sequence number tracking
+
+**Movement Types:**
+- Traverse, Sprint, Sneak, Ascend, Descend, Jump, Diagonal, Swim, Climb, and more
+- Each type has accurate cost and speed parameters
+
+**Projectile Types Supported:**
+- Arrow, Snowball, Egg, Ender Pearl, Splash Potion, Trident, Fishing Bobber
+- Each with accurate gravity, drag, and speed constants
+
+**Key Capabilities:**
+- Water landing detection (0 damage from any height)
+- Special block damage reduction (hay bale, slime, honey, powder snow)
+- Anti-cheat safe rotation and sequence numbers
+- Pathfinding integration for safe navigation
+
+See `physics/` and `models/physics*.go` for implementation details.
+
 ### Bow Firing with Ballistics
 
 The bot includes physics-based bow aiming that calculates pitch, yaw, and power to hit targets:
 - Simulates arrow trajectory (gravity, drag)
 - Iterates through pitch/power combinations to find optimal shot
 - Accounts for bot eye height and target position
+- Now powered by generalized projectile physics system
 
 **Commands:**
 - `>>>bot<<< fireBow` - Fire bow in current direction
@@ -247,18 +282,19 @@ The bot includes physics-based bow aiming that calculates pitch, yaw, and power 
 
 See [docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md) for implementation details.
 
-## Planned Features
+### Player Following
 
-### Player Following (Implemented, ongoing polish)
-
-The bot can follow players using intelligent pathfinding. See [FOLLOW_PLAYER_PLAN.md](FOLLOW_PLAYER_PLAN.md) for the comprehensive implementation plan.
+The bot can follow players using intelligent pathfinding with HPA* (Hierarchical Path-finding A*).
 
 **Capabilities:**
 - Follow specific player by name
-- Navigate around obstacles
+- Navigate around obstacles using A*, EPEA*, or HPA* algorithms
 - Handle water, ladders, and complex terrain
 - Avoid dangerous blocks (lava, etc.)
 - Recover from stuck states
+- Dynamic world updates (handles blocks being placed/broken)
+
+See [docs/HPA_USAGE_EXAMPLE.md](docs/HPA_USAGE_EXAMPLE.md) for pathfinding usage.
 
 ## Development
 
@@ -277,9 +313,10 @@ go run ./cmd/mc-agent -address "localhost:25565"
 ### Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Comprehensive codebase guide for Claude Code
-- **[FOLLOW_PLAYER_PLAN.md](FOLLOW_PLAYER_PLAN.md)** - Player-following feature implementation plan
-- **[MC_DATA_GEN_UPDATES_IMPACT.md](MC_DATA_GEN_UPDATES_IMPACT.md)** - Block collision data integration guide
-- **[bow-fire-sequence.md](bow-fire-sequence.md)** - Bow firing packet sequence documentation
+- **[docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md)** - Bow firing commands and ballistics documentation
+- **[docs/HPA_USAGE_EXAMPLE.md](docs/HPA_USAGE_EXAMPLE.md)** - HPA* pathfinding usage guide
+- **[docs/CONTAINER_INTERACTION_GUIDE.md](docs/CONTAINER_INTERACTION_GUIDE.md)** - Container/inventory interaction guide
+- **[testing/README.md](testing/README.md)** - Integration testing framework documentation
 
 ## Legacy Code
 
@@ -316,7 +353,6 @@ Currently tested and working with Minecraft Java Edition:
 ## Known Issues
 
 - Position tracking was fixed for Minecraft 1.21.5+ protocol changes (TeleportID field reordering)
-- Pathfinding system exists but is currently commented out pending mc-data-gen integration
 
 ## Related Projects
 

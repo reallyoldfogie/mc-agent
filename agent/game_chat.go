@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -65,23 +66,38 @@ func (a *agent) onTeleported(x, y, z float64, yaw, pitch float32) {
 // HandleTeleported is a wrapper matching basic.EventsListener.Teleported signature.
 func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error {
 	a.setPosition(x, y, z, yaw, pitch)
-	if a.teleport != nil {
-		_ = a.teleport.AcceptTeleportation(pk.VarInt(teleportID))
+	// Prefer auto-created player, fall back to injected teleport
+	var t TeleportAccepter = a.player
+	if t == nil {
+		t = a.teleport
+	}
+	if t != nil {
+		_ = t.AcceptTeleportation(pk.VarInt(teleportID))
 	}
 	return nil
 }
 
 // SendChat sends a chat message via the chat subsystem when available.
+// Implements ChatOperations interface.
 func (a *agent) SendChat(message string) error {
-	if a.chat == nil {
-		return nil
+	a.mu.Lock()
+	// Prefer auto-created chatMgr, fall back to injected chat
+	var cm Chat = a.chatMgr
+	if cm == nil {
+		cm = a.chat
 	}
-	return a.chat.SendMessage(message)
+	a.mu.Unlock()
+
+	if cm == nil {
+		return fmt.Errorf("chat manager not initialized")
+	}
+	return cm.SendMessage(message)
 }
 
 // OnSystemChat handles system chat messages from the server.
 func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 	log.Printf("System Chat: %#v, Overlay: %v", c, overlay)
+	a.emitChatEvent(c)
 	return nil
 }
 
@@ -119,6 +135,7 @@ func (a *agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message,
 		prefix = "[Not Secure] "
 	}
 	log.Printf("%sPlayer: %v", prefix, msg)
+	a.emitChatEvent(msg)
 
 	// Check if message contains a command for this bot
 	text, ok := a.extractCommandFromMessage(msg)
@@ -135,6 +152,7 @@ func (a *agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message,
 // OnDisguisedChat handles disguised chat messages (e.g., from RCON /say).
 func (a *agent) OnDisguisedChat(msg chat.Message) error {
 	log.Printf("Disguised: %v", msg)
+	a.emitChatEvent(msg)
 
 	// Check if message contains a command for this bot
 	text, ok := a.extractCommandFromMessage(msg)
@@ -146,4 +164,18 @@ func (a *agent) OnDisguisedChat(msg chat.Message) error {
 	_ = a.SendChat("Received: " + text)
 	a.handleChatCommand(text)
 	return nil
+}
+
+func (a *agent) emitChatEvent(msg chat.Message) {
+	if a.chatEvents == nil {
+		return
+	}
+	text := msg.Text
+	if text == "" {
+		text = fmt.Sprintf("%v", msg)
+	}
+	select {
+	case a.chatEvents <- text:
+	default:
+	}
 }

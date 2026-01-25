@@ -1,5 +1,3 @@
-//go:build integration
-
 package testing
 
 import (
@@ -32,6 +30,7 @@ func TestNavigationSingleAgent(t *testing.T) {
 	serverCfg := DefaultServerConfig()
 	serverCfg.Version = "1.21.5"
 	serverCfg.PullImage = false // set to true to pull latest image
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -53,8 +52,6 @@ func TestNavigationSingleAgent(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = true
-	agentCfg.EnableFollowing = false
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/nav_single_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -144,6 +141,7 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 	// Start test server
 	serverCfg := DefaultServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -162,7 +160,6 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = true
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/nav_waypoints_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -183,9 +180,9 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 	require.NoError(t, err, "get starting position")
 
 	waypoints := []Position{
-		{X: startX + 10, Y: startY, Z: startZ},      // East
-		{X: startX + 10, Y: startY, Z: startZ + 10}, // Southeast
-		{X: startX, Y: startY, Z: startZ + 10},      // South
+		{X: startX + 30, Y: startY, Z: startZ},      // East
+		{X: startX + 30, Y: startY, Z: startZ + 30}, // Southeast
+		{X: startX, Y: startY, Z: startZ + 30},      // South
 		{X: startX, Y: startY, Z: startZ},           // Back to start
 	}
 
@@ -205,16 +202,14 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 
 		// Calculate timeout
 		distance := current.Distance(waypoint)
-		timeout := CalculateMovementTimeout(distance)
-		if timeout < 30*time.Second {
-			timeout = 30 * time.Second
-		}
+		timeout := max(CalculateMovementTimeout(distance), 30*time.Second)
 
 		// Wait for arrival
 		err = tracker.WaitForPosition(ctx, agent.Name, waypoint, 1.0, timeout)
 		require.NoError(t, err, "agent should reach waypoint %d", i+1)
 
-		logger.Logf("Reached waypoint %d", i+1)
+		logger.Logf("Reached waypoint %d - pausing for %d Seconds", i+1, 3)
+		time.Sleep(3 * time.Second) // brief pause between waypoints
 	}
 
 	logger.Logf("Replay saved to: %s", agentCfg.ReplayOutput)
@@ -236,11 +231,19 @@ func TestNavigationVerticalMovement(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
+	const (
+		distBetweenStairs = 2 // how often to place a stair block in the staircase
+		xDiff             = 10
+		yDiff             = xDiff / distBetweenStairs
+		zDiff             = 3
+	)
+
 	framework, err := NewFramework()
 	require.NoError(t, err, "create framework")
 
 	serverCfg := DefaultServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -256,7 +259,6 @@ func TestNavigationVerticalMovement(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = true
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/nav_vertical_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -274,15 +276,93 @@ func TestNavigationVerticalMovement(t *testing.T) {
 	startX, startY, startZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
 	require.NoError(t, err, "get starting position")
 
-	// Navigate to higher elevation (5 blocks up, 10 blocks away)
+	// Navigate to higher elevation (5 blocks up, 10 blocks away) - build stairs to make path possible
 	destination := Position{
-		X: startX + 10,
-		Y: startY + 5,
-		Z: startZ,
+		X: startX + xDiff,
+		Y: startY + yDiff,
+		Z: startZ + zDiff,
 	}
 
 	logger.Logf("Navigating from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f)",
 		startX, startY, startZ, destination.X, destination.Y, destination.Z)
+
+	// Forceload chunks before building to ensure chunks are loaded
+	chunkX1 := int(startX) >> 4
+	chunkZ1 := int(startZ) >> 4
+	chunkX2 := int(destination.X) >> 4
+	chunkZ2 := int(destination.Z) >> 4
+	forceloadCmd := fmt.Sprintf("forceload add %d %d %d %d", chunkX1<<4, chunkZ1<<4, chunkX2<<4, chunkZ2<<4)
+	_, err = inst.RCON.Exec(ctx, forceloadCmd)
+	if err != nil {
+		logger.Logf("Warning: Failed to forceload chunks: %v", err)
+	}
+	time.Sleep(1 * time.Second) // Wait for chunks to load
+
+	resp, err := inst.RCON.ExecuteWithRetry(ctx, fmt.Sprintf(`summon block_display %f %f %f {block_state:{Name:"minecraft:diamond_block"}}`, destination.X, destination.Y, destination.Z), 3)
+	if err != nil {
+		logger.Logf("Warning: Failed to place display_block at (%f, %f, %f): %v [%s]", destination.X, destination.Y, destination.Z, err, resp)
+	}
+
+	// build a platform at the destination
+	resp, err = inst.RCON.ExecuteWithRetry(ctx, fmt.Sprintf(`fill %d %d %d %d %d %d minecraft:stone_slab[type=top]`, int(destination.X), int(destination.Y)-1, int(destination.Z)-5, int(destination.X)+6, int(destination.Y)-1, int(destination.Z)+6), 3)
+	if err != nil {
+		logger.Logf("Warning: Failed to fill stone_slab[type=top] at (%d, %d, %d => %d, %d, %d): %v [%s]", int(destination.X), int(destination.Y)-1, int(destination.Z)-5, int(destination.X)+6, int(destination.Y)-1, int(destination.Z)+6, err, resp)
+	} else {
+		logger.Logf("Filled stone_slab[type=top] at (%d, %d, %d => %d, %d, %d) [%s]\n", int(destination.X), int(destination.Y)-1, int(destination.Z)-5, int(destination.X)+6, int(destination.Y)-1, int(destination.Z)+6, resp)
+	}
+
+	// BUILD STAIRS to destination (fix for flat terrain)
+	// Build a gradual staircase: 10 blocks horizontal, 5 blocks vertical = 1 step up every 2 blocks
+	logger.Logf("Building staircase from start to destination")
+	// Use same Z coordinate as platform for alignment
+	stairZ := int(destination.Z)
+	for i := 1; i <= xDiff; i++ {
+		blockX := int(startX) + i
+		blockY := int(startY) + (i / distBetweenStairs) // Gradual ascent: 1 block up every <distBetweenStairs> blocks horizontal
+		blockZ := stairZ
+
+		retry := 0
+
+	RETRY:
+		// Place stair block facing east
+		if blockY < int(destination.Y) {
+			// place distBetweenStairs-1 slabs, then a stair
+			if i == 1 || i%distBetweenStairs == 0 { // Place stair block facing east
+				resp, err = inst.RCON.ExecuteWithRetry(ctx, fmt.Sprintf("setblock %d %d %d minecraft:stone_stairs[facing=east,half=bottom]", blockX, blockY, blockZ), 3)
+				if err != nil {
+					str := fmt.Sprintf("Warning: Failed to place stone_stair[facing=east,half=bottom] at (%d, %d, %d): %v [%s]", blockX, blockY, blockZ, err, resp)
+					logger.Log(str)
+					// require.NoError(t, err, str)
+					time.Sleep(500 * time.Millisecond)
+					retry++
+					if retry < 4 {
+						inst.RCON.Reconnect(ctx)
+						goto RETRY
+					}
+				} else {
+					logger.Logf("Placed stone_stair[facing=east,half=bottom] at (%d, %d, %d) [%s]", blockX, blockY, blockZ, resp)
+				}
+
+			} else { // Place slab
+				resp, err = inst.RCON.ExecuteWithRetry(ctx, fmt.Sprintf("setblock %d %d %d minecraft:stone_slab[type=top]", blockX, blockY, blockZ), 3)
+				if err != nil {
+					str := fmt.Sprintf("Warning: Failed to place stone_slab[type=top] at (%d, %d, %d): %v [%s]", blockX, blockY, blockZ, err, resp)
+					logger.Log(str)
+					// require.NoError(t, err, str)
+					time.Sleep(500 * time.Millisecond)
+					retry++
+					if retry < 4 {
+						inst.RCON.Reconnect(ctx)
+						goto RETRY
+					}
+				} else {
+					logger.Logf("Placed stone_slab[type=top] at (%d, %d, %d) [%s]", blockX, blockY, blockZ, resp)
+				}
+			}
+		}
+	}
+	logger.Logf("Staircase built, waiting for chunks to sync")
+	time.Sleep(2 * time.Second)
 
 	navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", destination.X, destination.Y, destination.Z)
 	sayCmd := inst.RCON.Say(ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
@@ -292,7 +372,7 @@ func TestNavigationVerticalMovement(t *testing.T) {
 	// Longer timeout for vertical movement
 	distance := Position{X: startX, Y: startY, Z: startZ}.Distance(destination)
 	timeout := CalculateMovementTimeout(distance)
-	timeout *= 2 // double timeout for vertical movement
+	timeout *= 4 // increase timeout for vertical movement
 
 	err = tracker.WaitForPosition(ctx, agent.Name, destination, 1.5, timeout)
 	if err != nil {

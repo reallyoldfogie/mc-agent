@@ -8,56 +8,24 @@ import (
 	"sync"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
-// FollowConfig holds configuration for following behavior
-type FollowConfig struct {
-	TargetDistance      float64       // Desired distance to maintain from target (blocks)
-	StopDistance        float64       // Stop following when within this distance
-	RecalcInterval      time.Duration // How often to recalculate path
-	RecalcDistThreshold float64       // Recalc if target moves more than this
-	MaxPathSteps        int           // Maximum pathfinding search depth
-	StuckThreshold      time.Duration // Consider stuck after this time without movement
-	MaxStuckAttempts    int           // Maximum recovery attempts before giving up
-	JumpRecoveryHeight  float64       // How high to jump for recovery (blocks)
-	SprintDistance      float64       // Start sprinting when farther than this (blocks)
-	SneakDistance       float64       // Start sneaking when closer than this (blocks)
-}
-
-// DefaultFollowConfig returns default configuration
-func DefaultFollowConfig() FollowConfig {
-	return FollowConfig{
-		TargetDistance:      3.0,             // Stay 3 blocks away
-		StopDistance:        0.2,             // Stop when within .2 blocks
-		RecalcInterval:      2 * time.Second, // Recalc every 2 seconds
-		RecalcDistThreshold: 3.0,             // Recalc if target moves 3+ blocks
-		MaxPathSteps:        200,             // Search up to 200 steps
-		StuckThreshold:      5 * time.Second, // Stuck after 5 seconds
-		MaxStuckAttempts:    3,               // Try 3 recovery attempts
-		JumpRecoveryHeight:  0.5,             // Jump 0.5 blocks for recovery
-		SprintDistance:      8.0,             // Sprint when >8 blocks away
-		SneakDistance:       2.5,             // Sneak when <2.5 blocks away
-	}
-}
-
-// FollowManager manages the follow behavior
-type FollowManager interface {
-	Start(targetPlayerName string) error
-	Stop() error
-	IsActive() bool
-	GetState() FollowState
-	GetStatus() string
-	GetPath() *pathfinding.Path
+type pathExecutor interface {
+	SetPath(*pathfinding.Path) error
+	ClearPath()
 }
 
 // followManager implements FollowManager
 type followManager struct {
 	mu     sync.RWMutex
 	active bool
-	state  FollowState
+	state  models.FollowState
+
+	getFollowerName func() string
 
 	// Target info
 	targetName     string
@@ -65,46 +33,87 @@ type followManager struct {
 	lastTargetPos  struct {
 		x, y, z float64
 	}
+	lastTargetPosTime time.Time
+	// Target position history for velocity calculation
+	targetPosHistory []struct {
+		x, y, z   float64
+		timestamp time.Time
+	}
+	historyMaxSize       int
+	targetWasStationary bool // Track if target was recently stationary
 
 	// Path info
-	currentPath      *pathfinding.Path
-	pathIndex        int
-	lastPathTime     time.Time
-	lastMovementTime time.Time
+	currentPath       *models.Path
+	lastPathTime      time.Time
+	lastPathTargetPos models.V3 // Target position when last path was calculated
 
-	// Stuck detection and recovery (Phase 5)
+	// Stuck detection and recovery
 	stuckAttempts  int       // Number of recovery attempts made
 	lastStuckCheck time.Time // Last time we checked for stuck
+	lastBotPos     struct {
+		x, y, z float64
+	}
+	lastBotPosTime    time.Time
+	lastProgressCheck time.Time
+
+	// Logging
+	lastDetailedLog        time.Time
+	lastRecalcDecisionLog time.Time
+	lastRecalcStatsLog    time.Time
+
+	// Stats (reset every ~1s)
+	statTickTotal          int
+	statShouldRecalcCalls  int
+	statSkipInactive       int
+	statSkipTargetLost     int
+	statSkipArrived        int
+	statSkipTransition     int
+	statSkipUninit         int
+	statSkipPathNil        int
+	statSkipProgressRecalc int
+
+	// Timers
+	lastTransitionTime time.Time
 
 	// Control
 	stopChan chan struct{}
 	config   FollowConfig
 
 	// Dependencies
-	targetSelector   TargetSelector
+	targetSelector   models.TargetSelector
 	pathFinder       pathfinding.PathFinder
 	movementExecutor movement.MovementExecutor
+	pathExecutor     pathExecutor
 	getBotPosition   func() (x, y, z float64, yaw, pitch float32, initialized bool)
 	sendChatMessage  func(string) error
 }
 
 // NewFollowManager creates a new follow manager
 func NewFollowManager(
-	targetSelector TargetSelector,
+	targetSelector models.TargetSelector,
 	pathFinder pathfinding.PathFinder,
 	movementExecutor movement.MovementExecutor,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
 	sendChat func(string) error,
 	config FollowConfig,
-) FollowManager {
+	getFollowerName func() string,
+) models.FollowManager {
+	var pe pathExecutor
+	if exec, ok := movementExecutor.(pathExecutor); ok {
+		pe = exec
+	}
 	return &followManager{
-		targetSelector:   targetSelector,
-		pathFinder:       pathFinder,
-		movementExecutor: movementExecutor,
-		getBotPosition:   getBotPos,
-		sendChatMessage:  sendChat,
-		config:           config,
-		state:            StateIdle,
+		getFollowerName:      getFollowerName,
+		targetSelector:       targetSelector,
+		pathFinder:           pathFinder,
+		movementExecutor:     movementExecutor,
+		pathExecutor:         pe,
+		getBotPosition:       getBotPos,
+		sendChatMessage:      sendChat,
+		config:               config,
+		state:                models.StateIdle,
+		historyMaxSize:       5, // Track last 5 positions for velocity calculation
+		targetWasStationary:  true, // Assume target starts stationary
 	}
 }
 
@@ -117,24 +126,38 @@ func (fm *followManager) Start(targetPlayerName string) error {
 		return fmt.Errorf("already following %s", fm.targetName)
 	}
 
-	// Find target player
-	fm.state = StateTargeting
-	target, err := fm.targetSelector.FindPlayerByName(targetPlayerName)
-	if err != nil {
-		fm.state = StateIdle
-		return fmt.Errorf("failed to find target: %w", err)
-	}
+	log.Printf("[FollowManager %s] Start called, target='%s'", fm.getFollowerName(), targetPlayerName)
 
 	// Initialize follow state
+	fm.state = models.StateTargeting
 	fm.active = true
 	fm.targetName = targetPlayerName
-	fm.targetEntityID = target.EntityID
-	fm.lastTargetPos.x = target.X
-	fm.lastTargetPos.y = target.Y
-	fm.lastTargetPos.z = target.Z
+	fm.targetEntityID = 0
+	fm.lastTargetPos = struct{ x, y, z float64 }{}
+	fm.lastTargetPosTime = time.Time{}
+	fm.lastPathTargetPos = models.V3{}
 	fm.stopChan = make(chan struct{})
-	fm.pathIndex = 0
-	fm.lastMovementTime = time.Now()
+	fm.lastPathTime = time.Time{}
+	fm.currentPath = nil
+	fm.targetPosHistory = nil
+	fm.targetWasStationary = true
+	fm.stuckAttempts = 0
+	fm.lastStuckCheck = time.Time{}
+	fm.lastBotPosTime = time.Time{}
+	fm.lastProgressCheck = time.Now()
+	fm.lastTransitionTime = time.Time{}
+	fm.lastDetailedLog = time.Time{}
+	fm.lastRecalcDecisionLog = time.Time{}
+	fm.lastRecalcStatsLog = time.Time{}
+	fm.statTickTotal = 0
+	fm.statShouldRecalcCalls = 0
+	fm.statSkipInactive = 0
+	fm.statSkipTargetLost = 0
+	fm.statSkipArrived = 0
+	fm.statSkipTransition = 0
+	fm.statSkipUninit = 0
+	fm.statSkipPathNil = 0
+	fm.statSkipProgressRecalc = 0
 
 	// Start follow loop
 	go fm.followLoop()
@@ -151,8 +174,9 @@ func (fm *followManager) Stop() error {
 		return fmt.Errorf("not currently following")
 	}
 
+	fm.clearPath()
 	fm.active = false
-	fm.state = StateIdle
+	fm.state = models.StateIdle
 	close(fm.stopChan)
 
 	return nil
@@ -166,7 +190,7 @@ func (fm *followManager) IsActive() bool {
 }
 
 // GetState returns the current state
-func (fm *followManager) GetState() FollowState {
+func (fm *followManager) GetState() models.FollowState {
 	fm.mu.RLock()
 	defer fm.mu.RUnlock()
 	return fm.state
@@ -186,7 +210,9 @@ func (fm *followManager) GetStatus() string {
 		fm.targetName, distance, fm.state)
 }
 
-func (fm *followManager) GetPath() *pathfinding.Path {
+func (fm *followManager) GetPath() *models.Path {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
 	return fm.currentPath
 }
 
@@ -201,7 +227,7 @@ func (fm *followManager) followLoop() {
 			return
 		case <-ticker.C:
 			if err := fm.update(); err != nil {
-				log.Printf("Follow loop error: %v", err)
+				log.Printf("[FollowManager %s] Follow loop error: %v", fm.getFollowerName(), err)
 				// Don't stop on error, just log it
 			}
 		}
@@ -213,84 +239,311 @@ func (fm *followManager) update() error {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 
+	// Tick + periodic stats log (once per second per follower)
+	fm.statTickTotal++
+	if fm.lastRecalcStatsLog.IsZero() || time.Since(fm.lastRecalcStatsLog) >= 1*time.Second {
+		log.Printf("[FollowManager %s] RecalcStats ticks=%d calls=%d skips={inactive:%d target_lost:%d arrived:%d transition:%d uninit:%d path_nil:%d progress:%d}",
+			fm.getFollowerName(),
+			fm.statTickTotal,
+			fm.statShouldRecalcCalls,
+			fm.statSkipInactive,
+			fm.statSkipTargetLost,
+			fm.statSkipArrived,
+			fm.statSkipTransition,
+			fm.statSkipUninit,
+			fm.statSkipPathNil,
+			fm.statSkipProgressRecalc,
+		)
+		fm.statTickTotal = 0
+		fm.statShouldRecalcCalls = 0
+		fm.statSkipInactive = 0
+		fm.statSkipTargetLost = 0
+		fm.statSkipArrived = 0
+		fm.statSkipTransition = 0
+		fm.statSkipUninit = 0
+		fm.statSkipPathNil = 0
+		fm.statSkipProgressRecalc = 0
+		fm.lastRecalcStatsLog = time.Now()
+	}
+
 	if !fm.active {
+		fm.statSkipInactive++
 		return nil
 	}
 
 	// Enhanced target validation
-	targetX, targetY, targetZ, exists := fm.targetSelector.GetTargetPosition(fm.targetEntityID)
-	if !exists {
-		return fm.handleTargetLost("target no longer exists (disconnected or despawned) [" + strconv.FormatInt(int64(fm.targetEntityID), 10) + "]")
-	} else {
-		log.Printf("current following state: %s", fm.state)
-		if fm.state == StateLost {
-			fm.state = StateFollowingPath
-			fm.sendChatMessage("target re-located")
+	var (
+		targetX, targetY, targetZ float64
+		exists                   bool
+	)
+	if fm.targetEntityID == 0 {
+		target, err := fm.targetSelector.FindPlayerByName(fm.targetName)
+		if err != nil {
+			// Target not visible yet; keep waiting in targeting mode.
+			return nil
 		}
+		fm.targetEntityID = target.EntityID
+		fm.lastTargetPos.x = target.X
+		fm.lastTargetPos.y = target.Y
+		fm.lastTargetPos.z = target.Z
+		fm.lastTargetPosTime = time.Now()
+		fm.lastPathTargetPos = models.V3{X: target.X, Y: target.Y, Z: target.Z}
+		fm.currentPath = nil
+		fm.stuckAttempts = 0
+		fm.lastPathTime = time.Now()
+		fm.targetPosHistory = nil
+		fm.targetWasStationary = true
+		fm.state = models.StateFollowingPath
+		targetX, targetY, targetZ = target.X, target.Y, target.Z
+		exists = true
+	} else {
+		targetX, targetY, targetZ, exists = fm.targetSelector.GetTargetPosition(fm.targetEntityID)
+	}
+	if !exists {
+		fm.statSkipTargetLost++
+		return fm.handleTargetLost("target no longer exists (disconnected or despawned) [" + strconv.FormatInt(int64(fm.targetEntityID), 10) + "]")
+	}
+	log.Printf("[FollowManager %s] current following state: %s", fm.getFollowerName(), fm.state)
+	if fm.state == models.StateLost {
+		fm.state = models.StateFollowingPath
+		fm.sendChatMessage("target re-located")
 	}
 
-	// Check for teleportation (large distance change)
-	if fm.lastTargetPos.x != 0 || fm.lastTargetPos.y != 0 || fm.lastTargetPos.z != 0 {
+	var targetMovedDistance float64
+
+	// Check for teleportation (large distance change relative to elapsed time)
+	// Only check if we have a previous position recorded
+	if !fm.lastTargetPosTime.IsZero() {
 		lastDist := fm.calculateDistance(
 			fm.lastTargetPos.x, fm.lastTargetPos.y, fm.lastTargetPos.z,
 			targetX, targetY, targetZ)
+		targetMovedDistance = lastDist
 
-		// If target moved more than 20 blocks in one update, likely teleported
-		if lastDist > 20.0 {
-			log.Printf("Target teleported %.1f blocks", lastDist)
-			fm.sendChatMessage(fmt.Sprintf("%s teleported - recalculating path", fm.targetName))
+		// Calculate time elapsed since last position check
+		elapsedTime := time.Since(fm.lastTargetPosTime)
+
+		// Calculate maximum expected movement based on elapsed time
+		// Players can sprint at ~5.6 m/s in Minecraft
+		// Add 50% safety margin to account for speed effects, elytra, etc.
+		maxExpectedMovement := (5.6 * elapsedTime.Seconds()) * 1.5
+
+		// If target moved significantly more than expected, likely teleported
+		if lastDist > maxExpectedMovement && lastDist > 2.0 {
+			log.Printf("[FollowManager %s] Target teleported %.1f blocks from (%.2f %.2f %.2f) to (%.2f %.2f %.2f) in %.2fs (expected max: %.1f)",
+				fm.getFollowerName(),
+				lastDist,
+				fm.lastTargetPos.x, fm.lastTargetPos.y, fm.lastTargetPos.z,
+				targetX, targetY, targetZ,
+				elapsedTime.Seconds(),
+				maxExpectedMovement)
+
+			fm.sendChatMessage(fmt.Sprintf("[FollowManager %s] %s may have teleported - recalculating path", fm.getFollowerName(), fm.targetName))
 			// Force path recalculation but don't stop following
 			fm.currentPath = nil
-			fm.pathIndex = 0
 			fm.stuckAttempts = 0 // Reset stuck counter after teleport
+		}
+	}
+
+	// Add current position to history BEFORE transition detection so velocity can be calculated
+	fm.addPositionToHistory(targetX, targetY, targetZ, time.Now())
+
+	// Update lastTargetPos after teleportation check to track position changes between updates
+	fm.lastTargetPos.x = targetX
+	fm.lastTargetPos.y = targetY
+	fm.lastTargetPos.z = targetZ
+	fm.lastTargetPosTime = time.Now()
+
+	// Detect target stationary-to-moving transition
+	// Calculate velocity from accumulated history (need at least 2 samples)
+	transitionedToMoving := false
+	if len(fm.targetPosHistory) >= 2 {
+		vx, vy, vz := fm.calculateTargetVelocity()
+		velocityMagnitude := math.Sqrt(vx*vx + vy*vy + vz*vz)
+		
+		if fm.targetWasStationary && velocityMagnitude > 0.5 {
+			// Target transitioned from stationary to moving based on velocity
+			log.Printf("[FollowManager %s] Target started moving (velocity %.2f b/s) - clearing stale position history and forcing immediate recalc",
+				fm.getFollowerName(), velocityMagnitude)
+			fm.targetPosHistory = nil
+			// Add current position as first entry in fresh history
+			fm.addPositionToHistory(targetX, targetY, targetZ, time.Now())
+			fm.targetWasStationary = false
+			transitionedToMoving = true
+			fm.statSkipTransition++
+			fm.lastTransitionTime = time.Now()
+		} else if velocityMagnitude < 0.1 {
+			// Target is stationary (velocity < 0.1 b/s)
+			fm.targetWasStationary = true
+		} else {
+			// Target is moving continuously
+			fm.targetWasStationary = false
 		}
 	}
 
 	// Check distance to target
 	botX, botY, botZ, _, _, initialized := fm.getBotPosition()
 	if !initialized {
+		fm.statSkipUninit++
 		return fmt.Errorf("bot position not initialized")
 	}
 
 	distance := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
 
-	// Check if we're close enough
-	if distance <= fm.config.StopDistance {
-		if fm.state != StateArrived {
-			fm.state = StateArrived
+	// Periodic detailed logging (every 5 seconds)
+	if fm.lastDetailedLog.IsZero() || time.Since(fm.lastDetailedLog) > 5*time.Second {
+		vx, vy, vz := fm.calculateTargetVelocity()
+		velocityMagnitude := math.Sqrt(vx*vx + vy*vy + vz*vz)
+		timeSinceLastPath := time.Since(fm.lastPathTime)
+		predictiveStr := "no"
+		if velocityMagnitude > 1.0 {
+			predictiveStr = "yes"
+		}
+		log.Printf("[FollowManager %s] === Follow State === Distance: %.2f | Velocity: %.2f b/s | State: %s | Last path: %.1fs ago | Predictive: %s",
+			fm.getFollowerName(), distance, velocityMagnitude, fm.state, timeSinceLastPath.Seconds(), predictiveStr)
+		fm.lastDetailedLog = time.Now()
+	}
+
+	// Pause only when we're close and the target is not moving.
+	arrivedGate := distance <= fm.config.StopDistance && targetMovedDistance <= fm.config.TargetStillDistance
+
+	// Minimum chase window after movement transition
+	chaseWindow := 500 * time.Millisecond
+	if !fm.lastTransitionTime.IsZero() && time.Since(fm.lastTransitionTime) < chaseWindow {
+		// Suppress arrived gate during chase window
+		if arrivedGate {
+			log.Printf("[FollowManager %s] Arrived gate SUPPRESSED during chase window (%.0fms) dist=%.2f, moved=%.2f", fm.getFollowerName(), chaseWindow.Seconds()*1000, distance, targetMovedDistance)
+		}
+		arrivedGate = false
+	}
+
+	// If target just started moving, override Arrived gate immediately.
+	if arrivedGate && transitionedToMoving {
+		if fm.state == models.StateArrived {
+			log.Printf("[FollowManager %s] Arrived gate OFF (transition detected) dist=%.2f, moved=%.2f>%.2f", fm.getFollowerName(), distance, targetMovedDistance, fm.config.TargetStillDistance)
+			fm.state = models.StateFollowingPath
+		}
+		// Do not early-return; allow immediate recalc below.
+	} else if arrivedGate {
+		// Normal Arrived handling (no movement)
+		if fm.state != models.StateArrived {
+			log.Printf("[FollowManager %s] Arrived gate ON dist=%.2f<=%.2f, still=%.2f<=%.2f", fm.getFollowerName(), distance, fm.config.StopDistance, targetMovedDistance, fm.config.TargetStillDistance)
+			fm.state = models.StateArrived
 			fm.sendChatMessage(fmt.Sprintf("Arrived at %s (%.1f blocks)", fm.targetName, distance))
+			fm.clearPath()
+		}
+		fm.statSkipArrived++
+		return nil
+	} else if fm.state == models.StateArrived {
+		log.Printf("[FollowManager %s] Arrived gate OFF dist=%.2f>%.2f or moved=%.2f>%.2f", fm.getFollowerName(), distance, fm.config.StopDistance, targetMovedDistance, fm.config.TargetStillDistance)
+		fm.state = models.StateFollowingPath
+	}
+
+	// For executors without path execution capability, apply head tracking and MoveTowards fallback
+	if fm.pathExecutor == nil {
+		return fm.followWithMoveTowards(botX, botY, botZ, targetX, targetY, targetZ)
+	}
+
+	// Force immediate recalculation if target just started moving
+	if transitionedToMoving {
+		return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
+	}
+
+	// For executors with path capability, only handle path recalculation and stuck recovery
+	return fm.monitorPathExecution(botX, botY, botZ, targetX, targetY, targetZ)
+}
+
+// monitorPathExecution monitors path execution by the executor and handles recalculation/recovery
+func (fm *followManager) monitorPathExecution(botX, botY, botZ, targetX, targetY, targetZ float64) error {
+	// Progress-based stuck detection: check if bot and target have diverging movement
+	now := time.Now()
+	if fm.lastProgressCheck.IsZero() {
+		fm.lastProgressCheck = now
+	}
+	if !fm.lastProgressCheck.IsZero() && now.Sub(fm.lastProgressCheck) > 2*time.Second {
+		// Calculate bot movement since last progress check
+		botDistMoved := 0.0
+		if !fm.lastBotPosTime.IsZero() {
+			botDistMoved = fm.calculateDistance(
+				fm.lastBotPos.x, fm.lastBotPos.y, fm.lastBotPos.z,
+				botX, botY, botZ)
+		}
+		if botDistMoved > 0.3 {
+			// Treat forward progress as non-stuck.
+			fm.lastPathTime = now
 		}
 
-		return nil
+		// Calculate target movement since last progress check
+		targetDistMoved := 0.0
+		if len(fm.targetPosHistory) >= 2 {
+			// Compare current target position with position from 2 seconds ago
+			for i := len(fm.targetPosHistory) - 1; i >= 0; i-- {
+				if now.Sub(fm.targetPosHistory[i].timestamp) >= 2*time.Second {
+					targetDistMoved = fm.calculateDistance(
+						fm.targetPosHistory[i].x, fm.targetPosHistory[i].y, fm.targetPosHistory[i].z,
+						targetX, targetY, targetZ)
+					break
+				}
+			}
+		}
+
+		// If bot hasn't moved but target has moved significantly, force immediate recalc
+		if botDistMoved < 0.5 && targetDistMoved > 2.0 {
+			fm.statSkipProgressRecalc++
+			log.Printf("[FollowManager %s] Stuck following outdated path: bot moved %.2f, target moved %.2f - forcing recalc",
+				fm.getFollowerName(), botDistMoved, targetDistMoved)
+			return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
+		}
+
+		fm.lastProgressCheck = now
 	}
 
-	// CRITICAL: When stationary, we must still send position+rotation packets regularly
-	// to keep the server updated and prevent it from unloading entities.
-	// LookAt() only sends rotation, so we need to send position+rotation explicitly.
-
-	// Calculate look angles to target
-	fromY := botY + 1.62  // Bot eye level
-	toY := targetY + 1.62 // Target eye level
-
-	dx := targetX - botX
-	dy := toY - fromY
-	dz := targetZ - botZ
-
-	horizontalDist := math.Sqrt(dx*dx + dz*dz)
-	yaw := float32(math.Atan2(-dx, dz) * 180 / math.Pi)
-	pitch := float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
-
-	// Send position AND rotation (not just rotation) to keep server happy
-	if err := fm.movementExecutor.SendPositionAndRotation(botX, botY, botZ, yaw, pitch, true); err != nil {
-		log.Printf("SendPositionAndRotation error while stationary: %v", err)
+	// Update last bot position tracking
+	if fm.lastBotPosTime.IsZero() || now.Sub(fm.lastBotPosTime) > 500*time.Millisecond {
+		fm.lastBotPos.x = botX
+		fm.lastBotPos.y = botY
+		fm.lastBotPos.z = botZ
+		fm.lastBotPosTime = now
 	}
 
-	// Always look at the target player (continuous head tracking)
-	// This ensures the bot tracks the player even when moving
-	if err := fm.movementExecutor.LookAt(targetX, targetY+1.62, targetZ, true); err != nil {
-		log.Printf("LookAt target player error: %v", err)
+	// Check if we need to recalculate path
+	needsRecalc := fm.shouldRecalculatePath(targetX, targetY, targetZ)
+
+	if fm.currentPath == nil {
+		fm.statSkipPathNil++
+		log.Printf("[FollowManager %s] monitor: currentPath is nil, forcing path calculation", fm.getFollowerName())
+		return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
 	}
 
+	if needsRecalc {
+		log.Printf("[FollowManager %s] monitor: needsRecalc=true (dist=%.2f, sinceLastPath=%.2fs)", fm.getFollowerName(), fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ), time.Since(fm.lastPathTime).Seconds())
+		return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
+	}
+
+	// Check for stuck condition by monitoring if target hasn't changed
+	// and executor hasn't made progress (executor tracks movement internally)
+	if time.Since(fm.lastPathTime) > fm.config.StuckThreshold {
+		// Also check if distance to target has increased (moving away from target)
+		currentDist := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
+		if fm.currentPath != nil && len(fm.currentPath.Steps) > 0 {
+			// Compare with distance when path was calculated
+			startPos := fm.currentPath.Steps[0].Position
+			initialDist := fm.calculateDistance(startPos.X, startPos.Y, startPos.Z, targetX, targetY, targetZ)
+			if currentDist > initialDist {
+				log.Printf("[FollowManager %s] Distance to target increased (%.2f -> %.2f) - forcing recalc",
+					fm.getFollowerName(), initialDist, currentDist)
+				return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
+			}
+		}
+
+		// Stuck - executor hasn't completed path in reasonable time
+		return fm.handleStuck(botX, botY, botZ, targetX, targetY, targetZ)
+	}
+
+	return nil
+}
+
+// followWithMoveTowards implements simple path following for executors without path capability
+func (fm *followManager) followWithMoveTowards(botX, botY, botZ, targetX, targetY, targetZ float64) error {
 	// Check if we need to recalculate path
 	needsRecalc := fm.shouldRecalculatePath(targetX, targetY, targetZ)
 
@@ -298,41 +551,87 @@ func (fm *followManager) update() error {
 		return fm.calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ)
 	}
 
-	// Follow current path
-	return fm.followCurrentPath(botX, botY, botZ)
+	if fm.currentPath == nil {
+		return nil
+	}
+
+	// Get target position for distance-based sprint/sneak
+	distance := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
+
+	// Sprint/Sneak based on distance
+	if distance > fm.config.SprintDistance {
+		// Far from target - sprint
+		if err := fm.movementExecutor.StartSprinting(); err != nil {
+			log.Printf("[FollowManager %s] StartSprinting error: %v", fm.getFollowerName(), err)
+		}
+		// Make sure not sneaking while sprinting
+		if err := fm.movementExecutor.StopSneaking(); err != nil {
+			log.Printf("[FollowManager %s] StopSneaking error: %v", fm.getFollowerName(), err)
+		}
+	} else if distance < fm.config.SneakDistance {
+		// Very close to target - sneak
+		if err := fm.movementExecutor.StopSprinting(); err != nil {
+			log.Printf("[FollowManager %s] StopSprinting error: %v", fm.getFollowerName(), err)
+		}
+		if err := fm.movementExecutor.StartSneaking(); err != nil {
+			log.Printf("[FollowManager %s] StartSneaking error: %v", fm.getFollowerName(), err)
+		}
+	} else {
+		// Normal distance - walk normally
+		if err := fm.movementExecutor.StopSprinting(); err != nil {
+			log.Printf("[FollowManager %s] StopSprinting error: %v", fm.getFollowerName(), err)
+		}
+		if err := fm.movementExecutor.StopSneaking(); err != nil {
+			log.Printf("[FollowManager %s] StopSneaking error: %v", fm.getFollowerName(), err)
+		}
+	}
+
+	// Look at the target player
+	if err := fm.movementExecutor.LookAt(targetX, targetY+1.62, targetZ, true); err != nil {
+		log.Printf("[FollowManager %s] LookAt target player error: %v", fm.getFollowerName(), err)
+	}
+
+	// For fallback MoveTowards path following, move towards target
+	// This is a simple path following without explicit path stepping
+	_, _, _, err := fm.movementExecutor.MoveTowards(targetX, targetY, targetZ, 0.2, true)
+	if err != nil {
+		log.Printf("[FollowManager %s] Movement error: %v", fm.getFollowerName(), err)
+		return err
+	}
+
+	return nil
 }
 
 // shouldRecalculatePath checks if path needs recalculation
-// Performance optimized with rate limiting
+// Simply checks if target has moved beyond threshold
 func (fm *followManager) shouldRecalculatePath(targetX, targetY, targetZ float64) bool {
-	// Phase 5: Don't recalculate too frequently (performance optimization)
-	timeSinceLastCalc := time.Since(fm.lastPathTime)
-	if timeSinceLastCalc < 1*time.Second {
-		// Minimum 1 second between recalculations to prevent CPU spikes
-		return false
+	fm.statShouldRecalcCalls++
+	if !fm.lastPathTime.IsZero() {
+		if time.Since(fm.lastPathTime) < fm.config.MinRecalcInterval {
+			return false
+		}
+		if time.Since(fm.lastPathTime) > fm.config.RecalcInterval {
+			return true
+		}
 	}
-
-	// Recalc if enough time has passed
-	if timeSinceLastCalc > fm.config.RecalcInterval {
-		log.Printf("Path recalc: time interval exceeded (%.1fs)", timeSinceLastCalc.Seconds())
-		return true
-	}
-
-	// Recalc if target moved significantly
-	dx := targetX - fm.lastTargetPos.x
-	dy := targetY - fm.lastTargetPos.y
-	dz := targetZ - fm.lastTargetPos.z
+	// Check if target moved significantly since last path calculation
+	dx := targetX - fm.lastPathTargetPos.X
+	dy := targetY - fm.lastPathTargetPos.Y
+	dz := targetZ - fm.lastPathTargetPos.Z
 	distMoved := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	threshold := fm.config.RecalcDistThreshold
 
-	if distMoved > fm.config.RecalcDistThreshold {
-		log.Printf("Path recalc: target moved %.1f blocks", distMoved)
+	if distMoved > threshold {
+		log.Printf("[FollowManager %s] Path recalc needed: target moved %.2f blocks (from %.2f,%.2f,%.2f to %.2f,%.2f,%.2f)",
+			fm.getFollowerName(), distMoved, fm.lastPathTargetPos.X, fm.lastPathTargetPos.Y, fm.lastPathTargetPos.Z, targetX, targetY, targetZ)
 		return true
 	}
 
-	// Recalc if path is exhausted
-	if fm.currentPath != nil && fm.pathIndex >= len(fm.currentPath.Steps) {
-		log.Printf("Path recalc: path exhausted")
-		return true
+	// Throttled debug log when no recalc is needed (at most once per second)
+	if fm.lastRecalcDecisionLog.IsZero() || time.Since(fm.lastRecalcDecisionLog) >= 1*time.Second {
+		log.Printf("[FollowManager %s] No recalc: target moved %.2f ≤ %.2f since last path (from %.2f,%.2f,%.2f to %.2f,%.2f,%.2f)",
+			fm.getFollowerName(), distMoved, threshold, fm.lastPathTargetPos.X, fm.lastPathTargetPos.Y, fm.lastPathTargetPos.Z, targetX, targetY, targetZ)
+		fm.lastRecalcDecisionLog = time.Now()
 	}
 
 	return false
@@ -340,182 +639,137 @@ func (fm *followManager) shouldRecalculatePath(targetX, targetY, targetZ float64
 
 // calculateNewPath calculates a new path to the target
 func (fm *followManager) calculateNewPath(botX, botY, botZ, targetX, targetY, targetZ float64) error {
-	fm.state = StateCalculatingPath
+	fm.state = models.StateCalculatingPath
 
-	// Calculate goal position that maintains target distance from player
-	// Calculate 3D distance with world integration
-	dx := botX - targetX
-	dy := botY - targetY
-	dz := botZ - targetZ
+	log.Printf("[FollowManager %s] Calculating new path from (%.2f %.2f %.2f) to (%.2f %.2f %.2f)", fm.getFollowerName(), botX, botY, botZ, targetX, targetY, targetZ)
 
-	// Calculate 3D distance
-	distance3D := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	// Calculate target velocity for predictive targeting
+	vx, vy, vz := fm.calculateTargetVelocity()
+	velocityMagnitude := math.Sqrt(vx*vx + vy*vy + vz*vz)
 
-	// Calculate goal position at TargetDistance from target (3D)
-	var goalX, goalY, goalZ float64
-	if distance3D > 0.1 { // If bot is not at exactly the same position
-		// Normalize direction vector and scale to TargetDistance
-		goalX = targetX + (dx/distance3D)*fm.config.TargetDistance
-		goalY = targetY + (dy/distance3D)*fm.config.TargetDistance
-		goalZ = targetZ + (dz/distance3D)*fm.config.TargetDistance
-	} else {
-		// If at exactly the same position, pick a direction (north)
-		goalX = targetX
-		goalY = targetY
-		goalZ = targetZ - fm.config.TargetDistance
+	// Apply predictive targeting if target is moving
+	predictedTargetX, predictedTargetY, predictedTargetZ := targetX, targetY, targetZ
+	if velocityMagnitude > 1.0 { // Target is moving (>1 block/sec)
+		// Predict target position based on velocity and config factor
+		predictionTime := fm.config.TargetVelocityFactor * 2.0 // 0.5 factor = 1 second ahead
+		predictedTargetX = targetX + vx*predictionTime
+		predictedTargetY = targetY + vy*predictionTime
+		predictedTargetZ = targetZ + vz*predictionTime
+		log.Printf("[FollowManager %s] Predictive targeting: velocity=%.2f b/s, predicting %.2fs ahead to (%.2f, %.2f, %.2f)",
+			fm.getFollowerName(), velocityMagnitude, predictionTime, predictedTargetX, predictedTargetY, predictedTargetZ)
 	}
 
-	// Convert to block coordinates
-	// IMPORTANT: Trust the server's reported positions rather than trying to "correct" based on world data
-	// The world chunk data may be stale/incorrect, but the server position is authoritative
-	start := pathfinding.V3{
+	// Calculate goal position: follow behind the leader's direction of movement
+	// If leader is moving, position goal behind leader along movement direction
+	// If leader is stationary, position goal at current position
+	var goalX, goalY, goalZ float64
+	if velocityMagnitude > 0.5 { // Leader is moving
+		// Normalize velocity vector
+		vMag := velocityMagnitude
+		vxNorm := vx / vMag
+		vyNorm := vy / vMag
+		vzNorm := vz / vMag
+		// Position goal TargetDistance blocks BEHIND predicted target position
+		// (opposite to movement direction)
+		goalX = predictedTargetX - vxNorm*fm.config.TargetDistance
+		goalY = predictedTargetY - vyNorm*fm.config.TargetDistance
+		goalZ = predictedTargetZ - vzNorm*fm.config.TargetDistance
+	} else {
+		// Leader is stationary, just path toward leader position
+		// Goal is the predicted target position itself (or close to it)
+		goalX = predictedTargetX
+		goalY = predictedTargetY
+		goalZ = predictedTargetZ
+	}
+
+	// Convert to block coordinates for pathfinding
+	// IMPORTANT: Both start AND goal must be floored to block coordinates because
+	// A* operates on integer block positions. Using fractional goal coordinates
+	// causes A* to never reach the goal (nearest integer positions are outside goalRadius).
+	start := models.V3{
 		X: math.Floor(botX),
-		Y: math.Floor(botY), // This is the block containing bot's feet
+		Y: math.Floor(botY),
 		Z: math.Floor(botZ),
 	}
-	goal := pathfinding.V3{
+
+	goal := models.V3{
 		X: math.Floor(goalX),
 		Y: math.Floor(goalY),
 		Z: math.Floor(goalZ),
 	}
 
-	log.Printf("Pathfinding from (%f, %f, %f) to (%f, %f, %f) [target distance: %.1f blocks from player]",
-		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z, fm.config.TargetDistance)
+	log.Printf("[FollowManager %s] Pathfinding from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [target distance: %.1f blocks from player]",
+		fm.getFollowerName(), start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z, fm.config.TargetDistance)
 
 	line := utils.Line(start, goal)
 	lineLength := len(line)
 
-	log.Printf("Pathfinding straight line distance from (%f, %f, %f) to (%f, %f, %f) = %d",
-		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z, lineLength)
+	log.Printf("[FollowManager %s] Pathfinding straight line distance from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) = %d",
+		fm.getFollowerName(), start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z, lineLength)
 
 	// Allow up to 50x the straight-line distance for pathfinding
 	// This gives A* enough steps to explore around obstacles
 	// For a 9-block distance, this allows ~450 steps
-	maxPathSteps := min(fm.config.MaxPathSteps, 50*lineLength)
+	// Use max() to ensure we use at least the configured MaxPathSteps
+	maxPathSteps := max(fm.config.MaxPathSteps, 50*lineLength)
 
-	// Find path
-	path, err := fm.pathFinder.FindPath(start, goal, maxPathSteps)
+	// Find path with timeout to prevent blocking forever
+	type pathResult struct {
+		path *models.Path
+		err  error
+	}
+	resultCh := make(chan pathResult, 1)
+
+	go func() {
+		path, err := fm.pathFinder.FindPath(start, goal, maxPathSteps)
+		resultCh <- pathResult{path: path, err: err}
+	}()
+
+	var path *models.Path
+	var err error
+
+	select {
+	case result := <-resultCh:
+		path = result.path
+		err = result.err
+	case <-time.After(fm.config.PathfindingTimeout):
+		fm.state = models.StateStuck
+		log.Printf("[FollowManager %s] Pathfinding timed out after %v", fm.getFollowerName(), fm.config.PathfindingTimeout)
+		return fmt.Errorf("pathfinding timed out after %v", fm.config.PathfindingTimeout)
+	}
+
 	if err != nil {
-		fm.state = StateStuck
-		log.Printf("Pathfinding failed: %v", err)
+		fm.state = models.StateStuck
+		log.Printf("[FollowManager %s] Pathfinding failed: %v", fm.getFollowerName(), err)
 		return err
 	}
 
-	if !path.Found {
-		fm.state = StateStuck
+	if path == nil || !path.Found {
+		fm.state = models.StateStuck
+		log.Printf("[FollowManager %s] no path found", fm.getFollowerName())
 		return fmt.Errorf("no path found")
 	}
 
 	// Update path state
 	fm.currentPath = path
-	fm.pathIndex = 0
 	fm.lastPathTime = time.Now()
-	fm.lastTargetPos.x = targetX
-	fm.lastTargetPos.y = targetY
-	fm.lastTargetPos.z = targetZ
-	fm.state = StateFollowingPath
+	fm.lastPathTargetPos = models.V3{X: targetX, Y: targetY, Z: targetZ}
+	log.Printf("[FollowManager %s] lastPathTargetPos updated to (%.2f, %.2f, %.2f)", fm.getFollowerName(), fm.lastPathTargetPos.X, fm.lastPathTargetPos.Y, fm.lastPathTargetPos.Z)
+	// Note: lastTargetPos is now updated in the main update loop to track per-tick changes
+	fm.state = models.StateFollowingPath
+	fm.stuckAttempts = 0
 
-	// Log detailed path information
-	log.Printf("[Follow] %s", path.LogSummary())
-	log.Printf("[Follow] Path details:\n%s", path.LogDetails())
-
-	return nil
-}
-
-// followCurrentPath executes the current path
-func (fm *followManager) followCurrentPath(botX, botY, botZ float64) error {
-	if fm.currentPath == nil || fm.pathIndex >= len(fm.currentPath.Steps) {
-		return nil
-	}
-
-	// Get target position for distance-based sprint/sneak
-	targetX, targetY, targetZ, exists := fm.targetSelector.GetTargetPosition(fm.targetEntityID)
-	if exists {
-		distance := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
-
-		// Sprint/Sneak based on distance (only when we have a valid path)
-		if distance > fm.config.SprintDistance {
-			// Far from target - sprint
-			if err := fm.movementExecutor.StartSprinting(); err != nil {
-				log.Printf("StartSprinting error: %v", err)
-			}
-			// Make sure not sneaking while sprinting
-			if err := fm.movementExecutor.StopSneaking(); err != nil {
-				log.Printf("StopSneaking error: %v", err)
-			}
-		} else if distance < fm.config.SneakDistance {
-			// Very close to target - sneak
-			if err := fm.movementExecutor.StopSprinting(); err != nil {
-				log.Printf("StopSprinting error: %v", err)
-			}
-			if err := fm.movementExecutor.StartSneaking(); err != nil {
-				log.Printf("StartSneaking error: %v", err)
-			}
-		} else {
-			// Normal distance - walk normally
-			if err := fm.movementExecutor.StopSprinting(); err != nil {
-				log.Printf("StopSprinting error: %v", err)
-			}
-			if err := fm.movementExecutor.StopSneaking(); err != nil {
-				log.Printf("StopSneaking error: %v", err)
-			}
+	// Delegate path execution to executor if it supports it
+	if fm.pathExecutor != nil {
+		if err := fm.pathExecutor.SetPath(path); err != nil {
+			log.Printf("[FollowManager %s] Failed to set path on executor: %v", fm.getFollowerName(), err)
+			return err
 		}
 	}
 
-	// Get next step
-	step := fm.currentPath.Steps[fm.pathIndex]
-
-	stepIncrement := 0.5
-	if fm.movementExecutor.IsSprinting() {
-		stepIncrement = 0.8
-	} else if fm.movementExecutor.IsSneaking() {
-		stepIncrement = 0.3
-	}
-
-	// Calculate target position (center of block)
-	stepX, stepY, stepZ := float64(step.Position.X), float64(step.Position.Y), float64(step.Position.Z)
-	stepTargetX := stepX + stepIncrement
-	stepTargetY := stepY + stepIncrement // Use Y from pathfinding step (world integration complete)
-	stepTargetZ := stepZ + stepIncrement
-
-	// Check if we've reached this step (compare to block center, not corner)
-	distance := fm.calculateDistance(botX, botY, botZ, stepTargetX, stepTargetY, stepTargetZ)
-
-	log.Printf("Following path step %d/%d: bot at (%.1f, %.1f, %.1f), target step at (%f, %f, %f), distance: %.2f",
-		fm.pathIndex+1, len(fm.currentPath.Steps), botX, botY, botZ, step.Position.X, step.Position.Y, step.Position.Z, distance)
-
-	if distance < 0.5 { // Within 0.5 blocks of step center
-		fm.pathIndex++
-		fm.lastMovementTime = time.Now()
-		log.Printf("Reached step %d/%d: %s to (%f, %f, %f)",
-			fm.pathIndex, len(fm.currentPath.Steps), step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
-		return nil
-	}
-
-	// Check for stuck (Phase 5: Enhanced with recovery strategies)
-	if time.Since(fm.lastMovementTime) > fm.config.StuckThreshold {
-		return fm.handleStuck(botX, botY, botZ, stepTargetX, stepTargetY, stepTargetZ)
-	}
-
-	// Move towards step incrementally (0.2 blocks per update)
-	// (Head tracking is done in main update loop, not here)
-	// MoveTowards will update position but we already set rotation above
-	// This respects server-side movement validation
-	log.Printf("Moving towards (%.1f, %.1f, %.1f) by 0.2 blocks", stepTargetX, stepTargetY, stepTargetZ)
-	newX, newY, newZ, err := fm.movementExecutor.MoveTowards(stepTargetX, stepTargetY, stepTargetZ, 0.2, true)
-	if err != nil {
-		log.Printf("Movement error: %v", err)
-		return err
-	}
-
-	// Check if we actually moved
-	moveDistance := fm.calculateDistance(botX, botY, botZ, newX, newY, newZ)
-	log.Printf("After MoveTowards: new pos (%.1f, %.1f, %.1f), moved %.3f blocks", newX, newY, newZ, moveDistance)
-	if moveDistance > 0.01 {
-		fm.lastMovementTime = time.Now()
-		// Reset stuck counter when bot successfully moves
-		fm.resetStuckCounter()
-	}
+	// Log detailed path information
+	log.Printf("[FollowManager %s]  %s", fm.getFollowerName(), path.LogSummary())
+	log.Printf("[FollowManager %s]  Path details:\n%s", fm.getFollowerName(), path.LogDetails(true))
 
 	return nil
 }
@@ -528,25 +782,69 @@ func (fm *followManager) calculateDistance(x1, y1, z1, x2, y2, z2 float64) float
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
+// addPositionToHistory adds a position sample to the history for velocity calculation
+func (fm *followManager) addPositionToHistory(x, y, z float64, timestamp time.Time) {
+	// Add new position to history
+	fm.targetPosHistory = append(fm.targetPosHistory, struct {
+		x, y, z   float64
+		timestamp time.Time
+	}{
+		x:         x,
+		y:         y,
+		z:         z,
+		timestamp: timestamp,
+	})
+
+	// Keep only the most recent samples
+	if len(fm.targetPosHistory) > fm.historyMaxSize {
+		fm.targetPosHistory = fm.targetPosHistory[1:]
+	}
+}
+
+// calculateTargetVelocity calculates target velocity based on position history
+// Returns velocity in blocks/second for each axis
+func (fm *followManager) calculateTargetVelocity() (vx, vy, vz float64) {
+	if len(fm.targetPosHistory) < 2 {
+		return 0, 0, 0
+	}
+
+	// Use oldest and newest positions for velocity calculation
+	oldest := fm.targetPosHistory[0]
+	newest := fm.targetPosHistory[len(fm.targetPosHistory)-1]
+
+	// Calculate time difference
+	deltaTime := newest.timestamp.Sub(oldest.timestamp).Seconds()
+	if deltaTime < 0.001 { // Avoid division by zero
+		return 0, 0, 0
+	}
+
+	// Calculate velocity (blocks per second)
+	vx = (newest.x - oldest.x) / deltaTime
+	vy = (newest.y - oldest.y) / deltaTime
+	vz = (newest.z - oldest.z) / deltaTime
+
+	return vx, vy, vz
+}
+
 // ============================================================================
-// Enhanced Stuck Detection and Recovery
+// Stuck Detection and Recovery
 // ============================================================================
 
 // handleStuck implements recovery strategies when bot is stuck
 func (fm *followManager) handleStuck(botX, botY, botZ, targetX, targetY, targetZ float64) error {
-	fm.state = StateStuck
+	fm.state = models.StateStuck
 	fm.stuckAttempts++
 
-	log.Printf("Stuck detected (attempt %d/%d) at position (%.1f, %.1f, %.1f)",
-		fm.stuckAttempts, fm.config.MaxStuckAttempts, botX, botY, botZ)
+	log.Printf("[FollowManager %s] Stuck detected (attempt %d/%d) at position (%.1f, %.1f, %.1f)",
+		fm.getFollowerName(), fm.stuckAttempts, fm.config.MaxStuckAttempts, botX, botY, botZ)
 
 	// Check if we've exhausted recovery attempts
 	if fm.stuckAttempts >= fm.config.MaxStuckAttempts {
 		fm.sendChatMessage(fmt.Sprintf("Unable to reach %s after %d attempts - giving up",
 			fm.targetName, fm.stuckAttempts))
-		log.Printf("Exhausted recovery attempts, stopping follow")
+		log.Printf("[FollowManager %s] Exhausted recovery attempts, stopping follow", fm.getFollowerName())
 		fm.active = false
-		fm.state = StateIdle
+		fm.state = models.StateIdle
 		return fmt.Errorf("stuck after %d recovery attempts", fm.stuckAttempts)
 	}
 
@@ -561,12 +859,18 @@ func (fm *followManager) handleStuck(botX, botY, botZ, targetX, targetY, targetZ
 		recoveryErr = fm.tryJumpRecovery(botX, botY, botZ)
 
 	case 2:
+		// First attempt: try to move sideways to potentially get unstuck
+		fm.sendChatMessage(fmt.Sprintf("Stuck - attempting sideways recovery (attempt %d/%d)",
+			fm.stuckAttempts, fm.config.MaxStuckAttempts))
+		recoveryErr = fm.trySidewaysRecovery(botX, botY, botZ, targetX, targetY, targetZ)
+
+	case 3:
 		// Second attempt: Try alternate nearby destination
 		fm.sendChatMessage(fmt.Sprintf("Stuck - trying alternate path (attempt %d/%d)",
 			fm.stuckAttempts, fm.config.MaxStuckAttempts))
 		recoveryErr = fm.tryAlternateDestination(botX, botY, botZ, targetX, targetY, targetZ)
 
-	case 3:
+	case 4:
 		// Third attempt: Move backwards and retry
 		fm.sendChatMessage(fmt.Sprintf("Stuck - backing up (attempt %d/%d)",
 			fm.stuckAttempts, fm.config.MaxStuckAttempts))
@@ -580,11 +884,11 @@ func (fm *followManager) handleStuck(botX, botY, botZ, targetX, targetY, targetZ
 	}
 
 	if recoveryErr != nil {
-		log.Printf("Recovery attempt %d failed: %v", fm.stuckAttempts, recoveryErr)
+		log.Printf("[FollowManager %s] Recovery attempt %d failed: %v", fm.getFollowerName(), fm.stuckAttempts, recoveryErr)
 	}
 
-	// Reset movement timer to give recovery a chance
-	fm.lastMovementTime = time.Now()
+	// Reset path timer to give recovery a chance
+	fm.lastPathTime = time.Now()
 	fm.lastStuckCheck = time.Now()
 
 	return nil
@@ -592,7 +896,7 @@ func (fm *followManager) handleStuck(botX, botY, botZ, targetX, targetY, targetZ
 
 // tryJumpRecovery attempts to get unstuck by jumping in place
 func (fm *followManager) tryJumpRecovery(botX, botY, botZ float64) error {
-	log.Printf("Attempting jump recovery at (%.1f, %.1f, %.1f)", botX, botY, botZ)
+	log.Printf("[FollowManager %s] Attempting jump recovery at (%.1f, %.1f, %.1f)", fm.getFollowerName(), botX, botY, botZ)
 
 	// Jump up by configured height
 	jumpY := botY + fm.config.JumpRecoveryHeight
@@ -613,16 +917,60 @@ func (fm *followManager) tryJumpRecovery(botX, botY, botZ float64) error {
 	}
 
 	// Clear current path to force recalculation
-	fm.currentPath = nil
-	fm.pathIndex = 0
+	fm.clearPath()
 
-	log.Printf("Jump recovery completed")
+	log.Printf("[FollowManager %s] Jump recovery completed", fm.getFollowerName())
+	return nil
+}
+
+// trySidewaysRecovery attempts to get unstuck by moving sideways
+func (fm *followManager) trySidewaysRecovery(botX, botY, botZ, targetX, targetY, targetZ float64) error {
+	log.Printf("[FollowManager %s] Attempting sideways recovery at (%.1f, %.1f, %.1f)", fm.getFollowerName(), botX, botY, botZ)
+
+	var err error
+	sidewaysX := botX
+	sidewaysZ := botZ
+	for attempt := range 4 {
+		moveX := 0.0
+		moveZ := 0.0
+		switch attempt {
+		case 0:
+			moveZ = -1.0 // North
+		case 1:
+			moveZ = 1.0 // South
+		case 2:
+			moveX = 1.0 // East
+		case 3:
+			moveX = -1.0 // West
+		}
+
+		// Move sideways by configured distance (to the right)
+		sidewaysX = botX + moveX
+		sidewaysZ = botZ + moveZ
+		err = fm.tryAlternateDestination(botX, botY, botZ, sidewaysX, botY, sidewaysZ)
+		if err == nil {
+			log.Printf("[FollowManager %s] Sideways movement succeeded to (%.1f, %.1f, %.1f)", fm.getFollowerName(), sidewaysX, botY, sidewaysZ)
+			break
+		}
+		log.Printf("[FollowManager %s] Sideways movement attempt %d failed: %v", fm.getFollowerName(), attempt+1, err)
+	}
+
+	if err != nil {
+		return fmt.Errorf("sideways movement failed: %w", err)
+	}
+
+	err = fm.tryAlternateDestination(sidewaysX, botY, sidewaysZ, targetX, targetY, targetZ)
+	if err != nil {
+		return fmt.Errorf("sideways recovery failed: %w", err)
+	}
+
+	log.Printf("[FollowManager %s] Sideways recovery completed", fm.getFollowerName())
 	return nil
 }
 
 // tryAlternateDestination tries to path to a nearby alternate location
 func (fm *followManager) tryAlternateDestination(botX, botY, botZ, targetX, targetY, targetZ float64) error {
-	log.Printf("Attempting alternate destination recovery")
+	log.Printf("[FollowManager %s] Attempting alternate destination recovery", fm.getFollowerName())
 
 	// Try destinations at different angles around the target
 	alternateOffsets := []struct{ dx, dz float64 }{
@@ -641,26 +989,30 @@ func (fm *followManager) tryAlternateDestination(botX, botY, botZ, targetX, targ
 		altZ := targetZ + offset.dz
 
 		// Convert to block coordinates
-		start := pathfinding.V3{
+		start := models.V3{
 			X: math.Floor(botX),
 			Y: math.Floor(botY),
 			Z: math.Floor(botZ),
 		}
-		goal := pathfinding.V3{
+		goal := models.V3{
 			X: math.Floor(altX),
 			Y: math.Floor(botY), // Keep same Y level
 			Z: math.Floor(altZ),
 		}
 
-		log.Printf("Trying alternate destination %d: (%f, %f, %f)", i+1, goal.X, goal.Y, goal.Z)
+		log.Printf("[FollowManager %s] Trying alternate destination %d: (%f, %f, %f)", fm.getFollowerName(), i+1, goal.X, goal.Y, goal.Z)
 
 		// Try to find path to alternate destination
 		path, err := fm.pathFinder.FindPath(start, goal, fm.config.MaxPathSteps)
 		if err == nil && path.Found {
-			log.Printf("Found alternate path with %d steps", len(path.Steps))
+			log.Printf("[FollowManager %s] Found alternate path with %d steps", fm.getFollowerName(), len(path.Steps))
 			fm.currentPath = path
-			fm.pathIndex = 0
 			fm.lastPathTime = time.Now()
+			if fm.pathExecutor != nil {
+				if err := fm.pathExecutor.SetPath(path); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 	}
@@ -670,7 +1022,7 @@ func (fm *followManager) tryAlternateDestination(botX, botY, botZ, targetX, targ
 
 // tryBackupRecovery moves the bot backwards and clears path
 func (fm *followManager) tryBackupRecovery(botX, botY, botZ, targetX, targetY, targetZ float64) error {
-	log.Printf("Attempting backup recovery")
+	log.Printf("[FollowManager %s] Attempting backup recovery", fm.getFollowerName())
 
 	// Calculate direction away from target
 	dx := botX - targetX
@@ -691,8 +1043,8 @@ func (fm *followManager) tryBackupRecovery(botX, botY, botZ, targetX, targetY, t
 	backupX := botX + dx*1.0
 	backupZ := botZ + dz*1.0
 
-	log.Printf("Moving backwards from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f)",
-		botX, botY, botZ, backupX, botY, backupZ)
+	log.Printf("[FollowManager %s] Moving backwards from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f)",
+		fm.getFollowerName(), botX, botY, botZ, backupX, botY, backupZ)
 
 	// Send position update to move backwards
 	err := fm.movementExecutor.SendPosition(backupX, botY, backupZ, true)
@@ -701,10 +1053,9 @@ func (fm *followManager) tryBackupRecovery(botX, botY, botZ, targetX, targetY, t
 	}
 
 	// Clear path to force recalculation from new position
-	fm.currentPath = nil
-	fm.pathIndex = 0
+	fm.clearPath()
 
-	log.Printf("Backup recovery completed")
+	log.Printf("[FollowManager %s] Backup recovery completed", fm.getFollowerName())
 	return nil
 }
 
@@ -712,31 +1063,32 @@ func (fm *followManager) tryBackupRecovery(botX, botY, botZ, targetX, targetY, t
 func (fm *followManager) tryClearPathRecovery() error {
 	log.Printf("Clearing path for fresh recalculation")
 
-	fm.currentPath = nil
-	fm.pathIndex = 0
+	fm.clearPath()
 	fm.lastPathTime = time.Time{} // Force immediate recalc
 
 	return nil
 }
 
-// resetStuckCounter resets stuck detection when bot successfully moves
-func (fm *followManager) resetStuckCounter() {
-	if fm.stuckAttempts > 0 {
-		log.Printf("Bot recovered! Resetting stuck counter (was %d attempts)", fm.stuckAttempts)
-		fm.stuckAttempts = 0
-	}
-}
-
 // ============================================================================
-// Phase 5: Enhanced Target Validation
+// Target Validation
 // ============================================================================
 
 // handleTargetLost handles the case when target is lost (disconnect, despawn, etc.)
 func (fm *followManager) handleTargetLost(reason string) error {
-	log.Printf("[TARGET_LOST] transitioning following state from %s to %s", fm.state.String(), StateLost.String())
-	fm.state = StateLost
+	log.Printf("[FollowManager %s] [TARGET_LOST] transitioning following state from %s to %s", fm.getFollowerName(), fm.state.String(), models.StateLost.String())
+	fm.state = models.StateLost
 	fm.sendChatMessage(fmt.Sprintf("Lost target %s: %s", fm.targetName, reason))
 	log.Printf("Target lost: %s", reason)
+	fm.targetEntityID = 0
+	fm.lastTargetPosTime = time.Time{}
+	fm.clearPath()
 	// fm.active = false
 	return fmt.Errorf("target lost: %s", reason)
+}
+
+func (fm *followManager) clearPath() {
+	fm.currentPath = nil
+	if fm.pathExecutor != nil {
+		fm.pathExecutor.ClearPath()
+	}
 }

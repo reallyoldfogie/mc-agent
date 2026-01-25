@@ -3,11 +3,15 @@ package agent
 import (
 	"context"
 	"math"
+	"net"
 	"testing"
 	"time"
 
+	mcnet "github.com/Tnze/go-mc/net"
 	pk "github.com/Tnze/go-mc/net/packet"
-	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/google/uuid"
+	"github.com/reallyoldfogie/mc-agent/models"
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/require"
 )
@@ -33,15 +37,24 @@ func (f *fakeMoveExec) LookAt(x, y, z float64, onGround bool) error {
 	f.lookCalls = append(f.lookCalls, [3]float64{x, y, z})
 	return nil
 }
+func (f *fakeMoveExec) StartSprinting() error { return nil }
+func (f *fakeMoveExec) StopSprinting() error  { return nil }
+func (f *fakeMoveExec) IsSprinting() bool     { return false }
+func (f *fakeMoveExec) StartSneaking() error  { return nil }
+func (f *fakeMoveExec) StopSneaking() error   { return nil }
+func (f *fakeMoveExec) IsSneaking() bool      { return false }
 
 type fakePF struct {
-	start, pathGoal pathfinding.V3
+	start, pathGoal models.V3
 	called          bool
 }
 
-func (f *fakePF) FindPath(s, g pathfinding.V3, _ int) (*pathfinding.Path, error) {
+func (f *fakePF) FindPath(s, g models.V3, _ int) (*models.Path, error) {
 	f.start, f.pathGoal, f.called = s, g, true
-	return &pathfinding.Path{}, nil
+	return &models.Path{}, nil
+}
+func (f *fakePF) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
+	return startY
 }
 
 type fakeSBPacketMgr struct {
@@ -122,13 +135,35 @@ func (f fakeSBPacketMgr) GetEntityTypeID(name string) int32 {
 
 type fakeClientWriter struct{ pkts []pk.Packet }
 
-func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, JoinOptions) error {
+func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, bot.JoinOptions) error {
 	return nil
 }
-func (f *fakeClientWriter) Events() EventBus                 { return nil }
+func (f *fakeClientWriter) Events() bot.Events               { return nil }
 func (f *fakeClientWriter) Name() string                     { return "BOT" }
 func (f *fakeClientWriter) HandleGame(context.Context) error { return nil }
 func (f *fakeClientWriter) WritePacket(p pk.Packet) error    { f.pkts = append(f.pkts, p); return nil }
+func (f *fakeClientWriter) Close() error                                                          { return nil }
+func (f *fakeClientWriter) Conn() *bot.Conn                                                       { return nil }
+func (f *fakeClientWriter) SetAuth(bot.Auth)                                                      {}
+func (f *fakeClientWriter) JoinServer(context.Context, string) error                              { return nil }
+func (f *fakeClientWriter) JoinServerWithDialer(context.Context, *net.Dialer, string) error      { return nil }
+func (f *fakeClientWriter) UUID() uuid.UUID                                                       { return uuid.UUID{} }
+func (f *fakeClientWriter) Cookies() map[string][]byte                                            { return nil }
+func (f *fakeClientWriter) SetCookies(map[string][]byte)                                          {}
+func (f *fakeClientWriter) RegistryData() map[string]*bot.CustomRegistry                          { return nil }
+func (f *fakeClientWriter) RegistryTags() map[string]*bot.RegistryTags                            { return nil }
+func (f *fakeClientWriter) LoginPlugin() map[string]bot.CustomPayloadHandler                      { return nil }
+func (f *fakeClientWriter) CustomReportDetails() map[string]string                                { return nil }
+func (f *fakeClientWriter) SetJoinLogin(func(*mcnet.Conn) error)                                  {}
+func (f *fakeClientWriter) SetJoinConfiguration(func(*mcnet.Conn) error)                          {}
+func (f *fakeClientWriter) MovementMirror() bot.MovementMirror                                    { return nil }
+func (f *fakeClientWriter) RegistryCallback() bot.RegistryDataCallback                            { return nil }
+func (f *fakeClientWriter) PacketMgr() protocol_models.PacketMgr                                  { return nil }
+func (f *fakeClientWriter) EnableFeature([]pk.Identifier)                                         {}
+func (f *fakeClientWriter) PushResourcePack(bot.ResourcePack)                                     {}
+func (f *fakeClientWriter) PopResourcePack(pk.UUID)                                               {}
+func (f *fakeClientWriter) PopAllResourcePack()                                                   {}
+func (f *fakeClientWriter) SelectDataPacks([]bot.DataPack) []bot.DataPack                         { return nil }
 
 // Movement: moveForward 0.1 should send one position packet forward (yaw=0 => +Z)
 func TestCommand_MoveForward_SmallStep(t *testing.T) {

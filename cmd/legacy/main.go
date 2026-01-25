@@ -29,6 +29,7 @@ import (
 	"github.com/google/uuid"
 
 	agentpkg "github.com/reallyoldfogie/mc-agent/agent"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
 	"github.com/reallyoldfogie/mc-bot-go/bot/msg"
@@ -86,12 +87,12 @@ var (
 )
 
 var (
-	client        *bot.Client
-	player        *basic.Player
-	playerList    *playerlist.PlayerList
+	client        bot.Client
+	player        basic.Player
+	playerList    playerlist.PlayerList
 	chatHandler   *msg.Manager
 	worldManager  pathfinding.World // *world.World
-	screenManager *screen.Manager
+	screenManager screen.Manager
 
 	blockMgr  mc_versions.BlockMgr
 	soundMgr  mc_versions.SoundMgr
@@ -100,8 +101,8 @@ var (
 	movementExecutor movement.MovementExecutor
 	shapeMgr         pathfinding.BlockShapeManager
 	pathFinder       pathfinding.PathFinder
-	targetSelector   following.TargetSelector
-	followManager    following.FollowManager
+	targetSelector   models.TargetSelector
+	followManager    models.FollowManager
 
 	protocolVersion uint
 
@@ -109,7 +110,7 @@ var (
 	// outside the replay init block can finalize the archive.
 	replayRecGlobal    *recorder.Recorder
 	replayMirrorGlobal agentpkg.MovementMirror
-	skinProvider       agentpkg.SkinProvider
+	skinProvider       models.SkinProvider
 
 	// Bot position tracking
 	botPosition struct {
@@ -204,18 +205,18 @@ func sendPacketWithReplayMirror(pkt pk.Packet) error {
 	if replayMirrorGlobal != nil {
 		replayMirrorGlobal.HandleServerbound(pkt)
 	}
-	return client.Conn.WritePacket(pkt)
+	return client.Conn().WritePacket(pkt)
 }
 
 // getTrackedEntities returns a copy of tracked entities for following package
-func getTrackedEntities() map[int32]*following.TrackedEntity {
+func getTrackedEntities() map[int32]*models.TrackedEntity {
 	trackedEntities.mu.RLock()
 	defer trackedEntities.mu.RUnlock()
 
 	// Convert from main.TrackedEntity to following.TrackedEntity
-	result := make(map[int32]*following.TrackedEntity)
+	result := make(map[int32]*models.TrackedEntity)
 	for id, entity := range trackedEntities.entities {
-		result[id] = &following.TrackedEntity{
+		result[id] = &models.TrackedEntity{
 			UUID:  entity.UUID,
 			X:     entity.X,
 			Y:     entity.Y,
@@ -233,7 +234,7 @@ func getPlayerUUIDByName(name string) ([16]byte, error) {
 		return [16]byte{}, fmt.Errorf("player list not initialized")
 	}
 
-	players := playerList.PlayerInfos
+	players := playerList.Get()
 	for uuid, info := range players {
 		if info.Name == name {
 			return uuid, nil
@@ -362,9 +363,9 @@ func main() {
 		}
 		log.Print("Authenticated as ", mauth.Name, " (", mauth.UUID, ")")
 		auth = bot.Auth{
-			AsTk: mauth.AsTk,
-			Name: mauth.Name,
-			UUID: mauth.UUID,
+			AccessToken: mauth.AsTk,
+			Name:        mauth.Name,
+			UUID:        mauth.UUID,
 		}
 		if parsed, err := uuid.Parse(mauth.UUID); err == nil {
 			copy(authUUIDBytes[:], parsed[:])
@@ -377,9 +378,9 @@ func main() {
 		}
 		fmt.Printf("Offline mode => setting bot.Auth to {name: %s, UUID: %s, AsTk: %s}\n", *name, *playerID, *accessToken)
 		auth = bot.Auth{
-			Name: *name,
-			UUID: *playerID,
-			AsTk: *accessToken,
+			Name:        *name,
+			UUID:        *playerID,
+			AccessToken: *accessToken,
 		}
 		if parsed, err := uuid.Parse(*playerID); err == nil {
 			copy(authUUIDBytes[:], parsed[:])
@@ -416,7 +417,7 @@ func main() {
 	customRegistries.registries = make(map[string]*CustomRegistry)
 
 	client = bot.NewClient(packetMgr)
-	client.Auth = auth
+	client.SetAuth(auth)
 
 	// Hook into configuration phase to capture registry data
 	setupRegistryDataCapture(client)
@@ -456,11 +457,7 @@ func main() {
 		UnloadChunk: onChunkUnload,
 	}, packetMgr)
 
-	screenManager = screen.NewManager(client, screen.EventsListener{
-		Open:    nil,
-		SetSlot: onScreenSlotChange,
-		Close:   nil,
-	}, packetMgr)
+	screenManager = screen.NewManager(client, containerEvents{}, packetMgr)
 
 	// Initialize pathfinding with block shape data
 	// Resolve mc-data-gen path (supports URLs for download or local paths)
@@ -474,25 +471,32 @@ func main() {
 		return
 	}
 
-	protocolBasePath := *mcProtocolGoPath
-	if protocolBasePath == "" {
-		protocolBasePath = "../mc-protocol-go"
+	cache := utils.NewMinecraftDataCache("1.21.5")
+	if err := cache.EnsureDataGenerated(); err != nil {
+		log.Printf("[ERROR] Failed to ensure data generated: %v", err)
+		return
 	}
 
-	shapeMgr, err = pathfinding.NewBlockShapeManager(*mcVersion, dataBasePath)
+	blocksPath, err := cache.GetBlocksJSONPath()
+	if err != nil {
+		log.Printf("[ERROR] Failed to get blocks JSON path: %v", err)
+		return
+	}
+
+	// Load state properties from mc-protocol-go's blocks.json at runtime to avoid compilation OOM
+	statePropsLoader, err := pathfinding.NewStatePropertyLoader(blocksPath)
+	if err != nil {
+		log.Printf("Warning: Failed to load state properties: %v", err)
+		log.Printf("Pathfinding will work with limited state awareness")
+		statePropsLoader = nil // Continue without state properties
+	}
+
+	shapeMgr, err = pathfinding.NewBlockShapeManager(*mcVersion, dataBasePath, blockMgr, statePropsLoader)
 	if err != nil {
 		log.Printf("Warning: Failed to initialize BlockShapeManager: %v", err)
 		log.Printf("Pathfinding will not be available")
 	} else {
-		// Load state properties from mc-protocol-go's blocks.json at runtime to avoid compilation OOM
-		statePropsLoader, err := pathfinding.NewStatePropertyLoader(protocolBasePath, *mcVersion)
-		if err != nil {
-			log.Printf("Warning: Failed to load state properties: %v", err)
-			log.Printf("Pathfinding will work with limited state awareness")
-			statePropsLoader = nil // Continue without state properties
-		}
-
-		pathFinder = pathfinding.NewPathFinder(worldManager, shapeMgr, blockMgr, statePropsLoader)
+		pathFinder = pathfinding.NewAStarPathFinder(worldManager, shapeMgr)
 		log.Printf("Pathfinding initialized for version %s", *mcVersion)
 
 		// Initialize follow system
@@ -510,6 +514,7 @@ func main() {
 			getBotPosition,
 			sendChatMessage,
 			followConfig,
+			func() string { return client.Name() },
 		)
 		log.Printf("Follow system initialized")
 	}
@@ -544,7 +549,7 @@ func main() {
 			// Use bundle delimiter filtering to avoid recording unconsumed buffer data
 			// Login phase packets (including Set Compression) are filtered at the bot client level
 			bundleDelimiterID := int32(packetMgr.GetClientboundPacketID("ClientboundBundleDelimiter"))
-			client.Events.AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
+			client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
 		}
 	}
 
@@ -605,7 +610,7 @@ func main() {
 		LocalTime:  true,                                                         // Use local time for timestamps
 	}
 
-	client.Events.AddGeneric(logPackets(logger, *mcVersion, protocolVersion))
+	client.Events().AddGeneric(logPackets(logger, *mcVersion, protocolVersion))
 
 	// client.Events.AddListener(bot.PacketHandler{
 	// 	ID:       packetMgr.GetClientboundPacketID("ClientboundPlayerInfo"),
@@ -734,7 +739,7 @@ func main() {
 			var entityUUID [16]byte
 			copy(entityUUID[:], EntityUUID[:])
 			isPlayer := false
-			for uuid := range playerList.PlayerInfos {
+			for uuid := range playerList.Get() {
 				var playerUUID [16]byte
 				copy(playerUUID[:], uuid[:])
 				if playerUUID == entityUUID {
@@ -941,7 +946,7 @@ func main() {
 			return nil
 		},
 	}
-	client.Events.AddListener(handleBotLogin)
+	client.Events().AddListener(handleBotLogin)
 	// Mirror player info to capture server-provided UUID/name for replay
 	var handleBotPlayerInfo = bot.PacketHandler{
 		ID:       packetMgr.GetClientboundPacketID("ClientboundPlayerInfo"),
@@ -953,7 +958,7 @@ func main() {
 			return nil
 		},
 	}
-	client.Events.AddListener(handleBotPlayerInfo)
+	client.Events().AddListener(handleBotPlayerInfo)
 
 	// Custom ClientboundPosition handler for 1.21.5+ with new packet structure
 	// Priority 63 to run before basic.Player's handler (priority 64)
@@ -1023,13 +1028,13 @@ func main() {
 		},
 	}
 
-	client.Events.AddListener(soundListener)
-	client.Events.AddListener(handleBotPosition)
-	client.Events.AddListener(handleSpawnEntity)
-	client.Events.AddListener(handleEntityPosition)
-	client.Events.AddListener(handleEntityPositionRotation)
-	client.Events.AddListener(handleTeleportEntity)
-	client.Events.AddListener(handleRemoveEntities)
+	client.Events().AddListener(soundListener)
+	client.Events().AddListener(handleBotPosition)
+	client.Events().AddListener(handleSpawnEntity)
+	client.Events().AddListener(handleEntityPosition)
+	client.Events().AddListener(handleEntityPositionRotation)
+	client.Events().AddListener(handleTeleportEntity)
+	client.Events().AddListener(handleRemoveEntities)
 	// client.Events.AddListener(handleSetEntityData)
 
 	// Handler for server view distance updates
@@ -1046,7 +1051,7 @@ func main() {
 			return nil
 		},
 	}
-	client.Events.AddListener(handleUpdateViewDistance)
+	client.Events().AddListener(handleUpdateViewDistance)
 
 	// Handler for server simulation distance updates
 	var handleSimulationDistance = bot.PacketHandler{
@@ -1062,7 +1067,7 @@ func main() {
 			return nil
 		},
 	}
-	client.Events.AddListener(handleSimulationDistance)
+	client.Events().AddListener(handleSimulationDistance)
 
 	log.Println("Login success")
 
@@ -1147,10 +1152,10 @@ func onGameStart() error {
 }
 
 // setupRegistryDataCapture hooks into the configuration phase to capture registry data
-func setupRegistryDataCapture(c *bot.Client) {
+func setupRegistryDataCapture(c bot.Client) {
 	// Add a high-priority event listener for RegistryData packets
 	// This will run during configuration phase
-	c.Events.AddListener(bot.PacketHandler{
+	c.Events().AddListener(bot.PacketHandler{
 		ID:       packetMgr.GetClientboundConfigPacketID("ClientboundConfigRegistryData"),
 		Priority: 100, // High priority to capture before default handler
 		F:        handleRegistryDataPacket,
@@ -1247,14 +1252,14 @@ func onSystemMsg(c chat.Message, overlay bool) error {
 
 func onPlayerMsg(senderInfo playerlist.PlayerInfo, msg chat.Message, validated bool) error {
 	// Use bot's actual login name for command prefix
-	rofBotFlag := fmt.Sprintf(">>>%s<<<", client.Name)
+	rofBotFlag := fmt.Sprintf(">>>%s<<<", client.Name())
 	var prefix string
 	if !validated {
 		prefix = "[Not Secure] "
 	}
 	log.Printf("\n%sPlayer: %v\n\n", prefix, msg)
 
-	if senderInfo.ID.String() == client.UUID.String() {
+	if senderInfo.ID.String() == client.UUID().String() {
 		return nil
 	}
 
@@ -1316,11 +1321,11 @@ func onChunkUnload(pos world.ChunkPos) error {
 //	Similar to how we use blockMgr.GetByID() for blocks
 func onScreenSlotChange(id, index int) error {
 	if id == -2 {
-		log.Printf("Slot: inventory: %v", screenManager.Inventory.Slots[index])
+		log.Printf("Slot: inventory: %v", screenManager.Inventory().Slots[index])
 	} else if id == -1 && index == -1 {
-		log.Printf("Slot: cursor: %v", screenManager.Cursor)
+		log.Printf("Slot: cursor: %v", screenManager.Cursor())
 	} else {
-		container, ok := screenManager.Screens[id]
+		container, ok := screenManager.Screens()[id]
 		if ok {
 			// Currently, only inventory container is supported
 			switch container := container.(type) {
@@ -1330,7 +1335,7 @@ func onScreenSlotChange(id, index int) error {
 				if slot.ID >= 0 && int(slot.ID) < len(registryid.Item) {
 					itemName = registryid.Item[slot.ID]
 				}
-				log.Printf("Slot: Screen[%d].Slot[%d]: [%v] * %d | NBT: %v", id, index, itemName, slot.Count, slot.NBT)
+				log.Printf("Slot: Screen[%d].Slot[%d]: [%v] * %d | Components: %v", id, index, itemName, slot.Count, slot.Components)
 			}
 		}
 	}
@@ -2065,7 +2070,7 @@ func moveForwardCommand(distStr string) {
 	totalDistance := math.Abs(distance)
 	stepCount := int(math.Ceil(totalDistance / stepSize))
 
-	for i := 0; i < stepCount; i++ {
+	for i := range stepCount {
 		progress := float64(i+1) / float64(stepCount)
 		if progress > 1.0 {
 			progress = 1.0
@@ -2165,8 +2170,8 @@ func testPathCommand() {
 	}
 
 	// Convert to block coordinates
-	start := pathfinding.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
-	goal := pathfinding.V3{X: start.X, Y: start.Y, Z: start.Z - 5} // 5 blocks north
+	start := models.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
+	goal := models.V3{X: start.X, Y: start.Y, Z: start.Z - 5} // 5 blocks north
 
 	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
@@ -2224,8 +2229,8 @@ func findPathCommand(xStr, yStr, zStr string) {
 	}
 
 	// Convert to block coordinates
-	start := pathfinding.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
-	goal := pathfinding.V3{X: targetX, Y: targetY, Z: targetZ}
+	start := models.V3{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
+	goal := models.V3{X: targetX, Y: targetY, Z: targetZ}
 
 	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
@@ -2286,7 +2291,7 @@ func startFollowingPlayer(playerName string) {
 			followManager.Stop()
 			return
 		default:
-			if followManager.GetState() == following.StateFollowingPath {
+			if followManager.GetState() == models.StateFollowingPath {
 				exitLoop = true
 			}
 		}
@@ -2406,7 +2411,7 @@ func DoUseItem(hand pk.VarInt, sequence pk.VarInt, yaw pk.Float, pitch pk.Float)
 
 	pkt.SetFields(fields)
 
-	return client.Conn.WritePacket(pkt.Marshal())
+	return client.Conn().WritePacket(pkt.Marshal())
 
 	// return client.Conn.WritePacket(pk.Marshal(
 	// 	 packetid.ServerboundUseItem,
@@ -2431,7 +2436,7 @@ const (
 )
 
 func DoPlayerAction(action PlayerAction, pos pk.Position) error {
-	return client.Conn.WritePacket(pk.Marshal(
+	return client.Conn().WritePacket(pk.Marshal(
 		// packetid.ServerboundPlayerAction,
 		packetMgr.GetServerboundPacketID("ServerboundPlayerAction"),
 		pk.VarInt(action),
@@ -2521,7 +2526,7 @@ func findNearestPlayer() *NearestPlayerInfo {
 	for _, entity := range trackedEntities.entities {
 		// Check if this entity is a player by looking in playerList
 		isPlayer := false
-		for uuid := range playerList.PlayerInfos {
+		for uuid := range playerList.Get() {
 			var playerUUID [16]byte
 			copy(playerUUID[:], uuid[:])
 			if playerUUID == entity.UUID {
@@ -2590,7 +2595,7 @@ func getEntityStats() map[string]int {
 	for _, entity := range trackedEntities.entities {
 		// Check if this entity is a player by looking in playerList
 		isPlayer := false
-		for uuid := range playerList.PlayerInfos {
+		for uuid := range playerList.Get() {
 			var playerUUID [16]byte
 			copy(playerUUID[:], uuid[:])
 			if playerUUID == entity.UUID {
@@ -2677,7 +2682,7 @@ func startTracking() {
 			} else {
 				// Try to find player name from playerList
 				playerName := "Unknown"
-				for uuid, info := range playerList.PlayerInfos {
+				for uuid, info := range playerList.Get() {
 					var infoUUID [16]byte
 					copy(infoUUID[:], uuid[:])
 					if infoUUID == nearest.UUID {
@@ -2721,3 +2726,10 @@ func stopTracking() {
 	chatHandler.SendMessage("Stopped tracking")
 	log.Println("Stopped tracking nearest player")
 }
+
+type containerEvents struct {
+}
+
+func (ce containerEvents) Open(id int, containerType int32, title chat.Message) error { return nil }
+func (ce containerEvents) SetSlot(id, index int) error                                { return onScreenSlotChange(id, index) }
+func (ce containerEvents) Close(code int) error                                       { return nil }

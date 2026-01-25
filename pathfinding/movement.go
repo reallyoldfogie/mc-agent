@@ -1,31 +1,35 @@
 package pathfinding
 
 import (
+	"fmt"
 	"log"
 
-	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
+
+// MovePruneConfig controls distance-based pruning for move generation.
+type MovePruneConfig struct {
+	StartDist float64
+	DriftCap  float64
+}
 
 // MovementValidator validates whether specific movements are possible
 type MovementValidator struct {
-	world            World
-	shapeMgr         BlockShapeManager
-	blockMgr         mc_versions.BlockMgr
-	statePropsLoader *StatePropertyLoader
-	playerEyeHeight  float64 // Usually 1.62 blocks
-	playerWidth      float64 // Player collision box width (usually 0.6)
-	debugCheckCount  int     // Counter for debug logging
+	world           World
+	shapeMgr        BlockShapeManager
+	playerEyeHeight float64 // Usually 1.62 blocks
+	playerWidth     float64 // Player collision box width (usually 0.6)
+	debugCheckCount int     // Counter for debug logging
+	climbDebugCount int     // Counter for climb debug logging
 }
 
 // NewMovementValidator creates a new movement validator
-func NewMovementValidator(w World, shapeMgr BlockShapeManager, blockMgr mc_versions.BlockMgr, statePropsLoader *StatePropertyLoader) *MovementValidator {
+func NewMovementValidator(w World, shapeMgr BlockShapeManager) *MovementValidator {
 	return &MovementValidator{
-		world:            w,
-		shapeMgr:         shapeMgr,
-		blockMgr:         blockMgr,
-		statePropsLoader: statePropsLoader,
-		playerEyeHeight:  1.62,
-		playerWidth:      0.6,
+		world:           w,
+		shapeMgr:        shapeMgr,
+		playerEyeHeight: 1.62,
+		playerWidth:     0.6,
 	}
 }
 
@@ -33,7 +37,7 @@ func NewMovementValidator(w World, shapeMgr BlockShapeManager, blockMgr mc_versi
 // Requires:
 // - Blocks at feet level (to.Y) and head level (to.Y+1) are passable
 // - Block below feet (to.Y-1) is solid
-func (mv *MovementValidator) CanTraverse(from, to V3) bool {
+func (mv *MovementValidator) CanTraverse(from, to models.V3) bool {
 	// Check destination is adjacent horizontally
 	dx := to.X - from.X
 	dz := to.Z - from.Z
@@ -66,7 +70,7 @@ func (mv *MovementValidator) CanTraverse(from, to V3) bool {
 // - to.Y == from.Y + 1
 // - Destination is passable
 // - Has ground support
-func (mv *MovementValidator) CanAscend(from, to V3) bool {
+func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 	// Check destination is 1 block higher
 	dy := to.Y - from.Y
 	if dy != 1 {
@@ -83,7 +87,7 @@ func (mv *MovementValidator) CanAscend(from, to V3) bool {
 		return false // Too far
 	}
 
-	// Debug ascend checks for start position (use integer equality since V3 uses float64 for block coords)
+	// Debug ascend checks for start position (use integer equality since models.V3 uses float64 for block coords)
 	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
 		log.Printf("[DEBUG CanAscend] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
 			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
@@ -114,10 +118,106 @@ func (mv *MovementValidator) CanAscend(from, to V3) bool {
 		}
 		return false
 	}
-	
+
 	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
 		log.Printf("[DEBUG CanAscend] SUCCESS")
 	}
+	return true
+}
+
+// CanAscendStairs checks if the bot can walk up stairs from 'from' to 'to' (1 block higher)
+// This is similar to CanAscend but specifically for stair blocks where no jump is needed.
+// Requires:
+// - to.Y == from.Y + 1
+// - Ground block at target (to.Y - 1) is a stair
+// - Destination is passable
+// - Has ground support
+func (mv *MovementValidator) CanAscendStairs(from, to models.V3) bool {
+	// Check destination is 1 block higher
+	dy := to.Y - from.Y
+	if dy != 1 {
+		return false
+	}
+
+	// Check horizontal distance (cardinal direction only)
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	// Check if the ground block at target is a stair
+	groundPos := to.Add(0, -1, 0)
+	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	if !loaded || groundStateID == 0 {
+		return false
+	}
+	if !mv.shapeMgr.IsStair(groundStateID) {
+		return false // Ground is not a stair
+	}
+
+	// Check if destination is passable (feet and head)
+	if !mv.isPositionPassable(to) {
+		return false
+	}
+
+	// Check if there's ground support (stair provides this)
+	if !mv.hasGroundSupport(to) {
+		return false
+	}
+
+	// No headroom check needed for stairs - natural walking, no jump
+	return true
+}
+
+// CanDescendStairs checks if the bot can walk down stairs from 'from' to 'to' (1 block lower)
+// This is for walking down stair blocks naturally without falling.
+// Requires:
+// - to.Y == from.Y - 1
+// - Ground block at current position (from.Y - 1) is a stair
+// - Destination is passable
+// - Has ground support
+func (mv *MovementValidator) CanDescendStairs(from, to models.V3) bool {
+	// Check destination is 1 block lower
+	dy := from.Y - to.Y
+	if dy != 1 {
+		return false
+	}
+
+	// Check horizontal distance (cardinal direction only)
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	// Check if the ground block at current position is a stair
+	// (we're descending FROM a stair)
+	groundPos := from.Add(0, -1, 0)
+	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	if !loaded || groundStateID == 0 {
+		return false
+	}
+	if !mv.shapeMgr.IsStair(groundStateID) {
+		return false // Current ground is not a stair
+	}
+
+	// Check if destination is passable (feet and head)
+	if !mv.isPositionPassable(to) {
+		return false
+	}
+
+	// Check if there's ground support at destination
+	if !mv.hasGroundSupport(to) {
+		return false
+	}
+
 	return true
 }
 
@@ -126,7 +226,7 @@ func (mv *MovementValidator) CanAscend(from, to V3) bool {
 // - to.Y < from.Y (and to.Y >= from.Y - 3 for safety)
 // - Destination is passable
 // - Has ground support
-func (mv *MovementValidator) CanDescend(from, to V3) bool {
+func (mv *MovementValidator) CanDescend(from, to models.V3) bool {
 	// Check destination is lower
 	dy := from.Y - to.Y
 	if dy <= 0 || dy > 3 {
@@ -157,7 +257,7 @@ func (mv *MovementValidator) CanDescend(from, to V3) bool {
 }
 
 // isPositionPassable checks if a position (feet and head) is passable
-func (mv *MovementValidator) isPositionPassable(pos V3) bool {
+func (mv *MovementValidator) isPositionPassable(pos models.V3) bool {
 	// Check feet level
 	if !mv.isBlockPassable(pos) {
 		return false
@@ -169,174 +269,44 @@ func (mv *MovementValidator) isPositionPassable(pos V3) bool {
 }
 
 // isBlockPassable checks if a single block is passable
-func (mv *MovementValidator) isBlockPassable(pos V3) bool {
+func (mv *MovementValidator) isBlockPassable(pos models.V3) bool {
 	// Get block state ID from world
-	stateID := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+
+	if !loaded {
+		return false // Chunk not loaded, not passable
+	}
 
 	// State ID 0 is always air (passable)
 	if stateID == 0 {
 		return true
 	}
 
-	// Convert state ID to block + properties (when available)
-	blockID := mv.blockMgr.BlockIDByStateID(stateID)
-	block := mv.blockMgr.GetByID(blockID)
-
-	// Try to extract properties for this specific state ID
-	props := mv.propsFromStateID(stateID)
-
-	// Use the block name + extracted properties to check if passable
-	passable := mv.shapeMgr.IsPassable(block.Name, props)
-
-	// Debug logging (first 5 checks)
-	if mv.debugCheckCount < 5 {
-		log.Printf("[DEBUG isBlockPassable] pos=(%f,%f,%f) stateID=%d blockID=%d blockName=%s props=%v passable=%t",
-			pos.X, pos.Y, pos.Z, stateID, blockID, block.Name, props, passable)
-		mv.debugCheckCount++
-	}
-
-	return passable
-}
-
-// CalculateTerrainCostPenalty calculates additional cost penalties based on block properties
-// This includes dangerous blocks (lava, fire), fences, doors, etc.
-// Returns the penalty to add to the base movement cost
-func (mv *MovementValidator) CalculateTerrainCostPenalty(pos V3, blockID string, props map[string]string) float64 {
-	penalty := 0.0
-
-	// Dangerous blocks - very high penalty to avoid
-	if mv.shapeMgr.IsDangerous(blockID, props) {
-		penalty += 1000.0 // Extremely high cost to avoid lava, fire, etc.
-	}
-
-	// Fences are 1.5 blocks tall - not jumpable, treat as barriers
-	if mv.shapeMgr.IsFenceLike(blockID, props) {
-		penalty += 500.0 // High cost - prefer to path around
-	}
-
-	// Water - moderate penalty (slower movement)
-	if mv.shapeMgr.IsWater(blockID, props) {
-		penalty += 1.0 // Swimming is slower than walking
-	}
-
-	// Doors/gates - slight penalty (may need to open)
-	if mv.shapeMgr.IsDoorLike(blockID, props) {
-		// TODO: Parse block state properties to check "open" state
-		// Currently we pass nil for props because we don't extract properties from state IDs
-		// Need to:
-		//   1. Add method to BlockMgr to get properties from state ID
-		//   2. Parse the state ID into block ID + property map
-		//   3. Check props["open"] == "true" to give lower penalty for open doors
-		// For now, assume doors may be closed and apply penalty
-		penalty += 2.0 // Small penalty for door interaction
-	}
-
-	// Slabs and stairs - slight bonus (easier to traverse)
-	if mv.shapeMgr.IsSlab(blockID, props) || mv.shapeMgr.IsStair(blockID, props) {
-		penalty -= 0.2 // Small bonus for easier terrain
-	}
-
-	return penalty
+	// Use shapeMgr to check if passable
+	return mv.shapeMgr.IsPassable(stateID)
 }
 
 // hasGroundSupport checks if there's solid ground below the position
-func (mv *MovementValidator) hasGroundSupport(pos V3) bool {
+func (mv *MovementValidator) hasGroundSupport(pos models.V3) bool {
 	// Check block directly below feet
 	groundPos := pos.Add(0, -1, 0)
-	stateID := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	stateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
 
-	// State ID 0 is air - check for partial blocks (stairs, slabs)
+	if !loaded {
+		return false // Chunk not loaded
+	}
+
+	// State ID 0 is air - no ground support
 	if stateID == 0 {
-		// Check if we're standing on a partial block (stair, slab)
-		// Allow up to 0.5 block tolerance by checking 2 blocks below
-		altGroundPos := pos.Add(0, -2, 0)
-		altStateID := mv.world.GetBlockAt(altGroundPos.X, altGroundPos.Y, altGroundPos.Z)
-
-		if altStateID != 0 {
-			// Check if it's a partial block with surface height
-			blockID := mv.blockMgr.BlockIDByStateID(altStateID)
-			block := mv.blockMgr.GetByID(blockID)
-			props := mv.propsFromStateID(altStateID)
-			surfaceHeight := mv.shapeMgr.GetStandingSurfaceHeight(block.Name, props)
-
-			if surfaceHeight > 0 && surfaceHeight < 1.0 {
-				// Standing on partial block - this is valid ground support
-				log.Printf("[DEBUG hasGroundSupport] Standing on partial block at Y-2: %s (surface height %.2f)",
-					block.Name, surfaceHeight)
-				return true
-			}
-		}
-
-		log.Printf("[DEBUG hasGroundSupport] No ground at (%f, %f, %f) below pos (%f, %f, %f) - got air (stateID 0)",
-			groundPos.X, groundPos.Y, groundPos.Z, pos.X, pos.Y, pos.Z)
 		return false
 	}
 
-	// Convert state ID to block ID and get block info
-	blockID := mv.blockMgr.BlockIDByStateID(stateID)
-	block := mv.blockMgr.GetByID(blockID)
-
-	// Try to extract properties for this specific state ID
-	props := mv.propsFromStateID(stateID)
-
-	// Use the block name + extracted properties to determine solidity
-	isSolid := mv.shapeMgr.IsSolid(block.Name, props)
-
-	log.Printf("[DEBUG hasGroundSupport] Ground check at (%f, %f, %f): stateID=%d, blockID=%d, blockName=%s, props=%v, isSolid=%v",
-		groundPos.X, groundPos.Y, groundPos.Z, stateID, blockID, block.Name, props, isSolid)
-
 	// Check if block is solid (provides standing surface)
-	return isSolid
-}
-
-// propsFromStateID attempts to extract the block state properties map for a given global state ID.
-//
-// Uses the StatePropertyLoader to dynamically load properties from JSON at runtime.
-func (mv *MovementValidator) propsFromStateID(stateID uint32) map[string]string {
-	if mv.statePropsLoader == nil {
-		return make(map[string]string)
-	}
-	return mv.statePropsLoader.GetProperties(stateID)
-}
-
-// GetStandingSurfaceHeight returns the height of the standing surface at a position
-// For slabs and stairs, this may be 0.5 or variable height
-// Returns 0.0 if not solid, 1.0 for full block, 0.0-1.0 for partial blocks
-func (mv *MovementValidator) GetStandingSurfaceHeight(pos V3, blockID string, props map[string]string) float64 {
-	// Use the BlockShapeManager to get precise height
-	return mv.shapeMgr.GetStandingSurfaceHeight(blockID, props)
-}
-
-// CanTraversePartialBlock checks if movement is valid considering partial blocks (slabs, stairs)
-// This provides more precise collision detection than the basic CanTraverse
-func (mv *MovementValidator) CanTraversePartialBlock(from, to V3, fromBlockID, toBlockID string, fromProps, toProps map[string]string) bool {
-	// Get the height of the standing surfaces
-	fromHeight := mv.GetStandingSurfaceHeight(from.Add(0, -1, 0), fromBlockID, fromProps)
-	toHeight := mv.GetStandingSurfaceHeight(to.Add(0, -1, 0), toBlockID, toProps)
-
-	// Calculate height difference
-	heightDiff := toHeight - fromHeight
-
-	// If moving to a higher surface that's less than a full block, might not need a jump
-	if heightDiff > 0 && heightDiff <= 0.5 {
-		// Check if destination is passable
-		if !mv.isPositionPassable(to) {
-			return false
-		}
-		return true
-	}
-
-	// For other cases, use standard validation
-	return mv.CanTraverse(from, to)
-}
-
-// IsSlabOrStair checks if a block is a slab or stair
-func (mv *MovementValidator) IsSlabOrStair(blockID string, props map[string]string) bool {
-	return mv.shapeMgr.IsSlab(blockID, props) || mv.shapeMgr.IsStair(blockID, props)
+	return mv.shapeMgr.IsSolid(stateID)
 }
 
 // CanDiagonalTraverse checks if the bot can walk diagonally on the same Y level
-func (mv *MovementValidator) CanDiagonalTraverse(from, to V3) bool {
+func (mv *MovementValidator) CanDiagonalTraverse(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -372,7 +342,7 @@ func (mv *MovementValidator) CanDiagonalTraverse(from, to V3) bool {
 }
 
 // CanDiagonalAscend checks if the bot can jump up diagonally
-func (mv *MovementValidator) CanDiagonalAscend(from, to V3) bool {
+func (mv *MovementValidator) CanDiagonalAscend(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -414,7 +384,7 @@ func (mv *MovementValidator) CanDiagonalAscend(from, to V3) bool {
 }
 
 // CanJump2 checks if the bot can jump across a 2-block gap
-func (mv *MovementValidator) CanJump2(from, to V3) bool {
+func (mv *MovementValidator) CanJump2(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -445,7 +415,7 @@ func (mv *MovementValidator) CanJump2(from, to V3) bool {
 }
 
 // CanClimb checks if the bot can climb (ladders, vines, etc.)
-func (mv *MovementValidator) CanClimb(from, to V3) bool {
+func (mv *MovementValidator) CanClimb(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -461,19 +431,16 @@ func (mv *MovementValidator) CanClimb(from, to V3) bool {
 	}
 
 	// Check if there's a climbable block at destination
-	stateID := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if stateID == 0 {
-		return false // Air, not climbable
+	stateID, loaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !loaded || stateID == 0 {
+		return false // Chunk not loaded or air, not climbable
 	}
 
-	blockID := mv.blockMgr.BlockIDByStateID(stateID)
-	block := mv.blockMgr.GetByID(blockID)
-
-	return mv.shapeMgr.IsClimbable(block.Name, nil)
+	return mv.shapeMgr.IsClimbable(stateID)
 }
 
 // CanSwim checks if the bot can swim horizontally through water
-func (mv *MovementValidator) CanSwim(from, to V3) bool {
+func (mv *MovementValidator) CanSwim(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -489,29 +456,25 @@ func (mv *MovementValidator) CanSwim(from, to V3) bool {
 	}
 
 	// Check if destination is water
-	toStateID := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if toStateID == 0 {
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded || toStateID == 0 {
 		return false
 	}
-	toBlockID := mv.blockMgr.BlockIDByStateID(toStateID)
-	toBlock := mv.blockMgr.GetByID(toBlockID)
-	if !mv.shapeMgr.IsWater(toBlock.Name, nil) {
+	if !mv.shapeMgr.IsWater(toStateID) {
 		return false
 	}
 
 	// Check if from position is also water (must already be swimming)
-	fromStateID := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if fromStateID == 0 {
+	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	if !fromLoaded || fromStateID == 0 {
 		return false
 	}
-	fromBlockID := mv.blockMgr.BlockIDByStateID(fromStateID)
-	fromBlock := mv.blockMgr.GetByID(fromBlockID)
 
-	return mv.shapeMgr.IsWater(fromBlock.Name, nil)
+	return mv.shapeMgr.IsWater(fromStateID)
 }
 
 // CanSwimUp checks if the bot can swim upward in water
-func (mv *MovementValidator) CanSwimUp(from, to V3) bool {
+func (mv *MovementValidator) CanSwimUp(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -527,29 +490,25 @@ func (mv *MovementValidator) CanSwimUp(from, to V3) bool {
 	}
 
 	// Check if destination is water
-	toStateID := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if toStateID == 0 {
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded || toStateID == 0 {
 		return false
 	}
-	toBlockID := mv.blockMgr.BlockIDByStateID(toStateID)
-	toBlock := mv.blockMgr.GetByID(toBlockID)
-	if !mv.shapeMgr.IsWater(toBlock.Name, nil) {
+	if !mv.shapeMgr.IsWater(toStateID) {
 		return false
 	}
 
 	// Check if from position is also water (must already be swimming)
-	fromStateID := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if fromStateID == 0 {
+	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	if !fromLoaded || fromStateID == 0 {
 		return false
 	}
-	fromBlockID := mv.blockMgr.BlockIDByStateID(fromStateID)
-	fromBlock := mv.blockMgr.GetByID(fromBlockID)
 
-	return mv.shapeMgr.IsWater(fromBlock.Name, nil)
+	return mv.shapeMgr.IsWater(fromStateID)
 }
 
 // CanSwimDown checks if the bot can swim downward in water
-func (mv *MovementValidator) CanSwimDown(from, to V3) bool {
+func (mv *MovementValidator) CanSwimDown(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
 	dy := to.Y - from.Y
@@ -565,25 +524,149 @@ func (mv *MovementValidator) CanSwimDown(from, to V3) bool {
 	}
 
 	// Check if destination is water
-	toStateID := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if toStateID == 0 {
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded || toStateID == 0 {
 		return false
 	}
-	toBlockID := mv.blockMgr.BlockIDByStateID(toStateID)
-	toBlock := mv.blockMgr.GetByID(toBlockID)
-	if !mv.shapeMgr.IsWater(toBlock.Name, nil) {
+	if !mv.shapeMgr.IsWater(toStateID) {
 		return false
 	}
 
 	// Check if from position is also water (must already be swimming)
-	fromStateID := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if fromStateID == 0 {
+	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	if !fromLoaded || fromStateID == 0 {
 		return false
 	}
-	fromBlockID := mv.blockMgr.BlockIDByStateID(fromStateID)
-	fromBlock := mv.blockMgr.GetByID(fromBlockID)
 
-	return mv.shapeMgr.IsWater(fromBlock.Name, nil)
+	return mv.shapeMgr.IsWater(fromStateID)
+}
+
+// isOnClimbable checks if the given position has a climbable block (ladder/vine)
+func (mv *MovementValidator) isOnClimbable(pos models.V3) bool {
+	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	if !loaded || stateID == 0 {
+		return false
+	}
+	return mv.shapeMgr.IsClimbable(stateID)
+}
+
+// CanEnterClimb checks if the bot can enter a climbable block from an adjacent position
+// Requires:
+// - Target position has a climbable block (ladder/vine)
+// - From and to are adjacent (cardinal direction, same Y or ±1)
+func (mv *MovementValidator) CanEnterClimb(from, to models.V3) bool {
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	dy := to.Y - from.Y
+
+	// Must be adjacent horizontally (cardinal direction only)
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	// Must be same Y or ±1
+	if dy < -1 || dy > 1 {
+		return false
+	}
+
+	// Check if target has a climbable block
+	return mv.isOnClimbable(to)
+}
+
+// CanExitClimb checks if the bot can exit from a climbable block onto an adjacent platform
+// Handles two scenarios:
+// - Scenario 1: Same-level exit (to block is air with ground support)
+// - Scenario 2: Step-up exit (to block is solid, to+1 is air - stepping onto platform)
+func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	dy := to.Y - from.Y
+
+	// Must be adjacent horizontally (cardinal direction only)
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	// Must be same Y level for the check (we adjust Y later for step-up)
+	if dy != 0 {
+		return false
+	}
+
+	// Must be on a climbable block
+	if !mv.isOnClimbable(from) {
+		return false
+	}
+
+	// Get the block at target position
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded {
+		return false
+	}
+
+	toPassable := toStateID == 0 || mv.shapeMgr.IsPassable(toStateID)
+
+	// Scenario 1: Same-level exit (to is passable with ground support)
+	if toPassable {
+		// Check if there's ground to stand on and head clearance
+		if mv.hasGroundSupport(to) && mv.isPositionPassable(to) {
+			log.Printf("[CanExitClimb] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: same-level exit",
+				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			return true
+		}
+	}
+
+	// Scenario 2: Step-up exit (to is solid floor, step up onto it)
+	// Check if to+1 is passable (air above the floor)
+	toUp := to.Add(0, 1, 0)
+	toUpStateID, toUpLoaded := mv.world.GetBlockAt(toUp.X, toUp.Y, toUp.Z)
+	if !toUpLoaded {
+		return false
+	}
+
+	toUpPassable := toUpStateID == 0 || mv.shapeMgr.IsPassable(toUpStateID)
+
+	if toUpPassable {
+		// Check if 'to' block is solid (the floor we step onto)
+		toSolid := toStateID != 0 && mv.shapeMgr.IsSolid(toStateID)
+		if toSolid {
+			// Check head clearance at to+2
+			toUp2 := to.Add(0, 2, 0)
+			if mv.isBlockPassable(toUp2) {
+				log.Printf("[CanExitClimb] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: step-up exit to (%.0f,%.0f,%.0f)",
+					from.X, from.Y, from.Z, to.X, to.Y, to.Z, toUp.X, toUp.Y, toUp.Z)
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getExitClimbTargetY determines the correct Y coordinate for an ExitClimb move
+// For same-level exits: returns to.Y
+// For step-up exits: returns to.Y + 1
+func (mv *MovementValidator) getExitClimbTargetY(from, to models.V3) float64 {
+	// Check if this is a same-level exit
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded {
+		return to.Y
+	}
+
+	toPassable := toStateID == 0 || mv.shapeMgr.IsPassable(toStateID)
+
+	// If to is passable and has ground support, it's a same-level exit
+	if toPassable && mv.hasGroundSupport(to) {
+		return to.Y
+	}
+
+	// Otherwise it's a step-up exit - target is one block higher
+	return to.Y + 1
 }
 
 // FindGroundBelow finds the nearest valid ground level below the given position
@@ -593,21 +676,19 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 	log.Printf("[FindGroundBelow] Searching for ground at (%f, %f) from Y=%f", x, z, startY)
 
 	// Check current position first
-	currentStateID := mv.world.GetBlockAt(x, startY, z)
+	currentStateID, _ := mv.world.GetBlockAt(x, startY, z)
 
 	// If current position is inside a solid block, search UPWARD to find surface
 	if currentStateID != 0 {
-		currentBlockID := mv.blockMgr.BlockIDByStateID(currentStateID)
-		currentBlock := mv.blockMgr.GetByID(currentBlockID)
-		isSolid := mv.shapeMgr.IsSolid(currentBlock.Name, nil)
+		isSolid := mv.shapeMgr.IsSolid(currentStateID)
 
 		if isSolid {
-			log.Printf("[FindGroundBelow] Bot is inside solid block at Y=%f (%s), searching upward for surface",
-				startY, currentBlock.Name)
+			log.Printf("[FindGroundBelow] Bot is inside solid block at Y=%f (stateID=%d), searching upward for surface",
+				startY, currentStateID)
 
 			// Search upward to find the top of the solid terrain
 			for y := startY; y <= startY+maxSearchDepth && y <= 320; y++ {
-				pos := V3{X: x, Y: y, Z: z}
+				pos := models.V3{X: x, Y: y, Z: z}
 
 				// Check if this is a valid standing position (air with solid below)
 				if mv.isPositionPassable(pos) && mv.hasGroundSupport(pos) {
@@ -624,7 +705,7 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 	log.Printf("[FindGroundBelow] Searching downward from Y=%f for valid standing position", startY)
 
 	for y := startY; y >= startY-maxSearchDepth && y >= -64; y-- {
-		pos := V3{X: x, Y: y, Z: z}
+		pos := models.V3{X: x, Y: y, Z: z}
 
 		// Check if this position is valid:
 		// 1. Feet and head blocks must be passable (air or passable blocks)
@@ -641,12 +722,12 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 }
 
 // logTerrainAround logs all blocks around a position for debugging
-func (mv *MovementValidator) logTerrainAround(from V3) {
+func (mv *MovementValidator) logTerrainAround(from models.V3) {
 	log.Printf("[TERRAIN] === Terrain around (%.0f, %.0f, %.0f) ===", from.X, from.Y, from.Z)
-	
+
 	// All 8 directions plus center
-	directions := []struct{
-		name string
+	directions := []struct {
+		name   string
 		dx, dz float64
 	}{
 		{"CENTER", 0, 0},
@@ -659,34 +740,31 @@ func (mv *MovementValidator) logTerrainAround(from V3) {
 		{"SW", -1, 1},
 		{"NW", -1, -1},
 	}
-	
+
 	// For each direction, log blocks from Y-1 to Y+3
 	for _, dir := range directions {
 		x := from.X + dir.dx
 		z := from.Z + dir.dz
-		
+
 		log.Printf("[TERRAIN] %s (%.0f, %.0f):", dir.name, x, z)
 		for dy := float64(-1); dy <= 3; dy++ {
 			y := from.Y + dy
-			stateID := mv.world.GetBlockAt(x, y, z)
-			
+			stateID, _ := mv.world.GetBlockAt(x, y, z)
+
 			var blockName string
 			var passable bool
 			var solid bool
-			
+
 			if stateID == 0 {
 				blockName = "air"
 				passable = true
 				solid = false
 			} else {
-				blockID := mv.blockMgr.BlockIDByStateID(stateID)
-				block := mv.blockMgr.GetByID(blockID)
-				blockName = block.Name
-				props := mv.propsFromStateID(stateID)
-				passable = mv.shapeMgr.IsPassable(blockName, props)
-				solid = mv.shapeMgr.IsSolid(blockName, props)
+				blockName = fmt.Sprintf("stateID=%d", stateID)
+				passable = mv.shapeMgr.IsPassable(stateID)
+				solid = mv.shapeMgr.IsSolid(stateID)
 			}
-			
+
 			var yLabel string
 			switch dy {
 			case -1:
@@ -700,21 +778,25 @@ func (mv *MovementValidator) logTerrainAround(from V3) {
 			case 3:
 				yLabel = "Y+3        "
 			}
-			
+
 			log.Printf("  %s: %s (passable=%t, solid=%t)", yLabel, blockName, passable, solid)
 		}
 	}
 }
 
 // GetPossibleMoves returns all valid moves from a given position
-// Optionally filters moves based on goal to reduce search space (pass zero V3 to disable filtering)
-func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
+// Optionally filters moves based on goal to reduce search space (pass zero models.V3 to disable filtering)
+func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, prune *MovePruneConfig) []PathStep {
 	moves := make([]PathStep, 0, 32) // Increased capacity for more move types
-	
+
 	// Debug: log terrain around start position once
 	if mv.debugCheckCount == 0 {
 		mv.logTerrainAround(from)
 	}
+
+	// Check if we're on a climbable (affects which moves are valid)
+	onClimbable := mv.isOnClimbable(from)
+	atTopOfClimbable := onClimbable && !mv.CanClimb(from, from.Add(0, 1, 0))
 
 	// Cardinal directions (N, S, E, W)
 	cardinalDirs := []struct {
@@ -749,25 +831,47 @@ func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
 		}
 
 		// Try ascend (1 block up)
+		// IMPORTANT: Skip when at top of climbable - use ExitClimb instead
 		toUp := from.Add(dir.dx, 1, dir.dz)
-		if mv.CanAscend(from, toUp) {
-			moves = append(moves, PathStep{
-				Position: toUp,
-				Movement: Ascend,
-				Cost:     Ascend.BaseCost(),
-			})
+		if !atTopOfClimbable {
+			// First try AscendStairs (walking up stairs naturally, no jump needed)
+			if mv.CanAscendStairs(from, toUp) {
+				moves = append(moves, PathStep{
+					Position: toUp,
+					Movement: AscendStairs,
+					Cost:     AscendStairs.BaseCost(),
+				})
+			} else if mv.CanAscend(from, toUp) {
+				// Fall back to AscendJump (jumping up a full block)
+				moves = append(moves, PathStep{
+					Position: toUp,
+					Movement: AscendJump,
+					Cost:     AscendJump.BaseCost(),
+				})
+			}
 		}
 
-		// Try descend (1-3 blocks down)
-		for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
-			toDown := from.Add(dir.dx, -dropHeight, dir.dz)
-			if mv.CanDescend(from, toDown) {
-				moves = append(moves, PathStep{
-					Position: toDown,
-					Movement: Descend,
-					Cost:     Descend.BaseCost(),
-				})
-				break // Only take the first valid drop height
+		// Try descend (1 block down first for stairs, then 1-3 blocks for drops)
+		toDown := from.Add(dir.dx, -1, dir.dz)
+		// First try DescendStairs (walking down stairs naturally)
+		if mv.CanDescendStairs(from, toDown) {
+			moves = append(moves, PathStep{
+				Position: toDown,
+				Movement: DescendStairs,
+				Cost:     DescendStairs.BaseCost(),
+			})
+		} else {
+			// Fall back to Descend (dropping 1-3 blocks)
+			for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
+				toDropDown := from.Add(dir.dx, -dropHeight, dir.dz)
+				if mv.CanDescend(from, toDropDown) {
+					moves = append(moves, PathStep{
+						Position: toDropDown,
+						Movement: Descend,
+						Cost:     Descend.BaseCost(),
+					})
+					break // Only take the first valid drop height
+				}
 			}
 		}
 
@@ -805,8 +909,9 @@ func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
 		}
 
 		// Try diagonal ascend
+		// IMPORTANT: Skip when at top of climbable - use ExitClimb instead
 		toUp := from.Add(dir.dx, 1, dir.dz)
-		if mv.CanDiagonalAscend(from, toUp) {
+		if !atTopOfClimbable && mv.CanDiagonalAscend(from, toUp) {
 			moves = append(moves, PathStep{
 				Position: toUp,
 				Movement: DiagonalAscend,
@@ -827,6 +932,62 @@ func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
 				Movement: Climb,
 				Cost:     Climb.BaseCost(),
 			})
+		}
+	}
+
+	// EnterClimb - entering a climbable block from adjacent position
+	for _, dir := range cardinalDirs {
+		// Same level enter
+		to := from.Add(dir.dx, 0, dir.dz)
+		if mv.CanEnterClimb(from, to) {
+			moves = append(moves, PathStep{
+				Position: to,
+				Movement: EnterClimb,
+				Cost:     EnterClimb.BaseCost(),
+			})
+		}
+
+		// Enter from below (jumping to grab ladder)
+		toUp := from.Add(dir.dx, 1, dir.dz)
+		if mv.CanEnterClimb(from, toUp) {
+			moves = append(moves, PathStep{
+				Position: toUp,
+				Movement: JumpToClimb,
+				Cost:     JumpToClimb.BaseCost(),
+			})
+		}
+
+		// Enter from above (dropping onto ladder)
+		toDown := from.Add(dir.dx, -1, dir.dz)
+		if mv.CanEnterClimb(from, toDown) {
+			moves = append(moves, PathStep{
+				Position: toDown,
+				Movement: EnterClimb,
+				Cost:     EnterClimb.BaseCost(),
+			})
+		}
+	}
+
+	// ExitClimb - exiting from a climbable block onto adjacent platform
+	// Only check if we're currently on a climbable and can't climb further up
+	isOnClimb := mv.isOnClimbable(from)
+	canClimbUp := mv.CanClimb(from, from.Add(0, 1, 0))
+
+	if isOnClimb && !canClimbUp {
+		// At top of ladder/vine - check for exits in cardinal directions
+		for _, dir := range cardinalDirs {
+			to := from.Add(dir.dx, 0, dir.dz)
+			if mv.CanExitClimb(from, to) {
+				// Determine correct Y coordinate for the exit
+				targetY := mv.getExitClimbTargetY(from, to)
+				targetPos := models.V3{X: to.X, Y: targetY, Z: to.Z}
+
+				moves = append(moves, PathStep{
+					Position: targetPos,
+					Movement: ExitClimb,
+					Cost:     ExitClimb.BaseCost(),
+				})
+			}
 		}
 	}
 
@@ -864,39 +1025,55 @@ func (mv *MovementValidator) GetPossibleMoves(from V3, goal V3) []PathStep {
 		}
 	}
 
-	// Prune moves that go too far from goal (if goal is provided)
-	if goal.X != 0 || goal.Y != 0 || goal.Z != 0 {
+	// Prune moves that go too far from goal (if pruning config provided)
+	if prune != nil && (goal.X != 0 || goal.Y != 0 || goal.Z != 0) {
 		fromDist := from.DistanceTo(goal)
 		filtered := make([]PathStep, 0, len(moves))
-		
+
 		// Debug: log first call to understand terrain
 		if mv.debugCheckCount < 2 {
-			log.Printf("[GetPossibleMoves] DEBUG from=(%.0f,%.0f,%.0f) goal=(%.0f,%.0f,%.0f) dist=%.1f",
+			log.Printf("[GetPossibleMoves] from=(%.0f,%.0f,%.0f) goal=(%.0f,%.0f,%.0f) dist=%.1f",
 				from.X, from.Y, from.Z, goal.X, goal.Y, goal.Z, fromDist)
-			log.Printf("[GetPossibleMoves] DEBUG Generated %d moves before pruning:", len(moves))
-			for i, move := range moves {
-				toDist := move.Position.DistanceTo(goal)
-				log.Printf("  Move %d: %s to (%.0f,%.0f,%.0f) distToGoal=%.1f",
-					i+1, move.Movement, move.Position.X, move.Position.Y, move.Position.Z, toDist)
-			}
+			log.Printf("[GetPossibleMoves] Generated %d moves (AscendStairs=%d)", len(moves), 0)
 		}
-		
+
+		pruned := 0
 		for _, move := range moves {
 			toDist := move.Position.DistanceTo(goal)
 			// Allow moves that get closer, or slightly farther (for obstacle avoidance)
-			// Allow up to 5 blocks detour to handle obstacles
-			if toDist <= fromDist+5.0 {
+			// Use DriftCap from prune config
+			if toDist <= fromDist+prune.DriftCap {
 				filtered = append(filtered, move)
+			} else {
+				pruned++
 			}
 		}
-		
+
 		if mv.debugCheckCount < 2 {
-			log.Printf("[GetPossibleMoves] DEBUG After pruning: %d moves (pruned %d)",
-				len(filtered), len(moves)-len(filtered))
+			log.Printf("[GetPossibleMoves] After distance pruning: %d moves (pruned %d)",
+				len(filtered), pruned)
 			mv.debugCheckCount++
 		}
-		
-		return filtered
+
+		// Remove duplicates
+		seen := make(map[models.V3]bool)
+		unique := make([]PathStep, 0, len(filtered))
+		dups := 0
+		for _, move := range filtered {
+			if !seen[move.Position] {
+				seen[move.Position] = true
+				unique = append(unique, move)
+			} else {
+				dups++
+			}
+		}
+
+		if mv.debugCheckCount < 2 {
+			log.Printf("[GetPossibleMoves] After deduplication: %d moves (removed %d duplicates)",
+				len(unique), dups)
+		}
+
+		return unique
 	}
 
 	return moves

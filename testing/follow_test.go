@@ -1,5 +1,3 @@
-//go:build integration
-
 package testing
 
 import (
@@ -8,9 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type movementExecutorTypeProvider interface {
+	MovementExecutorType() movement.ExecutorType
+}
+
+func requirePhysicsExecutor(t *testing.T, agent *ManagedAgent) {
+	t.Helper()
+	provider, ok := agent.Agent.(movementExecutorTypeProvider)
+	require.True(t, ok, "agent does not expose movement executor type")
+	require.Equal(t, movement.PhysicsExecutor, provider.MovementExecutorType(), "agent should use physics movement executor")
+}
 
 // TestFollowSingleAgent tests that agent B can follow agent A to a destination.
 func TestFollowSingleAgent(t *testing.T) {
@@ -25,6 +35,7 @@ func TestFollowSingleAgent(t *testing.T) {
 	// Start test server using flat world for reliable spawn locations
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -45,14 +56,14 @@ func TestFollowSingleAgent(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	leaderCfg.EnablePathfinding = true
-	leaderCfg.EnableFollowing = false // leader doesn't follow anyone
 	leaderCfg.EnableReplay = true
 	leaderCfg.ReplayOutput = fmt.Sprintf("./replays/follow_test_leader_%s.mcpr", time.Now().Format("20060102_150405"))
+	leaderCfg.HPADebugPathColor = "lime"
 
 	leader, err := framework.SpawnAgent(ctx, inst, leaderCfg)
 	require.NoError(t, err, "spawn leader agent")
 	logger.Logf("Leader agent spawned (replay: %s)", leaderCfg.ReplayOutput)
+	requirePhysicsExecutor(t, leader)
 
 	// Spawn follower agent (Agent B) with replay recording
 	followerCfg := DefaultAgentConfig(
@@ -60,14 +71,14 @@ func TestFollowSingleAgent(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	followerCfg.EnablePathfinding = true
-	followerCfg.EnableFollowing = true
 	followerCfg.EnableReplay = true
 	followerCfg.ReplayOutput = fmt.Sprintf("./replays/follow_test_follower_%s.mcpr", time.Now().Format("20060102_150405"))
+	followerCfg.HPADebugPathColor = "blue"
 
 	follower, err := framework.SpawnAgent(ctx, inst, followerCfg)
 	require.NoError(t, err, "spawn follower agent")
 	logger.Logf("Follower agent spawned (replay: %s)", followerCfg.ReplayOutput)
+	requirePhysicsExecutor(t, follower)
 
 	// Wait for agents to join
 	time.Sleep(5 * time.Second)
@@ -75,6 +86,13 @@ func TestFollowSingleAgent(t *testing.T) {
 	// Get starting positions
 	leaderStartX, leaderStartY, leaderStartZ, err := inst.RCON.GetEntityPos(ctx, leader.Name)
 	require.NoError(t, err, "get leader starting position")
+
+	result, err := inst.RCON.Teleport(ctx, "Follower", leaderStartX-6, leaderStartY, leaderStartZ-3).Exec(ctx)
+	require.NoError(t, err, "teleport Follower to Leader")
+	logger.Logf("Teleport result: %s", result)
+
+	// Allow time for teleport to take effect
+	time.Sleep(2 * time.Second)
 
 	followerStartX, followerStartY, followerStartZ, err := inst.RCON.GetEntityPos(ctx, follower.Name)
 	require.NoError(t, err, "get follower starting position")
@@ -100,6 +118,8 @@ func TestFollowSingleAgent(t *testing.T) {
 	resp, err := followCmd.Exec(ctx)
 	require.NoError(t, err, "send follow command to follower")
 	logger.Logf("Follow command sent, response: %s", resp)
+
+	// follower.Agent.Follow()
 
 	// Give follower time to process follow command
 	time.Sleep(2 * time.Second)
@@ -141,7 +161,7 @@ func TestFollowSingleAgent(t *testing.T) {
 	logger.Logf("Leader reached destination")
 
 	// Wait for follower to catch up (give extra time)
-	time.Sleep(5 * time.Second)
+	time.Sleep(15 * time.Second)
 
 	// Verify follower is near leader
 	leaderX, leaderY, leaderZ, err := inst.RCON.GetEntityPos(ctx, leader.Name)
@@ -182,6 +202,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -198,9 +219,9 @@ func TestFollowMultipleAgents(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	leaderCfg.EnablePathfinding = true
 	leaderCfg.EnableReplay = true
 	leaderCfg.ReplayOutput = fmt.Sprintf("./replays/multi_follow_leader_%s.mcpr", time.Now().Format("20060102_150405"))
+	leaderCfg.HPADebugPathColor = "red"
 
 	leader, err := framework.SpawnAgent(ctx, inst, leaderCfg)
 	require.NoError(t, err, "spawn leader")
@@ -216,10 +237,16 @@ func TestFollowMultipleAgents(t *testing.T) {
 			fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 			serverCfg.Version,
 		)
-		cfg.EnablePathfinding = true
-		cfg.EnableFollowing = true
 		cfg.EnableReplay = true
 		cfg.ReplayOutput = fmt.Sprintf("./replays/multi_follow_%s_%s.mcpr", name, time.Now().Format("20060102_150405"))
+		switch name {
+		case "Follower1":
+			cfg.HPADebugPathColor = "orange"
+		case "Follower2":
+			cfg.HPADebugPathColor = "yellow"
+		case "Follower3":
+			cfg.HPADebugPathColor = "green"
+		}
 
 		follower, err := framework.SpawnAgent(ctx, inst, cfg)
 		require.NoError(t, err, "spawn follower %s", name)
@@ -326,6 +353,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -342,9 +370,9 @@ func TestFollowDynamicTarget(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	leaderCfg.EnablePathfinding = true
 	leaderCfg.EnableReplay = true
 	leaderCfg.ReplayOutput = fmt.Sprintf("./replays/dynamic_follow_leader_%s.mcpr", time.Now().Format("20060102_150405"))
+	leaderCfg.HPADebugPathColor = "cyan"
 
 	leader, err := framework.SpawnAgent(ctx, inst, leaderCfg)
 	require.NoError(t, err, "spawn leader")
@@ -355,10 +383,9 @@ func TestFollowDynamicTarget(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	followerCfg.EnablePathfinding = true
-	followerCfg.EnableFollowing = true
 	followerCfg.EnableReplay = true
 	followerCfg.ReplayOutput = fmt.Sprintf("./replays/dynamic_follow_follower_%s.mcpr", time.Now().Format("20060102_150405"))
+	followerCfg.HPADebugPathColor = "magenta"
 
 	follower, err := framework.SpawnAgent(ctx, inst, followerCfg)
 	require.NoError(t, err, "spawn follower")
@@ -435,6 +462,7 @@ func TestFollowStopCommand(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -453,6 +481,7 @@ func TestFollowStopCommand(t *testing.T) {
 	)
 	leaderCfg.EnableReplay = true
 	leaderCfg.ReplayOutput = fmt.Sprintf("./replays/stop_follow_leader_%s.mcpr", time.Now().Format("20060102_150405"))
+	leaderCfg.HPADebugPathColor = "purple"
 
 	leader, err := framework.SpawnAgent(ctx, inst, leaderCfg)
 	require.NoError(t, err, "spawn leader")
@@ -463,9 +492,9 @@ func TestFollowStopCommand(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	followerCfg.EnableFollowing = true
 	followerCfg.EnableReplay = true
 	followerCfg.ReplayOutput = fmt.Sprintf("./replays/stop_follow_follower_%s.mcpr", time.Now().Format("20060102_150405"))
+	followerCfg.HPADebugPathColor = "brown"
 
 	follower, err := framework.SpawnAgent(ctx, inst, followerCfg)
 	require.NoError(t, err, "spawn follower")

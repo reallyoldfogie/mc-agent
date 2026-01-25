@@ -31,7 +31,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 				return
 			case <-ticker.C:
 				if _, err := os.Stat(stopPath); err == nil {
-					log.Printf("[agent] Stop file %s detected; initiating shutdown", stopPath)
+					log.Printf("[Agent %s] Stop file %s detected; initiating shutdown", a.client.Name(), stopPath)
 					a.removeStopFileIfExists(stopPath)
 					// Trigger shutdown by canceling the context
 					a.mu.Lock()
@@ -41,7 +41,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 					a.mu.Unlock()
 					return
 				} else if !errors.Is(err, os.ErrNotExist) {
-					log.Printf("[agent] Error checking stop file %s: %v", stopPath, err)
+					log.Printf("[Agent %s] Error checking stop file %s: %v", a.client.Name(), stopPath, err)
 				}
 			}
 		}
@@ -51,8 +51,8 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 // removeStopFileIfExists removes the stop file and logs any errors.
 func (a *agent) removeStopFileIfExists(stopPath string) {
 	if err := os.Remove(stopPath); err == nil {
-		log.Printf("[agent] Removed stop file %s", stopPath)
+		log.Printf("[Agent %s] Removed stop file %s", a.client.Name(), stopPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		log.Printf("[agent] Error removing stop file %s: %v", stopPath, err)
+		log.Printf("[Agent %s] Error removing stop file %s: %v", a.client.Name(), stopPath, err)
 	}
 }

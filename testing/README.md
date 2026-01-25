@@ -76,11 +76,11 @@ cd testing
 **Using go test directly**:
 ```bash
 # From project root
-go test ./testing -tags=integration -v
+go test ./testing -v
 
 # From testing directory
 cd testing
-go test -tags=integration -v .
+go test -v .
 ```
 
 Run specific test:
@@ -89,19 +89,35 @@ Run specific test:
 ./testing/run_tests.sh -t TestNavigationSingleAgent
 
 # Using go test
-go test ./testing -tags=integration -run TestNavigationSingleAgent -v
+go test ./testing -run TestNavigationSingleAgent -v
 ```
 
 Run tests with timeout:
 ```bash
-go test ./testing -tags=integration -timeout 30m -v
+go test ./testing -timeout 30m -v
+```
+
+### Environment Variables
+
+Control test behavior via environment variables:
+
+```bash
+# Disable structure generation in flat worlds (default: false)
+# Set to "true" to enable villages, temples, etc. in flat world tests
+MC_AGENT_GENERATE_STRUCTURES=false go test ./testing -v
+
+# Keep server running after tests (for debugging)
+TEST_KEEP_SERVER=1 go test ./testing -v
+
+# Skip integration tests (require Docker)
+SKIP_INTEGRATION=1 go test ./testing -v
 ```
 
 ### Parallel Execution
 
 Run tests in parallel (caution: resource-intensive):
 ```bash
-go test ./testing -tags=integration -v -parallel 2
+go test ./testing -v -parallel 2
 ```
 
 ### Test Output
@@ -210,15 +226,19 @@ See [itzg/docker-minecraft-server](https://github.com/itzg/docker-minecraft-serv
 
 **Example: Flat World for Consistent Testing**
 ```go
-serverCfg := DefaultServerConfig()
+serverCfg := FlatWorldServerConfig()  // Uses flat world preset
+// Structure generation is automatically disabled for flat worlds
+// Override via MC_AGENT_GENERATE_STRUCTURES environment variable if needed
 serverCfg.ExtraEnv = map[string]string{
     "SEED": "0",
-    "LEVEL_TYPE": "flat",
     "VIEW_DISTANCE": "12",
     "SPAWN_PROTECTION": "0",
-    "GENERATE_STRUCTURES": "false",
 }
 ```
+
+**Note**: For flat worlds (`WorldGenFlat` or `WorldGenControlled`), the framework automatically sets `GENERATE_STRUCTURES=false` to ensure predictable terrain. You can override this by:
+1. Setting the `MC_AGENT_GENERATE_STRUCTURES` environment variable when running tests
+2. Explicitly setting `GENERATE_STRUCTURES` in `serverCfg.ExtraEnv`
 
 ### Agent Configuration
 
@@ -333,7 +353,7 @@ Each test server requires:
 
 Limit parallel tests based on available resources:
 ```bash
-go test ./testing -tags=integration -parallel 1 -v
+go test ./testing -parallel 1 -v
 ```
 
 ### Test Duration
@@ -412,7 +432,7 @@ jobs:
           go-version: '1.22'
       - name: Run integration tests
         run: |
-          go test ./testing -tags=integration -v -timeout 60m
+          go test ./testing -v -timeout 60m
       - uses: actions/upload-artifact@v3
         if: always()
         with:

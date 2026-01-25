@@ -14,25 +14,26 @@ import (
 //
 // Original packet log:
 // {"id":58,"name":"ClientboundPlayerChat","timestamp":"2025-12-15T16:54:24.102737363-07:00",
-//  "data":"AOT8oYYCeDPmmDNU2n1s/TEAAAxIZWxsbywgd29ybGQAAAGbJG/HEgAAAAAAAAAAAAAAAQoKAAtjbGlja19ldmVudAgABmFjdGlvbgAPc3VnZ2VzdF9jb21tYW5kCAAHY29tbWFuZAALL3RlbGwgRGF6ZSAACAAJaW5zZXJ0aW9uAAREYXplCAAEdGV4dAAERGF6ZQoAC2hvdmVyX2V2ZW50CAAEbmFtZQAERGF6ZQgABmFjdGlvbgALc2hvd19lbnRpdHkIAAJpZAAQbWluZWNyYWZ0OnBsYXllcgsABHV1aWQAAAAE5PyhhgJ4M+aYM1TafWz9MQAAAA==",
-//  "version":"1.21.5","protocol_version":770}
+//
+//	"data":"AOT8oYYCeDPmmDNU2n1s/TEAAAxIZWxsbywgd29ybGQAAAGbJG/HEgAAAAAAAAAAAAAAAQoKAAtjbGlja19ldmVudAgABmFjdGlvbgAPc3VnZ2VzdF9jb21tYW5kCAAHY29tbWFuZAALL3RlbGwgRGF6ZSAACAAJaW5zZXJ0aW9uAAREYXplCAAEdGV4dAAERGF6ZQoAC2hvdmVyX2V2ZW50CAAEbmFtZQAERGF6ZQgABmFjdGlvbgALc2hvd19lbnRpdHkIAAJpZAAQbWluZWNyYWZ0OnBsYXllcgsABHV1aWQAAAAE5PyhhgJ4M+aYM1TafWz9MQAAAA==",
+//	"version":"1.21.5","protocol_version":770}
 func TestClientboundPlayerChat_RealPacket(t *testing.T) {
 	// Decode the base64 packet data
 	packetDataB64 := "AOT8oYYCeDPmmDNU2n1s/TEAAAxIZWxsbywgd29ybGQAAAGbJG/HEgAAAAAAAAAAAAAAAQoKAAtjbGlja19ldmVudAgABmFjdGlvbgAPc3VnZ2VzdF9jb21tYW5kCAAHY29tbWFuZAALL3RlbGwgRGF6ZSAACAAJaW5zZXJ0aW9uAAREYXplCAAEdGV4dAAERGF6ZQoAC2hvdmVyX2V2ZW50CAAEbmFtZQAERGF6ZQgABmFjdGlvbgALc2hvd19lbnRpdHkIAAJpZAAQbWluZWNyYWZ0OnBsYXllcgsABHV1aWQAAAAE5PyhhgJ4M+aYM1TafWz9MQAAAA=="
-	
+
 	packetData, err := base64.StdEncoding.DecodeString(packetDataB64)
 	require.NoError(t, err, "Failed to decode base64 packet data")
-	
+
 	// Create a packet with ID 58 (ClientboundPlayerChat for protocol 770/1.21.5)
 	p := pk.Packet{
 		ID:   58,
 		Data: packetData,
 	}
-	
+
 	t.Logf("Packet ID: %d", p.ID)
 	t.Logf("Packet Length: %d bytes", len(p.Data))
 	t.Logf("Packet Data (hex): %x", p.Data)
-	
+
 	// Try to parse the packet fields manually to understand structure
 	// ClientboundPlayerChat structure (1.21.5):
 	// - Sender UUID (128 bits / 16 bytes)
@@ -50,13 +51,13 @@ func TestClientboundPlayerChat_RealPacket(t *testing.T) {
 	// - Chat Type (VarInt)
 	// - Network Name (Chat Component)
 	// - Network Target Name (Optional Chat Component)
-	
+
 	var (
 		senderUUID pk.UUID
 		index      pk.VarInt
 		sigPresent pk.Boolean
 	)
-	
+
 	err = p.Scan(&senderUUID, &index, &sigPresent)
 	if err != nil {
 		t.Logf("Failed to parse initial fields: %v", err)
@@ -66,7 +67,7 @@ func TestClientboundPlayerChat_RealPacket(t *testing.T) {
 		t.Logf("Index: %d", index)
 		t.Logf("Signature Present: %t", sigPresent)
 	}
-	
+
 	// Parse the full message to extract the text
 	var plainMsg pk.String
 	// Skip to plain message: UUID (16) + VarInt(1) + Boolean(1) = 18 bytes
@@ -74,7 +75,7 @@ func TestClientboundPlayerChat_RealPacket(t *testing.T) {
 	if _, err := plainMsg.ReadFrom(rr); err == nil {
 		t.Logf("Plain Message: %s", plainMsg)
 	}
-	
+
 	// The important thing is that the packet doesn't cause a panic or unexpected exit
 	// This test serves as documentation of the problematic packet
 }

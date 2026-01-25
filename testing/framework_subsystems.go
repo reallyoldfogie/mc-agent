@@ -3,164 +3,92 @@ package testing
 import (
 	"fmt"
 
-	"github.com/reallyoldfogie/mc-agent/agent"
-	"github.com/reallyoldfogie/mc-agent/following"
-	"github.com/reallyoldfogie/mc-agent/movement"
-	pf "github.com/reallyoldfogie/mc-agent/pathfinding"
-	agutils "github.com/reallyoldfogie/mc-agent/utils"
-	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
-	"github.com/reallyoldfogie/mc-bot-go/bot/msg"
-	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
-	"github.com/reallyoldfogie/mc-bot-go/bot/world"
-	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
-	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// wireAgentSubsystems wires up all the subsystems needed for an agent to function.
-// This mirrors the setup in cmd/agent/main.go.
-func wireAgentSubsystems(agnt agent.Agent, botClient *bot.Client, packetMgr protocol_models.PacketMgr, blockMgr mc_versions.BlockMgr, cfg AgentConfig) error {
-	// Create player subsystem with basic settings
-	customSettings := basic.DefaultSettings
-	customSettings.ViewDistance = 32
-	customSettings.Locale = "en_us"
+// wireAgentSubsystems provides minimal test-specific wiring.
+// Most subsystems (Player, World, Chat, Screen, PathFinder, Movement) are now created
+// automatically in agent.Init(), so this function is much simpler.
+func wireAgentSubsystems(agnt models.Agent) {
+	// All subsystems are created automatically in agent.Init()!
+	// We only need to set test-specific adapters here.
 
-	player := basic.NewPlayer(botClient, customSettings, basic.EventsListener{
-		GameStart:    agnt.HandleGameStart,
-		Disconnect:   agnt.HandleDisconnect,
-		HealthChange: agnt.HandleHealthChange,
-		Death:        agnt.HandleDeath,
-		Teleported:   agnt.HandleTeleported,
-	}, packetMgr)
-
-	// Expose teleport accepter to agent
-	agnt.SetTeleportAccepter(player)
-
-	// Player list for chat manager
-	plist := playerlist.New(botClient, packetMgr)
-
-	// Chat manager with agent event handlers
-	chatMgr := msg.New(botClient, player, plist, msg.EventsHandler{
-		SystemChat:        agnt.OnSystemChat,
-		PlayerChatMessage: agnt.OnPlayerChat,
-		DisguisedChat:     agnt.OnDisguisedChat,
-	}, packetMgr)
-	agnt.SetChat(agent.NewChatFromMsg(chatMgr))
-
-	// World manager with chunk load/unload callbacks (created once, reused for pathfinding)
-	wm := world.NewWorld(botClient, player, world.EventsListener{
-		LoadChunk:   agnt.HandleChunkLoad,
-		UnloadChunk: agnt.HandleChunkUnload,
-	}, packetMgr)
-
-	// Screen manager: wire slot change and provide slot resolver
-	scr := screen.NewManager(botClient, screen.EventsListener{
-		Open:    nil,
-		SetSlot: agnt.OnScreenSlotChange,
-		Close:   nil,
-	}, packetMgr)
-	agnt.SetSlotResolver(slotResolver{m: scr})
-	agnt.SetItemManager(itemMgrAdapter{})
-
-	// Provide player UUID resolver for following
-	agnt.SetPlayerUUIDResolver(func(name string) ([16]byte, error) {
-		for uuid, info := range plist.PlayerInfos {
-			if info.Name == name {
-				return uuid, nil
-			}
-		}
-		return [16]byte{}, fmt.Errorf("player %s not found", name)
-	})
-
-	// Provide name-by-UUID resolver for tracking messages
-	agnt.SetPlayerNameResolver(func(u [16]byte) (string, bool) {
-		for uuid, info := range plist.PlayerInfos {
-			var cu [16]byte
-			copy(cu[:], uuid[:])
-			if cu == u {
-				return info.Name, true
-			}
-		}
-		return "", false
-	})
-
-	// Wire up pathfinding and following if enabled
-	if cfg.EnablePathfinding {
-		dataBasePath, err := agutils.ResolveDataPath(cfg.MCDataGenPath, "../data/mc-data-gen-cache", "")
-		if err != nil {
-			return fmt.Errorf("resolve data path: %w", err)
-		}
-
-		shapeMgr, err := pf.NewBlockShapeManager(cfg.Version, dataBasePath)
-		if err != nil {
-			return fmt.Errorf("create block shape manager: %w", err)
-		}
-
-		var stateProps *pf.StatePropertyLoader
-		if cfg.MCProtocolGoPath != "" {
-			if spl, err := pf.NewStatePropertyLoader(cfg.MCProtocolGoPath, cfg.Version); err == nil {
-				stateProps = spl
-			}
-		}
-
-		// Reuse the world manager created above (do not recreate it)
-
-		pathFinder := pf.NewPathFinder(wm, shapeMgr, blockMgr, stateProps)
-		agnt.SetPathFinder(pathFinder)
-
-		moveExec := movement.NewMovementExecutor(botClient, packetMgr, agnt.GetPosition, agnt.UpdatePosition, agnt.GetEntityID)
-		agnt.SetMovementExecutor(moveExec)
-
-		if cfg.EnableFollowing {
-			targetSelector := following.NewTargetSelector(agnt.GetTrackedEntitiesForFollowing, agnt.ResolvePlayerUUIDByName, agnt.GetPositionSimple)
-			followCfg := following.DefaultFollowConfig()
-			followMgr := following.NewFollowManager(targetSelector, pathFinder, moveExec, agnt.GetPosition, agnt.SendChat, followCfg)
-			agnt.SetFollowManager(followMgr)
-		}
-	}
-
-	return nil
+	// Set slot resolver (adapts screen manager for following/recipes)
+	// Note: The screen manager is created automatically, we just need to provide an adapter
+	agnt.SetSlotResolver(slotResolverFromAgent{agnt: agnt})
+	agnt.SetItemManager(registryItemMgrAdapter{agnt: agnt})
 }
 
-// slotResolver adapts screen.Manager slot data to the agent SlotResolver interface.
-type slotResolver struct{ m *screen.Manager }
+// slotResolverFromAgent adapts the agent's screen operations to the SlotResolver interface.
+type slotResolverFromAgent struct {
+	agnt models.Agent
+}
 
-func (sr slotResolver) ResolveSlot(id, index int) (itemID int, count int, ok bool) {
+func (sr slotResolverFromAgent) ResolveSlot(id, index int) (itemID int, count int, ok bool) {
+	// Get the screen/inventory from the agent
+	var screenContainer interface{}
+
 	if id == -2 {
-		if index >= 0 && index < len(sr.m.Inventory.Slots) {
-			s := sr.m.Inventory.Slots[index]
+		// Player inventory
+		screenContainer = sr.agnt.GetInventory()
+	} else if id >= 0 {
+		// Container window
+		screenContainer = sr.agnt.GetScreen(id)
+	}
+
+	if id == -1 && index == -1 {
+		// Cursor slot
+		cursor := sr.agnt.GetCursor()
+		if cursor.ID >= 0 {
+			return int(cursor.ID), int(cursor.Count), true
+		}
+		return 0, 0, false
+	}
+
+	// Type assert to screen.Inventory to access slots
+	if inv, ok := screenContainer.(*screen.Inventory); ok {
+		if index >= 0 && index < len(inv.Slots) {
+			s := inv.Slots[index]
 			if s.ID >= 0 {
 				return int(s.ID), int(s.Count), true
 			}
 		}
 		return 0, 0, false
 	}
-	if id == -1 && index == -1 {
-		s := sr.m.Cursor
-		if s.ID >= 0 {
-			return int(s.ID), int(s.Count), true
-		}
-		return 0, 0, false
-	}
-	if c, okc := sr.m.Screens[id]; okc {
-		switch cont := c.(type) {
-		case *screen.Inventory:
-			if index >= 0 && index < len(cont.Slots) {
-				s := cont.Slots[index]
+
+	// Type assert to other container types as needed
+	if screenContainer != nil {
+		// Generic container access
+		if c, ok := screenContainer.(interface{ GetSlots() []screen.Slot }); ok {
+			slots := c.GetSlots()
+			if index >= 0 && index < len(slots) {
+				s := slots[index]
 				if s.ID >= 0 {
 					return int(s.ID), int(s.Count), true
 				}
 			}
 		}
 	}
+
 	return 0, 0, false
 }
 
-// itemMgrAdapter provides item names using registryid data as a fallback.
-type itemMgrAdapter struct{}
+// registryItemMgrAdapter provides item names using the agent's registry data.
+type registryItemMgrAdapter struct {
+	agnt models.Agent
+}
 
-func (itemMgrAdapter) GetItemNameByID(id int) string {
-	// For tests, we don't need full item registry
+func (m registryItemMgrAdapter) GetItemNameByID(id int) string {
+	if m.agnt == nil {
+		return ""
+	}
+	reg := m.agnt.GetRegistry("minecraft:item")
+	if reg == nil || !reg.IsReady() {
+		return ""
+	}
+	if name, ok := reg.GetNameByID(int32(id)); ok {
+		return name
+	}
 	return fmt.Sprintf("item_%d", id)
 }

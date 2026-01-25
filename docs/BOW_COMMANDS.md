@@ -249,16 +249,40 @@ This simulates various target positions and prints calculated yaw, pitch, and po
    - Requires arrows in inventory
    - No automatic equipping
 
+## Generalized Projectile System
+
+The bow aiming functionality has been extracted and generalized into `physics/projectile.go`, which now supports multiple projectile types:
+
+**Supported Projectiles:**
+- Arrow (bow)
+- Snowball
+- Egg
+- Ender Pearl
+- Splash Potion
+- Trident
+- Fishing Bobber
+
+**Key Functions:**
+```go
+// physics/projectile.go
+func SimulateProjectile(projectileType ProjectileType, startPos V3, yaw, pitch, power float64) []V3
+func FindOptimalTrajectory(projectileType ProjectileType, from, to V3, world World) (yaw, pitch, power float64, hit bool)
+func CalculateAiming(botPos, targetPos Point) (yaw, pitch, powerFactor float64)
+```
+
+See `docs/PHYSICS_CONFIG.md` for detailed projectile physics configuration and usage examples.
+
 ## Future Enhancements
 
 - [ ] Moving target prediction (lead calculation)
-- [ ] Obstacle/block detection using World data
+- [x] Obstacle/block detection using World data (available in FindOptimalTrajectory)
 - [ ] Multi-target trajectory (hit multiple entities)
 - [ ] Automatic bow/arrow equipping
 - [ ] Enchantment effects (Power, Punch, Flame)
 - [ ] Crossbow support
 - [ ] Rapid fire mode (spam arrows)
 - [ ] Parabolic path visualization in logs
+- [x] Generalized projectile physics (completed - see physics/projectile.go)
 
 ## Physics References
 
@@ -268,7 +292,8 @@ This simulates various target positions and prints calculated yaw, pitch, and po
 
 ## Code Files
 
-- `agent/bowCommands.go` - Main implementation
+- `agent/bowCommands.go` - Bow command implementation
+- `physics/projectile.go` - Generalized projectile physics (NEW)
 - `cmd/targetBow/main.go` - Standalone testing utility
 - `agent/commands.go` - Command parsing (`fireBow`, `fireBowAt`)
 

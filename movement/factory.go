@@ -31,7 +31,7 @@ func (et ExecutorType) String() string {
 // ExecutorConfig holds configuration for creating a movement executor.
 type ExecutorConfig struct {
 	// Required for all executor types
-	Client         *bot.Client
+	Client         bot.Client
 	PacketMgr      protocol_models.PacketMgr
 	GetBotPos      func() (float64, float64, float64, float32, float32, bool)
 	SetBotPos      func(float64, float64, float64, float32, float32)
@@ -45,35 +45,35 @@ type ExecutorConfig struct {
 // NewExecutor creates a movement executor of the specified type.
 // For PhysicsExecutor, config.World and config.ShapeProvider must be provided.
 func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecutor {
-	switch executorType {
-	case InterpolationExecutor:
-		return NewMovementExecutor(
-			config.Client,
-			config.PacketMgr,
-			config.GetBotPos,
-			config.SetBotPos,
-			config.GetBotEntityID,
-		)
+	// switch executorType {
+	// case InterpolationExecutor:
+	// 	return NewMovementExecutor(
+	// 		config.Client,
+	// 		config.PacketMgr,
+	// 		config.GetBotPos,
+	// 		config.SetBotPos,
+	// 		config.GetBotEntityID,
+	// 	)
 
-	case PhysicsExecutor:
-		return NewPhysicsMovementExecutor(
-			config.Client,
-			config.PacketMgr,
-			config.GetBotPos,
-			config.SetBotPos,
-			config.GetBotEntityID,
-			config.World,
-			config.ShapeProvider,
-		)
+	// case PhysicsExecutor:
+	return NewPhysicsMovementExecutor(
+		config.Client,
+		config.PacketMgr,
+		config.GetBotPos,
+		config.SetBotPos,
+		config.GetBotEntityID,
+		config.World,
+		config.ShapeProvider,
+	)
 
-	default:
-		// Default to interpolation executor
-		return NewMovementExecutor(
-			config.Client,
-			config.PacketMgr,
-			config.GetBotPos,
-			config.SetBotPos,
-			config.GetBotEntityID,
-		)
-	}
+	// default:
+	// 	// Default to interpolation executor
+	// 	return NewMovementExecutor(
+	// 		config.Client,
+	// 		config.PacketMgr,
+	// 		config.GetBotPos,
+	// 		config.SetBotPos,
+	// 		config.GetBotEntityID,
+	// 	)
+	// }
 }

@@ -3,23 +3,117 @@ package pathfinding
 import (
 	"math"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // mockPhysicsState implements PhysicsState for testing
 type mockPhysicsState struct {
-	pos      V3
-	vel      V3
+	pos      models.V3
+	vel      models.V3
 	yaw      float64
 	pitch    float64
 	onGround bool
+	sneaking bool
 }
 
-func (m *mockPhysicsState) GetPosition() (pos V3, yaw, pitch float64, onGround bool) {
+func (m *mockPhysicsState) GetPosition() (pos models.V3, yaw, pitch float64, onGround bool) {
 	return m.pos, m.yaw, m.pitch, m.onGround
 }
 
-func (m *mockPhysicsState) GetVelocity() V3 {
+func (m *mockPhysicsState) GetVelocity() models.V3 {
 	return m.vel
+}
+
+func (m *mockPhysicsState) Position() models.V3 {
+	return m.pos
+}
+
+func (m *mockPhysicsState) Velocity() models.V3 {
+	return m.vel
+}
+
+func (m *mockPhysicsState) Yaw() float64 {
+	return m.yaw
+}
+
+func (m *mockPhysicsState) Pitch() float64 {
+	return m.pitch
+}
+
+func (m *mockPhysicsState) OnGround() bool {
+	return m.onGround
+}
+
+func (m *mockPhysicsState) IsSneaking() bool {
+	return m.sneaking
+}
+
+func (m *mockPhysicsState) GetDimensions() (width, height, eyeHeight float64) {
+	return 0, 0, 0
+}
+
+func (m *mockPhysicsState) GetAABB() models.AABB {
+	return models.AABB{}
+}
+
+func (m *mockPhysicsState) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
+	m.pos = pos
+	m.yaw = yaw
+	m.pitch = pitch
+	m.onGround = onGround
+}
+
+func (m *mockPhysicsState) SetPositionSimple(pos models.V3) {
+	m.pos = pos
+}
+
+func (m *mockPhysicsState) SetYaw(yaw float64) {
+	m.yaw = yaw
+}
+
+func (m *mockPhysicsState) SetPitch(pitch float64) {
+	m.pitch = pitch
+}
+
+func (m *mockPhysicsState) SetVelocity(vel models.V3) {
+	m.vel = vel
+}
+
+func (m *mockPhysicsState) SetOnGround(onGround bool) {
+	m.onGround = onGround
+}
+
+func (m *mockPhysicsState) SetSneaking(sneaking bool) {
+	m.sneaking = sneaking
+}
+
+func (m *mockPhysicsState) Tick(_ Inputs, _ models.PhysicsWorld) error {
+	return nil
+}
+
+func (m *mockPhysicsState) PredictMovement(_ []Inputs, _ int, _ models.PhysicsWorld) []PhysicsState {
+	return nil
+}
+
+func (m *mockPhysicsState) PredictPosition(_ models.V3, _ int, _ models.PhysicsWorld) models.V3 {
+	return models.V3{}
+}
+
+func (m *mockPhysicsState) WillCollide(_ models.V3, _ models.PhysicsWorld) bool {
+	return false
+}
+
+func (m *mockPhysicsState) HasGroundSupportAt(_ models.V3, _ models.PhysicsWorld) bool {
+	return false
+}
+
+func (m *mockPhysicsState) AtLookTarget(_, _ float64) bool {
+	return false
+}
+
+func (m *mockPhysicsState) GetSurroundingBoxes(_ models.AABB, _ models.PhysicsWorld) []models.AABB {
+	return nil
 }
 
 // Test input generation for Traverse movement
@@ -27,15 +121,15 @@ func TestGenerateInputs_Traverse(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 64, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 64, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
 	}
 
 	target := PathStep{
-		Position: V3{X: 1, Y: 64, Z: 0}, // 1 block east
+		Position: models.V3{X: 1, Y: 64, Z: 0}, // 1 block east
 		Movement: Traverse,
 		Cost:     1.0,
 	}
@@ -43,10 +137,10 @@ func TestGenerateInputs_Traverse(t *testing.T) {
 	inputs := gen.GenerateInputs(state, target, 0)
 
 	// Check throttle is pushing toward target (east = +X)
-	// atan2(-deltaX=-1, -deltaZ=0) = atan2(-1, 0) ≈ -π/2
-	// sin(-π/2) ≈ -1, cos(-π/2) ≈ 0
-	if inputs.ThrottleX > -0.9 || inputs.ThrottleX < -1.1 {
-		t.Errorf("Expected ThrottleX ≈ -1, got %.3f", inputs.ThrottleX)
+	// atan2(deltaX=1, deltaZ=0) = atan2(1, 0) ≈ π/2
+	// sin(π/2) ≈ 1, cos(π/2) ≈ 0
+	if inputs.ThrottleX < 0.9 || inputs.ThrottleX > 1.1 {
+		t.Errorf("Expected ThrottleX ≈ 1, got %.3f", inputs.ThrottleX)
 	}
 	if inputs.ThrottleZ > 0.1 || inputs.ThrottleZ < -0.1 {
 		t.Errorf("Expected ThrottleZ ≈ 0, got %.3f", inputs.ThrottleZ)
@@ -63,24 +157,24 @@ func TestGenerateInputs_Ascend(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 64, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 64, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
 	}
 
 	target := PathStep{
-		Position: V3{X: 1, Y: 65, Z: 0}, // 1 block east, 1 block up
-		Movement: Ascend,
+		Position: models.V3{X: 1, Y: 65, Z: 0}, // 1 block east, 1 block up
+		Movement: AscendJump,
 		Cost:     1.5,
 	}
 
 	inputs := gen.GenerateInputs(state, target, 0)
 
 	// Check throttle is pushing toward target
-	if inputs.ThrottleX > -0.8 || inputs.ThrottleX < -1.1 {
-		t.Errorf("Expected ThrottleX ≈ -1, got %.3f", inputs.ThrottleX)
+	if inputs.ThrottleX < 0.8 || inputs.ThrottleX > 1.1 {
+		t.Errorf("Expected ThrottleX ≈ 1, got %.3f", inputs.ThrottleX)
 	}
 
 	// For ascend close to target and below it, jump should be true
@@ -92,16 +186,16 @@ func TestGenerateInputs_Ascend(t *testing.T) {
 
 	// Let's test with bot already at X=1, needing to jump up
 	state2 := &mockPhysicsState{
-		pos:      V3{X: 1, Y: 64, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 1, Y: 64, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
 	}
 
 	target2 := PathStep{
-		Position: V3{X: 1, Y: 65, Z: 0}, // directly above
-		Movement: Ascend,
+		Position: models.V3{X: 1, Y: 65, Z: 0}, // directly above
+		Movement: AscendJump,
 		Cost:     1.5,
 	}
 
@@ -131,29 +225,29 @@ func TestGenerateInputs_Jump2(t *testing.T) {
 	// Test jump timing: should jump when dist2 is between 1.5 and 1.78
 	testCases := []struct {
 		name        string
-		currentPos  V3
-		targetPos   V3
+		currentPos  models.V3
+		targetPos   models.V3
 		expectJump  bool
 		description string
 	}{
 		{
 			name:        "Too far to jump",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 2, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 2, Y: 64, Z: 0},
 			expectJump:  false,
 			description: "dist2=2.0 > 1.78, don't jump yet",
 		},
 		{
 			name:        "In jump window",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 1.6, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 1.6, Y: 64, Z: 0},
 			expectJump:  true,
 			description: "dist2=1.6, should jump",
 		},
 		{
 			name:        "Too close to jump",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 1, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 1, Y: 64, Z: 0},
 			expectJump:  false,
 			description: "dist2=1.0 < 1.5, too close",
 		},
@@ -163,7 +257,7 @@ func TestGenerateInputs_Jump2(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			state := &mockPhysicsState{
 				pos:      tc.currentPos,
-				vel:      V3{X: 0, Y: 0, Z: 0},
+				vel:      models.V3{X: 0, Y: 0, Z: 0},
 				yaw:      0,
 				pitch:    0,
 				onGround: true,
@@ -191,8 +285,8 @@ func TestGenerateInputs_Swim(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 60, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 60, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: false,
@@ -200,7 +294,7 @@ func TestGenerateInputs_Swim(t *testing.T) {
 
 	// Test Swim (horizontal)
 	targetSwim := PathStep{
-		Position: V3{X: 5, Y: 60, Z: 0},
+		Position: models.V3{X: 5, Y: 60, Z: 0},
 		Movement: Swim,
 		Cost:     2.0,
 	}
@@ -213,7 +307,7 @@ func TestGenerateInputs_Swim(t *testing.T) {
 
 	// Test SwimUp
 	targetUp := PathStep{
-		Position: V3{X: 0, Y: 61, Z: 0},
+		Position: models.V3{X: 0, Y: 61, Z: 0},
 		Movement: SwimUp,
 		Cost:     2.5,
 	}
@@ -225,7 +319,7 @@ func TestGenerateInputs_Swim(t *testing.T) {
 
 	// Test SwimDown
 	targetDown := PathStep{
-		Position: V3{X: 0, Y: 59, Z: 0},
+		Position: models.V3{X: 0, Y: 59, Z: 0},
 		Movement: SwimDown,
 		Cost:     1.5,
 	}
@@ -242,15 +336,15 @@ func TestGenerateInputs_Climb(t *testing.T) {
 
 	// Test approaching ladder from distance
 	stateFar := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 63, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 63, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: false,
 	}
 
 	targetLadder := PathStep{
-		Position: V3{X: 1, Y: 65, Z: 0},
+		Position: models.V3{X: 1, Y: 65, Z: 0},
 		Movement: Climb,
 		Cost:     1.8,
 	}
@@ -263,8 +357,8 @@ func TestGenerateInputs_Climb(t *testing.T) {
 
 	// Test climbing on ladder (close to it)
 	stateNear := &mockPhysicsState{
-		pos:      V3{X: 1.2, Y: 64.5, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 1.2, Y: 64.5, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: false,
@@ -282,8 +376,8 @@ func TestGenerateInputs_Diagonal(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 64, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 64, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
@@ -291,7 +385,7 @@ func TestGenerateInputs_Diagonal(t *testing.T) {
 
 	// Test DiagonalTraverse
 	targetDiag := PathStep{
-		Position: V3{X: 1, Y: 64, Z: 1},
+		Position: models.V3{X: 1, Y: 64, Z: 1},
 		Movement: DiagonalTraverse,
 		Cost:     1.414,
 	}
@@ -304,7 +398,7 @@ func TestGenerateInputs_Diagonal(t *testing.T) {
 
 	// Test DiagonalAscend
 	targetDiagAscend := PathStep{
-		Position: V3{X: 1, Y: 65, Z: 1},
+		Position: models.V3{X: 1, Y: 65, Z: 1},
 		Movement: DiagonalAscend,
 		Cost:     2.0,
 	}
@@ -321,18 +415,18 @@ func TestEstimateTicksRequired(t *testing.T) {
 	gen := NewInputGenerator()
 
 	testCases := []struct {
-		name          string
-		currentPos    V3
-		targetPos     V3
-		movement      MovementType
-		minTicks      int
-		maxTicks      int
-		description   string
+		name        string
+		currentPos  models.V3
+		targetPos   models.V3
+		movement    MovementType
+		minTicks    int
+		maxTicks    int
+		description string
 	}{
 		{
 			name:        "Traverse 1 block",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 1, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 1, Y: 64, Z: 0},
 			movement:    Traverse,
 			minTicks:    10,
 			maxTicks:    20,
@@ -340,17 +434,17 @@ func TestEstimateTicksRequired(t *testing.T) {
 		},
 		{
 			name:        "Ascend 1 block",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 1, Y: 65, Z: 0},
-			movement:    Ascend,
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 1, Y: 65, Z: 0},
+			movement:    AscendJump,
 			minTicks:    15,
 			maxTicks:    30,
 			description: "Jump takes ~10 ticks + horizontal travel",
 		},
 		{
 			name:        "Jump2 across gap",
-			currentPos:  V3{X: 0, Y: 64, Z: 0},
-			targetPos:   V3{X: 2, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 64, Z: 0},
+			targetPos:   models.V3{X: 2, Y: 64, Z: 0},
 			movement:    Jump2,
 			minTicks:    20,
 			maxTicks:    30,
@@ -358,8 +452,8 @@ func TestEstimateTicksRequired(t *testing.T) {
 		},
 		{
 			name:        "Descend 2 blocks",
-			currentPos:  V3{X: 0, Y: 66, Z: 0},
-			targetPos:   V3{X: 1, Y: 64, Z: 0},
+			currentPos:  models.V3{X: 0, Y: 66, Z: 0},
+			targetPos:   models.V3{X: 1, Y: 64, Z: 0},
 			movement:    Descend,
 			minTicks:    10,
 			maxTicks:    20,
@@ -371,7 +465,7 @@ func TestEstimateTicksRequired(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			state := &mockPhysicsState{
 				pos:      tc.currentPos,
-				vel:      V3{X: 0, Y: 0, Z: 0},
+				vel:      models.V3{X: 0, Y: 0, Z: 0},
 				yaw:      0,
 				pitch:    0,
 				onGround: true,
@@ -397,16 +491,16 @@ func TestEstimateTicksRequired(t *testing.T) {
 func TestIsComplete(t *testing.T) {
 	testCases := []struct {
 		name        string
-		currentPos  V3
+		currentPos  models.V3
 		targetStep  PathStep
 		expected    bool
 		description string
 	}{
 		{
 			name:       "Traverse complete",
-			currentPos: V3{X: 1.05, Y: 64.02, Z: 0.05},
+			currentPos: models.V3{X: 1.05, Y: 64.02, Z: 0.05},
 			targetStep: PathStep{
-				Position: V3{X: 1, Y: 64, Z: 0},
+				Position: models.V3{X: 1, Y: 64, Z: 0},
 				Movement: Traverse,
 			},
 			expected:    true,
@@ -414,9 +508,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "Traverse not complete - too far horizontally",
-			currentPos: V3{X: 1.3, Y: 64, Z: 0},
+			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
 			targetStep: PathStep{
-				Position: V3{X: 1, Y: 64, Z: 0},
+				Position: models.V3{X: 1, Y: 64, Z: 0},
 				Movement: Traverse,
 			},
 			expected:    false,
@@ -424,9 +518,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "Traverse not complete - too far above",
-			currentPos: V3{X: 1, Y: 64.1, Z: 0},
+			currentPos: models.V3{X: 1, Y: 64.1, Z: 0},
 			targetStep: PathStep{
-				Position: V3{X: 1, Y: 64, Z: 0},
+				Position: models.V3{X: 1, Y: 64, Z: 0},
 				Movement: Traverse,
 			},
 			expected:    false,
@@ -434,9 +528,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "Jump2 complete",
-			currentPos: V3{X: 2.1, Y: 63.95, Z: 0},
+			currentPos: models.V3{X: 2.1, Y: 63.95, Z: 0},
 			targetStep: PathStep{
-				Position: V3{X: 2, Y: 64, Z: 0},
+				Position: models.V3{X: 2, Y: 64, Z: 0},
 				Movement: Jump2,
 			},
 			expected:    true,
@@ -444,9 +538,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "Descend complete",
-			currentPos: V3{X: 1.1, Y: 64.03, Z: 0.1},
+			currentPos: models.V3{X: 1.1, Y: 64.03, Z: 0.1},
 			targetStep: PathStep{
-				Position: V3{X: 1, Y: 64, Z: 0},
+				Position: models.V3{X: 1, Y: 64, Z: 0},
 				Movement: Descend,
 			},
 			expected:    true,
@@ -454,9 +548,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "SwimUp complete",
-			currentPos: V3{X: 0, Y: 61.1, Z: 0},
+			currentPos: models.V3{X: 0, Y: 61.1, Z: 0},
 			targetStep: PathStep{
-				Position: V3{X: 0, Y: 61, Z: 0},
+				Position: models.V3{X: 0, Y: 61, Z: 0},
 				Movement: SwimUp,
 			},
 			expected:    true,
@@ -464,9 +558,9 @@ func TestIsComplete(t *testing.T) {
 		},
 		{
 			name:       "SwimUp not complete",
-			currentPos: V3{X: 0, Y: 60.8, Z: 0},
+			currentPos: models.V3{X: 0, Y: 60.8, Z: 0},
 			targetStep: PathStep{
-				Position: V3{X: 0, Y: 61, Z: 0},
+				Position: models.V3{X: 0, Y: 61, Z: 0},
 				Movement: SwimUp,
 			},
 			expected:    false,
@@ -488,52 +582,52 @@ func TestIsComplete(t *testing.T) {
 // Test stuck detection
 func TestIsStuck(t *testing.T) {
 	target := PathStep{
-		Position: V3{X: 10, Y: 64, Z: 0},
+		Position: models.V3{X: 10, Y: 64, Z: 0},
 		Movement: Traverse,
 		Cost:     10.0,
 	}
 
 	// Not stuck - still within estimated time
-	if IsStuck(V3{X: 5, Y: 64, Z: 0}, V3{X: 0, Y: 0, Z: 0}, target, 10, 20) {
+	if IsStuck(models.V3{X: 5, Y: 64, Z: 0}, models.V3{X: 0, Y: 0, Z: 0}, target, 10, 20) {
 		t.Error("Should not be stuck when runtime < estimatedTicks*2")
 	}
 
 	// Not stuck - still moving
-	if IsStuck(V3{X: 5, Y: 64, Z: 0}, V3{X: 0.1, Y: 0, Z: 0}, target, 50, 20) {
+	if IsStuck(models.V3{X: 5, Y: 64, Z: 0}, models.V3{X: 0.1, Y: 0, Z: 0}, target, 50, 20) {
 		t.Error("Should not be stuck when still moving (velocity > 0.05)")
 	}
 
 	// Not stuck - very close to target
-	if IsStuck(V3{X: 10.2, Y: 64, Z: 0}, V3{X: 0, Y: 0, Z: 0}, target, 50, 20) {
+	if IsStuck(models.V3{X: 10.2, Y: 64, Z: 0}, models.V3{X: 0, Y: 0, Z: 0}, target, 50, 20) {
 		t.Error("Should not be stuck when very close to target (< 0.5 blocks)")
 	}
 
 	// Stuck - exceeded time, not moving, far from target
-	if !IsStuck(V3{X: 5, Y: 64, Z: 0}, V3{X: 0, Y: 0, Z: 0}, target, 50, 20) {
+	if !IsStuck(models.V3{X: 5, Y: 64, Z: 0}, models.V3{X: 0, Y: 0, Z: 0}, target, 50, 20) {
 		t.Error("Should be stuck when exceeded time, not moving, and far from target")
 	}
 }
 
 // Test progress estimation
 func TestEstimateProgress(t *testing.T) {
-	start := V3{X: 0, Y: 64, Z: 0}
-	target := V3{X: 10, Y: 64, Z: 0}
+	start := models.V3{X: 0, Y: 64, Z: 0}
+	target := models.V3{X: 10, Y: 64, Z: 0}
 
 	testCases := []struct {
 		name      string
-		start     V3
-		current   V3
-		target    V3
+		start     models.V3
+		current   models.V3
+		target    models.V3
 		expected  float64
 		tolerance float64
 	}{
-		{"At start", start, V3{X: 0, Y: 64, Z: 0}, target, 0.0, 0.01},
-		{"25% progress", start, V3{X: 2.5, Y: 64, Z: 0}, target, 0.25, 0.01},
-		{"50% progress", start, V3{X: 5, Y: 64, Z: 0}, target, 0.5, 0.01},
-		{"75% progress", start, V3{X: 7.5, Y: 64, Z: 0}, target, 0.75, 0.01},
-		{"At target", start, V3{X: 10, Y: 64, Z: 0}, target, 1.0, 0.01},
-		{"Past target", start, V3{X: 12, Y: 64, Z: 0}, target, 1.2, 0.01}, // Overshot - 120% progress
-		{"Zero distance", start, start, start, 1.0, 0.01},                  // Start == target
+		{"At start", start, models.V3{X: 0, Y: 64, Z: 0}, target, 0.0, 0.01},
+		{"25% progress", start, models.V3{X: 2.5, Y: 64, Z: 0}, target, 0.25, 0.01},
+		{"50% progress", start, models.V3{X: 5, Y: 64, Z: 0}, target, 0.5, 0.01},
+		{"75% progress", start, models.V3{X: 7.5, Y: 64, Z: 0}, target, 0.75, 0.01},
+		{"At target", start, models.V3{X: 10, Y: 64, Z: 0}, target, 1.0, 0.01},
+		{"Past target", start, models.V3{X: 12, Y: 64, Z: 0}, target, 1.2, 0.01}, // Overshot - 120% progress
+		{"Zero distance", start, start, start, 1.0, 0.01},                        // Start == target
 	}
 
 	for _, tc := range testCases {
@@ -550,16 +644,16 @@ func TestEstimateProgress(t *testing.T) {
 func TestIsComplete_AdditionalCases(t *testing.T) {
 	testCases := []struct {
 		name        string
-		currentPos  V3
+		currentPos  models.V3
 		targetStep  PathStep
 		expected    bool
 		description string
 	}{
 		{
 			name:       "Climb complete",
-			currentPos: V3{X: 1.1, Y: 65.03, Z: 0.1},
+			currentPos: models.V3{X: 1.1, Y: 65.03, Z: 0.1},
 			targetStep: PathStep{
-				Position: V3{X: 1, Y: 65, Z: 0},
+				Position: models.V3{X: 1, Y: 65, Z: 0},
 				Movement: Climb,
 			},
 			expected:    true,
@@ -583,8 +677,8 @@ func TestEstimateTicksRequired_AdditionalCases(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 64, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 64, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
@@ -593,15 +687,15 @@ func TestEstimateTicksRequired_AdditionalCases(t *testing.T) {
 	testCases := []struct {
 		name     string
 		movement MovementType
-		target   V3
+		target   models.V3
 		minTicks int
 		maxTicks int
 	}{
-		{"DiagonalTraverse", DiagonalTraverse, V3{X: 1, Y: 64, Z: 1}, 10, 20},
-		{"Climb 2 blocks", Climb, V3{X: 0, Y: 66, Z: 0}, 20, 50},
-		{"Swim horizontal", Swim, V3{X: 5, Y: 64, Z: 0}, 40, 70},
-		{"SwimUp 1 block", SwimUp, V3{X: 0, Y: 65, Z: 0}, 15, 35},
-		{"SwimDown 1 block", SwimDown, V3{X: 0, Y: 63, Z: 0}, 10, 25},
+		{"DiagonalTraverse", DiagonalTraverse, models.V3{X: 1, Y: 64, Z: 1}, 10, 20},
+		{"Climb 2 blocks", Climb, models.V3{X: 0, Y: 66, Z: 0}, 20, 50},
+		{"Swim horizontal", Swim, models.V3{X: 5, Y: 64, Z: 0}, 40, 70},
+		{"SwimUp 1 block", SwimUp, models.V3{X: 0, Y: 65, Z: 0}, 15, 35},
+		{"SwimDown 1 block", SwimDown, models.V3{X: 0, Y: 63, Z: 0}, 10, 25},
 	}
 
 	for _, tc := range testCases {
@@ -625,15 +719,15 @@ func TestGenerateInputs_Descend(t *testing.T) {
 	gen := NewInputGenerator()
 
 	state := &mockPhysicsState{
-		pos:      V3{X: 0, Y: 66, Z: 0},
-		vel:      V3{X: 0, Y: 0, Z: 0},
+		pos:      models.V3{X: 0, Y: 66, Z: 0},
+		vel:      models.V3{X: 0, Y: 0, Z: 0},
 		yaw:      0,
 		pitch:    0,
 		onGround: true,
 	}
 
 	target := PathStep{
-		Position: V3{X: 1, Y: 64, Z: 0},
+		Position: models.V3{X: 1, Y: 64, Z: 0},
 		Movement: Descend,
 		Cost:     1.2,
 	}

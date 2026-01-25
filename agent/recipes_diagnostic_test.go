@@ -151,7 +151,7 @@ func tryNewStructure(r *bytes.Reader, t *testing.T) error {
 			return fmt.Errorf("reading result %d type: %w", i, err)
 		}
 		t.Logf("    Result %d type: %d", i, resType)
-		
+
 		// Handle result data based on type
 		switch int(resType) {
 		case 0, 1: // empty, any_fuel - no data

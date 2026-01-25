@@ -2,10 +2,14 @@ package agent
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
+	mcnet "github.com/Tnze/go-mc/net"
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/google/uuid"
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/require"
 )
@@ -83,20 +87,44 @@ func (f fakeCBPacketMgr) GetEntityTypeID(name string) int32 {
 	return 0
 }
 
-type fakeEventBus struct{ handlers []PacketHandler }
+type fakeEventBus struct{ handlers []bot.PacketHandler }
 
-func (f *fakeEventBus) AddGeneric(listeners ...PacketHandler) {}
-func (f *fakeEventBus) AddListener(listeners ...PacketHandler) {
-	f.handlers = append(f.handlers, listeners...)
-}
+func (f *fakeEventBus) AddGeneric(listeners ...bot.PacketHandler)        {}
+func (f *fakeEventBus) AddListener(listeners ...bot.PacketHandler)       { f.handlers = append(f.handlers, listeners...) }
+func (f *fakeEventBus) GetGenericListeners() []bot.PacketHandler         { return nil }
+func (f *fakeEventBus) GetListeners() [][]bot.PacketHandler              { return nil }
 
 type fakeClient struct{ bus *fakeEventBus }
 
-func (f *fakeClient) JoinServerWithOptions(context.Context, string, JoinOptions) error { return nil }
-func (f *fakeClient) Events() EventBus                                                 { return f.bus }
-func (f *fakeClient) Name() string                                                     { return "BOT" }
-func (f *fakeClient) HandleGame(context.Context) error                                 { return nil }
-func (f *fakeClient) WritePacket(p pk.Packet) error                                    { return nil }
+func (f *fakeClient) JoinServerWithOptions(context.Context, string, bot.JoinOptions) error {
+	return nil
+}
+func (f *fakeClient) Events() bot.Events               { return f.bus }
+func (f *fakeClient) Name() string                     { return "BOT" }
+func (f *fakeClient) HandleGame(context.Context) error { return nil }
+func (f *fakeClient) WritePacket(p pk.Packet) error    { return nil }
+func (f *fakeClient) Close() error                                                          { return nil }
+func (f *fakeClient) Conn() *bot.Conn                                                       { return nil }
+func (f *fakeClient) SetAuth(bot.Auth)                                                      {}
+func (f *fakeClient) JoinServer(context.Context, string) error                              { return nil }
+func (f *fakeClient) JoinServerWithDialer(context.Context, *net.Dialer, string) error      { return nil }
+func (f *fakeClient) UUID() uuid.UUID                                                       { return uuid.UUID{} }
+func (f *fakeClient) Cookies() map[string][]byte                                            { return nil }
+func (f *fakeClient) SetCookies(map[string][]byte)                                          {}
+func (f *fakeClient) RegistryData() map[string]*bot.CustomRegistry                          { return nil }
+func (f *fakeClient) RegistryTags() map[string]*bot.RegistryTags                            { return nil }
+func (f *fakeClient) LoginPlugin() map[string]bot.CustomPayloadHandler                      { return nil }
+func (f *fakeClient) CustomReportDetails() map[string]string                                { return nil }
+func (f *fakeClient) SetJoinLogin(func(*mcnet.Conn) error)                                  {}
+func (f *fakeClient) SetJoinConfiguration(func(*mcnet.Conn) error)                          {}
+func (f *fakeClient) MovementMirror() bot.MovementMirror                                    { return nil }
+func (f *fakeClient) RegistryCallback() bot.RegistryDataCallback                            { return nil }
+func (f *fakeClient) PacketMgr() protocol_models.PacketMgr                                  { return nil }
+func (f *fakeClient) EnableFeature([]pk.Identifier)                                         {}
+func (f *fakeClient) PushResourcePack(bot.ResourcePack)                                     {}
+func (f *fakeClient) PopResourcePack(pk.UUID)                                               {}
+func (f *fakeClient) PopAllResourcePack()                                                   {}
+func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack                         { return nil }
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
 	agentInt, err := New(Config{Address: "127.0.0.1:25565"})

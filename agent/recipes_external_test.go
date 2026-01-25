@@ -67,12 +67,12 @@ func buildUpdateRecipesPacket() pk.Packet {
 	pb.WriteField(pk.VarInt(2)) // two entries
 	// Entry 1: input IDSet [1, 100], result SlotDisplay: item(200)
 	// With scanIDSet: count=2, ids[0]=1, read 1 more (100) → [1, 100]
-	writeIDSet(&pb, 1, 100) // first must be len-1 = 1
+	writeIDSet(&pb, 1, 100)           // first must be len-1 = 1
 	writeSlotDisplay(&pb, 2, func() { // result: item
 		pb.WriteField(pk.VarInt(200))
 	})
 	// Entry 2: input IDSet [1, 400], result SlotDisplay: with_remainder(item(301), item(302))
-	writeIDSet(&pb, 1, 400) // first must be len-1 = 1
+	writeIDSet(&pb, 1, 400)           // first must be len-1 = 1
 	writeSlotDisplay(&pb, 6, func() { // result: with_remainder
 		// ingredient
 		writeSlotDisplay(&pb, 2, func() { pb.WriteField(pk.VarInt(301)) })

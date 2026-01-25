@@ -61,14 +61,7 @@ type Inputs struct {
 	Jump                 bool    // Jump button pressed
 	Sprint               bool    // Sprint button pressed (increases speed by 30%)
 	Sneak                bool    // Sneak button pressed (reduces speed to 30%)
+	ClimbDirection       float64 // Ladder climb direction: +1.0=up, -1.0=down, 0.0=no climb
 }
 
-// PhysicsState is an interface for physics state needed by input generators and movement executors.
-// This allows input generation without direct coupling to the physics package.
-type PhysicsState interface {
-	// GetPosition returns current position, rotation, and ground contact status
-	GetPosition() (pos V3, yaw, pitch float64, onGround bool)
-
-	// GetVelocity returns current velocity vector
-	GetVelocity() V3
-}
+// PhysicsState moved to physics_state.go to keep interfaces isolated per file.

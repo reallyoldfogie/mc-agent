@@ -77,9 +77,9 @@ func (sm *SkinManager) GetSkinForPlayer(uuid [16]byte, name string) []ProfilePro
 	result := make([]ProfileProperty, len(props))
 	for i, p := range props {
 		result[i] = ProfileProperty{
-			Name:      p.Name(),
-			Value:     p.Value(),
-			Signature: p.Signature(),
+			Name:      p.Name,
+			Value:     p.Value,
+			Signature: p.Signature,
 		}
 	}
 	return result
@@ -92,9 +92,9 @@ func (sm *SkinManager) GetRandomExtractedSkin(uuid [16]byte, name string) []Prof
 	result := make([]ProfileProperty, len(props))
 	for i, p := range props {
 		result[i] = ProfileProperty{
-			Name:      p.Name(),
-			Value:     p.Value(),
-			Signature: p.Signature(),
+			Name:      p.Name,
+			Value:     p.Value,
+			Signature: p.Signature,
 		}
 	}
 	return result
@@ -107,9 +107,9 @@ func (sm *SkinManager) GetSkinByName(skinName, model string, uuid [16]byte, play
 	result := make([]ProfileProperty, len(props))
 	for i, p := range props {
 		result[i] = ProfileProperty{
-			Name:      p.Name(),
-			Value:     p.Value(),
-			Signature: p.Signature(),
+			Name:      p.Name,
+			Value:     p.Value,
+			Signature: p.Signature,
 		}
 	}
 	return result
@@ -118,11 +118,4 @@ func (sm *SkinManager) GetSkinByName(skinName, model string, uuid [16]byte, play
 // ListAvailableSkins returns all skins that have been extracted
 func (sm *SkinManager) ListAvailableSkins() ([]LocalSkin, error) {
 	return sm.fetcher.LoadExtractedSkins(sm.skinsDir)
-}
-
-// ProfileProperty is the exported version of profileProperty
-type ProfileProperty struct {
-	Name      string
-	Value     string
-	Signature string
 }

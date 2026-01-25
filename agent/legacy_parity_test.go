@@ -10,8 +10,7 @@ import (
 	"strings"
 
 	"github.com/Tnze/go-mc/chat"
-	"github.com/reallyoldfogie/mc-agent/following"
-	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
 	"github.com/stretchr/testify/require"
 )
@@ -30,11 +29,11 @@ func (f *fakeFollowMgr) Start(name string) error {
 	f.active = (f.startErr == nil)
 	return f.startErr
 }
-func (f *fakeFollowMgr) Stop() error                     { f.stopCalled = true; f.active = false; return nil }
-func (f *fakeFollowMgr) IsActive() bool                  { return f.active }
-func (f *fakeFollowMgr) GetStatus() string               { return f.status }
-func (f *fakeFollowMgr) GetPath() *pathfinding.Path      { return nil }
-func (f *fakeFollowMgr) GetState() following.FollowState { return following.StateIdle }
+func (f *fakeFollowMgr) Stop() error                  { f.stopCalled = true; f.active = false; return nil }
+func (f *fakeFollowMgr) IsActive() bool               { return f.active }
+func (f *fakeFollowMgr) GetStatus() string            { return f.status }
+func (f *fakeFollowMgr) GetPath() *models.Path        { return nil }
+func (f *fakeFollowMgr) GetState() models.FollowState { return models.StateIdle }
 
 // Ensure follow <name> works, stopFollow respects active/inactive, and followStatus returns string
 func TestFollowCommands(t *testing.T) {
@@ -178,8 +177,11 @@ func TestMoveUp_Negative(t *testing.T) {
 // findPath invalid args and error propagation
 type fakePFFail struct{}
 
-func (fakePFFail) FindPath(_, _ pathfinding.V3, _ int) (*pathfinding.Path, error) {
+func (fakePFFail) FindPath(_, _ models.V3, _ int) (*models.Path, error) {
 	return nil, errors.New("pf error")
+}
+func (fakePFFail) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
+	return startY
 }
 
 func TestFindPath_InvalidAndError(t *testing.T) {

@@ -10,27 +10,28 @@ import (
 
 // MockWorld implements physics.World for testing
 type MockWorld struct {
-	blocks map[[3]int]int32
+	blocks map[[3]int]uint32
 }
 
 func NewMockWorld() *MockWorld {
 	return &MockWorld{
-		blocks: make(map[[3]int]int32),
+		blocks: make(map[[3]int]uint32),
 	}
 }
 
-func (mw *MockWorld) GetBlockStatus(x, y, z int) int32 {
-	return mw.blocks[[3]int{x, y, z}]
+func (mw *MockWorld) GetBlockStatus(x, y, z int) (uint32, bool) {
+	val, found := mw.blocks[[3]int{x, y, z}]
+	return val, found
 }
 
-func (mw *MockWorld) SetBlock(x, y, z int, blockState int32) {
+func (mw *MockWorld) SetBlock(x, y, z int, blockState uint32) {
 	mw.blocks[[3]int{x, y, z}] = blockState
 }
 
 // MockShapeProvider implements physics.BlockShapeProvider for testing
 type MockShapeProvider struct{}
 
-func (msp *MockShapeProvider) GetCollisionBoxes(blockStateID int32, x, y, z int) []physics.AABB {
+func (msp *MockShapeProvider) GetCollisionBoxes(blockStateID uint32, x, y, z int) []physics.AABB {
 	if blockStateID == 0 {
 		// Air - no collision
 		return []physics.AABB{}
@@ -46,12 +47,79 @@ func (msp *MockShapeProvider) GetCollisionBoxes(blockStateID int32, x, y, z int)
 	}
 }
 
-func (msp *MockShapeProvider) IsPassable(blockStateID int32) bool {
+func (msp *MockShapeProvider) IsPassable(blockStateID uint32) bool {
 	return blockStateID == 0 // Only air (0) is passable
 }
 
-func (msp *MockShapeProvider) IsClimbable(blockStateID int32) bool {
+func (msp *MockShapeProvider) IsSolid(blockStateID uint32) bool {
+	return blockStateID != 0
+}
+
+func (msp *MockShapeProvider) GetStandingSurfaceHeight(blockStateID uint32) float64 {
+	if blockStateID == 0 {
+		return 0
+	}
+	return 1.0
+}
+
+func (msp *MockShapeProvider) IsClimbable(blockStateID uint32) bool {
 	return false // No climbable blocks in mock
+}
+
+func (msp *MockShapeProvider) IsFluid(blockStateID uint32) bool {
+	return false // No fluid blocks in mock
+}
+
+func (msp *MockShapeProvider) IsWater(blockStateID uint32) bool {
+	return false // No water blocks in mock
+}
+
+func (msp *MockShapeProvider) IsLava(blockStateID uint32) bool {
+	return false // No lava blocks in mock
+}
+
+func (msp *MockShapeProvider) IsDangerous(blockStateID uint32) bool {
+	return false // No dangerous blocks in mock
+}
+
+func (msp *MockShapeProvider) IsDoorLike(blockStateID uint32) bool {
+	return false // No door-like blocks in mock
+}
+
+func (msp *MockShapeProvider) IsFenceLike(blockStateID uint32) bool {
+	return false // No fence-like blocks in mock
+}
+
+func (msp *MockShapeProvider) IsSlab(blockStateID uint32) bool {
+	return false // No slabs in mock
+}
+
+func (msp *MockShapeProvider) IsStair(blockStateID uint32) bool {
+	return false // No stairs in mock
+}
+
+func (msp *MockShapeProvider) IsLogOrLeaf(blockStateID uint32) bool {
+	return false // No logs or leaves in mock
+}
+
+func (msp *MockShapeProvider) IsHayBale(blockStateID uint32) bool {
+	return false // No hay bales in mock
+}
+
+func (msp *MockShapeProvider) IsBed(blockStateID uint32) bool {
+	return false // No beds in mock
+}
+
+func (msp *MockShapeProvider) IsHoneyBlock(blockStateID uint32) bool {
+	return false // No honey blocks in mock
+}
+
+func (msp *MockShapeProvider) IsSlimeBlock(blockStateID uint32) bool {
+	return false // No slime blocks in mock
+}
+
+func (msp *MockShapeProvider) IsPowderSnow(blockStateID uint32) bool {
+	return false // No powder snow in mock
 }
 
 // Test helper: Create physics executor for testing
@@ -211,43 +279,16 @@ func TestPhysicsExecutor_PredictionErrorTracking(t *testing.T) {
 	}
 }
 
-// TestPhysicsExecutor_ExecuteStep tests single step execution
-func TestPhysicsExecutor_ExecuteStep(t *testing.T) {
-	exec := createTestPhysicsExecutor()
-
-	// Create a simple traverse step
-	step := pathfinding.PathStep{
-		Position: physics.V3{X: 1, Y: 64, Z: 0}, // Move 1 block east
-		Movement: pathfinding.Traverse,
-		Cost:     1.0,
-	}
-
-	// Execute one tick
-	complete, err := exec.ExecuteStep(step, 0)
-	if err != nil {
-		t.Fatalf("ExecuteStep failed: %v", err)
-	}
-
-	// Should not be complete after just one tick (need ~20 ticks to move 1 block)
-	if complete {
-		t.Error("Step should not be complete after 1 tick")
-	}
-
-	// Position should have changed (bot is moving)
-	pos, _, _, _ := exec.physicsState.GetPosition()
-	if pos.X == 0 {
-		t.Error("Position X should have changed after one tick")
-	}
-}
-
 // TestPhysicsExecutor_ExecutePath_SimpleTraverse tests path execution
 func TestPhysicsExecutor_ExecutePath_SimpleTraverse(t *testing.T) {
-	t.Skip("Skipping complex physics integration test - needs full world setup and physics debugging")
-
 	exec := createTestPhysicsExecutor()
 
 	// Reduce tick rate for faster testing
 	exec.tickRate = 1 * time.Millisecond
+
+	// Start continuous mode
+	exec.Start()
+	defer exec.Stop()
 
 	// Create a simple 3-step path
 	path := &pathfinding.Path{
@@ -292,6 +333,10 @@ func TestPhysicsExecutor_ExecutePath_SimpleTraverse(t *testing.T) {
 // TestPhysicsExecutor_ExecutePath_NotFound tests handling of failed paths
 func TestPhysicsExecutor_ExecutePath_NotFound(t *testing.T) {
 	exec := createTestPhysicsExecutor()
+
+	// Start continuous mode
+	exec.Start()
+	defer exec.Stop()
 
 	// Create a path that wasn't found
 	path := &pathfinding.Path{
@@ -365,22 +410,6 @@ func TestPhysicsExecutor_MoveTowards_NotSupported(t *testing.T) {
 	_, _, _, err := exec.MoveTowards(1, 64, 0, 0.1, true)
 	if err == nil {
 		t.Error("MoveTowards should return error (not supported by physics executor)")
-	}
-}
-
-// BenchmarkPhysicsExecutor_ExecuteStep benchmarks single step execution
-func BenchmarkPhysicsExecutor_ExecuteStep(b *testing.B) {
-	exec := createTestPhysicsExecutor()
-
-	step := pathfinding.PathStep{
-		Position: physics.V3{X: 1, Y: 64, Z: 0},
-		Movement: pathfinding.Traverse,
-		Cost:     1.0,
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = exec.ExecuteStep(step, 0)
 	}
 }
 

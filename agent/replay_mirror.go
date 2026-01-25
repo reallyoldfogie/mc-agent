@@ -14,6 +14,7 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	gouuid "github.com/google/uuid"
+	"github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 
@@ -27,26 +28,28 @@ type replayMovementMirror struct {
 	rec *recorder.Recorder
 	pm  protocol_models.PacketMgr
 
-	mu               sync.Mutex
-	entityID         int32
-	entityType       int32
-	name             string
-	uuid             [16]byte
-	hasUUID          bool
-	serverName       string
-	serverUUID       [16]byte
-	serverPI         []byte
-	serverPIHasProps bool
-	properties       []profileProperty
-	fetchedProps     bool
-	spawned          bool
-	loginSeen        bool // tracks if LOGIN packet has been recorded
-	skinProvider     SkinProvider
+	mu                   sync.Mutex
+	entityID             int32
+	entityType           int32
+	name                 string
+	uuid                 [16]byte
+	hasUUID              bool
+	serverName           string
+	serverUUID           [16]byte
+	serverPI             []byte
+	serverPIHasProps     bool
+	serverPlayerInfoSeen bool
+	properties           []profileProperty
+	fetchedProps         bool
+	spawned              bool
+	loginSeen            bool // tracks if LOGIN packet has been recorded
+	skinProvider         models.SkinProvider
 
 	lastX, lastY, lastZ float64
 	lastYaw, lastPitch  float32
 	onGround            bool
 	playerInfoSent      bool
+	positionInitialized bool
 
 	sbidPos        int32 // cached serverbound ids
 	sbidPosRot     int32
@@ -55,11 +58,14 @@ type replayMovementMirror struct {
 	cbidTeleport   int32 // cached clientbound id
 	cbidAddEnt     int32
 	cbidPlayerInfo int32
+	cbidMovePos    int32
+	cbidMovePosRot int32
+	cbidRotateHead int32
 }
 
 // NewReplayMovementMirror constructs a movement mirror if both recorder and
 // packet manager are provided. It returns nil when either dependency is nil.
-func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, sp SkinProvider) MovementMirror {
+func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, sp models.SkinProvider) MovementMirror {
 	if rec == nil || pm == nil {
 		return nil
 	}
@@ -73,6 +79,9 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		cbidTeleport:   int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
 		cbidAddEnt:     int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
 		cbidPlayerInfo: int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
+		cbidMovePos:    int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
+		cbidMovePosRot: int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
+		cbidRotateHead: int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
 		skinProvider:   sp,
 	}
 }
@@ -198,6 +207,9 @@ func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 				props := collectProperties(gameProfile)
 				m.mu.Lock()
 				m.serverName = string(gameProfile.Name)
+				if targetUUID == m.uuid || (m.name != "" && m.serverName == m.name) {
+					m.serverPlayerInfoSeen = true
+				}
 				// If the server's UUID differs from our canonical UUID, keep only properties.
 				if targetUUID == m.uuid {
 					if len(props) > 0 {
@@ -219,6 +231,9 @@ func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 					if len(props) > 0 {
 						m.properties = props
 						m.playerInfoSent = false
+					}
+					if m.serverName == m.name && m.uuid == ([16]byte{}) {
+						m.uuid = targetUUID
 					}
 				}
 				m.mu.Unlock()
@@ -253,6 +268,8 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	if err := p.Scan(&x, &y, &z, &yaw, &pitch, &onGround); err != nil {
 		return
 	}
+	log.Printf("[ReplayMirror] handlePosRot: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+		float64(x), float64(y), float64(z), float32(yaw), float32(pitch))
 	m.emitTeleport(float64(x), float64(y), float64(z), float32(yaw), float32(pitch), bool(onGround))
 }
 
@@ -281,6 +298,17 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32,
 		return
 	}
 
+	prevX, prevY, prevZ := m.lastX, m.lastY, m.lastZ
+	prevYaw, prevPitch := m.lastYaw, m.lastPitch
+	prevOnGround := m.onGround
+	m.lastX, m.lastY, m.lastZ = x, y, z
+	m.lastYaw, m.lastPitch = yaw, pitch
+	m.onGround = onGround
+
+	if !m.loginSeen {
+		return
+	}
+
 	// Ensure tab list entry exists once we know our id/name/uuid.
 	// Only emit after LOGIN packet has been recorded to maintain correct packet order.
 	if m.loginSeen {
@@ -293,25 +321,79 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32,
 		m.writeAddEntity(x, y, z, yaw, pitch)
 	}
 
-	m.lastX, m.lastY, m.lastZ = x, y, z
-	m.lastYaw, m.lastPitch = yaw, pitch
-	m.onGround = onGround
+	// Only emit teleport packets after the entity has been spawned and we have an
+	// initial position, to avoid redundant teleports on spawn.
+	if m.spawned {
+		changed := x != prevX || y != prevY || z != prevZ || yaw != prevYaw || pitch != prevPitch || onGround != prevOnGround
+		if m.positionInitialized && changed {
+			if dx, dy, dz, ok := encodeRelMove(prevX, prevY, prevZ, x, y, z); ok {
+				m.writeRelMove(dx, dy, dz, yaw, pitch, onGround)
+			} else {
+				// Split large deltas into multiple relative moves to keep replay in sync
+				// without emitting teleport packets (which can corrupt replays).
+				m.emitRelMoveSteps(prevX, prevY, prevZ, x, y, z, yaw, pitch, onGround)
+			}
+		}
+		m.positionInitialized = true
+	}
+}
 
-	// Only emit teleport packets after the entity has been spawned
-	// DISABLE AS THINGS PROPERLY RENDER IN THE VIEW WITHOUT IT, AND AN EXCEPTION IS THROWN WITH IT (2025-12-18 10:23A).
-	// if m.spawned {
-	// 	teleport := pk.Marshal(
-	// 		m.cbidTeleport,
-	// 		pk.VarInt(m.entityID),
-	// 		pk.Double(x),
-	// 		pk.Double(y),
-	// 		pk.Double(z),
-	// 		pk.Byte(angleToByte(yaw)),
-	// 		pk.Byte(angleToByte(pitch)),
-	// 		pk.Boolean(onGround),
-	// 	)
-	// 	_ = m.rec.RecordNow(int32(teleport.ID), teleport.Data)
-	// }
+func (m *replayMovementMirror) writeRelMove(dx, dy, dz int16, yaw, pitch float32, onGround bool) {
+	yawByte := angleToByte(yaw)
+	pitchByte := angleToByte(pitch)
+	log.Printf("[ReplayMirror] writeRelMove: delta=(%d, %d, %d) yaw=%.2f->%d pitch=%.2f->%d",
+		dx, dy, dz, yaw, yawByte, pitch, pitchByte)
+	move := pk.Marshal(
+		m.cbidMovePosRot,
+		pk.VarInt(m.entityID),
+		pk.Short(dx),
+		pk.Short(dy),
+		pk.Short(dz),
+		pk.Byte(yawByte),
+		pk.Byte(pitchByte),
+		pk.Boolean(onGround),
+	)
+	_ = m.rec.RecordNow(int32(move.ID), move.Data)
+	
+	// Also update head yaw to match body yaw
+	m.writeRotateHead(yaw)
+}
+
+func (m *replayMovementMirror) writeRotateHead(yaw float32) {
+	yawByte := angleToByte(yaw)
+	rotate := pk.Marshal(
+		m.cbidRotateHead,
+		pk.VarInt(m.entityID),
+		pk.Byte(yawByte),
+	)
+	_ = m.rec.RecordNow(int32(rotate.ID), rotate.Data)
+}
+
+func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z float64, yaw, pitch float32, onGround bool) {
+	const maxDelta = 7.9 // slightly under 8 blocks to stay within int16 range
+	dx := x - prevX
+	dy := y - prevY
+	dz := z - prevZ
+
+	steps := int(math.Ceil(math.Max(math.Abs(dx), math.Max(math.Abs(dy), math.Abs(dz))) / maxDelta))
+	if steps < 1 {
+		steps = 1
+	}
+
+	curX, curY, curZ := prevX, prevY, prevZ
+	for i := 1; i <= steps; i++ {
+		nextX := prevX + dx*float64(i)/float64(steps)
+		nextY := prevY + dy*float64(i)/float64(steps)
+		nextZ := prevZ + dz*float64(i)/float64(steps)
+		rdx, rdy, rdz, ok := encodeRelMove(curX, curY, curZ, nextX, nextY, nextZ)
+		if !ok {
+			log.Printf("[ReplayMirror] Warning: failed to encode relative move step (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
+				curX, curY, curZ, nextX, nextY, nextZ)
+			return
+		}
+		m.writeRelMove(rdx, rdy, rdz, yaw, pitch, onGround)
+		curX, curY, curZ = nextX, nextY, nextZ
+	}
 }
 
 func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float32) {
@@ -340,6 +422,17 @@ func angleToByte(f float32) byte {
 	return byte(int(math.Round(float64(f*256/360))) & 0xFF)
 }
 
+func encodeRelMove(prevX, prevY, prevZ, x, y, z float64) (int16, int16, int16, bool) {
+	const scale = 4096.0
+	dx := int64(math.Round((x - prevX) * scale))
+	dy := int64(math.Round((y - prevY) * scale))
+	dz := int64(math.Round((z - prevZ) * scale))
+	if dx < math.MinInt16 || dx > math.MaxInt16 || dy < math.MinInt16 || dy > math.MaxInt16 || dz < math.MinInt16 || dz > math.MaxInt16 {
+		return 0, 0, 0, false
+	}
+	return int16(dx), int16(dy), int16(dz), true
+}
+
 // emit minimal PlayerInfo (aka PlayerInfoUpdate) so the bot appears in tab and has a name.
 func (m *replayMovementMirror) ensurePlayerInfo() {
 	m.mu.Lock()
@@ -357,6 +450,9 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 	if !m.loginSeen {
 		return
 	}
+	if m.serverPlayerInfoSeen {
+		return
+	}
 	// Try to fetch textures if we don't already have properties.
 	if len(m.properties) == 0 && m.skinProvider != nil {
 		if props := m.skinProvider.Get(m.uuid, m.name); len(props) > 0 {
@@ -368,8 +464,8 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 	if len(m.properties) == 0 {
 		m.ensurePropertiesFromLocalReplayLocked()
 	}
-	// If we captured a server add_player packet that already contains properties, re-emit it directly.
-	if len(m.serverPI) > 0 && m.serverPIHasProps {
+	// If we captured a server add_player packet, re-emit it directly.
+	if len(m.serverPI) > 0 {
 		payload := make([]byte, len(m.serverPI))
 		copy(payload, m.serverPI)
 		_ = m.rec.RecordNow(int32(m.cbidPlayerInfo), payload)
@@ -393,31 +489,67 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 		log.Printf("ensurePlayerInfoLocked: emitting without textures for %s (uuid=%s)", name, uuidHex(uuid))
 	}
 
-	// Manually encode minimal PlayerInfoUpdate packet (1.20.2+ format).
-	var buf bytes.Buffer
-	buf.Write(encodeVarInt(0b00011101)) // action
-	buf.Write(encodeVarInt(1))          // count
-	buf.Write(uuid[:])
-	writeString(&buf, name)
-	props := m.properties
-	buf.Write(encodeVarInt(int32(len(props)))) // properties len
-	for _, prop := range props {
-		writeString(&buf, prop.name)
-		writeString(&buf, prop.value)
-		if prop.signature != "" {
-			buf.WriteByte(1)
-			writeString(&buf, prop.signature)
-		} else {
-			buf.WriteByte(0)
-		}
-	}
-	buf.Write(encodeVarInt(0)) // game mode
-	buf.WriteByte(1)           // listed true
-	buf.Write(encodeVarInt(0)) // latency 0
+	// Build a correct PlayerInfoUpdate packet using generated protocol types.
+	action := v1215_clientbound.PlayerInfoActionBitflags{}
+	action.SetAddPlayer(true)
+	action.SetUpdateGameMode(true)
+	action.SetUpdateListed(true)
+	action.SetUpdateLatency(true)
 
-	payload := buf.Bytes()
-	_ = m.rec.RecordNow(int32(m.cbidPlayerInfo), payload)
+	props := make([]v1215_basetypes.GameProfilePropertiesArrayType, 0, len(m.properties))
+	for _, prop := range m.properties {
+		if prop.Name == "" || prop.Value == "" {
+			continue
+		}
+		var sig protocol_models.Option[pk.String]
+		if prop.Signature != "" {
+			sigVal := pk.String(prop.Signature)
+			sig = protocol_models.Option[pk.String]{Has: true, Val: &sigVal}
+		}
+		props = append(props, v1215_basetypes.GameProfilePropertiesArrayType{
+			Name:      pk.String(prop.Name),
+			Value:     pk.String(prop.Value),
+			Signature: sig,
+		})
+	}
+	profile := v1215_basetypes.GameProfile{
+		Name: pk.String(name),
+	}
+	profile.Properties.Ary.Ary = props
+
+	entry := v1215_clientbound.PlayerInfoDataArrayType{
+		Uuid:     pk.UUID(uuid),
+		Player:   &profile,
+		Gamemode: ptrVarInt(0),
+		Listed:   ptrVarInt(1),
+		Latency:  ptrVarInt(0),
+	}
+
+	data := protocol_models.Array[pk.VarInt, v1215_clientbound.PlayerInfoDataArrayType]{
+		Ary: protocol_models.Ary[pk.VarInt]{Ary: []v1215_clientbound.PlayerInfoDataArrayType{entry}},
+	}
+	ctx := protocol_models.NewParentContext()
+	ctx.SetField("action/add_player", action.AddPlayer)
+	ctx.SetField("action/initialize_chat", action.InitializeChat)
+	ctx.SetField("action/update_game_mode", action.UpdateGameMode)
+	ctx.SetField("action/update_listed", action.UpdateListed)
+	ctx.SetField("action/update_latency", action.UpdateLatency)
+	ctx.SetField("action/update_display_name", action.UpdateDisplayName)
+	ctx.SetField("action/update_list_order", action.UpdateListOrder)
+	ctx.SetField("action/update_hat", action.UpdateHat)
+	data.SetParentContext(ctx)
+
+	pkt := v1215_clientbound.NewPlayerInfo()
+	pkt.Action = action
+	pkt.Data = data
+	payload := pkt.Marshal().Data
+	_ = m.rec.RecordNow(int32(pkt.PacketID()), payload)
 	m.playerInfoSent = true
+}
+
+func ptrVarInt(v int32) *pk.VarInt {
+	val := pk.VarInt(v)
+	return &val
 }
 
 // playerInfoEntry encodes the minimal entry for PlayerInfo (add_player/listed/latency/gamemode).
@@ -551,7 +683,7 @@ func loadTexturesFromReplay(path string, target [16]byte, targetName string) ([]
 					sig, sn = readString(buf[idx:])
 					idx += sn
 				}
-				props = append(props, profileProperty{name: pname, value: pval, signature: sig})
+				props = append(props, profileProperty{Name: pname, Value: pval, Signature: sig})
 			}
 			if len(props) > 0 {
 				if uuid == target {
@@ -612,9 +744,9 @@ func collectProperties(gp *v1215_basetypes.GameProfile) []profileProperty {
 		if name == "" || value == "" {
 			continue
 		}
-		prop := profileProperty{name: name, value: value}
+		prop := profileProperty{Name: name, Value: value}
 		if p.Signature.Has && p.Signature.Val != nil {
-			prop.signature = string(*p.Signature.Val)
+			prop.Signature = string(*p.Signature.Val)
 		}
 		props = append(props, prop)
 	}
