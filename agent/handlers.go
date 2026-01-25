@@ -9,57 +9,59 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/google/uuid"
+
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 // handlers returns set of packet handlers needed.
-func (a *agent) handlers() []PacketHandler {
+func (a *agent) handlers() []bot.PacketHandler {
 	if a.packetMgr == nil {
 		return nil
 	}
-	handlers := []PacketHandler{
+	handlers := []bot.PacketHandler{
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundSound")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSound"),
 			Priority: 0,
 			F:        a.onSoundPacket,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundAddEntity")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundAddEntity"),
 			Priority: 0,
 			F:        a.onAddEntity,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundMoveEntityPosRot"),
 			Priority: 0,
 			F:        a.onMoveEntityPosRot,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundMoveEntityPos")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundMoveEntityPos"),
 			Priority: 0,
 			F:        a.onMoveEntityPos,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundTeleportEntity")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundTeleportEntity"),
 			Priority: 0,
 			F:        a.onTeleportEntity,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundRemoveEntities")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundRemoveEntities"),
 			Priority: 0,
 			F:        a.onRemoveEntities,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundLogin")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundLogin"),
 			Priority: 100,
 			F:        a.onLogin,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundPosition")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundPosition"),
 			Priority: 63,
 			F:        a.onClientboundPosition,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundPlayerInfo")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundPlayerInfo"),
 			Priority: 90,
 			F: func(p pk.Packet) error {
 				if a.moveMirror != nil {
@@ -69,24 +71,70 @@ func (a *agent) handlers() []PacketHandler {
 			},
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundSetChunkCacheRadius")),
+			ID:       a.packetMgr.GetClientboundConfigPacketID("ClientboundConfigFinishConfiguration"),
+			Priority: 95,
+			F: func(p pk.Packet) error {
+				if a.moveMirror != nil {
+					a.moveMirror.NotifyLoginSeen()
+				}
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetChunkCacheRadius"),
 			Priority: 0,
 			F:        a.onUpdateViewDistance,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundSetSimulationDistance")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetSimulationDistance"),
 			Priority: 0,
 			F:        a.onSimulationDistance,
 		},
 		{
-			ID:       int32(a.packetMgr.GetClientboundPacketID("ClientboundDeclareRecipes")),
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDeclareRecipes"),
 			Priority: 0,
 			F:        a.ParseUpdateRecipesPacket,
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDisconnect"),
+			Priority: 0,
+			F:        a.onDisconnect2,
 		},
 	}
 	// Include config-phase registry capture
 	handlers = append(handlers, a.registryHandlers()...)
 	return handlers
+}
+
+// onDisconnect handles cleanup on disconnect packet.
+func (a *agent) onDisconnect2(p pk.Packet) error {
+	a.setEntityID(-1)
+	pkt, err := a.packetMgr.GetClientboundPacketByID(a.packetMgr.GetClientboundPacketID("ClientboundDisconnect"))
+	if err != nil {
+		return err
+	}
+	err = pkt.Scan(p)
+	if err != nil {
+		return err
+	}
+
+	name := ""
+	if a.client != nil {
+		name = a.client.Name()
+	}
+
+	fields := pkt.GetFields()
+	if reasonField, ok := fields["Reason"]; ok {
+		reason, ok := reasonField.(pk.String)
+		if ok {
+			log.Printf("[Agent %s] Disconnected from server: %s", name, string(reason))
+		} else {
+			log.Printf("[Agent %s] Disconnected from server.", name)
+		}
+	} else {
+		log.Printf("[Agent %s] Disconnected from server.", name)
+	}
+	return nil
 }
 
 // onAddEntity tracks new or respawned entities.
@@ -96,15 +144,14 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 		EntityUUID pk.UUID
 		EntityType pk.VarInt
 		X, Y, Z    pk.Double
+		Velocity   LpVec3 // Velocity moved BEFORE pitch/yaw in 1.21.5+
 		Pitch      pk.Angle
 		Yaw        pk.Angle
 		HeadYaw    pk.Angle
 		Data       pk.VarInt
-		VelX       pk.Short
-		VelY       pk.Short
-		VelZ       pk.Short
 	)
-	if err := p.Scan(&EntityID, &EntityUUID, &EntityType, &X, &Y, &Z, &Pitch, &Yaw, &HeadYaw, &Data, &VelX, &VelY, &VelZ); err != nil {
+	// Fixed field order for 1.21.5+: EntityID, UUID, Type, X, Y, Z, Velocity(LpVec3), Pitch, Yaw, HeadYaw, Data
+	if err := p.Scan(&EntityID, &EntityUUID, &EntityType, &X, &Y, &Z, &Velocity, &Pitch, &Yaw, &HeadYaw, &Data); err != nil {
 		return nil // ignore malformed packets here
 	}
 
@@ -251,8 +298,6 @@ func (a *agent) onLogin(p pk.Packet) error {
 			copy(id[:], parsed[:])
 		}
 		a.moveMirror.SetEntityMeta(int32(entityID), a.cfg.Auth.Name, id)
-		// Notify that LOGIN packet has been seen and recorded
-		a.moveMirror.NotifyLoginSeen()
 		// Entity type is set via registry callback during configuration phase
 	}
 	return nil
@@ -269,6 +314,11 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	)
 	if err := p.Scan(&TeleportID, &X, &Y, &Z, &DX, &DY, &DZ, &Yaw, &Pitch, &Flags); err != nil {
 		return nil
+	}
+
+	if a.moveMirror != nil {
+		// First play-state packet; safe to allow replay mirror emissions now.
+		a.moveMirror.NotifyLoginSeen()
 	}
 
 	// Absolute base position
@@ -302,11 +352,21 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		)
 		a.moveMirror.HandleServerbound(syntheticPacket)
 	}
+	if syncer, ok := a.moveExec.(interface {
+		SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool)
+	}); ok {
+		syncer.SyncWithServer(a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, true)
+	}
 	a.posMu.Unlock()
 
 	// Accept teleport when possible
-	if a.teleport != nil {
-		_ = a.teleport.AcceptTeleportation(TeleportID)
+	// Prefer auto-created player, fall back to injected teleport
+	var t TeleportAccepter = a.player
+	if t == nil {
+		t = a.teleport
+	}
+	if t != nil {
+		_ = t.AcceptTeleportation(TeleportID)
 	}
 	_ = DX
 	_ = DY
@@ -384,7 +444,7 @@ func (a *agent) ParseUpdateRecipesPacket(p pk.Packet) error {
 		payload.PropertySets = append(payload.PropertySets, PropertySet{ID: fmt.Sprintf("%s", propertySetID), Items: items})
 	}
 
-// Parse Stonecutter entries (format: IDSet + SlotDisplay)
+	// Parse Stonecutter entries (format: IDSet + SlotDisplay)
 	var numStonecutterEntries pk.VarInt
 	if _, err := numStonecutterEntries.ReadFrom(r); err != nil {
 		log.Printf("[recipes] ERROR: failed to read stonecutter entry count: %v", err)

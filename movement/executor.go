@@ -2,44 +2,16 @@ package movement
 
 import (
 	"fmt"
+	"log"
 	"math"
 
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// MovementExecutor handles sending movement packets to the server
-type MovementExecutor interface {
-	// SendPosition sends a position update to the server (position only, no rotation)
-	SendPosition(x, y, z float64, onGround bool) error
-
-	// SendPositionAndRotation sends a combined position and rotation update
-	SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error
-
-	// SendRotation sends a rotation update (rotation only, no position)
-	SendRotation(yaw, pitch float32, onGround bool) error
-
-	// MoveTowards moves the bot towards target coordinates by a given distance
-	// Returns the new position after moving
-	MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error)
-
-	// LookAt rotates the bot to look at target coordinates
-	LookAt(targetX, targetY, targetZ float64, onGround bool) error
-
-	// Sprint control
-	StartSprinting() error
-	StopSprinting() error
-	IsSprinting() bool
-
-	// Sneak control
-	StartSneaking() error
-	StopSneaking() error
-	IsSneaking() bool
-}
-
 // movementExecutor implements MovementExecutor
 type movementExecutor struct {
-	client    *bot.Client
+	client    bot.Client
 	packetMgr protocol_models.PacketMgr
 	// Reference to bot position tracking (will be passed from main)
 	getBotPosition func() (x, y, z float64, yaw, pitch float32, initialized bool)
@@ -55,7 +27,7 @@ type movementExecutor struct {
 
 // NewMovementExecutor creates a new MovementExecutor
 func NewMovementExecutor(
-	client *bot.Client,
+	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
 	setBotPos func(float64, float64, float64, float32, float32),
@@ -93,6 +65,11 @@ func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
 	var err error
 	if me.client != nil {
 		err = SendPositionWithCallback(me.client, me.packetMgr, x, y, z, onGround, me.onPacketSent)
+		// If sneaking, also send the sneak command to maintain sneak state
+		if err == nil && me.isSneaking {
+			entityID := me.getBotEntityID()
+			_ = SendStartSneaking(me.client, me.packetMgr, entityID)
+		}
 	}
 
 	if err == nil {
@@ -108,12 +85,24 @@ func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch 
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
+		log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation received: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
 		err = SendPositionAndRotationWithCallback(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround, me.onPacketSent)
+		// If sneaking, also send the sneak command to maintain sneak state
+		if err == nil && me.isSneaking {
+			entityID := me.getBotEntityID()
+			_ = SendStartSneaking(me.client, me.packetMgr, entityID)
+		}
 	}
 
 	if err == nil {
 		// Update tracked position and rotation
+		if me.client != nil {
+			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation calling setBotPosition: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
+		}
 		me.setBotPosition(x, y, z, yaw, pitch)
+		if me.client != nil {
+			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation setBotPosition done", me.client.Name())
+		}
 	}
 	return err
 }

@@ -3,19 +3,21 @@ package utils
 import (
 	"math"
 
-	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Line ...
-func Line(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
+func Line(pt1, pt2 models.V3) []models.V3 {
+	pt1 = models.V3{X: math.Floor(pt1.X), Y: math.Floor(pt1.Y), Z: math.Floor(pt1.Z)}
+	pt2 = models.V3{X: math.Floor(pt2.X), Y: math.Floor(pt2.Y), Z: math.Floor(pt2.Z)}
 	return Bresenham3D(pt1, pt2)
 }
 
 // Bresenham3D - converted from Python3 code for generating points on a 3-D line
 // using Bresenham's Algorithm
-func Bresenham3D(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
+func Bresenham3D(pt1, pt2 models.V3) []models.V3 {
 	var xs, ys, zs, p1, p2 float64
-	listOfPoints := []pathfinding.V3{}
+	listOfPoints := []models.V3{}
 	// listOfPoints = append(listOfPoints, Block{X: pt1.X, Y: pt1.Y, Z: pt1.Z, BlockType: "minecraft:glowstone"})
 	listOfPoints = append(listOfPoints, pt1)
 	dx := math.Abs(float64(pt2.X - pt1.X))
@@ -53,7 +55,7 @@ func Bresenham3D(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
 			}
 			p1 += 2 * dy
 			p2 += 2 * dz
-			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, models.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	} else if dy >= dx && dy >= dz { // Driving axis is Y-axis"
 		p1 = 2*dx - dy
@@ -70,7 +72,7 @@ func Bresenham3D(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
 			}
 			p1 += 2 * dx
 			p2 += 2 * dz
-			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, models.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	} else { // Driving axis is Z-axis"
 		p1 = 2*dy - dz
@@ -87,7 +89,7 @@ func Bresenham3D(pt1, pt2 pathfinding.V3) []pathfinding.V3 {
 			}
 			p1 += 2 * dy
 			p2 += 2 * dx
-			listOfPoints = append(listOfPoints, pathfinding.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
+			listOfPoints = append(listOfPoints, models.V3{X: pt1.X, Y: pt1.Y, Z: pt1.Z})
 		}
 	}
 	return listOfPoints

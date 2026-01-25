@@ -42,6 +42,8 @@ coverage.html
 *.log
 logs/
 bot.log
+test.log
+testing/logs
 
 # Temporary files
 /tmp/
@@ -51,6 +53,13 @@ tmp/
 /cmd/skin-demo/skin-demo
 *.mcpr
 .agentStop
+<<<<<<< HEAD
+=======
+/testing/data
+.cache/
+/testing/versions/
+/testing/libraries/
+>>>>>>> Add-physics-engine
 
 # Credential and authentication files
 *creds*
@@ -74,6 +83,10 @@ Desktop.ini
 data/generated/
 data/cache/
 data/mc-data-gen-cache/
+<<<<<<< HEAD
+=======
+agent/data/
+>>>>>>> Add-physics-engine
 
 # Manual testing artifacts
 manual_testing/output/

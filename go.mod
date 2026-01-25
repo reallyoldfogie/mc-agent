@@ -16,6 +16,7 @@ require (
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4
 	github.com/moby/moby/client v0.2.1
+	github.com/pkg/errors v0.9.1
 	github.com/reallyoldfogie/mc-bot-go v0.0.0-00010101000000-000000000000
 	github.com/reallyoldfogie/mc-client-test-go v0.0.0-00010101000000-000000000000
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.3
@@ -41,7 +42,6 @@ require (
 	github.com/moby/moby/api v1.52.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect

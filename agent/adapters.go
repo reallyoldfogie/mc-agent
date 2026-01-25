@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"context"
-
 	pk "github.com/Tnze/go-mc/net/packet"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
@@ -12,43 +10,46 @@ import (
 
 // Bot client adapters to satisfy our narrow interfaces without leaking dependencies.
 
-type botClientAdapter struct {
-	c *bot.Client
-}
+// type botClientAdapter struct {
+// 	c *bot.Client
+// }
 
-func (b *botClientAdapter) JoinServerWithOptions(ctx context.Context, address string, opts JoinOptions) error {
-	var rec bot.PacketRecorder
-	var mirror bot.MovementMirror
-	if opts.ReplayRecorder != nil {
-		rec = packetRecorderAdapter{rec: opts.ReplayRecorder}
-	}
-	if opts.MovementMirror != nil {
-		mirror = movementMirrorAdapter{m: opts.MovementMirror}
-	}
-	return b.c.JoinServerWithOptions(ctx, address, bot.JoinOptions{
-		ProtocolVersion:      opts.ProtocolVersion,
-		ReplayRecorder:       rec,
-		MovementMirror:       mirror,
-		RegistryDataCallback: opts.RegistryDataCallback,
-	})
-}
+// func (b *botClientAdapter) JoinServerWithOptions(ctx context.Context, address string, opts JoinOptions) error {
+// 	var rec bot.PacketRecorder
+// 	var mirror bot.MovementMirror
+// 	if opts.ReplayRecorder != nil {
+// 		rec = packetRecorderAdapter{rec: opts.ReplayRecorder}
+// 	}
+// 	if opts.MovementMirror != nil {
+// 		mirror = movementMirrorAdapter{m: opts.MovementMirror}
+// 	}
+// 	return b.c.JoinServerWithOptions(ctx, address, bot.JoinOptions{
+// 		ProtocolVersion:      opts.ProtocolVersion,
+// 		ReplayRecorder:       rec,
+// 		MovementMirror:       mirror,
+// 		RegistryDataCallback: opts.RegistryDataCallback,
+// 	})
+// }
 
-func (b *botClientAdapter) Events() EventBus {
-	return &botEventBusAdapter{events: &b.c.Events}
-}
+// func (b *botClientAdapter) Events() EventBus {
+// 	return &botEventBusAdapter{events: &b.c.Events}
+// }
 
-func (b *botClientAdapter) Name() string { return b.c.Name }
+// func (b *botClientAdapter) Name() string { return b.c.Name }
 
-func (b *botClientAdapter) HandleGame(ctx context.Context) error { return b.c.HandleGame(ctx) }
+// func (b *botClientAdapter) HandleGame(ctx context.Context) error { return b.c.HandleGame(ctx) }
 
-func (b *botClientAdapter) WritePacket(p pk.Packet) error { return b.c.Conn.WritePacket(p) }
+// func (b *botClientAdapter) WritePacket(p pk.Packet) error { return b.c.Conn.WritePacket(p) }
+
+// // BotClient returns the underlying *bot.Client for internal use by movement executor, etc.
+// func (b *botClientAdapter) BotClient() *bot.Client { return b.c }
 
 // botEventBusAdapter wraps bot.Events and converts PacketHandler shapes.
 type botEventBusAdapter struct {
-	events *bot.Events
+	events bot.Events
 }
 
-func (e *botEventBusAdapter) AddGeneric(listeners ...PacketHandler) {
+func (e *botEventBusAdapter) AddGeneric(listeners ...bot.PacketHandler) {
 	converted := make([]bot.PacketHandler, 0, len(listeners))
 	for _, l := range listeners {
 		h := l
@@ -57,7 +58,7 @@ func (e *botEventBusAdapter) AddGeneric(listeners ...PacketHandler) {
 	e.events.AddGeneric(converted...)
 }
 
-func (e *botEventBusAdapter) AddListener(listeners ...PacketHandler) {
+func (e *botEventBusAdapter) AddListener(listeners ...bot.PacketHandler) {
 	converted := make([]bot.PacketHandler, 0, len(listeners))
 	for _, l := range listeners {
 		h := l
@@ -67,7 +68,7 @@ func (e *botEventBusAdapter) AddListener(listeners ...PacketHandler) {
 }
 
 // NewClientFromBot wraps a concrete bot.Client as an Agent Client.
-func NewClientFromBot(c *bot.Client) Client { return &botClientAdapter{c: c} }
+// func NewClientFromBot(c *bot.Client) Client { return &botClientAdapter{c: c} }
 
 // chatAdapter wraps msg.Manager to satisfy Chat.
 type chatAdapter struct{ m *msg.Manager }

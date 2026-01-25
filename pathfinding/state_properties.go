@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 )
 
 // StatePropertyLoader loads block state properties from JSON at runtime
@@ -25,11 +24,22 @@ type StateRecord struct {
 	Default    bool              `json:"default,omitempty"`
 }
 
-// NewStatePropertyLoader creates a loader from mc-protocol-go's blocks.json report
-func NewStatePropertyLoader(mcProtocolGoPath, version string) (*StatePropertyLoader, error) {
-	// Construct path to blocks.json report
-	// Format: {mcProtocolGoPath}/.cache/metadata/{version}/data_generator/reports/blocks.json
-	blocksPath := filepath.Join(mcProtocolGoPath, ".cache", "metadata", version, "data_generator", "reports", "blocks.json")
+// NewStatePropertyLoader creates a loader from blocks.json using the Minecraft data cache.
+// The blocksJSONPath parameter should be obtained from MinecraftDataCache.GetBlocksJSONPath().
+//
+// Example:
+//
+//	cache := utils.NewMinecraftDataCache("1.21.5")
+//	if err := cache.EnsureDataGenerated(); err != nil {
+//	    return err
+//	}
+//	blocksPath, err := cache.GetBlocksJSONPath()
+//	if err != nil {
+//	    return err
+//	}
+//	loader, err := NewStatePropertyLoader(blocksPath)
+func NewStatePropertyLoader(blocksJSONPath string) (*StatePropertyLoader, error) {
+	blocksPath := blocksJSONPath
 
 	// Read the JSON file
 	data, err := os.ReadFile(blocksPath)

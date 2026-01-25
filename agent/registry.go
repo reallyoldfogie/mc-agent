@@ -6,17 +6,11 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
 type RegistryID string
-
-type CustomRegistry interface {
-	GetID() string
-	GetNameByID(id int32) (string, bool)
-	GetIDByName(name string) (int32, bool)
-	IsReady() bool
-}
 
 // customRegistry stores a single registry's data (ID -> name mappings)
 type customRegistry struct {
@@ -45,13 +39,13 @@ func (r *customRegistry) IsReady() bool {
 }
 
 // registryHandlers returns config-phase handlers to capture registry data.
-func (a *agent) registryHandlers() []PacketHandler {
+func (a *agent) registryHandlers() []bot.PacketHandler {
 	if a.packetMgr == nil {
 		return nil
 	}
-	return []PacketHandler{
+	return []bot.PacketHandler{
 		{
-			ID:       int32(a.packetMgr.GetClientboundConfigPacketID("ClientboundConfigRegistryData")),
+			ID:       a.packetMgr.GetClientboundConfigPacketID("ClientboundConfigRegistryData"),
 			Priority: 100,
 			F:        a.onRegistryData,
 		},
@@ -120,10 +114,21 @@ func (a *agent) onRegistryData(p pk.Packet) error {
 }
 
 // GetRegistry retrieves a custom registry by ID.
-func (a *agent) GetRegistry(id RegistryID) CustomRegistry {
+func (a *agent) GetRegistry(id string) CustomRegistry {
 	a.regMu.RLock()
 	defer a.regMu.RUnlock()
-	return a.registries[id]
+	return a.registries[RegistryID(id)]
+}
+
+// GetEntityTypeID looks up an entity type ID by name in the entity_type registry.
+// Returns (id, true) if found, (0, false) if not found or registry not ready.
+// Example: id, ok := agent.GetEntityTypeID("minecraft:horse")
+func (a *agent) GetEntityTypeID(entityName string) (int32, bool) {
+	reg := a.GetRegistry("minecraft:entity_type")
+	if reg == nil || !reg.IsReady() {
+		return 0, false
+	}
+	return reg.GetIDByName(entityName)
 }
 
 // onRegistryDataCallback handles registry data received during configuration phase.
@@ -161,8 +166,18 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 	if a.registries == nil {
 		a.registries = make(map[RegistryID]CustomRegistry)
 	}
+
+	// Check if we're overwriting an existing registry
+	// In practice, file-loaded registries (entity_type, menu, block, item, etc.) and
+	// packet-sent registries (worldgen/biome, chat_type, trim_pattern, etc.) are
+	// complementary - they don't overlap. But we check anyway for robustness.
+	_, existed := a.registries[reg.id]
 	a.registries[reg.id] = reg
 	a.regMu.Unlock()
 
-	log.Printf("[Registry] Stored %s registry with %d entries", registryID, len(entries))
+	if existed {
+		log.Printf("[Registry] ⚠ Overwriting %s registry with %d entries", registryID, len(entries))
+	} else {
+		log.Printf("[Registry] Stored %s registry with %d entries", registryID, len(entries))
+	}
 }

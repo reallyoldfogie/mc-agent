@@ -3,10 +3,11 @@ package testing
 import (
 	"fmt"
 	"log"
+	"strings"
 	"testing"
 
-	mdl "github.com/reallyoldfogie/mc-data-gen/loader"
-	"github.com/reallyoldfogie/mc-protocol-go/models"
+	agentmodels "github.com/reallyoldfogie/mc-agent/models"
+	protocolmodels "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
 // SimpleBlockRegistry is a simple mock block registry for testing
@@ -49,6 +50,10 @@ func (sbr *SimpleBlockRegistry) Register(blockName string, stateID uint32) {
 // GetStateID returns the state ID for a block name
 // Properties are ignored in this simple implementation
 func (sbr *SimpleBlockRegistry) GetStateID(blockName string, properties map[string]string) uint32 {
+	if !strings.HasPrefix(blockName, "minecraft:") {
+		blockName = "minecraft:" + blockName
+	}
+
 	if stateID, exists := sbr.blocks[blockName]; exists {
 		return stateID
 	}
@@ -74,19 +79,19 @@ func NewMockBlockManager() *MockBlockManager {
 }
 
 // BlockIDByStateID converts state ID to block ID (simplified - returns state ID as BlockID)
-func (mbm *MockBlockManager) BlockIDByStateID(stateID uint32) models.BlockID {
-	return models.BlockID(stateID)
+func (mbm *MockBlockManager) BlockIDByStateID(stateID uint32) protocolmodels.BlockID {
+	return protocolmodels.BlockID(stateID)
 }
 
 // GetByID returns block info by ID
-func (mbm *MockBlockManager) GetByID(blockID models.BlockID) models.Block {
+func (mbm *MockBlockManager) GetByID(blockID protocolmodels.BlockID) protocolmodels.Block {
 	// Find block name by ID
 	for name, id := range mbm.registry.blocks {
-		if models.BlockID(id) == blockID {
-			return models.Block{Name: name}
+		if protocolmodels.BlockID(id) == blockID {
+			return protocolmodels.Block{Name: name}
 		}
 	}
-	return models.Block{Name: "minecraft:unknown"}
+	return protocolmodels.Block{Name: "minecraft:unknown"}
 }
 
 // BitsPerBlock returns the number of bits per block (mock returns 8)
@@ -96,6 +101,7 @@ func (mbm *MockBlockManager) BitsPerBlock() int {
 
 // MockShapeManager is a mock implementation of pathfinding's BlockShapeManager
 type MockShapeManager struct {
+	blockMgr       *MockBlockManager
 	solidBlocks    map[string]bool
 	passableBlocks map[string]bool
 	surfaceHeights map[string]float64
@@ -104,6 +110,7 @@ type MockShapeManager struct {
 // NewMockShapeManager creates a mock shape manager with common block properties
 func NewMockShapeManager() *MockShapeManager {
 	msm := &MockShapeManager{
+		blockMgr:       NewMockBlockManager(),
 		solidBlocks:    make(map[string]bool),
 		passableBlocks: make(map[string]bool),
 		surfaceHeights: make(map[string]float64),
@@ -121,10 +128,10 @@ func NewMockShapeManager() *MockShapeManager {
 
 	// Partial blocks
 	msm.solidBlocks["minecraft:oak_stairs"] = true
-	msm.surfaceHeights["minecraft:oak_stairs"] = 0.5 // Stairs surface at half height
+	msm.surfaceHeights["minecraft:oak_stairs"] = 1.0 // Stairs are full block height (top surface at Y+1.0)
 
 	msm.solidBlocks["minecraft:oak_slab"] = true
-	msm.surfaceHeights["minecraft:oak_slab"] = 0.5 // Slab surface at half height
+	msm.surfaceHeights["minecraft:oak_slab"] = 0.5 // Bottom slabs are half block height (top surface at Y+0.5)
 
 	// Passable blocks (can walk through)
 	passableBlocks := []string{
@@ -137,13 +144,27 @@ func NewMockShapeManager() *MockShapeManager {
 	return msm
 }
 
+func (msm *MockShapeManager) blockName(blockStateID uint32) string {
+	if blockStateID == 0 {
+		return "minecraft:air"
+	}
+	if msm.blockMgr == nil {
+		return "minecraft:unknown"
+	}
+	blockID := msm.blockMgr.BlockIDByStateID(uint32(blockStateID))
+	block := msm.blockMgr.GetByID(blockID)
+	return block.Name
+}
+
 // IsSolid returns whether a block is solid (provides ground support)
-func (msm *MockShapeManager) IsSolid(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsSolid(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return msm.solidBlocks[blockName]
 }
 
 // IsPassable returns whether a block can be walked through
-func (msm *MockShapeManager) IsPassable(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsPassable(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	if msm.passableBlocks[blockName] {
 		return true
 	}
@@ -152,7 +173,8 @@ func (msm *MockShapeManager) IsPassable(blockName string, props map[string]strin
 }
 
 // GetStandingSurfaceHeight returns the Y offset where a player stands on this block
-func (msm *MockShapeManager) GetStandingSurfaceHeight(blockName string, props map[string]string) float64 {
+func (msm *MockShapeManager) GetStandingSurfaceHeight(blockStateID uint32) float64 {
+	blockName := msm.blockName(blockStateID)
 	if height, exists := msm.surfaceHeights[blockName]; exists {
 		return height
 	}
@@ -160,68 +182,99 @@ func (msm *MockShapeManager) GetStandingSurfaceHeight(blockName string, props ma
 }
 
 // IsClimbable returns whether a block can be climbed
-func (msm *MockShapeManager) IsClimbable(blockName string, props map[string]string) bool {
-	return blockName == "minecraft:ladder"
+func (msm *MockShapeManager) IsClimbable(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:ladder"
 }
 
 // IsWater returns whether a block is water
-func (msm *MockShapeManager) IsWater(blockName string, props map[string]string) bool {
-	return blockName == "minecraft:water"
+func (msm *MockShapeManager) IsWater(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:water"
 }
 
 // IsLava returns whether a block is lava
-func (msm *MockShapeManager) IsLava(blockName string, props map[string]string) bool {
-	return blockName == "minecraft:lava"
+func (msm *MockShapeManager) IsLava(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:lava"
 }
 
 // IsSlab returns whether a block is a slab
-func (msm *MockShapeManager) IsSlab(blockName string, props map[string]string) bool {
-	return blockName == "minecraft:oak_slab"
+func (msm *MockShapeManager) IsSlab(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:oak_slab"
 }
 
 // IsStair returns whether a block is stairs
-func (msm *MockShapeManager) IsStair(blockName string, props map[string]string) bool {
-	return blockName == "minecraft:oak_stairs"
+func (msm *MockShapeManager) IsStair(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:oak_stairs"
 }
 
 // GetCollisionBoxes returns collision boxes for a block (mock returns simple box for solid blocks)
-func (msm *MockShapeManager) GetCollisionBoxes(blockName string, props map[string]string, x, y, z int) []mdl.AABB {
-	if msm.IsSolid(blockName, props) {
+func (msm *MockShapeManager) GetCollisionBoxes(blockStateID uint32, x, y, z int) []agentmodels.AABB {
+	if msm.IsSolid(blockStateID) {
 		// Return a simple full-block collision box
-		return []mdl.AABB{
-			{
-				Min: mdl.Vec3{X: float64(x), Y: float64(y), Z: float64(z)},
-				Max: mdl.Vec3{X: float64(x + 1), Y: float64(y + 1), Z: float64(z + 1)},
-			},
+		return []agentmodels.AABB{
+			agentmodels.NewAABB(
+				float64(x), float64(y), float64(z),
+				float64(x+1), float64(y+1), float64(z+1),
+			),
 		}
 	}
 	// No collision for non-solid blocks
-	return []mdl.AABB{}
+	return []agentmodels.AABB{}
 }
 
 // IsFluid returns whether a block is a fluid
-func (msm *MockShapeManager) IsFluid(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsFluid(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:water" || blockName == "minecraft:lava"
 }
 
 // IsDangerous returns whether a block is dangerous
-func (msm *MockShapeManager) IsDangerous(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsDangerous(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:lava" || blockName == "minecraft:fire" || blockName == "minecraft:cactus"
 }
 
 // IsDoorLike returns whether a block is door-like
-func (msm *MockShapeManager) IsDoorLike(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsDoorLike(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:oak_door" || blockName == "minecraft:iron_door"
 }
 
 // IsFenceLike returns whether a block is fence-like
-func (msm *MockShapeManager) IsFenceLike(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsFenceLike(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:oak_fence" || blockName == "minecraft:fence_gate"
 }
 
 // IsLogOrLeaf returns whether a block is a log or leaf
-func (msm *MockShapeManager) IsLogOrLeaf(blockName string, props map[string]string) bool {
+func (msm *MockShapeManager) IsLogOrLeaf(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:oak_log" || blockName == "minecraft:oak_leaves"
+}
+
+// IsHayBale returns whether a block is a hay bale
+func (msm *MockShapeManager) IsHayBale(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:hay_block"
+}
+
+// IsBed returns whether a block is a bed
+func (msm *MockShapeManager) IsBed(blockStateID uint32) bool {
+	blockName := msm.blockName(blockStateID)
+	return strings.HasSuffix(blockName, "_bed")
+}
+
+// IsHoneyBlock returns whether a block is a honey block
+func (msm *MockShapeManager) IsHoneyBlock(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:honey_block"
+}
+
+// IsSlimeBlock returns whether a block is a slime block
+func (msm *MockShapeManager) IsSlimeBlock(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:slime_block"
+}
+
+// IsPowderSnow returns whether a block is powder snow
+func (msm *MockShapeManager) IsPowderSnow(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:powder_snow"
 }
 
 // TestLogger provides logging for tests

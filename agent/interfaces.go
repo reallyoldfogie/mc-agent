@@ -27,11 +27,11 @@ type JoinOptions struct {
 }
 
 // PacketRecorder is a minimal recorder interface used for replay capture.
-type PacketRecorder interface {
-	RecordNow(id int32, payload []byte) error
-	SetSelfID(id int)
-	AddPlayer(uuid string)
-}
+// type PacketRecorder interface {
+// 	RecordNow(id int32, payload []byte) error
+// 	SetSelfID(id int)
+// 	AddPlayer(uuid string)
+// }
 
 // SkinProvider returns skin/texture properties for a given player UUID/name.
 type SkinProvider interface {
@@ -40,13 +40,13 @@ type SkinProvider interface {
 
 // MovementMirror consumes serverbound packets and may synthesize clientbound
 // packets (e.g., to mirror the bot's own movement into a replay).
-type MovementMirror interface {
-	HandleServerbound(pk.Packet)
-	SetEntityMeta(entityID int32, name string, uuid [16]byte)
-	SetEntityType(entityType int32)
-	HandlePlayerInfo(pk.Packet)
-	NotifyLoginSeen() // signals that LOGIN packet has been recorded
-}
+// type MovementMirror interface {
+// 	HandleServerbound(pk.Packet)
+// 	SetEntityMeta(entityID int32, name string, uuid [16]byte)
+// 	SetEntityType(entityType int32)
+// 	HandlePlayerInfo(pk.Packet)
+// 	NotifyLoginSeen() // signals that LOGIN packet has been recorded
+// }
 
 // EventBus registers and dispatches packet handlers.
 type EventBus interface {
@@ -62,33 +62,33 @@ type PacketHandler struct {
 }
 
 // Auth mirrors the authentication details required by the underlying client.
-type Auth struct {
-	AsTk string
-	Name string
-	UUID string
-}
+// type Auth struct {
+// 	AsTk string
+// 	Name string
+// 	UUID string
+// }
 
-// Optional: accept teleports (provided by player subsystem when available)
-type TeleportAccepter interface {
-	AcceptTeleportation(id pk.VarInt) error
-}
+// // Optional: accept teleports (provided by player subsystem when available)
+// type TeleportAccepter interface {
+// 	AcceptTeleportation(id pk.VarInt) error
+// }
 
-// Respawner triggers a player respawn.
-type Respawner interface {
-	Respawn() error
-}
+// // Respawner triggers a player respawn.
+// type Respawner interface {
+// 	Respawn() error
+// }
 
-// Chat provides a way to send messages to the server.
-type Chat interface {
-	SendMessage(string) error
-}
+// // Chat provides a way to send messages to the server.
+// type Chat interface {
+// 	SendMessage(string) error
+// }
 
-// ItemManager provides item name lookups by ID.
-type ItemManager interface {
-	GetItemNameByID(id int) string
-}
+// // ItemManager provides item name lookups by ID.
+// type ItemManager interface {
+// 	GetItemNameByID(id int) string
+// }
 
-// SlotResolver resolves a slot into an item ID and count.
-type SlotResolver interface {
-	ResolveSlot(id, index int) (itemID int, count int, ok bool)
-}
+// // SlotResolver resolves a slot into an item ID and count.
+// type SlotResolver interface {
+// 	ResolveSlot(id, index int) (itemID int, count int, ok bool)
+// }

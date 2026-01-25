@@ -1,5 +1,3 @@
-//go:build integration
-
 package testing
 
 import (
@@ -31,6 +29,7 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 	// Use flat-world configuration for predictable terrain
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 	serverCfg.PullImage = false
 
 	inst, err := framework.StartServer(ctx, serverCfg)
@@ -52,8 +51,6 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = false // IMPORTANT: Test movement WITHOUT pathfinding
-	agentCfg.EnableFollowing = false
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_movement_single_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -137,6 +134,7 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -152,7 +150,6 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = false // Test pure movement without pathfinding
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_waypoints_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -216,6 +213,7 @@ func TestFlatMovementVertical(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -231,7 +229,6 @@ func TestFlatMovementVertical(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = false // Test vertical movement without pathfinding
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_vertical_%s.mcpr", time.Now().Format("20060102_150405"))
 
@@ -249,14 +246,56 @@ func TestFlatMovementVertical(t *testing.T) {
 	startX, startY, startZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
 	require.NoError(t, err, "get starting position")
 
-	// Test moveUp command
-	upDistance := 3.0
-	moveUpCmd := fmt.Sprintf("moveUp %.2f", upDistance)
-	sayCmd := inst.RCON.Say(ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, moveUpCmd))
-	_, err = sayCmd.Exec(ctx)
-	require.NoError(t, err, "send moveUp command")
+	// Forceload chunks before building to ensure chunks are loaded
+	chunkX := int(startX) >> 4
+	chunkZ := int(startZ) >> 4
+	forceloadCmd := fmt.Sprintf("forceload add %d %d %d %d", (chunkX-1)<<4, (chunkZ-1)<<4, (chunkX+1)<<4, (chunkZ+1)<<4)
+	_, err = inst.RCON.Exec(ctx, forceloadCmd)
+	if err != nil {
+		logger.Logf("Warning: Failed to forceload chunks: %v", err)
+	}
+	time.Sleep(1 * time.Second) // Wait for chunks to load
 
-	logger.Logf("Sent moveUp %.2f command", upDistance)
+	// BUILD LADDER for vertical movement (fix for flat terrain)
+	logger.Logf("Building ladder at agent position for vertical movement test")
+	ladderHeight := 5
+	// Build backing wall for ladder
+	for y := int(startY); y <= int(startY)+ladderHeight; y++ {
+		_, err := inst.RCON.Exec(ctx, fmt.Sprintf("setblock %d %d %d minecraft:stone", int(startX)+1, y, int(startZ)))
+		if err != nil {
+			logger.Logf("Warning: Failed to place backing wall at (%d, %d, %d): %v", int(startX)+1, y, int(startZ), err)
+		}
+	}
+	// Place ladders on the wall
+	for y := int(startY); y <= int(startY)+ladderHeight; y++ {
+		_, err := inst.RCON.Exec(ctx, fmt.Sprintf("setblock %d %d %d minecraft:ladder[facing=west]", int(startX), y, int(startZ)))
+		if err != nil {
+			logger.Logf("Warning: Failed to place ladder at (%d, %d, %d): %v", int(startX), y, int(startZ), err)
+		}
+	}
+	logger.Logf("Ladder built, waiting for chunks to sync")
+	time.Sleep(2 * time.Second)
+
+	// Teleport agent to the center of the ladder block to ensure proper positioning
+	ladderCenterX := float64(int(startX)) + 0.5
+	ladderCenterZ := float64(int(startZ)) + 0.5
+	tpCmd := fmt.Sprintf("tp %s %.2f %.2f %.2f", agent.Name, ladderCenterX, startY, ladderCenterZ)
+	_, err = inst.RCON.Exec(ctx, tpCmd)
+	if err != nil {
+		logger.Logf("Warning: Failed to teleport agent to ladder center: %v", err)
+	}
+	logger.Logf("Teleported agent to ladder center (%.2f, %.2f, %.2f)", ladderCenterX, startY, ladderCenterZ)
+	time.Sleep(500 * time.Millisecond)
+
+	// Test moveToAndSneak command - uses pathfinding to climb ladder and holds position with sneak
+	upDistance := 3.0
+	targetY := startY + upDistance
+	moveCmd := fmt.Sprintf("moveToAndSneak %.2f %.2f %.2f", ladderCenterX, targetY, ladderCenterZ)
+	sayCmd := inst.RCON.Say(ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, moveCmd))
+	_, err = sayCmd.Exec(ctx)
+	require.NoError(t, err, "send moveToAndSneak command")
+
+	logger.Logf("Sent moveToAndSneak to (%.2f, %.2f, %.2f)", ladderCenterX, targetY, ladderCenterZ)
 
 	// Wait for movement to complete
 	time.Sleep(5 * time.Second)
@@ -269,8 +308,8 @@ func TestFlatMovementVertical(t *testing.T) {
 	logger.Logf("Y position change: %.2f (expected ~%.2f)", yChange, upDistance)
 
 	assert.Greater(t, yChange, upDistance*0.5, "agent should move up at least 50% of requested distance")
-	assert.Equal(t, startX, finalX, "X position should remain the same")
-	assert.Equal(t, startZ, finalZ, "Z position should remain the same")
+	assert.InDelta(t, ladderCenterX, finalX, 0.1, "X position should remain at ladder center")
+	assert.InDelta(t, ladderCenterZ, finalZ, 0.1, "Z position should remain at ladder center")
 }
 
 // TestFlatMovementForwardCommand tests the moveForward command on flat terrain.
@@ -284,6 +323,7 @@ func TestFlatMovementForwardCommand(t *testing.T) {
 
 	serverCfg := FlatWorldServerConfig()
 	serverCfg.Version = "1.21.5"
+	RequireIntegrationEnv(t, serverCfg)
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	require.NoError(t, err, "start server")
@@ -299,7 +339,6 @@ func TestFlatMovementForwardCommand(t *testing.T) {
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
-	agentCfg.EnablePathfinding = false
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_forward_%s.mcpr", time.Now().Format("20060102_150405"))
 

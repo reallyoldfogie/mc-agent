@@ -15,22 +15,6 @@ import (
 	"time"
 )
 
-// profileProperty represents a single game profile property such as "textures".
-type profileProperty struct {
-	name      string
-	value     string
-	signature string
-}
-
-// Name returns the property name.
-func (p profileProperty) Name() string { return p.name }
-
-// Value returns the property value.
-func (p profileProperty) Value() string { return p.value }
-
-// Signature returns the property signature if present.
-func (p profileProperty) Signature() string { return p.signature }
-
 // SkinFetcherConfig controls how skins are resolved and cached.
 type SkinFetcherConfig struct {
 	AllowNetwork bool
@@ -160,7 +144,7 @@ func (s *SkinFetcher) fetchFromMojang(uuid [16]byte, name string) []profilePrope
 		if p.Name == "" || p.Value == "" {
 			continue
 		}
-		props = append(props, profileProperty{name: p.Name, value: p.Value, signature: p.Signature})
+		props = append(props, profileProperty{Name: p.Name, Value: p.Value, Signature: p.Signature})
 	}
 	return props
 }
@@ -207,7 +191,7 @@ func (s *SkinFetcher) readPropertyFile(path string) ([]profileProperty, error) {
 		if p.Name == "" || p.Value == "" {
 			continue
 		}
-		props = append(props, profileProperty{name: p.Name, value: p.Value, signature: p.Signature})
+		props = append(props, profileProperty{Name: p.Name, Value: p.Value, Signature: p.Signature})
 	}
 	return props, nil
 }
@@ -325,8 +309,8 @@ func (s *SkinFetcher) createPropertyFromLocalSkin(skin LocalSkin, uuid [16]byte,
 	texturesValue := base64.StdEncoding.EncodeToString(texturesJSON)
 
 	return []profileProperty{{
-		name:  "textures",
-		value: texturesValue,
+		Name:  "textures",
+		Value: texturesValue,
 	}}
 }
 

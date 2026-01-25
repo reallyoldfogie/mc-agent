@@ -58,7 +58,7 @@ func DumpEntity(ent *entity.Entity) {
 		return
 	}
 
-	fmt.Println(string(empJSON))
+	fmt.Println("entityJson:" + string(empJSON))
 }
 
 // GetYawAndPitch ...

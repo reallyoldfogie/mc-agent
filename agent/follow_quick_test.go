@@ -5,8 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/reallyoldfogie/mc-agent/following"
-	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,18 +13,18 @@ type quickFollowMgr struct {
 	started string
 	active  bool
 	stopped bool
-	state   following.FollowState
+	state   models.FollowState
 }
 
-func (q *quickFollowMgr) Start(name string) error    { q.started = name; q.active = true; return nil }
-func (q *quickFollowMgr) Stop() error                { q.stopped = true; q.active = false; return nil }
-func (q *quickFollowMgr) IsActive() bool             { return q.active }
-func (q *quickFollowMgr) GetStatus() string          { return "ok" }
-func (q *quickFollowMgr) GetPath() *pathfinding.Path { return nil }
-func (q *quickFollowMgr) GetState() following.FollowState {
+func (q *quickFollowMgr) Start(name string) error { q.started = name; q.active = true; return nil }
+func (q *quickFollowMgr) Stop() error             { q.stopped = true; q.active = false; return nil }
+func (q *quickFollowMgr) IsActive() bool          { return q.active }
+func (q *quickFollowMgr) GetStatus() string       { return "ok" }
+func (q *quickFollowMgr) GetPath() *models.Path   { return nil }
+func (q *quickFollowMgr) GetState() models.FollowState {
 	return q.state
 }
-func (q *quickFollowMgr) SetState(s following.FollowState) {
+func (q *quickFollowMgr) SetState(s models.FollowState) {
 	q.state = s
 }
 

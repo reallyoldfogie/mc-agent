@@ -1,6 +1,7 @@
 package testing
 
 import (
+	"log"
 	"sync"
 )
 
@@ -24,16 +25,17 @@ func NewMockWorld() *MockWorld {
 }
 
 // GetBlockAt implements the World interface used by pathfinding
-// Returns the block state ID at the given position, or 0 (air) if not set
-func (mw *MockWorld) GetBlockAt(x, y, z float64) uint32 {
+// Returns the block state ID at the given position, or 0 (air) if not set.
+// The second return value is always true for MockWorld since it's always "fully loaded".
+func (mw *MockWorld) GetBlockAt(x, y, z float64) (uint32, bool) {
 	mw.mu.RLock()
 	defer mw.mu.RUnlock()
 
 	pos := BlockPos{X: x, Y: y, Z: z}
 	if stateID, exists := mw.blocks[pos]; exists {
-		return stateID
+		return stateID, true
 	}
-	return 0 // Air
+	return 0, true // Air, but chunk is "loaded"
 }
 
 // SetBlock sets a block in the mock world
@@ -84,4 +86,13 @@ func (mw *MockWorld) BlockCount() int {
 	defer mw.mu.RUnlock()
 
 	return len(mw.blocks)
+}
+
+func (mw *MockWorld) DumpWorld() {
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
+
+	for pos, stateID := range mw.blocks {
+		log.Printf("Block at (%.2f, %.2f, %.2f): StateID=%d", pos.X, pos.Y, pos.Z, stateID)
+	}
 }

@@ -7,34 +7,36 @@ import (
 	"math"
 	"time"
 
-	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-// PathFinder finds paths using A* algorithm
-type PathFinder interface {
-	FindPath(start, goal V3, maxSteps int) (*Path, error)
-	FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64
-}
-
-// pathFinder implements PathFinder
-type pathFinder struct {
-	world             World
-	shapeMgr          BlockShapeManager
+// aStarPathFinder implements PathFinder
+type aStarPathFinder struct {
+	world             models.World
+	shapeMgr          models.BlockShapeManager
 	movementValidator *MovementValidator
+	goalRadius        float64
 }
 
-// NewPathFinder creates a new A* pathfinder
-func NewPathFinder(w World, shapeMgr BlockShapeManager, blockMgr mc_versions.BlockMgr, statePropsLoader *StatePropertyLoader) PathFinder {
-	return &pathFinder{
+// NewAStarPathFinder creates a new A* pathfinder
+func NewAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
+	return NewAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{})
+}
+
+// NewAStarPathFinderWithConfig creates a new A* pathfinder with custom settings.
+func NewAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
+	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
+	return &aStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr, blockMgr, statePropsLoader),
+		movementValidator: NewMovementValidator(w, shapeMgr),
+		goalRadius:        goalRadius,
 	}
 }
 
 // node represents a node in the A* search
 type node struct {
-	pos      V3
+	pos      models.V3
 	parent   *node
 	movement MovementType
 	gCost    float64 // Cost from start to this node
@@ -72,9 +74,13 @@ func (h *nodeHeap) Pop() any {
 }
 
 // heuristic calculates the heuristic cost from pos to goal
+func heuristic(pos, goal models.V3) float64 {
+	return chebyshevHeuristic(pos, goal)
+}
+
 // Uses 3D Euclidean distance with Y-axis weight adjustment
 // This is an admissible heuristic (never overestimates) which ensures A* optimality
-func heuristic(pos, goal V3) float64 {
+func euclideanHeuristic(pos, goal models.V3) float64 {
 	dx := goal.X - pos.X
 	dy := (goal.Y - pos.Y) * 1.5 // Weight Y-axis since vertical movement is more expensive
 	dz := goal.Z - pos.Z
@@ -83,14 +89,59 @@ func heuristic(pos, goal V3) float64 {
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
+// Uses Chebyshev distance for environments allowing diagonal movement
+func chebyshevHeuristic(pos, goal models.V3) float64 {
+	dx := math.Abs(goal.X - pos.X)
+	dy := math.Abs(goal.Y - pos.Y)
+	dz := math.Abs(goal.Z - pos.Z)
+
+	// Chebyshev distance considers the maximum axis distance
+	// This is admissible since diagonal moves are not cheaper than straight moves
+	return math.Max(math.Max(dx, dz), dy)
+}
+
+// Uses Manhattan distance for better guidance on grid-based movement
+func manhattanHeuristic(pos, goal models.V3) float64 {
+	// Calculate horizontal Manhattan distance
+	dx := math.Abs(goal.X - pos.X)
+	dz := math.Abs(goal.Z - pos.Z)
+	horizontalDist := dx + dz
+
+	// Calculate vertical distance
+	dy := goal.Y - pos.Y
+
+	// Base cost: Manhattan distance (traverse cost = 1.0)
+	// This assumes we can traverse horizontally at cost 1.0 per block
+	cost := horizontalDist
+
+	// Add vertical cost
+	if dy > 0 {
+		// Going up: use AscendStairs cost (1.0) as lower bound
+		// This is admissible because AscendStairs is the cheapest upward movement
+		cost += dy * 1.0
+	} else if dy < 0 {
+		// Going down: use Descend cost (1.2) as lower bound
+		cost += math.Abs(dy) * 1.2
+	}
+
+	// Diagonal optimization: if we can move diagonally, reduce the estimate slightly
+	// Diagonal moves cover sqrt(2) distance but only cost 1.4, saving 0.014 per diagonal
+	// This makes the heuristic more accurate without making it inadmissible
+	diagonalBlocks := math.Min(dx, dz)
+	diagonalSavings := diagonalBlocks * 0.4 // 2.0 straight moves vs 1.4 diagonal
+	cost -= diagonalSavings
+
+	return cost
+}
+
 // (Pathfinding from)|(A\*)|(Pathfinding straight line distance)|(\(\d+,?\s?74+,?\s?\d+\))
 
 // FindPath finds a path from start to goal using A* algorithm
-func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
+func (pf *aStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Path, error) {
 	startTime := time.Now()
 
 	// Validate start and goal positions
-	if start == goal {
+	if start.DistanceTo(goal) <= pf.goalRadius {
 		return &Path{
 			Steps:      []PathStep{},
 			TotalCost:  0,
@@ -102,13 +153,17 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 	}
 
 	// Debug: Get possible moves from start to verify we can move
-	startMoves := pf.movementValidator.GetPossibleMoves(start, goal)
+	prune := &MovePruneConfig{
+		StartDist: start.DistanceTo(goal),
+		DriftCap:  4.0,
+	}
+	startMoves := pf.movementValidator.GetPossibleMoves(start, goal, prune)
 	log.Printf("[A*] Start position (%f,%f,%f) has %d possible moves (filtered toward goal)",
 		start.X, start.Y, start.Z, len(startMoves))
 
 	if len(startMoves) > 0 {
 		log.Printf("[A*] First possible moves from (%f,%f,%f):\n", start.X, start.Y, start.Z)
-		for i := 0; i < len(startMoves); i++ {
+		for i := range startMoves {
 			log.Printf("  - Move %d: %s to (%f,%f,%f) cost=%.2f",
 				i+1, startMoves[i].Movement, startMoves[i].Position.X,
 				startMoves[i].Position.Y, startMoves[i].Position.Z, startMoves[i].Cost)
@@ -119,8 +174,8 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 	openSet := &nodeHeap{}
 	heap.Init(openSet)
 
-	closedSet := make(map[V3]bool)
-	gScores := make(map[V3]float64)
+	closedSet := make(map[models.V3]bool)
+	gScores := make(map[models.V3]float64)
 
 	// Add start node
 	startNode := &node{
@@ -154,15 +209,15 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 		current := heap.Pop(openSet).(*node)
 
 		// Check if we reached the goal
-		if current.pos == goal {
+		if current.pos.DistanceTo(goal) <= pf.goalRadius {
 			// Reconstruct path
 			path := pf.reconstructPath(current, start, goal)
 			path.SearchTime = float64(time.Since(startTime).Milliseconds())
-			
+
 			// Log path summary and details
 			log.Printf("[A*] %s", path.LogSummary())
-			log.Printf("[A*] Path details:\n%s", path.LogDetails())
-			
+			log.Printf("[A*] Path details:\n%s", path.LogDetails(true))
+
 			return path, nil
 		}
 
@@ -170,7 +225,7 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 		closedSet[current.pos] = true
 
 		// Get all possible moves from current position (filtered toward goal)
-		neighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal)
+		neighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal, prune)
 
 		for _, neighborStep := range neighbors {
 			neighborPos := neighborStep.Position
@@ -215,12 +270,12 @@ func (pf *pathFinder) FindPath(start, goal V3, maxSteps int) (*Path, error) {
 }
 
 // FindGroundBelow delegates to the movement validator to find valid ground
-func (pf *pathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
+func (pf *aStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
 	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
 }
 
 // reconstructPath builds the path from the goal node back to the start
-func (pf *pathFinder) reconstructPath(goalNode *node, start, goal V3) *Path {
+func (pf *aStarPathFinder) reconstructPath(goalNode *node, start, goal models.V3) *Path {
 	// Walk back from goal to start
 	steps := make([]PathStep, 0)
 	totalCost := 0.0

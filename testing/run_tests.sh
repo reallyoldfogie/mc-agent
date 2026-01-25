@@ -4,6 +4,7 @@
 # This script helps run integration tests with proper configuration
 
 set -e
+set -o pipefail
 
 # Change to script directory (testing/)
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -122,9 +123,9 @@ echo -e "${GREEN}✓ Directories ready${NC}"
 echo ""
 
 # Build test command (run from testing directory)
-TEST_CMD="go test -tags=integration ."
+TEST_CMD="go test . -count 1 "
 if [ -n "$TEST_PATTERN" ]; then
-    TEST_CMD="$TEST_CMD -run $TEST_PATTERN"
+    TEST_CMD="$TEST_CMD -run "${TEST_PATTERN@Q}
 fi
 TEST_CMD="$TEST_CMD -parallel $PARALLEL"
 TEST_CMD="$TEST_CMD -timeout $TIMEOUT"
@@ -135,7 +136,7 @@ fi
 # Print configuration
 echo -e "${YELLOW}Test Configuration:${NC}"
 if [ -n "$TEST_PATTERN" ]; then
-    echo "  Test Pattern: $TEST_PATTERN"
+    echo "  Test Pattern: "${TEST_PATTERN@Q}
 else
     echo "  Test Pattern: All tests"
 fi

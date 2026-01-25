@@ -1,14 +1,16 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"log"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
-	"log"
-	"strconv"
-
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 )
 
@@ -22,128 +24,16 @@ func (a *agent) handleChatCommand(cmd string) {
 	parts := strings.Fields(cmd)
 	name := strings.ToLower(parts[0])
 	args := parts[1:]
-
-	switch name {
-	case "help":
-		_ = a.SendChat("Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow")
-	case "pos":
-		x, y, z, _, _, ok := a.GetPosition()
-		if !ok {
-			_ = a.SendChat("Bot position not initialized")
+	if a.commandRegistry == nil {
+		_ = a.SendChat("Command registry not initialized")
+		return
+	}
+	if err := a.commandRegistry.Execute(name, a, args); err != nil {
+		if errors.Is(err, models.ErrActionNotFound) {
+			_ = a.SendChat("Unknown command. Try: help, pos, say")
 			return
 		}
-		_ = a.SendChat(fmt.Sprintf("Current position: %.2f, %.2f, %.2f", x, y, z))
-	case "say":
-		_ = a.SendChat(strings.Join(args, " "))
-	case "testmove":
-		go a.cmdTestMove()
-	case "moveto":
-		if len(args) < 3 {
-			_ = a.SendChat("Usage: moveTo <x> <y> <z>")
-			return
-		}
-		go a.cmdMoveTo(args[0], args[1], args[2])
-	case "lineto":
-		if len(args) < 3 {
-			_ = a.SendChat("Usage: lineTo <x> <y> <z> (straight-line, flat world only)")
-			return
-		}
-		go a.cmdLineTo(args[0], args[1], args[2])
-	case "moveforward":
-		if len(args) < 1 {
-			_ = a.SendChat("Usage: moveForward <distance>")
-			return
-		}
-		go a.cmdMoveForward(args[0])
-	case "moveup":
-		if len(args) < 1 {
-			_ = a.SendChat("Usage: moveUp <distance>")
-			return
-		}
-		go a.cmdMoveUp(args[0])
-	case "findpath":
-		if len(args) < 3 {
-			_ = a.SendChat("Usage: findPath <x> <y> <z>")
-			return
-		}
-		go a.cmdFindPath(args[0], args[1], args[2])
-	case "testpath":
-		go a.cmdTestPath()
-	case "follow":
-		if len(args) < 1 {
-			go a.cmdStartFollowingNearest()
-			return
-		}
-		a.mu.Lock()
-		fm := a.followMgr
-		a.mu.Unlock()
-		if fm == nil {
-			_ = a.SendChat("Follow system not available")
-			return
-		}
-		if err := fm.Start(args[0]); err != nil {
-			_ = a.SendChat("Follow error: " + err.Error())
-			return
-		}
-		_ = a.SendChat("Following " + args[0])
-	case "stopfollow":
-		a.mu.Lock()
-		fm := a.followMgr
-		a.mu.Unlock()
-		if fm == nil {
-			_ = a.SendChat("Follow system not available")
-			return
-		}
-		if !fm.IsActive() {
-			_ = a.SendChat("Not currently following anyone")
-			return
-		}
-		if err := fm.Stop(); err != nil {
-			_ = a.SendChat("Stop error: " + err.Error())
-			return
-		}
-		_ = a.SendChat("Stopped following")
-	case "followstatus":
-		a.mu.Lock()
-		fm := a.followMgr
-		a.mu.Unlock()
-		if fm == nil {
-			_ = a.SendChat("Follow system not available")
-			return
-		}
-		_ = a.SendChat(fm.GetStatus())
-	case "starttracking":
-		a.cmdStartTracking()
-	case "stoptracking":
-		a.cmdStopTracking()
-	case "firebow":
-		go a.cmdFireBow()
-	case "firebowat":
-		if len(args) == 0 {
-			a.cmdFireBow()
-		} else if len(args) == 1 {
-			if args[0] == "nearest" {
-				playerInfo, found := a.findNearestPlayer()
-				if found {
-					go a.cmdFireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z)
-					return
-				}
-			} else {
-				if playerInfo, err := a.targetSelector.FindPlayerByName(args[0]); err == nil {
-					go a.cmdFireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z)
-					return
-				} else {
-					_ = a.SendChat("Player not found: " + args[0])
-					return
-				}
-			}
-		}
-		if len(args) < 3 {
-			_ = a.SendChat("Usage: fireBowAt <x> <y> <z> | fireBowAt nearest | fireBowAt <player>")
-			return
-		}
-	default:
-		_ = a.SendChat("Unknown command. Try: help, pos, say")
+		_ = a.SendChat(err.Error())
 	}
 }
 
@@ -183,10 +73,6 @@ func (a *agent) cmdTestMove() {
 
 // cmdLineTo performs straight-line movement (for flat worlds only)
 func (a *agent) cmdLineTo(xs, ys, zs string) {
-	if a.moveExec == nil {
-		_ = a.SendChat("Movement executor not available")
-		return
-	}
 	tx, err := parseFloat(xs)
 	if err != nil {
 		_ = a.SendChat("Invalid X coordinate")
@@ -210,27 +96,9 @@ func (a *agent) cmdLineTo(xs, ys, zs string) {
 	dx, dy, dz := tx-x, ty-y, tz-z
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	_ = a.SendChat(fmt.Sprintf("Moving direct from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
-	_ = a.moveExec.LookAt(tx, ty, tz, true)
-	const stepSize = 0.2
-	const stepDelay = 50 * time.Millisecond
-	steps := int(math.Ceil(total / stepSize))
-	if steps == 0 {
-		_ = a.SendChat("Already at target position")
-		return
+	if err := a.LineTo(context.Background(), tx, ty, tz, true); err != nil {
+		_ = a.SendChat("Movement failed: " + err.Error())
 	}
-	for i := range steps {
-		prog := float64(i+1) / float64(steps)
-		if prog > 1 {
-			prog = 1
-		}
-		nx, ny, nz := x+dx*prog, y+dy*prog, z+dz*prog
-		if err := a.moveExec.SendPosition(nx, ny, nz, true); err != nil {
-			_ = a.SendChat(fmt.Sprintf("Movement failed at step %d: %v", i+1, err))
-			return
-		}
-		time.Sleep(stepDelay)
-	}
-	_ = a.SendChat(fmt.Sprintf("Arrived at (%.2f, %.2f, %.2f)", tx, ty, tz))
 }
 
 // cmdMoveTo performs pathfinding-based movement with segmentation for long distances
@@ -251,112 +119,79 @@ func (a *agent) cmdMoveTo(xs, ys, zs string) {
 		_ = a.SendChat("Invalid Z coordinate")
 		return
 	}
-
-	if a.pathfind == nil {
-		_ = a.SendChat("Pathfinding not available")
-		return
+	if err := a.MoveTo(context.Background(), tx, ty, tz, true); err != nil {
+		_ = a.SendChat(fmt.Sprintf("Pathfinding failed: %v", err))
 	}
-	if a.moveExec == nil {
-		_ = a.SendChat("Movement executor not available")
-		return
-	}
+}
 
-	x, y, z, _, _, ok := a.GetPosition()
-	if !ok {
-		_ = a.SendChat("Bot position not initialized")
-		return
-	}
+// followPath executes an already-computed path
+func (a *agent) followPath(ctx context.Context, path *models.Path) error {
+	log.Printf("[followPath] Executing cached path with %d steps", len(path.Steps))
+	log.Printf("[followPath] %s", path.LogSummary())
 
-	// Convert to block coordinates for pathfinding
-	finalGoal := pathfinding.V3{
-		X: math.Floor(tx),
-		Y: math.Floor(ty),
-		Z: math.Floor(tz),
+	// Log first 5 steps to diagnose direction issues
+	log.Printf("[followPath] Steps of path being executed:")
+	for i := 0; i < len(path.Steps); i++ {
+		step := path.Steps[i]
+		log.Printf("[followPath]   Step %d: %s to (%.0f, %.0f, %.0f)",
+			i+1, step.Movement.String(), step.Position.X, step.Position.Y, step.Position.Z)
 	}
 
-	currentPos := pathfinding.V3{
-		X: math.Floor(x),
-		Y: math.Floor(y),
-		Z: math.Floor(z),
+	if exec, ok := a.moveExec.(interface {
+		ExecutePath(*pathfinding.Path) error
+	}); ok {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		log.Printf("[followPath] Exec implements ExecutePath, using it.")
+		return exec.ExecutePath(path)
 	}
 
-	// Check if already at target block
-	if currentPos == finalGoal {
-		_ = a.SendChat("Already at target position")
-		return
-	}
+	log.Printf("[followPath] Exec doesn't implement ExecutePath, using fallback")
 
-	log.Printf("[moveTo] Moving from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
-		currentPos.X, currentPos.Y, currentPos.Z, finalGoal.X, finalGoal.Y, finalGoal.Z)
+	// Follow the path
+	const stepDelay = 100 * time.Millisecond
+	for i, step := range path.Steps {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		stepX := float64(step.Position.X) + 0.5
+		stepY := float64(step.Position.Y)
+		stepZ := float64(step.Position.Z) + 0.5
 
-	// Use segmented pathfinding for long distances
-	const segmentDistance = 20.0  // Pathfind in 20-block segments
-	const waypointDistance = 10.0 // Waypoints every 10 blocks
+		log.Printf("[followPath] Step %d/%d: %s to (%.1f, %.1f, %.1f)",
+			i+1, len(path.Steps), step.Movement, stepX, stepY, stepZ)
 
-	for {
-		distToGoal := currentPos.DistanceTo(finalGoal)
-		log.Printf("[moveTo] Distance to goal: %.1f blocks", distToGoal)
-
-		// If close enough, pathfind directly to goal
-		if distToGoal <= segmentDistance {
-			log.Printf("[moveTo] Close to goal, pathfinding directly")
-			if err := a.pathfindAndFollow(currentPos, finalGoal, distToGoal); err != nil {
-				_ = a.SendChat(fmt.Sprintf("Pathfinding failed: %v", err))
-				return
-			}
-			break
+		if err := a.moveExec.LookAt(stepX, stepY, stepZ, true); err != nil {
+			log.Printf("[followPath] LookAt failed: %v", err)
 		}
 
-		// For long distances, create intermediate waypoint
-		dx := finalGoal.X - currentPos.X
-		dy := finalGoal.Y - currentPos.Y
-		dz := finalGoal.Z - currentPos.Z
-
-		// Normalize direction and scale to waypoint distance
-		factor := waypointDistance / distToGoal
-		waypoint := pathfinding.V3{
-			X: math.Floor(currentPos.X + dx*factor),
-			Y: math.Floor(currentPos.Y + dy*factor),
-			Z: math.Floor(currentPos.Z + dz*factor),
+		if err := a.moveExec.SendPosition(stepX, stepY, stepZ, true); err != nil {
+			log.Printf("[followPath] Movement failed: %v", err)
+			return fmt.Errorf("movement failed at step %d: %w", i+1, err)
 		}
 
-		log.Printf("[moveTo] Segmented pathfinding to waypoint (%.0f, %.0f, %.0f)",
-			waypoint.X, waypoint.Y, waypoint.Z)
-		_ = a.SendChat(fmt.Sprintf("Waypoint: (%.0f, %.0f, %.0f)", waypoint.X, waypoint.Y, waypoint.Z))
-
-		// Pathfind to waypoint
-		if err := a.pathfindAndFollow(currentPos, waypoint, waypointDistance); err != nil {
-			_ = a.SendChat(fmt.Sprintf("Waypoint pathfinding failed: %v", err))
-			return
-		}
-
-		// Update current position for next segment
-		x, y, z, _, _, ok = a.GetPosition()
-		if !ok {
-			_ = a.SendChat("Lost position")
-			return
-		}
-		currentPos = pathfinding.V3{
-			X: math.Floor(x),
-			Y: math.Floor(y),
-			Z: math.Floor(z),
+		if err := sleepWithContext(ctx, stepDelay); err != nil {
+			return err
 		}
 	}
 
-	_ = a.SendChat(fmt.Sprintf("Arrived at (%.0f, %.0f, %.0f)", finalGoal.X, finalGoal.Y, finalGoal.Z))
-	log.Printf("[moveTo] Successfully reached final goal")
+	return nil
 }
 
 // pathfindAndFollow computes and follows a path from start to goal
-func (a *agent) pathfindAndFollow(start, goal pathfinding.V3, distance float64) error {
+func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) error {
 	log.Printf("[pathfindAndFollow] From (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
 		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z)
 
+	distance := start.DistanceTo(goal)
+
 	// Calculate step limit based on distance
-	maxSteps := int(distance * 100) // Allow 100x distance for complex terrain
-	if maxSteps < 2000 {
-		maxSteps = 2000 // Minimum 2000 steps for short segments
-	}
+	maxSteps := max(
+		// Allow 150x distance for complex terrain
+		int(distance*150),
+		// Minimum 10000 steps for short segments
+		10000)
 
 	path, err := a.pathfind.FindPath(start, goal, maxSteps)
 	if err != nil {
@@ -369,105 +204,34 @@ func (a *agent) pathfindAndFollow(start, goal pathfinding.V3, distance float64) 
 		return fmt.Errorf("no path found")
 	}
 
-	log.Printf("[pathfindAndFollow] %s", path.LogSummary())
-	log.Printf("[pathfindAndFollow] Path details:\n%s", path.LogDetails())
-
-	// Follow the path
-	const stepDelay = 100 * time.Millisecond
-	for i, step := range path.Steps {
-		stepX := float64(step.Position.X) + 0.5
-		stepY := float64(step.Position.Y)
-		stepZ := float64(step.Position.Z) + 0.5
-
-		log.Printf("[pathfindAndFollow] Step %d/%d: %s to (%.1f, %.1f, %.1f)",
-			i+1, len(path.Steps), step.Movement, stepX, stepY, stepZ)
-
-		if err := a.moveExec.LookAt(stepX, stepY, stepZ, true); err != nil {
-			log.Printf("[pathfindAndFollow] LookAt failed: %v", err)
-		}
-
-		if err := a.moveExec.SendPosition(stepX, stepY, stepZ, true); err != nil {
-			log.Printf("[pathfindAndFollow] Movement failed: %v", err)
-			return fmt.Errorf("movement failed at step %d: %w", i+1, err)
-		}
-
-		time.Sleep(stepDelay)
-	}
-
-	return nil
+	return a.followPath(ctx, path)
 }
 
 func (a *agent) cmdMoveForward(ds string) {
-	if a.moveExec == nil {
-		_ = a.SendChat("Movement not available")
-		return
-	}
 	dist, err := parseFloat(ds)
 	if err != nil {
 		_ = a.SendChat("Invalid distance")
 		return
 	}
-	x, y, z, yaw, _, ok := a.GetPosition()
-	if !ok {
-		_ = a.SendChat("Bot position not initialized")
+	_ = a.SendChat(fmt.Sprintf("Moving forward %.2f blocks", dist))
+	if err := a.MoveForward(context.Background(), dist); err != nil {
+		_ = a.SendChat("Movement failed: " + err.Error())
 		return
 	}
-	yawRad := float64(yaw) * math.Pi / 180
-	dx := -math.Sin(yawRad) * dist
-	dz := math.Cos(yawRad) * dist
-	tx, tz := x+dx, z+dz
-	_ = a.SendChat(fmt.Sprintf("Moving forward %.2f blocks", dist))
-	const stepSize = 0.2
-	const stepDelay = 50 * time.Millisecond
-	total := math.Abs(dist)
-	steps := int(math.Ceil(total / stepSize))
-	for i := 0; i < steps; i++ {
-		prog := float64(i+1) / float64(steps)
-		if prog > 1 {
-			prog = 1
-		}
-		nx := x + dx*prog
-		nz := z + dz*prog
-		if err := a.moveExec.SendPosition(nx, y, nz, true); err != nil {
-			_ = a.SendChat("Movement failed: " + err.Error())
-			return
-		}
-		time.Sleep(stepDelay)
-	}
-	_ = a.SendChat(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", tx, y, tz))
+	_ = a.SendChat("Move forward complete")
 }
 
 func (a *agent) cmdMoveUp(ds string) {
-	if a.moveExec == nil {
-		_ = a.SendChat("Movement not available")
-		return
-	}
 	dist, err := parseFloat(ds)
 	if err != nil {
 		_ = a.SendChat("Invalid distance")
 		return
 	}
-	x, y, z, _, _, ok := a.GetPosition()
-	if !ok {
-		_ = a.SendChat("Bot position not initialized")
+	if err := a.MoveUp(context.Background(), dist); err != nil {
+		_ = a.SendChat("Movement failed: " + err.Error())
 		return
 	}
-	const stepSize = 0.2
-	const stepDelay = 50 * time.Millisecond
-	steps := int(math.Ceil(math.Abs(dist) / stepSize))
-	for i := 0; i < steps; i++ {
-		prog := float64(i+1) / float64(steps)
-		if prog > 1 {
-			prog = 1
-		}
-		ny := y + dist*prog
-		if err := a.moveExec.SendPosition(x, ny, z, true); err != nil {
-			_ = a.SendChat("Movement failed: " + err.Error())
-			return
-		}
-		time.Sleep(stepDelay)
-	}
-	_ = a.SendChat(fmt.Sprintf("Moved to (%.2f, %.2f, %.2f)", x, y+dist, z))
+	_ = a.SendChat("Move up complete")
 }
 
 func (a *agent) cmdTestPath() {
@@ -480,8 +244,8 @@ func (a *agent) cmdTestPath() {
 		_ = a.SendChat("Bot position not initialized")
 		return
 	}
-	start := pathfinding.V3{X: x, Y: y, Z: z}
-	goal := pathfinding.V3{X: x, Y: y, Z: z + 5}
+	start := models.V3{X: x, Y: y, Z: z}
+	goal := models.V3{X: x, Y: y, Z: z + 5}
 	if _, err := a.pathfind.FindPath(start, goal, 200); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
@@ -490,11 +254,6 @@ func (a *agent) cmdTestPath() {
 }
 
 func (a *agent) cmdFindPath(xs, ys, zs string) {
-	x, y, z, _, _, ok := a.GetPosition()
-	if !ok {
-		_ = a.SendChat("Bot position not initialized")
-		return
-	}
 	tx, err := parseFloat(xs)
 	if err != nil {
 		_ = a.SendChat("Invalid X coordinate")
@@ -510,13 +269,7 @@ func (a *agent) cmdFindPath(xs, ys, zs string) {
 		_ = a.SendChat("Invalid Z coordinate")
 		return
 	}
-	if a.pathfind == nil {
-		_ = a.SendChat("Pathfinder not available")
-		return
-	}
-	start := pathfinding.V3{X: x, Y: y, Z: z}
-	goal := pathfinding.V3{X: tx, Y: ty, Z: tz}
-	if _, err := a.pathfind.FindPath(start, goal, 200); err != nil {
+	if err := a.FindPath(context.Background(), tx, ty, tz); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
 	}
@@ -589,8 +342,8 @@ func (a *agent) cmdStartTracking() {
 					continue
 				}
 				pname := "Unknown"
-				if a.nameByUUID != nil {
-					if n, okn := a.nameByUUID(nearest.UUID); okn {
+				if a.playerNameByUUID != nil {
+					if n, okn := a.playerNameByUUID(nearest.UUID); okn {
 						pname = n
 					}
 				}
@@ -634,8 +387,8 @@ func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 	first := true
 	for _, e := range ents {
 		// Only consider if in player list when resolver present; else consider all
-		if a.nameByUUID != nil {
-			if _, okn := a.nameByUUID(e.UUID); !okn {
+		if a.playerNameByUUID != nil {
+			if _, okn := a.playerNameByUUID(e.UUID); !okn {
 				continue
 			}
 		}
