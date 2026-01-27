@@ -12,7 +12,6 @@ replace github.com/reallyoldfogie/mc-replay-go => /home/reallyoldfogie/src/githu
 
 require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
-	github.com/davecgh/go-spew v1.1.1
 	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4
 	github.com/moby/moby/client v0.2.1
@@ -31,6 +30,7 @@ require (
 	github.com/aquasecurity/go-version v0.0.1 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
