@@ -251,12 +251,14 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 			out.ClimbDirection = 1.0
 		} else if deltaY < -0.1 {
 			// Too high, need to descend
+			// NOTE: Do NOT sneak while descending - sneaking prevents descent on ladders
 			out.ClimbDirection = -1.0
 		} else {
-			// At target height (on top of block) - stop climbing
+			// At target height (on top of block) - hold position
 			// In vanilla Minecraft, if no key pressed, player falls down ladder
-			// So we only set 0.0 when we're done climbing
+			// Enable sneaking to hold position and prevent falling past target
 			out.ClimbDirection = 0.0
+			out.Sneak = true
 		}
 
 		// If far from ladder and below target, approach the ladder first

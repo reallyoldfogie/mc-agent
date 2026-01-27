@@ -479,10 +479,26 @@ func (pe *PhysicsMovementExecutor) tick() {
 // generateIdleInputs generates inputs for idle mode (just physics, no movement).
 func (pe *PhysicsMovementExecutor) generateIdleInputs() physics.Inputs {
 	// Get current position for pitch
-	_, _, pitch, _ := pe.physicsState.GetPosition()
+	pos, _, pitch, _ := pe.physicsState.GetPosition()
+
+	// Preserve explicit sneak state from StartSneaking() calls (e.g., from stabilizeSneaking)
+	// This is different from the navigation mode feedback loop issue - in idle mode,
+	// we WANT to preserve explicit sneak commands so the agent holds position.
+	shouldSneak := pe.IsSneaking()
+
+	// Also auto-sneak if on a climbable block (ladder/vine) to hold position
+	if !shouldSneak {
+		blockAtPlayer, _ := pe.world.GetBlockStatus(
+			int(pos.X),
+			int(pos.Y),
+			int(pos.Z),
+		)
+		if pe.shapeProvider.IsClimbable(blockAtPlayer) {
+			shouldSneak = true
+		}
+	}
 
 	// Return zero throttle - agent just stands still and is affected by physics
-	// Preserve sneak state from external calls to StartSneaking/StopSneaking
 	return physics.Inputs{
 		ThrottleX: 0.0,
 		ThrottleZ: 0.0,
@@ -490,7 +506,7 @@ func (pe *PhysicsMovementExecutor) generateIdleInputs() physics.Inputs {
 		Pitch:     pitch,      // Keep current pitch
 		Jump:      false,
 		Sprint:    false,
-		Sneak:     pe.IsSneaking(),
+		Sneak:     shouldSneak,
 	}
 }
 
@@ -668,9 +684,11 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	}
 
 	// Normal navigation or post-repath
-	// Preserve external sneak state from StartSneaking/StopSneaking calls
+	// Let the input generator be authoritative on sneaking state.
+	// The previous OR with pe.IsSneaking() created a feedback loop where
+	// sneaking could never be disabled once enabled (e.g., from sideways recovery).
+	// This caused agents to get stuck on ladders since sneaking prevents descent.
 	inputs := pe.inputGen.GenerateInputs(pe.physicsState, step, 0)
-	inputs.Sneak = inputs.Sneak || pe.IsSneaking()
 	return inputs
 }
 
@@ -794,7 +812,7 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 		Pitch:     pitch,
 		Jump:      false, // Could add jump for step-up situations
 		Sprint:    false,
-		Sneak:     useSneak || pe.IsSneaking(),
+		Sneak:     useSneak, // Only sneak for edge safety, don't preserve previous state
 	}
 }
 
