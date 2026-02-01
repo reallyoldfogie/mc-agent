@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,74 +16,78 @@ import (
 // Tests one orientation for each structure type (9 tests total).
 // Set VERTICAL_NAV_FULL=1 to run full coverage (all orientations).
 func TestVerticalNavigationSmoke(t *testing.T) {
-	testCases := []struct {
-		name        string
-		segment     CourseSegment
-		orientation Orientation
-	}{
-		// Smoke tests (always run)
-		{"LadderAscent_North", &LadderAscent{Height: 5}, North},
-		{"LadderDescent_North", &LadderDescent{Height: 5}, North},
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			testCases := []struct {
+				name        string
+				segment     CourseSegment
+				orientation Orientation
+			}{
+				// Smoke tests (always run)
+				{"LadderAscent_North", &LadderAscent{Height: 5}, North},
+				{"LadderDescent_North", &LadderDescent{Height: 5}, North},
 
-		{"StairAscent_East", &StairAscent{Steps: 5}, East},
-		{"StairDescent_East", &StairDescent{Steps: 5}, East},
+				{"StairAscent_East", &StairAscent{Steps: 5}, East},
+				{"StairDescent_East", &StairDescent{Steps: 5}, East},
 
-		{"BlockStepAscent_South", &BlockStepAscent{Steps: 4}, South},
-		{"BlockStepDescent_South", &BlockStepDescent{Steps: 4}, South},
+				{"BlockStepAscent_South", &BlockStepAscent{Steps: 4}, South},
+				{"BlockStepDescent_South", &BlockStepDescent{Steps: 4}, South},
 
-		{"VineAscent", &VineAscent{Height: 5}, North},
-		{"VineDescent", &VineDescent{Height: 5}, North},
+				{"VineAscent", &VineAscent{Height: 5}, North},
+				{"VineDescent", &VineDescent{Height: 5}, North},
 
-		{"Combo_StairLadderStair", NewComboSegment("Combo_StairLadderStair",
-			&StairAscent{Steps: 3},
-			&LadderAscent{Height: 3},
-			&StairAscent{Steps: 3},
-		), East},
+				{"Combo_StairLadderStair", NewComboSegment("Combo_StairLadderStair",
+					&StairAscent{Steps: 3},
+					&LadderAscent{Height: 3},
+					&StairAscent{Steps: 3},
+				), East},
 
-		// Full coverage tests (only with VERTICAL_NAV_FULL=1)
-		{"LadderAscent_South", &LadderAscent{Height: 5}, South},
-		{"LadderAscent_East", &LadderAscent{Height: 5}, East},
-		{"LadderAscent_West", &LadderAscent{Height: 5}, West},
+				// Full coverage tests (only with VERTICAL_NAV_FULL=1)
+				{"LadderAscent_South", &LadderAscent{Height: 5}, South},
+				{"LadderAscent_East", &LadderAscent{Height: 5}, East},
+				{"LadderAscent_West", &LadderAscent{Height: 5}, West},
 
-		{"LadderDescent_South", &LadderDescent{Height: 5}, South},
-		{"LadderDescent_East", &LadderDescent{Height: 5}, East},
-		{"LadderDescent_West", &LadderDescent{Height: 5}, West},
+				{"LadderDescent_South", &LadderDescent{Height: 5}, South},
+				{"LadderDescent_East", &LadderDescent{Height: 5}, East},
+				{"LadderDescent_West", &LadderDescent{Height: 5}, West},
 
-		{"StairAscent_North", &StairAscent{Steps: 5}, North},
-		{"StairAscent_South", &StairAscent{Steps: 5}, South},
-		{"StairAscent_West", &StairAscent{Steps: 5}, West},
+				{"StairAscent_North", &StairAscent{Steps: 5}, North},
+				{"StairAscent_South", &StairAscent{Steps: 5}, South},
+				{"StairAscent_West", &StairAscent{Steps: 5}, West},
 
-		{"StairDescent_North", &StairDescent{Steps: 5}, North},
-		{"StairDescent_South", &StairDescent{Steps: 5}, South},
-		{"StairDescent_West", &StairDescent{Steps: 5}, West},
+				{"StairDescent_North", &StairDescent{Steps: 5}, North},
+				{"StairDescent_South", &StairDescent{Steps: 5}, South},
+				{"StairDescent_West", &StairDescent{Steps: 5}, West},
 
-		{"BlockStepAscent_North", &BlockStepAscent{Steps: 4}, North},
-		{"BlockStepAscent_East", &BlockStepAscent{Steps: 4}, East},
-		{"BlockStepAscent_West", &BlockStepAscent{Steps: 4}, West},
+				{"BlockStepAscent_North", &BlockStepAscent{Steps: 4}, North},
+				{"BlockStepAscent_East", &BlockStepAscent{Steps: 4}, East},
+				{"BlockStepAscent_West", &BlockStepAscent{Steps: 4}, West},
 
-		{"BlockStepDescent_North", &BlockStepDescent{Steps: 4}, North},
-		{"BlockStepDescent_East", &BlockStepDescent{Steps: 4}, East},
-		{"BlockStepDescent_West", &BlockStepDescent{Steps: 4}, West},
+				{"BlockStepDescent_North", &BlockStepDescent{Steps: 4}, North},
+				{"BlockStepDescent_East", &BlockStepDescent{Steps: 4}, East},
+				{"BlockStepDescent_West", &BlockStepDescent{Steps: 4}, West},
 
-		{"Combo_StairLadderStair_West", NewComboSegment("Combo_StairLadderStair_West",
-			&StairAscent{Steps: 3},
-			&LadderAscent{Height: 3},
-			&StairAscent{Steps: 3},
-		), West},
-	}
+				{"Combo_StairLadderStair_West", NewComboSegment("Combo_StairLadderStair_West",
+					&StairAscent{Steps: 3},
+					&LadderAscent{Height: 3},
+					&StairAscent{Steps: 3},
+				), West},
+			}
 
-	for i, tc := range testCases {
-		tc := tc // Capture for closure
-		testIndex := i
+			for i, tc := range testCases {
+				tc := tc // Capture for closure
+				testIndex := i
 
-		t.Run(tc.name, func(t *testing.T) {
-			runVerticalNavigationTest(t, tc.segment, tc.orientation, testIndex)
+				t.Run(tc.name, func(t *testing.T) {
+					runVerticalNavigationTest(t, tt.mcVersion, tc.segment, tc.orientation, testIndex)
+				})
+			}
 		})
 	}
 }
 
 // runVerticalNavigationTest executes a single vertical navigation test
-func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation Orientation, testIndex int) {
+func runVerticalNavigationTest(t *testing.T, mcVersion string, segment CourseSegment, orientation Orientation, testIndex int) {
 	logger := NewTestLogger(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -93,7 +98,7 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 
 	// Start flat world server (deterministic terrain)
 	serverCfg := FlatWorldServerConfig()
-	serverCfg.Version = "1.21.5"
+	serverCfg.Version = mcVersion
 	serverCfg.PullImage = false
 	RequireIntegrationEnv(t, serverCfg)
 
@@ -119,7 +124,7 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 	time.Sleep(1 * time.Second) // Let gamerules apply
 
 	// Build course segment at deterministic coordinates (spaced by testIndex)
-	origin := Position{
+	origin := models.V3{
 		X: 100 + float64(testIndex*50), // 50-block spacing to avoid interference
 		Y: 0,                           // Y_BASE = 0 (flat world surface)
 		Z: 100,
@@ -183,9 +188,12 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 		fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 		serverCfg.Version,
 	)
+
+	// Version handler is auto-detected by the framework
+
 	agentCfg.EnableReplay = true
-	agentCfg.ReplayOutput = fmt.Sprintf("./replays/%s_%s_%s.mcpr",
-		segment.Name(), strings.ToUpper(string(orientation.String()[0])), time.Now().Format("20060102_150405"))
+	agentCfg.ReplayOutput = fmt.Sprintf("./replays/%s_%s_%s_%s.mcpr",
+		segment.Name(), strings.ToUpper(string(orientation.String()[0])), mcVersion, time.Now().Format("20060102_150405"))
 
 	agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 	require.NoError(t, err, "spawn agent")
@@ -224,7 +232,7 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 	logger.Logf("Navigation command sent: %s", navCmd)
 
 	// Calculate timeout based on segment type
-	distance := start.Distance(goal)
+	distance := start.DistanceTo(goal)
 	timeout := 60 * time.Second // Conservative timeout for vertical movement
 	if distance > 10 {
 		timeout = 90 * time.Second
@@ -237,7 +245,7 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 		// Get final position for debugging
 		finalPos, ok := tracker.GetPosition(agent.Name)
 		if ok {
-			finalDist := finalPos.Distance(goal)
+			finalDist := finalPos.DistanceTo(goal)
 			logger.Logf("Agent final position: %.2f, %.2f, %.2f (distance from goal: %.2f)",
 				finalPos.X, finalPos.Y, finalPos.Z, finalDist)
 		}
@@ -247,13 +255,13 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 	// Get final position via RCON
 	finalX, finalY, finalZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
 	require.NoError(t, err, "get final position")
-	finalPos := Position{X: finalX, Y: finalY, Z: finalZ}
+	finalPos := models.V3{X: finalX, Y: finalY, Z: finalZ}
 
 	// Stop telemetry
 	telemetry := telemetryRecorder.Stop(finalPos)
 
 	logger.Logf("Agent final position: %.2f, %.2f, %.2f", finalX, finalY, finalZ)
-	logger.Logf("Distance from goal: %.2f blocks", finalPos.Distance(goal))
+	logger.Logf("Distance from goal: %.2f blocks", finalPos.DistanceTo(goal))
 	logger.Logf("Telemetry: jumps=%d climb_ticks=%d sneak_ticks=%d total_ticks=%d",
 		telemetry.JumpCount, telemetry.ClimbTicks, telemetry.SneakTicks, telemetry.TotalTicks)
 	logger.Logf("Movement types used: %v", telemetry.MovementTypes)
@@ -262,7 +270,7 @@ func runVerticalNavigationTest(t *testing.T, segment CourseSegment, orientation 
 	// Assertions
 
 	// 1. Agent reached goal within tolerance
-	finalDistance := finalPos.Distance(goal)
+	finalDistance := finalPos.DistanceTo(goal)
 	assert.LessOrEqual(t, finalDistance, 1.5, "agent should reach goal within 1.5 blocks")
 
 	// 2. Telemetry assertions (based on segment expectations)

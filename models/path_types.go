@@ -19,9 +19,9 @@ const (
 	DiagonalTraverse
 	DiagonalAscend
 	Swim
-	Climb       // Ladder/vine climbing (both ascent and descent)
-	EnterClimb  // Horizontal entry into climbable block (ladder/vine)
-	ExitClimb   // Exit from ladder/vine onto adjacent platform
+	Climb        // Ladder/vine climbing (both ascent and descent)
+	EnterClimb   // Horizontal entry into climbable block (ladder/vine)
+	ExitClimb    // Exit from ladder/vine onto adjacent platform
 	JumpToClimb  // Jump up to access elevated climbable (ladder/vine 1 block above ground)
 	Jump2ToClimb // Sprint jump 2 blocks to land on/grab climbable (vine/ladder across gap)
 	SwimUp

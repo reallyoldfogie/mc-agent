@@ -12,6 +12,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -171,6 +172,12 @@ func NewPhysicsMovementExecutor(
 // SetPacketCallback sets an optional callback for packet interception.
 func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface{})) {
 	pe.baseExecutor.SetPacketCallback(callback)
+}
+
+// SetMovementHandler sets an optional version-specific movement handler.
+// This forwards to the base executor for version-aware packet construction.
+func (pe *PhysicsMovementExecutor) SetMovementHandler(handler common.MovementHandler) {
+	pe.baseExecutor.SetMovementHandler(handler)
 }
 
 // SetClutchCallback sets an optional callback for clutch planning signals.

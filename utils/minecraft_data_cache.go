@@ -16,15 +16,16 @@ import (
 // into a single unified cache directory.
 //
 // Cache Structure:
-//   ~/.cache/mc-agent/minecraft-data/{version}/
-//     ├── server.jar                    (downloaded from Mojang)
-//     ├── generated/reports/            (output from data generator)
-//     │   ├── registries.json
-//     │   ├── blocks.json
-//     │   ├── items.json
-//     │   └── ...
-//     └── data_generator/reports/       (symlinked/copied for compatibility)
-//         └── ...
+//
+//	~/.cache/mc-agent/minecraft-data/{version}/
+//	  ├── server.jar                    (downloaded from Mojang)
+//	  ├── generated/reports/            (output from data generator)
+//	  │   ├── registries.json
+//	  │   ├── blocks.json
+//	  │   ├── items.json
+//	  │   └── ...
+//	  └── data_generator/reports/       (symlinked/copied for compatibility)
+//	      └── ...
 //
 // Thread-safe: Uses per-version mutex to prevent concurrent downloads.
 type MinecraftDataCache struct {

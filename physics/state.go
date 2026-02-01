@@ -1,7 +1,7 @@
 package physics
 
 import (
-	"fmt"
+	"log"
 	"math"
 	"os"
 
@@ -63,7 +63,7 @@ func (s *state) SetPosition(pos V3, yaw, pitch float64, onGround bool) {
 	deltaZ := pos.Z - s.Pos.Z
 
 	if deltaX != 0 || deltaY != 0 || deltaZ != 0 {
-		fmt.Printf("[Physics] Server position correction: Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
+		log.Printf("[Physics] Server position correction: Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
 			deltaX, deltaY, deltaZ, s.Vel.Y)
 	}
 
@@ -338,12 +338,12 @@ func (s *state) tickPosition(w World) {
 		newDist := stepUpVel.X*stepUpVel.X + stepUpVel.Z*stepUpVel.Z
 
 		if os.Getenv("DEBUG_STEP_UP") != "" {
-			fmt.Printf("[StepUp] Pos=(%.2f,%.2f,%.2f) Vel=(%.3f,%.3f,%.3f) OldVel=(%.3f,%.3f,%.3f) NewVel=(%.3f,%.3f,%.3f)\n",
+			log.Printf("[StepUp] Pos=(%.2f,%.2f,%.2f) Vel=(%.3f,%.3f,%.3f) OldVel=(%.3f,%.3f,%.3f) NewVel=(%.3f,%.3f,%.3f)\n",
 				s.Pos.X, s.Pos.Y, s.Pos.Z,
 				s.Vel.X, s.Vel.Y, s.Vel.Z,
 				newVel.X, newVel.Y, newVel.Z,
 				stepUpVel.X, stepUpVel.Y, stepUpVel.Z)
-			fmt.Printf("[StepUp] oldDist=%.4f newDist=%.4f stepUpVel.Y=%.4f threshold=%.4f\n",
+			log.Printf("[StepUp] oldDist=%.4f newDist=%.4f stepUpVel.Y=%.4f threshold=%.4f\n",
 				oldDist, newDist, stepUpVel.Y, -StepHeight+0.000002)
 		}
 
@@ -352,12 +352,12 @@ func (s *state) tickPosition(w World) {
 		// 2. Final Y offset is near zero (actually on ground after step)
 		if newDist > oldDist && stepUpVel.Y > -StepHeight+0.000002 {
 			if os.Getenv("DEBUG_STEP_UP") != "" {
-				fmt.Printf("[StepUp] USING STEP-UP\n")
+				log.Printf("[StepUp] USING STEP-UP\n")
 			}
 			newPlayerBB = stepUpBB
 			newVel = stepUpVel
 		} else if os.Getenv("DEBUG_STEP_UP") != "" {
-			fmt.Printf("[StepUp] NOT using step-up (failed conditions)\n")
+			log.Printf("[StepUp] NOT using step-up (failed conditions)\n")
 		}
 	}
 
@@ -376,7 +376,7 @@ func (s *state) tickPosition(w World) {
 
 		// DEBUG
 		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			fmt.Printf("[EdgePrev] Sneak=%v OnGround=%v NewPos=(%.3f,%.3f,%.3f)\n",
+			log.Printf("[EdgePrev] Sneak=%v OnGround=%v NewPos=(%.3f,%.3f,%.3f)\n",
 				s.isSneaking, s.onGround, newPosX, newPosY, newPosZ)
 		}
 
@@ -390,16 +390,30 @@ func (s *state) tickPosition(w World) {
 			{X: newPosX - halfWidth, Y: newPosY, Z: newPosZ - halfWidth}, // -X -Z
 		}
 
-		// If any corner would be over an edge (no ground support), prevent that movement
-		hasGroundSupport := true
+		// // If any corner would be over an edge (no ground support), prevent that movement
+		// hasGroundSupport := true
+		// for i, corner := range corners {
+		// 	support := s.hasGroundSupportAt(corner, w)
+		// 	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		// 		log.Printf("[EdgePrev]   Corner %d (%.3f,%.3f,%.3f) support=%v\n",
+		// 			i, corner.X, corner.Y, corner.Z, support)
+		// 	}
+		// 	if !support {
+		// 		hasGroundSupport = false
+		// 		break
+		// 	}
+		// }
+
+		// At least one corner must not be over an edge (no ground support), otherwise prevent that movement
+		hasGroundSupport := false
 		for i, corner := range corners {
 			support := s.hasGroundSupportAt(corner, w)
 			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-				fmt.Printf("[EdgePrev]   Corner %d (%.3f,%.3f,%.3f) support=%v\n",
+				log.Printf("[EdgePrev]   Corner %d (%.3f,%.3f,%.3f) support=%v\n",
 					i, corner.X, corner.Y, corner.Z, support)
 			}
-			if !support {
-				hasGroundSupport = false
+			if support {
+				hasGroundSupport = true
 				break
 			}
 		}
@@ -407,7 +421,7 @@ func (s *state) tickPosition(w World) {
 		// If no ground support at new position, revert to old position and stop movement
 		if !hasGroundSupport {
 			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-				fmt.Printf("[EdgePrev] PREVENTING MOVEMENT - no ground support\n")
+				log.Printf("[EdgePrev] PREVENTING MOVEMENT - no ground support\n")
 			}
 			newPlayerBB = playerBB // Revert to original position before movement
 			newVel.X = 0           // Zero horizontal velocity
@@ -433,9 +447,9 @@ func (s *state) tryStepUp(playerBB AABB, vel V3, w World) (AABB, V3) {
 	surroundings := s.getSurroundingBoxes(queryBB, w)
 
 	if os.Getenv("DEBUG_STEP_UP") != "" && len(surroundings) > 0 {
-		fmt.Printf("[tryStepUp] Found %d collision boxes in query range\n", len(surroundings))
+		log.Printf("[tryStepUp] Found %d collision boxes in query range\n", len(surroundings))
 		for i, box := range surroundings {
-			fmt.Printf("  Box %d: X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f] BlockID=%d\n",
+			log.Printf("  Box %d: X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f] BlockID=%d\n",
 				i, box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max, box.BlockID)
 		}
 	}
@@ -672,7 +686,7 @@ func (s *state) hasGroundSupportAt(pos V3, w World) bool {
 	isPassable := s.shapeProvider.IsPassable(blockID)
 
 	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		fmt.Printf("[EdgePrev]     Checking block at (%d,%d,%d) = %d, passable=%v\n",
+		log.Printf("[EdgePrev]     Checking block at (%d,%d,%d) = %d, passable=%v\n",
 			checkX, checkY, checkZ, blockID, isPassable)
 	}
 
@@ -693,9 +707,9 @@ func (s *state) hasGroundSupportAt(pos V3, w World) bool {
 	nearZEdge := zOffset > (1.0 - edgeMargin) // > 0.6, close to Z edge at 1.0
 
 	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		fmt.Printf("[EdgePrev]     Position offsets: X=%.3f, Z=%.3f (edge margin=%.1f)\n",
+		log.Printf("[EdgePrev]     Position offsets: X=%.3f, Z=%.3f (edge margin=%.1f)\n",
 			xOffset, zOffset, edgeMargin)
-		fmt.Printf("[EdgePrev]     Near edges: X=%v, Z=%v\n", nearXEdge, nearZEdge)
+		log.Printf("[EdgePrev]     Near edges: X=%v, Z=%v\n", nearXEdge, nearZEdge)
 	}
 
 	// If close to X edge, check for adjacent block in +X direction
@@ -703,7 +717,7 @@ func (s *state) hasGroundSupportAt(pos V3, w World) bool {
 		adjacentXBlock, _ := w.GetBlockStatus(checkX+1, checkY, checkZ)
 		hasXSupport := !s.shapeProvider.IsPassable(adjacentXBlock)
 		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			fmt.Printf("[EdgePrev]     Near X edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
+			log.Printf("[EdgePrev]     Near X edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
 				checkX+1, checkY, checkZ, adjacentXBlock, hasXSupport)
 		}
 		if !hasXSupport {
@@ -716,7 +730,7 @@ func (s *state) hasGroundSupportAt(pos V3, w World) bool {
 		adjacentZBlock, _ := w.GetBlockStatus(checkX, checkY, checkZ+1)
 		hasZSupport := !s.shapeProvider.IsPassable(adjacentZBlock)
 		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			fmt.Printf("[EdgePrev]     Near Z edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
+			log.Printf("[EdgePrev]     Near Z edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
 				checkX, checkY, checkZ+1, adjacentZBlock, hasZSupport)
 		}
 		if !hasZSupport {

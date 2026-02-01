@@ -166,10 +166,11 @@ func (f *fakeClientWriter) PushResourcePack(bot.ResourcePack)                {}
 func (f *fakeClientWriter) PopResourcePack(pk.UUID)                          {}
 func (f *fakeClientWriter) PopAllResourcePack()                              {}
 func (f *fakeClientWriter) SelectDataPacks([]bot.DataPack) []bot.DataPack    { return nil }
+func (f *fakeClientWriter) SetVersionHandler(bot.VersionHandler)             {}
 
 // Movement: moveForward 0.1 should send one position packet forward (yaw=0 => +Z)
 func TestCommand_MoveForward_SmallStep(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -193,7 +194,7 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 
 // Movement: moveTo with target in same block (floor(0.1)=0) should say "Already at target"
 func TestCommand_MoveTo_SmallDelta(t *testing.T) {
-	agentInt, err := New(Config{Address: "*********:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "*********:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -218,7 +219,7 @@ func TestCommand_MoveTo_SmallDelta(t *testing.T) {
 
 // Pathfinding: findPath calls FindPath with integerized coords
 func TestCommand_FindPath(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -241,7 +242,7 @@ func TestCommand_FindPath(t *testing.T) {
 
 // Tracking: startTracking should invoke LookAt on nearest at least once, and stopTracking should stop it
 func TestCommand_StartStopTracking(t *testing.T) {
-	agentInt, err := New(Config{Address: "*********:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "*********:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -273,7 +274,7 @@ func TestCommand_StartStopTracking(t *testing.T) {
 
 // FireBow: immediately sends a UseItem packet
 func TestCommand_FireBow_UseItemFirst(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -295,7 +296,7 @@ func TestCommand_FireBow_UseItemFirst(t *testing.T) {
 }
 
 func TestCommand_FireBow_ShootAfterHold(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

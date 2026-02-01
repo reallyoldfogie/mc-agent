@@ -2,6 +2,8 @@ package testing
 
 import (
 	"sync"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // MovementTelemetry tracks movement mode usage during path execution
@@ -12,8 +14,8 @@ type MovementTelemetry struct {
 	MaxDeltaY     float64   // Maximum vertical change per tick
 	TotalTicks    int       // Total execution time in ticks
 	PathSteps     int       // Number of PathSteps executed
-	StartPos      Position  // Starting position
-	EndPos        Position  // Final position
+	StartPos      models.V3 // Starting position
+	EndPos        models.V3 // Final position
 	MovementTypes []string  // Sequence of movement types used
 }
 
@@ -21,7 +23,7 @@ type MovementTelemetry struct {
 type TelemetryRecorder struct {
 	mu        sync.Mutex
 	telemetry MovementTelemetry
-	lastPos   Position
+	lastPos   models.V3
 	recording bool
 }
 
@@ -35,7 +37,7 @@ func NewTelemetryRecorder() *TelemetryRecorder {
 }
 
 // Start begins recording telemetry from the given start position
-func (tr *TelemetryRecorder) Start(startPos Position) {
+func (tr *TelemetryRecorder) Start(startPos models.V3) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 
@@ -75,7 +77,7 @@ func (tr *TelemetryRecorder) RecordTick(x, y, z float64, onGround bool, climbing
 		tr.telemetry.MaxDeltaY = deltaY
 	}
 
-	tr.lastPos = Position{X: x, Y: y, Z: z}
+	tr.lastPos = models.V3{X: x, Y: y, Z: z}
 }
 
 // RecordJump records a jump action
@@ -104,7 +106,7 @@ func (tr *TelemetryRecorder) RecordStep(stepType string) {
 }
 
 // Stop ends recording and returns the collected telemetry
-func (tr *TelemetryRecorder) Stop(endPos Position) MovementTelemetry {
+func (tr *TelemetryRecorder) Stop(endPos models.V3) MovementTelemetry {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 

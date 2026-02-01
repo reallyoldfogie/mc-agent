@@ -105,8 +105,8 @@ func (b ClusterBounds) String() string {
 
 // Cluster represents a subdivision of the world for hierarchical pathfinding
 type Cluster struct {
-	ID       ClusterID
-	Bounds   ClusterBounds
+	ID        ClusterID
+	Bounds    ClusterBounds
 	Entrances []*Entrance
 	// InternalPaths stores precomputed paths between entrances within this cluster
 	// Key is the entrance pair, value is the cached path

@@ -25,6 +25,8 @@ import (
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	agentutils "github.com/reallyoldfogie/mc-agent/utils"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
+	mcworld "github.com/reallyoldfogie/mc-agent/world"
 
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
@@ -32,10 +34,11 @@ import (
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/reallyoldfogie/mc-bot-go/bot/world"
+	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 
-	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
+	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_utils "github.com/reallyoldfogie/mc-protocol-go/utils"
 
@@ -76,10 +79,11 @@ type agent struct {
 	logw io.Writer
 
 	// dependencies (to be filled in during Init)
-	client    bot.Client
-	packetMgr protocol_models.PacketMgr
-	blockMgr  mc_versions.BlockMgr
-	soundMgr  mc_versions.SoundMgr
+	client         bot.Client
+	packetMgr      protocol_models.PacketMgr
+	blockMgr       protocol_versions.BlockMgr
+	soundMgr       protocol_versions.SoundMgr
+	versionHandler common.VersionHandler // optional version-specific packet handler
 
 	// internal state placeholders (expanded during migration)
 	// tracking
@@ -103,11 +107,15 @@ type agent struct {
 	moveMirror MovementMirror
 
 	// core subsystems (created automatically in Init) - using interfaces for separation of concerns
-	player     TeleportAccepter       // Player subsystem (teleportation)
-	worldMgr   World                  // World manager (block queries, pathfinding)
-	chatMgr    Chat                   // Chat manager (message sending)
-	screenMgr  models.ScreenSubsystem // Screen manager (inventory/containers)
-	playerList playerlist.PlayerList  // Player list (online player tracking)
+	player       TeleportAccepter       // Player subsystem (teleportation)
+	worldMgr     models.World           // World manager (block queries, pathfinding)
+	mcAgentWorld *mcworld.Manager       // mc-agent world manager (when version handler is available)
+	chatMgr      Chat                   // Chat manager (message sending)
+	screenMgr    models.ScreenSubsystem // Screen manager (inventory/containers)
+	playerList   playerlist.PlayerList  // Player list (online player tracking)
+
+	// Chunk batching (1.20.2+): track number of batches received for acknowledgement
+	chunkBatchCount float32
 
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed
@@ -180,9 +188,16 @@ func New(cfg Config) (models.Agent, error) {
 	}
 
 	var name string
-	if cfg.Client != nil {
-		name = cfg.Client.Name()
+	if cfg.Name != "" {
+		name = cfg.Name
+	} else {
+		if cfg.Client != nil {
+			name = cfg.Client.Name()
+		} else {
+			name = "UnnamedAgent"
+		}
 	}
+
 	// Ensure RegistriesPath is set and data is available
 	// If not set, defaults to ~/.cache/mc-agent/registries/{version}/
 	// Downloads and generates registries.json if needed (thread-safe)
@@ -214,20 +229,56 @@ func (a *agent) Init(ctx context.Context) error {
 	}
 	a.ctx, a.cancel = context.WithCancel(ctx)
 
-	// Derive managers if not provided
-	if a.packetMgr == nil {
-		a.packetMgr = a.cfg.PacketMgr
-	}
-	if a.blockMgr == nil {
-		a.blockMgr = a.cfg.BlockMgr
-	}
-	if a.soundMgr == nil {
-		a.soundMgr = a.cfg.SoundMgr
+	// Resolve version and protocol (auto-detect from server if not specified)
+	versionAutoDetected, err := a.resolveVersionAndManagers()
+	if err != nil {
+		return err
 	}
 
-	// Use prebuilt client when provided.
+	// Use prebuilt client when provided
 	if a.client == nil && a.cfg.Client != nil {
 		a.client = a.cfg.Client
+	}
+
+	// Create client automatically ONLY if version was auto-detected from server.
+	// This ensures callers who explicitly specify a version must also provide a client,
+	// which maintains backward compatibility with tests and allows proper mocking.
+	if a.client == nil && versionAutoDetected && a.packetMgr != nil {
+		a.client = bot.NewClient(a.packetMgr)
+		// Set auth on the newly created client if provided in config
+		if a.cfg.Auth.Name != "" || a.cfg.Auth.UUID != "" {
+			a.client.SetAuth(bot.Auth{
+				AccessToken: a.cfg.Auth.AccessToken,
+				Name:        a.cfg.Auth.Name,
+				UUID:        a.cfg.Auth.UUID,
+			})
+			log.Printf("[Agent] Created bot client for version %s (auth: %s)", a.cfg.Version, a.cfg.Auth.Name)
+		} else {
+			log.Printf("[Agent] Created bot client for version %s (no auth configured)", a.cfg.Version)
+		}
+	}
+
+	// Note: client can be nil for testing scenarios where dependencies are injected manually.
+	// Subsystem creation is skipped if client is nil.
+
+	// Set version handler on bot client immediately (before connection)
+	if a.client != nil {
+		log.Printf("[Agent %s][DEBUG] Checking version handler: versionHandler=%v", a.client.Name(), a.versionHandler != nil)
+
+		if a.versionHandler != nil {
+			type versionHandlerSetter interface {
+				SetVersionHandler(bot.VersionHandler)
+			}
+			if vhSetter, ok := a.client.(versionHandlerSetter); ok {
+				adapter := NewVersionHandlerAdapter(a.versionHandler)
+				vhSetter.SetVersionHandler(adapter)
+				log.Printf("[Agent %s] Version handler set for %s during Init", a.client.Name(), a.versionHandler.Version())
+			} else {
+				log.Printf("[Agent %s][DEBUG] Type assertion failed for SetVersionHandler", a.client.Name())
+			}
+		} else {
+			log.Printf("[Agent %s][DEBUG] Skipping version handler setup (versionHandler nil)", a.client.Name())
+		}
 	}
 
 	// Subsystems
@@ -256,12 +307,16 @@ func (a *agent) Init(ctx context.Context) error {
 		customSettings.ViewDistance = 32
 		customSettings.Locale = "en_us"
 
+		// Note: Teleported handler is NOT provided here because the agent's own
+		// onClientboundPosition handler (in handlers.go) already handles position
+		// parsing and teleport confirmation using version-specific parsing.
+		// Providing Teleported here would cause duplicate TeleportConfirm packets
+		// to be sent, which can cause issues with certain Minecraft versions.
 		playerConcrete := basic.NewPlayer(botClient, customSettings, basic.EventsListener{
 			GameStart:    a.HandleGameStart,
 			Disconnect:   a.HandleDisconnect,
 			HealthChange: a.HandleHealthChange,
 			Death:        a.HandleDeath,
-			Teleported:   a.HandleTeleported,
 		}, a.packetMgr)
 		a.player = playerConcrete // Assign concrete type to interface field
 		log.Printf("[Agent %s] Player subsystem initialized", a.client.Name())
@@ -309,22 +364,39 @@ func (a *agent) Init(ctx context.Context) error {
 		a.chatMgr = chatMgrConcrete // Assign concrete type to interface field
 		log.Printf("[Agent %s] Chat manager initialized", a.client.Name())
 
-		// Create World Manager (for chunk management, constructor requires concrete Player)
-		worldInterface := world.NewWorld(botClient, playerConcrete, world.EventsListener{
-			LoadChunk: func(pos world.ChunkPos) error {
-				return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
-			},
-			UnloadChunk: func(pos world.ChunkPos) error {
-				return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
-			},
-		}, a.packetMgr)
-		a.worldMgr = worldInterface
+		// Create World Manager (for chunk management)
+		if a.versionHandler != nil {
+			// Use mc-agent world with version handler for packet parsing
+			a.mcAgentWorld = mcworld.NewManager(a.versionHandler, mcworld.EventsListener{
+				LoadChunk: func(pos mcworld.ChunkPos) error {
+					return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
+				},
+				UnloadChunk: func(pos mcworld.ChunkPos) error {
+					return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
+				},
+			})
+			a.worldMgr = a.mcAgentWorld // mc-agent world implements models.World
+			log.Printf("[Agent %s] Using mc-agent world with version handler for %s", a.client.Name(), a.versionHandler.Version())
+		} else {
+			// Fall back to mc-bot-go world (constructor requires concrete Player)
+			worldInterface := world.NewWorld(botClient, playerConcrete, world.EventsListener{
+				LoadChunk: func(pos world.ChunkPos) error {
+					return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
+				},
+				UnloadChunk: func(pos world.ChunkPos) error {
+					return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
+				},
+			}, a.packetMgr)
+			a.worldMgr = worldInterface
+			log.Printf("[Agent %s] Using mc-bot-go world (no version handler)", a.client.Name())
+		}
 
 		// Create Screen Manager (for inventory/containers)
 		a.screenMgr = screen.NewManager(botClient, containerEvents{agent: a}, a.packetMgr)
 		log.Printf("[Agent %s] Screen manager initialized", a.client.Name())
 
 		a.initHeldSlotTracking()
+		a.initClientInformationHandler(customSettings)
 
 		var shapeMgr models.BlockShapeManager
 		var stateProps *pathfinding.StatePropertyLoader
@@ -390,6 +462,16 @@ func (a *agent) Init(ctx context.Context) error {
 		log.Printf("[Agent %s] Movement executor initialized (%s)", a.client.Name(), executorType.String())
 		a.shapeMgr = shapeMgr
 		a.stateProps = stateProps
+
+		// Wire up version handler to movement executor if available
+		if a.versionHandler != nil {
+			if movementHandlerSetter, ok := a.moveExec.(interface {
+				SetMovementHandler(common.MovementHandler)
+			}); ok {
+				movementHandlerSetter.SetMovementHandler(a.versionHandler.Play().Movement())
+				log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.client.Name(), a.versionHandler.Version())
+			}
+		}
 
 		if a.cfg.EnableClutchAssist {
 			if clutchSetter, ok := a.moveExec.(interface {
@@ -1002,6 +1084,122 @@ func (e configError) Error() string     { return string(e) }
 func ErrInvalidConfig(msg string) error { return configError(msg) }
 
 var ErrAlreadyInitialized = errors.New("agent: already initialized")
+
+// resolveVersionAndManagers handles version auto-detection and manager derivation.
+// It ensures all version-related configuration is consistent and complete.
+//
+// Resolution order:
+// 1. Auto-detect version from server if Config.Version is empty
+// 2. Resolve ProtocolVersion from Version if not specified
+// 3. Validate consistency between specified components
+// 4. Derive managers (PacketMgr, VersionHandler, etc.) if not provided
+//
+// Returns true if version was auto-detected from server (caller should create client).
+func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error) {
+	name := a.cfg.Name
+	if name == "" {
+		name = "Agent"
+	}
+
+	// Step 1: Auto-detect version from server if not specified
+	versionAutoDetected = false
+	if a.cfg.Version == "" {
+		if a.cfg.Address == "" {
+			return false, ErrInvalidConfig("cannot auto-detect version: Address not set")
+		}
+		detectedVersion, detectedProtocol, err := rof_utils.CheckServerVersion(a.cfg.Address, 0)
+		if err != nil {
+			return false, fmt.Errorf("auto-detect version from %s: %w", a.cfg.Address, err)
+		}
+		a.cfg.Version = detectedVersion
+		a.cfg.ProtocolVersion = detectedProtocol
+		versionAutoDetected = true
+		log.Printf("[%s] Auto-detected server version %s (protocol %d)", name, detectedVersion, detectedProtocol)
+	}
+
+	// Step 2: Resolve ProtocolVersion from Version if not specified
+	if a.cfg.ProtocolVersion == 0 {
+		if proto, ok := protocol_versions.VersionProtocol[a.cfg.Version]; ok {
+			a.cfg.ProtocolVersion = proto
+			log.Printf("[%s] Resolved protocol %d for version %s", name, proto, a.cfg.Version)
+		} else {
+			return false, ErrInvalidConfig(fmt.Sprintf("unknown version %q: cannot resolve protocol version", a.cfg.Version))
+		}
+	} else {
+		// Validate that specified ProtocolVersion matches Version
+		if expectedProto, ok := protocol_versions.VersionProtocol[a.cfg.Version]; ok {
+			if a.cfg.ProtocolVersion != expectedProto {
+				return false, ErrInvalidConfig(fmt.Sprintf(
+					"version/protocol mismatch: version %s expects protocol %d, but ProtocolVersion is %d",
+					a.cfg.Version, expectedProto, a.cfg.ProtocolVersion))
+			}
+		}
+	}
+
+	// Step 3: Validate VersionHandler consistency if provided
+	if a.cfg.VersionHandler != nil {
+		handlerVersion := a.cfg.VersionHandler.Version()
+		if handlerVersion != a.cfg.Version {
+			return false, ErrInvalidConfig(fmt.Sprintf(
+				"VersionHandler mismatch: handler is for %s, but Config.Version is %s",
+				handlerVersion, a.cfg.Version))
+		}
+		log.Printf("[%s] Using provided VersionHandler for %s", name, handlerVersion)
+	}
+
+	// Step 4: Derive PacketMgr if not provided
+	if a.cfg.PacketMgr == nil {
+		a.cfg.PacketMgr = protocol_versions.GetPacketMgrForVersion(a.cfg.Version)
+		if a.cfg.PacketMgr == nil {
+			return false, ErrInvalidConfig(fmt.Sprintf("no PacketMgr available for version %s", a.cfg.Version))
+		}
+		log.Printf("[%s] Derived PacketMgr for version %s", name, a.cfg.Version)
+	}
+	a.packetMgr = a.cfg.PacketMgr
+
+	// Step 5: Derive VersionHandler if not provided
+	if a.cfg.VersionHandler == nil {
+		vh, err := common.GetVersionHandler(a.cfg.Version)
+		if err != nil {
+			// VersionHandler is required unless a Client is already provided
+			// (for testing scenarios where mock clients don't need version-specific handling)
+			if a.cfg.Client == nil {
+				return false, fmt.Errorf("get VersionHandler for %s: %w", a.cfg.Version, err)
+			}
+			log.Printf("[%s] Warning: no VersionHandler for %s (using provided client without version-specific handling)", name, a.cfg.Version)
+		} else if vh == nil {
+			if a.cfg.Client == nil {
+				return false, ErrInvalidConfig(fmt.Sprintf(
+					"no VersionHandler available for version %s (supported: %v)",
+					a.cfg.Version, common.SupportedVersions()))
+			}
+			log.Printf("[%s] Warning: no VersionHandler for %s (using provided client without version-specific handling)", name, a.cfg.Version)
+		} else {
+			a.cfg.VersionHandler = vh
+			log.Printf("[%s] Derived VersionHandler for version %s", name, a.cfg.Version)
+		}
+	}
+	a.versionHandler = a.cfg.VersionHandler
+
+	// Step 6: Derive optional managers (SoundMgr, BlockMgr) - best effort
+	if a.cfg.SoundMgr == nil {
+		a.cfg.SoundMgr = protocol_versions.GetSoundMgrForVersion(a.cfg.Version)
+		if a.cfg.SoundMgr != nil {
+			log.Printf("[%s] Derived SoundMgr for version %s", name, a.cfg.Version)
+		}
+	}
+	a.soundMgr = a.cfg.SoundMgr
+
+	if a.cfg.BlockMgr == nil {
+		a.cfg.BlockMgr = protocol_versions.GetBlockMgrForVersion(a.cfg.Version)
+		if a.cfg.BlockMgr != nil {
+			log.Printf("[%s] Derived BlockMgr for version %s", name, a.cfg.Version)
+		}
+	}
+	a.blockMgr = a.cfg.BlockMgr
+
+	return versionAutoDetected, nil
+}
 
 // String returns a human-friendly description for logging.
 func (a *agent) String() string {

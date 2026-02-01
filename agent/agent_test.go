@@ -127,9 +127,10 @@ func (f *fakeClient) PushResourcePack(bot.ResourcePack)                         
 func (f *fakeClient) PopResourcePack(pk.UUID)                                         {}
 func (f *fakeClient) PopAllResourcePack()                                             {}
 func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack                   { return nil }
+func (f *fakeClient) SetVersionHandler(bot.VersionHandler)                            {}
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -161,7 +162,7 @@ func TestInitRegistersCoreHandlers(t *testing.T) {
 }
 
 func TestCleanupRemovedEntities(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

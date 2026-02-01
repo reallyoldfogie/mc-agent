@@ -2,11 +2,11 @@ package testing
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -15,12 +15,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-agent/models"
+	_ "github.com/reallyoldfogie/mc-agent/versions" // Import to register version handlers
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
@@ -34,11 +38,12 @@ import (
 // Framework orchestrates integration tests for Minecraft agents.
 // It manages server lifecycle, agent spawning, and test execution.
 type Framework struct {
-	serverMgr      testenv.Manager
-	instances      map[string]*TestInstance // keyed by test name
-	agentLogFile   *os.File                 // Log file for all agents
-	agentLogWriter io.Writer                // MultiWriter for agents (file + stdout)
-	logSetupMu     sync.Mutex               // Mutex for log setup
+	serverMgr        testenv.Manager
+	instances        map[string]*TestInstance // keyed by test name
+	agentLogFile     *os.File                 // Log file for all agents
+	agentLogWriter   io.Writer                // MultiWriter for agents (file + stdout)
+	agentLogFilename string                   // full path to log file
+	logSetupMu       sync.Mutex               // Mutex for log setup
 }
 
 // TestInstance represents a complete test environment with server and agents.
@@ -449,10 +454,16 @@ func (f *Framework) setupAgentLogging() error {
 
 	// Create log file with timestamp
 	logFile := fmt.Sprintf("%s/agents_%s.log", logsDir, time.Now().Format("20060102_150405"))
+	fullFileName, _ := filepath.Abs(logFile)
 	file, err := os.Create(logFile)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
 	}
+
+	// log before setting log.SetOutput, so the log file location is captured to the console.
+	log.Printf("Agent logging enabled: %s (%s)\n", logFile, fullFileName)
+
+	f.agentLogFilename = fullFileName
 
 	// Set global log output to file to avoid buffering logs in test output.
 	log.SetOutput(file)
@@ -462,8 +473,11 @@ func (f *Framework) setupAgentLogging() error {
 	f.agentLogFile = file
 	f.agentLogWriter = file
 
-	fmt.Printf("Agent logging enabled: %s\n", logFile)
 	return nil
+}
+
+func (f *Framework) GetAgentLogFilename() string {
+	return f.agentLogFilename
 }
 
 // CloseAgentLog closes the agent log file.
@@ -493,14 +507,17 @@ type AgentConfig struct {
 	ReplayOutput      string
 	SkinCacheDir      string
 	SkinNetEnabled    bool
-	HPADebugPathBlock string // Explicit block name to use (expects <color>_stained_glass)
-	HPADebugPathColor string // Color name to use when block is not specified
+	HPADebugPathBlock string                // Explicit block name to use (expects <color>_stained_glass)
+	HPADebugPathColor string                // Color name to use when block is not specified
+	VersionHandler common.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
+
+	EnableCamAgent bool // Whether to spawn a companion cam agent
 }
 
 // DefaultAgentConfig returns a sensible default configuration for test agents.
 func DefaultAgentConfig(name, serverAddress, version string) AgentConfig {
 	return AgentConfig{
-		Name:              name,
+		Name:              validateAgentName(name),
 		ServerAddress:     serverAddress,
 		Version:           version,
 		MCDataGenPath:     "", // Empty = use default (downloads if needed)
@@ -510,6 +527,7 @@ func DefaultAgentConfig(name, serverAddress, version string) AgentConfig {
 		SkinNetEnabled:    false,
 		HPADebugPathBlock: "",
 		HPADebugPathColor: "",
+		EnableCamAgent:    true,
 	}
 }
 
@@ -521,20 +539,29 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 	camCfg.EnableReplay = true
 	camCfg.ReplayOutput = camReplayOutput(cfg.ReplayOutput, camCfg.Name)
 
-	cam, err := f.spawnAgentInternal(ctx, inst, camCfg, false)
-	if err != nil {
-		return nil, fmt.Errorf("spawn cam agent %s: %w", camCfg.Name, err)
-	}
-
 	managed, err := f.spawnAgentInternal(ctx, inst, cfg, true)
 	if err != nil {
-		_ = cam.Stop(context.Background())
+		// _ = cam.Stop(context.Background())
 		return nil, err
 	}
-	managed.Cam = cam
+
+	if cfg.EnableCamAgent {
+		cam, err := f.spawnAgentInternal(ctx, inst, camCfg, false)
+		if err != nil {
+			return nil, fmt.Errorf("spawn cam agent %s: %w", camCfg.Name, err)
+		}
+		managed.Cam = cam
+	}
 	return managed, nil
 }
 
+func validateAgentName(name string) string {
+	const maxLen = 16
+	if len(name) > maxLen {
+		name = name[:maxLen]
+	}
+	return name
+}
 func camAgentName(base string) string {
 	const suffix = "Cam"
 	const maxLen = 16
@@ -599,6 +626,24 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	// Get sound manager for version
 	soundMgr := mc_versions.GetSoundMgrForVersion(mcVersion)
 
+	// Get version handler (either from config or auto-detect)
+	var versionHandler common.VersionHandler
+	if cfg.VersionHandler != nil {
+		versionHandler = cfg.VersionHandler
+		log.Printf("[%s] Using provided version handler for %s", cfg.Name, mcVersion)
+	} else {
+		// Auto-detect version handler (required)
+		vh, err := common.GetVersionHandler(mcVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get version handler for %s: %w", mcVersion, err)
+		}
+		if vh == nil {
+			return nil, fmt.Errorf("no version handler available for %s (supported: %v)", mcVersion, common.SupportedVersions())
+		}
+		versionHandler = vh
+		log.Printf("[%s] Auto-detected version handler for %s", cfg.Name, mcVersion)
+	}
+
 	// Create bot client (required for agent to actually connect)
 	botClient := bot.NewClient(packetMgr)
 	botClient.SetAuth(bot.Auth{
@@ -616,6 +661,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 
 	// Build agent configuration
 	agentCfg := agent.Config{
+		Name:              cfg.Name,
 		Address:           cfg.ServerAddress,
 		Version:           mcVersion,
 		ProtocolVersion:   protocolVersion,
@@ -623,7 +669,8 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		PacketMgr:         packetMgr,
 		BlockMgr:          blockMgr,
 		SoundMgr:          soundMgr,
-		Client:            botClient, // CRITICAL: Must provide client!
+		VersionHandler:    versionHandler, // Enable version-specific packet handling
+		Client:            botClient,      // CRITICAL: Must provide client!
 		MCDataGenPath:     cfg.MCDataGenPath,
 		MCProtocolGoPath:  cfg.MCProtocolGoPath,
 		RegistriesPath:    cfg.RegistriesPath, // Path to registries.json
@@ -748,26 +795,13 @@ func (ma *ManagedAgent) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Position represents a 3D position in the Minecraft world.
-type Position struct {
-	X, Y, Z float64
-}
-
-// Distance calculates Euclidean distance between two positions.
-func (p Position) Distance(other Position) float64 {
-	dx := p.X - other.X
-	dy := p.Y - other.Y
-	dz := p.Z - other.Z
-	return math.Sqrt(dx*dx + dy*dy + dz*dz)
-}
-
 // PositionTracker monitors agent positions using RCON queries.
 type PositionTracker struct {
 	inst         *TestInstance
 	pollInterval time.Duration
 	mu           sync.RWMutex
-	positions    map[string]Position   // keyed by agent name
-	history      map[string][]Position // position history for each agent
+	positions    map[string]models.V3   // keyed by agent name
+	history      map[string][]models.V3 // position history for each agent
 	stopCh       chan struct{}
 	doneCh       chan struct{}
 }
@@ -780,8 +814,8 @@ func NewPositionTracker(inst *TestInstance, pollInterval time.Duration) *Positio
 	return &PositionTracker{
 		inst:         inst,
 		pollInterval: pollInterval,
-		positions:    make(map[string]Position),
-		history:      make(map[string][]Position),
+		positions:    make(map[string]models.V3),
+		history:      make(map[string][]models.V3),
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
 	}
@@ -830,7 +864,7 @@ func (pt *PositionTracker) updatePositions(ctx context.Context) {
 			continue
 		}
 
-		pos := Position{X: x, Y: y, Z: z}
+		pos := models.V3{X: x, Y: y, Z: z}
 		pt.mu.Lock()
 		pt.positions[agent.Name] = pos
 		pt.history[agent.Name] = append(pt.history[agent.Name], pos)
@@ -839,7 +873,7 @@ func (pt *PositionTracker) updatePositions(ctx context.Context) {
 }
 
 // GetPosition returns the last known position of an agent.
-func (pt *PositionTracker) GetPosition(name string) (Position, bool) {
+func (pt *PositionTracker) GetPosition(name string) (models.V3, bool) {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
 	pos, ok := pt.positions[name]
@@ -847,7 +881,7 @@ func (pt *PositionTracker) GetPosition(name string) (Position, bool) {
 }
 
 // WaitForPosition waits until an agent reaches a target position within tolerance.
-func (pt *PositionTracker) WaitForPosition(ctx context.Context, name string, target Position, tolerance float64, timeout time.Duration) error {
+func (pt *PositionTracker) WaitForPosition(ctx context.Context, name string, target models.V3, tolerance float64, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -863,7 +897,7 @@ func (pt *PositionTracker) WaitForPosition(ctx context.Context, name string, tar
 			if !ok {
 				continue
 			}
-			if pos.Distance(target) <= tolerance {
+			if pos.DistanceTo(target) <= tolerance {
 				return nil
 			}
 		}
@@ -886,12 +920,12 @@ func CalculateMovementTimeout(distance float64) time.Duration {
 }
 
 // GetPositionHistory returns the position history for an agent.
-func (pt *PositionTracker) GetPositionHistory(name string) []Position {
+func (pt *PositionTracker) GetPositionHistory(name string) []models.V3 {
 	pt.mu.RLock()
 	defer pt.mu.RUnlock()
 	history := pt.history[name]
 	// Return a copy to prevent external modification
-	result := make([]Position, len(history))
+	result := make([]models.V3, len(history))
 	copy(result, history)
 	return result
 }
@@ -901,7 +935,7 @@ func (pt *PositionTracker) GetPositionHistory(name string) []Position {
 // - totalDistance: total distance traveled
 // - progressToward: net progress toward target (can be negative if moved away)
 // - madeProgress: true if agent moved meaningfully toward target
-func (pt *PositionTracker) AnalyzeMovementProgress(name string, start, target Position, minProgress float64) (totalDistance, progressToward float64, madeProgress bool) {
+func (pt *PositionTracker) AnalyzeMovementProgress(name string, start, target models.V3, minProgress float64) (totalDistance, progressToward float64, madeProgress bool) {
 	history := pt.GetPositionHistory(name)
 	if len(history) == 0 {
 		return 0, 0, false
@@ -909,13 +943,13 @@ func (pt *PositionTracker) AnalyzeMovementProgress(name string, start, target Po
 
 	// Calculate total distance traveled
 	for i := 1; i < len(history); i++ {
-		totalDistance += history[i-1].Distance(history[i])
+		totalDistance += history[i-1].DistanceTo(history[i])
 	}
 
 	// Calculate net progress toward target
-	startDist := start.Distance(target)
+	startDist := start.DistanceTo(target)
 	finalPos := history[len(history)-1]
-	finalDist := finalPos.Distance(target)
+	finalDist := finalPos.DistanceTo(target)
 	progressToward = startDist - finalDist
 
 	// Agent made progress if it moved at least minProgress blocks toward target
@@ -944,14 +978,25 @@ func (f *Framework) captureServerLogs(ctx context.Context, inst *testenv.Instanc
 		ShowStderr: true,
 		Follow:     false,
 		Timestamps: true,
-		Tail:       "1000",
+		// Tail:       "1000",
 	}
 
-	reader, err := f.serverMgr.Logs(ctx, inst.ID, opts)
+	containerReader, err := f.serverMgr.Logs(ctx, inst.ID, opts)
 	if err != nil {
 		return fmt.Errorf("fetch logs: %w", err)
 	}
-	defer reader.Close()
+	defer containerReader.Close()
+
+	// containerReader is a multiplexed stream, we need to seperate and remerge the stream to remove multiplexing metadata
+	var reader io.Reader
+	mergedStdErr := &bytes.Buffer{}
+
+	_, err = stdcopy.StdCopy(mergedStdErr, mergedStdErr, containerReader)
+	if err != nil {
+		reader = containerReader
+	} else {
+		reader = mergedStdErr
+	}
 
 	// Write logs to file
 	outFile, err := createFile(logFile)
@@ -964,39 +1009,40 @@ func (f *Framework) captureServerLogs(ctx context.Context, inst *testenv.Instanc
 		return fmt.Errorf("write logs: %w", err)
 	}
 
-	fmt.Printf("Server logs saved to: %s\n", logFile)
+	absLogFile, _ := filepath.Abs(logFile)
+	fmt.Printf("Server logs saved to: %s (%s)\n", logFile, absLogFile)
 	return nil
 }
 
 // captureAgentOutput captures agent output to a file for offline review.
-func (f *Framework) captureAgentOutput(agent *ManagedAgent, output string) error {
-	if agent == nil || output == "" {
-		return nil
-	}
+// func (f *Framework) captureAgentOutput(agent *ManagedAgent, output string) error {
+// 	if agent == nil || output == "" {
+// 		return nil
+// 	}
 
-	// Create logs directory if it doesn't exist
-	logsDir := "./logs/agents"
-	if err := ensureDir(logsDir); err != nil {
-		return fmt.Errorf("create logs directory: %w", err)
-	}
+// 	// Create logs directory if it doesn't exist
+// 	logsDir := "./logs/agents"
+// 	if err := ensureDir(logsDir); err != nil {
+// 		return fmt.Errorf("create logs directory: %w", err)
+// 	}
 
-	// Generate log filename with timestamp and agent name
-	logFile := fmt.Sprintf("%s/%s_%s.log", logsDir, agent.Name, time.Now().Format("20060102_150405"))
+// 	// Generate log filename with timestamp and agent name
+// 	logFile := fmt.Sprintf("%s/%s_%s.log", logsDir, agent.Name, time.Now().Format("20060102_150405"))
 
-	// Write output to file
-	outFile, err := createFile(logFile)
-	if err != nil {
-		return fmt.Errorf("create log file: %w", err)
-	}
-	defer outFile.Close()
+// 	// Write output to file
+// 	outFile, err := createFile(logFile)
+// 	if err != nil {
+// 		return fmt.Errorf("create log file: %w", err)
+// 	}
+// 	defer outFile.Close()
 
-	if _, err := outFile.WriteString(output); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
+// 	if _, err := outFile.WriteString(output); err != nil {
+// 		return fmt.Errorf("write output: %w", err)
+// 	}
 
-	fmt.Printf("Agent output saved to: %s\n", logFile)
-	return nil
-}
+// 	fmt.Printf("Agent output saved to: %s\n", logFile)
+// 	return nil
+// }
 
 // Helper functions
 
@@ -1015,7 +1061,8 @@ func copyWithTimeout(dst io.Writer, src io.Reader, timeout time.Duration) (int64
 	}
 	ch := make(chan result, 1)
 	go func() {
-		n, err := io.Copy(dst, src)
+		// use our own copy to filter out control characters (for some reason the server logs have a bunch of control characters in them)
+		n, err := copyFileStreaming(dst, src)
 		ch <- result{n, err}
 	}()
 
@@ -1025,6 +1072,44 @@ func copyWithTimeout(dst io.Writer, src io.Reader, timeout time.Duration) (int64
 	case <-time.After(timeout):
 		return 0, fmt.Errorf("copy timeout after %v", timeout)
 	}
+}
+
+// cleanControlChars filters out all non-printable Unicode characters from a string.
+func cleanControlChars(input string) string {
+	return strings.Map(func(r rune) rune {
+		// unicode.IsPrint returns true if the rune is a printable character
+		// (letters, numbers, punctuation, symbols, and spaces).
+		if unicode.IsPrint(r) {
+			return r
+		}
+
+		// replace with a space.  We could also return -1 to drop the rune completely
+		return ' '
+	}, input)
+}
+
+func copyFileStreaming(dst io.Writer, src io.Reader) (int64, error) {
+	var n int64
+
+	writer := bufio.NewWriter(dst)
+	defer writer.Flush() // Ensure all buffered writes are committed
+
+	scanner := bufio.NewScanner(src)
+	for scanner.Scan() {
+		line := scanner.Text()
+		cleanedLine := cleanControlChars(line)
+		nn, err := writer.WriteString(cleanedLine + "\n") // Add newline back if needed
+		if err != nil {
+			return n, fmt.Errorf("failed to write line to destination file: %w", err)
+		}
+		n += int64(nn)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return n, fmt.Errorf("error reading from source file: %w", err)
+	}
+
+	return n, nil
 }
 
 // Memory checking functions

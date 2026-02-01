@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"math"
 	"strings"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // SpawnValidator checks if multi-agent spawn locations are mutually reachable.
 // Agents spawning in caves, on different elevation levels, or separated by terrain
 // are marked as unreachable and cause test validation to fail.
 type SpawnValidator struct {
-	positions map[string]Position
+	positions map[string]models.V3
 	reachable map[string]map[string]bool // name -> name -> reachable
 }
 
@@ -20,7 +22,7 @@ type ValidationReport struct {
 	AllReachable       bool
 	TotalAgents        int
 	UnreachablePairs   []UnreachablePair
-	Positions          map[string]Position
+	Positions          map[string]models.V3
 	ReachabilityMatrix map[string]map[string]bool
 }
 
@@ -33,13 +35,13 @@ type UnreachablePair struct {
 // NewSpawnValidator creates a new spawn validator.
 func NewSpawnValidator() *SpawnValidator {
 	return &SpawnValidator{
-		positions: make(map[string]Position),
+		positions: make(map[string]models.V3),
 		reachable: make(map[string]map[string]bool),
 	}
 }
 
 // RecordPosition stores an agent's spawn position.
-func (sv *SpawnValidator) RecordPosition(name string, pos Position) {
+func (sv *SpawnValidator) RecordPosition(name string, pos models.V3) {
 	sv.positions[name] = pos
 	if sv.reachable[name] == nil {
 		sv.reachable[name] = make(map[string]bool)
@@ -91,7 +93,7 @@ func (sv *SpawnValidator) Validate(ctx context.Context) *ValidationReport {
 
 // checkReachable determines if two positions are reachable from each other.
 // Returns (reachable, reason).
-func (sv *SpawnValidator) checkReachable(posA, posB Position) (bool, string) {
+func (sv *SpawnValidator) checkReachable(posA, posB models.V3) (bool, string) {
 	// Check horizontal distance
 	hDist := math.Sqrt((posA.X-posB.X)*(posA.X-posB.X) + (posA.Z-posB.Z)*(posA.Z-posB.Z))
 	if hDist > 256 { // Max practical walking distance for a test

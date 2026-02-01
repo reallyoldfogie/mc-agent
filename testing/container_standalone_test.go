@@ -37,23 +37,23 @@ type StandaloneTestEnv struct {
 }
 
 // setupStandaloneTest creates a fresh server and agent for a single test (survival mode)
-func setupStandaloneTest(t *testing.T, testName string) *StandaloneTestEnv {
-	return setupStandaloneTestWithMode(t, testName, "survival")
+func setupStandaloneTest(t *testing.T, testName string, mcVersion string) *StandaloneTestEnv {
+	return setupStandaloneTestWithMode(t, testName, "survival", mcVersion)
 }
 
 // setupStandaloneTestForEntity creates a fresh server and agent for entity container tests
 // Unlike setupStandaloneTest, this does NOT place a block - entities are spawned by the test
-func setupStandaloneTestForEntity(t *testing.T, testName string) *StandaloneTestEnv {
-	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, "survival", false)
+func setupStandaloneTestForEntity(t *testing.T, testName string, mcVersion string) *StandaloneTestEnv {
+	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, "survival", false, mcVersion)
 }
 
 // setupStandaloneTestWithMode creates a fresh server and agent with specified game mode
-func setupStandaloneTestWithMode(t *testing.T, testName string, gameMode GameMode) *StandaloneTestEnv {
-	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, gameMode, true)
+func setupStandaloneTestWithMode(t *testing.T, testName string, gameMode GameMode, mcVersion string) *StandaloneTestEnv {
+	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, gameMode, true, mcVersion)
 }
 
 // setupStandaloneTestWithModeAndBlockPlacement creates a fresh server and agent with specified game mode and optional block placement
-func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string, gameMode GameMode, placeBlock bool) *StandaloneTestEnv {
+func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string, gameMode GameMode, placeBlock bool, mcVersion string) *StandaloneTestEnv {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 	// Get working directory
@@ -69,24 +69,11 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	serverCfg := DefaultServerConfig()
 	serverCfg.Memory = "1024M"
 	serverCfg.MinFreeMemoryMB = 512
-	serverCfg.Version = "1.21.5"
+	serverCfg.Version = mcVersion
 	serverCfg.GameMode = gameMode
 	serverCfg.PullImage = false
-	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", testName, "1.21.5")
+	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", testName, mcVersion)
 	RequireIntegrationEnv(t, serverCfg)
-
-	// NOTE: ALLOW_FLIGHT is no longer needed - agent now sends continuous position packets (20 TPS)
-	// during container operations to satisfy server validation requirements (Minecraft 1.21.5+)
-	// Keeping this commented out for reference:
-	// serverCfg.ExtraEnv = map[string]string{
-	// 	"ALLOW_FLIGHT": "TRUE",
-	// }
-
-	// Load container type registry from Minecraft data
-	registryPath := filepath.Join(cwd, "data", "download-cache", serverCfg.Version)
-	if err := mcscreen.LoadContainerTypesFromRegistry(registryPath); err != nil {
-		t.Logf("Warning: failed to load container registry from %s: %v (using hardcoded values)", registryPath, err)
-	}
 
 	// Optionally copy protocol dumper mod for packet debugging
 	// Set ENABLE_PROTOCOL_DUMPER=1 to enable
@@ -119,10 +106,13 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	addr := fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort)
 	botName := "StandaloneBot" // Must be <= 16 chars
 	agentCfg := AgentConfig{
-		Name:          botName,
-		ServerAddress: addr,
-		Version:       serverCfg.Version,
+		Name:           botName,
+		ServerAddress:  addr,
+		Version:        serverCfg.Version,
+		EnableCamAgent: false, // temporarily disable to simplify logging
 	}
+
+	// Version handler is auto-detected by the framework
 
 	agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 	require.NoError(t, err, "spawn agent")
@@ -131,6 +121,13 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 			_ = agent.BotClient().Close()
 		}
 	})
+
+	// Load container type registry from Minecraft data
+	// Must be done after agent is created, as the agent is what downloads the data
+	registryPath := filepath.Join(cwd, "data", "download-cache", serverCfg.Version)
+	if err := mcscreen.LoadContainerTypesFromRegistry(registryPath); err != nil {
+		t.Logf("Warning: failed to load container registry from %s: %v (using hardcoded values)", registryPath, err)
+	}
 
 	// Get components
 	screenMgr := agent.ScreenManager()
@@ -154,6 +151,10 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 
 	// Create container helpers
 	itemUsage := items.NewItemUsage(botClient.Conn(), agent.Config.PacketMgr)
+	// Set version-specific container handler
+	if agent.Config.VersionHandler != nil {
+		itemUsage.SetContainerHandler(agent.Config.VersionHandler.Play().Containers())
+	}
 	invMgr := items.NewInventoryManager(screenMgr)
 	invMgr.SetWaitForUpdates(false)
 	containerHelper := items.NewContainerHelper(itemUsage, invMgr, screenMgr, botClient, agent.Config.PacketMgr)
@@ -173,12 +174,6 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 		t.Logf("spawn point: %+v", spawnPoint)
 		t.Logf("calculated container block coords: X=%d Y=%d Z=%d", containerX, containerY, containerZ)
 
-		cmd := fmt.Sprintf("setblock %d %d %d minecraft:%s", containerX, containerY, containerZ, containerBlockType)
-		resp, err := inst.RCON.Exec(ctx, cmd)
-		require.NoError(t, err, "place %s", containerName)
-		t.Logf("setblock response: %s", resp)
-		t.Logf("placed %s at (%d, %d, %d)", containerName, containerX, containerY, containerZ)
-
 		// Ensure stable footing and clear line of sight to avoid "flying" kicks in survival.
 		platformY := containerY - 1
 		fillX1, fillX2 := containerX-3, containerX+3
@@ -196,6 +191,12 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 			fillX1, containerY, fillZ1, fillX2, airTopY, fillZ2,
 		))
 		require.NoError(t, err, "clear space around container")
+
+		// cmd := fmt.Sprintf("setblock %d %d %d minecraft:%s", containerX, containerY, containerZ, containerBlockType)
+		// resp, err := inst.RCON.Exec(ctx, cmd)
+		// require.NoError(t, err, "place %s", containerName)
+		// t.Logf("setblock response: %s", resp)
+		// t.Logf("placed %s at (%d, %d, %d)", containerName, containerX, containerY, containerZ)
 
 		_, err = PlaceBlockAndWait(ctx, inst.RCON, agent, models.V3{
 			X: float64(containerX),
@@ -315,132 +316,148 @@ func getContainerBlockType(testName string) string {
 
 // TestChest_Standalone runs the chest test with its own server
 func TestChest_Standalone(t *testing.T) {
-	env := setupStandaloneTest(t, "chest")
-	defer env.Cancel()
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "chest", tt.mcVersion)
+			defer env.Cancel()
 
-	// Teleport near chest
-	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
-	_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+			// Teleport near chest
+			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
+			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+			require.NoError(t, err)
+			time.Sleep(500 * time.Millisecond)
 
-	// Open chest using agent (handles rotation and continuous position packets automatically)
-	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
-	require.NoError(t, err, "open chest")
-	t.Logf("chest opened with window ID: %d", windowID)
+			// Open chest using agent (handles rotation and continuous position packets automatically)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
+			require.NoError(t, err, "open chest")
+			t.Logf("chest opened with window ID: %d", windowID)
 
-	// Verify it's a chest
-	screen, ok := env.ScreenMgr.Screens()[int(windowID)]
-	require.True(t, ok, "chest window should exist")
+			// Verify it's a chest
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, "chest window should exist")
 
-	chest, ok := screen.(*mcscreen.Chest)
-	require.True(t, ok, "screen should be a Chest")
-	require.Equal(t, 3, chest.Rows, "should be single chest (3 rows)")
+			chest, ok := screen.(*mcscreen.Chest)
+			require.True(t, ok, "screen should be a Chest")
+			require.Equal(t, 3, chest.Rows, "should be single chest (3 rows)")
 
-	// Close chest using agent
-	err = env.Agent.Agent.CloseContainer()
-	require.NoError(t, err, "close chest")
+			// Close chest using agent
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, "close chest")
 
-	t.Log("✓ Chest standalone test passed")
+			t.Log("✓ Chest standalone test passed")
+		})
+	}
 }
 
 // TestBarrel_Standalone runs the barrel test with its own server
 func TestBarrel_Standalone(t *testing.T) {
-	env := setupStandaloneTest(t, "barrel")
-	defer env.Cancel()
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "barrel", tt.mcVersion)
+			defer env.Cancel()
 
-	// Teleport near barrel
-	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
-	_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+			// Teleport near barrel
+			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
+			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+			require.NoError(t, err)
+			time.Sleep(500 * time.Millisecond)
 
-	// Open barrel using agent (handles rotation and continuous position packets automatically)
-	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
-	require.NoError(t, err, "open barrel")
-	t.Logf("barrel opened with window ID: %d", windowID)
+			// Open barrel using agent (handles rotation and continuous position packets automatically)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
+			require.NoError(t, err, "open barrel")
+			t.Logf("barrel opened with window ID: %d", windowID)
 
-	// Verify it's a chest-type container (barrels use same type as chests)
-	screen, ok := env.ScreenMgr.Screens()[int(windowID)]
-	require.True(t, ok, "barrel window should exist")
+			// Verify it's a chest-type container (barrels use same type as chests)
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, "barrel window should exist")
 
-	chest, ok := screen.(*mcscreen.Chest)
-	require.True(t, ok, "barrel should use Chest container type")
-	require.Equal(t, 63, len(chest.Slots), "barrel should have 63 total slots")
+			chest, ok := screen.(*mcscreen.Chest)
+			require.True(t, ok, "barrel should use Chest container type")
+			require.Equal(t, 63, len(chest.Slots), "barrel should have 63 total slots")
 
-	// Close barrel using agent
-	err = env.Agent.Agent.CloseContainer()
-	require.NoError(t, err, "close barrel")
+			// Close barrel using agent
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, "close barrel")
 
-	t.Log("✓ Barrel standalone test passed")
+			t.Log("✓ Barrel standalone test passed")
+		})
+	}
 }
 
 // TestFurnace_Standalone runs the furnace test with its own server
 func TestFurnace_Standalone(t *testing.T) {
-	env := setupStandaloneTest(t, "furnace")
-	defer env.Cancel()
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "furnace", tt.mcVersion)
+			defer env.Cancel()
 
-	// Teleport near furnace
-	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
-	_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+			// Teleport near furnace
+			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
+			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+			require.NoError(t, err)
+			time.Sleep(500 * time.Millisecond)
 
-	// Open furnace using agent (handles rotation and continuous position packets automatically)
-	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
-	require.NoError(t, err, "open furnace")
-	t.Logf("furnace opened with window ID: %d", windowID)
+			// Open furnace using agent (handles rotation and continuous position packets automatically)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+			require.NoError(t, err, "open furnace")
+			t.Logf("furnace opened with window ID: %d", windowID)
 
-	// Verify it's a GenericContainer (type 14)
-	screen, ok := env.ScreenMgr.Screens()[int(windowID)]
-	require.True(t, ok, "furnace window should exist")
+			// Verify it's a GenericContainer (type 14)
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, "furnace window should exist")
 
-	genericContainer, ok := screen.(*mcscreen.GenericContainer)
-	require.True(t, ok, "furnace should be a GenericContainer")
-	require.Equal(t, int32(14), genericContainer.Type, "should be type 14 (furnace)")
-	require.Equal(t, 3, genericContainer.ContainerSlots, "furnace should have 3 container slots")
+			genericContainer, ok := screen.(*mcscreen.GenericContainer)
+			require.True(t, ok, "furnace should be a GenericContainer")
+			require.Equal(t, int32(14), genericContainer.Type, "should be type 14 (furnace)")
+			require.Equal(t, 3, genericContainer.ContainerSlots, "furnace should have 3 container slots")
 
-	// Close furnace using agent
-	err = env.Agent.Agent.CloseContainer()
-	require.NoError(t, err, "close furnace")
+			// Close furnace using agent
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, "close furnace")
 
-	t.Log("✓ Furnace standalone test passed")
+			t.Log("✓ Furnace standalone test passed")
+		})
+	}
 }
 
 // TestShulkerBox_Standalone runs the shulker box test with its own server
 func TestShulkerBox_Standalone(t *testing.T) {
-	env := setupStandaloneTest(t, "shulker_box")
-	defer env.Cancel()
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "shulker_box", tt.mcVersion)
+			defer env.Cancel()
 
-	// Teleport near shulker box
-	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
-	_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-	require.NoError(t, err)
-	time.Sleep(500 * time.Millisecond)
+			// Teleport near shulker box
+			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
+			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+			require.NoError(t, err)
+			time.Sleep(500 * time.Millisecond)
 
-	cmd = fmt.Sprintf("data get block %.1f %.1f %.1f", env.ContainerPos.X, env.ContainerPos.Y, env.ContainerPos.Z)
-	resp, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-	require.NoError(t, err)
-	t.Logf("shulker box block data: %s", resp)
+			cmd = fmt.Sprintf("data get block %.1f %.1f %.1f", env.ContainerPos.X, env.ContainerPos.Y, env.ContainerPos.Z)
+			resp, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+			require.NoError(t, err)
+			t.Logf("shulker box block data: %s", resp)
 
-	// Open shulker box using agent (handles rotation and continuous position packets automatically)
-	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceUp, 5*time.Second)
-	require.NoError(t, err, "open shulker box")
-	t.Logf("shulker box opened with window ID: %d", windowID)
+			// Open shulker box using agent (handles rotation and continuous position packets automatically)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceUp, 5*time.Second)
+			require.NoError(t, err, "open shulker box")
+			t.Logf("shulker box opened with window ID: %d", windowID)
 
-	// Verify it's a GenericContainer (type 20)
-	screen, ok := env.ScreenMgr.Screens()[int(windowID)]
-	require.True(t, ok, "shulker box window should exist")
+			// Verify it's a GenericContainer (type 20)
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, "shulker box window should exist")
 
-	genericContainer, ok := screen.(*mcscreen.GenericContainer)
-	require.True(t, ok, "shulker box should be a GenericContainer")
-	require.Equal(t, int32(20), genericContainer.Type, "should be type 20 (shulker_box)")
-	require.Equal(t, 63, len(genericContainer.Slots), "shulker box should have 63 total slots")
-	require.Equal(t, 27, genericContainer.ContainerSlots, "shulker box should have 27 container slots")
+			genericContainer, ok := screen.(*mcscreen.GenericContainer)
+			require.True(t, ok, "shulker box should be a GenericContainer")
+			require.Equal(t, int32(20), genericContainer.Type, "should be type 20 (shulker_box)")
+			require.Equal(t, 63, len(genericContainer.Slots), "shulker box should have 63 total slots")
+			require.Equal(t, 27, genericContainer.ContainerSlots, "shulker box should have 27 container slots")
 
-	// Close shulker box using agent
-	err = env.Agent.Agent.CloseContainer()
-	require.NoError(t, err, "close shulker box")
+			// Close shulker box using agent
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, "close shulker box")
 
-	t.Log("✓ Shulker box standalone test passed")
+			t.Log("✓ Shulker box standalone test passed")
+		})
+	}
 }

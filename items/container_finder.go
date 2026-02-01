@@ -49,7 +49,9 @@ func (cf *ContainerFinder) FindContainersNearby(center models.V3, radius int) []
 
 				// Get block at this position
 				blockStateID, loaded := cf.world.GetBlockAt(float64(x), float64(y), float64(z))
-				if !loaded { continue }
+				if !loaded {
+					continue
+				}
 				if blockStateID == 0 {
 					continue // Air block or unloaded chunk
 				}

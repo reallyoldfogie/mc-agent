@@ -1,6 +1,5 @@
 package testing
 
-
 // BlockRegistry provides block state ID lookup for world building
 // This is a simplified interface - real implementation would use mc-protocol-go BlockManager
 type BlockRegistry interface {
@@ -12,7 +11,6 @@ type WorldBuilder struct {
 	world         *MockWorld
 	blockRegistry BlockRegistry
 }
-
 
 // NewWorldBuilder creates a new world builder
 // If blockRegistry is nil, you must use SetBlockDirect() with state IDs

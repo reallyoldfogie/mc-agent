@@ -69,7 +69,7 @@ func (a *agent) GetCursor() Slot {
 // GetWorld returns the world manager for block queries and pathfinding.
 // Returns nil if the world is not initialized.
 // Implements WorldOperations interface.
-func (a *agent) GetWorld() World {
+func (a *agent) GetWorld() models.World {
 	a.mu.Lock()
 	wm := a.worldMgr
 	a.mu.Unlock()

@@ -83,7 +83,7 @@ func buildUpdateRecipesPacket() pk.Packet {
 }
 
 func TestOnUpdateRecipes_ParsesAndStores(t *testing.T) {
-	a, err := agentpkg.New(agentpkg.Config{Address: "test"})
+	a, err := agentpkg.New(agentpkg.Config{Version: "1.21.5", Address: "test"})
 	require.NoError(t, err)
 	pkt := buildUpdateRecipesPacket()
 	require.NoError(t, a.ParseUpdateRecipesPacket(pkt))
@@ -128,7 +128,7 @@ func TestOnUpdateRecipes_ParsesAndStores(t *testing.T) {
 }
 
 func TestExportLastUpdateRecipesAsJSON(t *testing.T) {
-	a, err := agentpkg.New(agentpkg.Config{Address: "test"})
+	a, err := agentpkg.New(agentpkg.Config{Version: "1.21.5", Address: "test"})
 	require.NoError(t, err)
 	pkt := buildUpdateRecipesPacket()
 	require.NoError(t, a.ParseUpdateRecipesPacket(pkt))

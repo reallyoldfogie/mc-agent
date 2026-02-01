@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 )
 
@@ -12,7 +13,7 @@ import (
 type CourseSegment interface {
 	// Build the segment at origin, return start/goal positions
 	Build(ctx context.Context, rcon testenv.RCONHelper,
-		origin Position, orientation Orientation) (start, goal Position, err error)
+		origin models.V3, orientation Orientation) (start, goal models.V3, err error)
 
 	// GetExpectedTelemetry returns expected movement characteristics
 	GetExpectedTelemetry() TelemetryExpectations
@@ -37,7 +38,7 @@ type LadderAscent struct {
 
 // Build constructs a ladder ascent segment
 func (la *LadderAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -49,23 +50,23 @@ func (la *LadderAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 
 	// Build start platform (3x3 at start center, ground level)
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, int(origin.Y), startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build ladder tower FIRST (ladder at origin, wall one block in direction)
 	// This places wall at origin+dx which would block path to goal
 	if err := BuildLadder(ctx, rcon, int(origin.X), int(origin.Z), int(origin.Y), int(origin.Y)+la.Height, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build goal platform AFTER ladder so it overwrites the wall at the top level,
 	// creating a passage for the agent to walk from ladder to goal
 	if err := BuildPlatform(ctx, rcon, goalCenterX-1, goalY, goalCenterZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalCenterX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalCenterZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalCenterX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalCenterZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -91,7 +92,7 @@ type LadderDescent struct {
 
 // Build constructs a ladder descent segment
 func (ld *LadderDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -105,22 +106,22 @@ func (ld *LadderDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 
 	// Build goal platform at bottom first (no conflict with wall)
 	if err := BuildPlatform(ctx, rcon, goalCenterX-1, int(origin.Y), goalCenterZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build ladder tower (wall at origin+dx blocks path from start to ladder)
 	if err := BuildLadder(ctx, rcon, int(origin.X), int(origin.Z), int(origin.Y), startY, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build start platform AFTER ladder so it overwrites the wall at the top level,
 	// creating a passage for the agent to walk from start to ladder
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, startY, startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalCenterX) + 0.5, Y: origin.Y + 1, Z: float64(goalCenterZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalCenterX) + 0.5, Y: origin.Y + 1, Z: float64(goalCenterZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -146,7 +147,7 @@ type StairAscent struct {
 
 // Build constructs a stair ascent segment
 func (sa *StairAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -155,7 +156,7 @@ func (sa *StairAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 
 	// Build start platform (3x3 centered at start center)
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, int(origin.Y), startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build stairs starting at origin (directly adjacent to platform edge)
@@ -164,7 +165,7 @@ func (sa *StairAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	stairStartZ := int(origin.Z)
 	stairBaseY := int(origin.Y) + 1
 	if err := BuildStairs(ctx, rcon, stairStartX, stairBaseY, stairStartZ, sa.Steps, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build goal platform at top (directly after the last stair)
@@ -172,11 +173,11 @@ func (sa *StairAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	goalZ := int(origin.Z) + dz*(sa.Steps+1)
 	goalY := stairBaseY + sa.Steps - 1
 	if err := BuildPlatform(ctx, rcon, goalX-1, goalY, goalZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -202,7 +203,7 @@ type StairDescent struct {
 
 // Build constructs a stair descent segment
 func (sd *StairDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -212,7 +213,7 @@ func (sd *StairDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	// Start platform is elevated
 	startY := int(origin.Y) + sd.Steps
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, startY, startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build descending stairs starting at origin (directly adjacent to platform edge)
@@ -220,7 +221,7 @@ func (sd *StairDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	stairStartZ := int(origin.Z)
 	stairTopY := startY + 1
 	if err := BuildStairsDescending(ctx, rcon, stairStartX, stairTopY, stairStartZ, sd.Steps, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Goal platform at bottom (directly after the last stair)
@@ -228,11 +229,11 @@ func (sd *StairDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	goalZ := int(origin.Z) + dz*(sd.Steps+1)
 	goalY := int(origin.Y) + 1
 	if err := BuildPlatform(ctx, rcon, goalX-1, goalY, goalZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -258,7 +259,7 @@ type BlockStepAscent struct {
 
 // Build constructs a block step ascent segment
 func (bs *BlockStepAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -267,7 +268,7 @@ func (bs *BlockStepAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 
 	// Build start platform
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, int(origin.Y), startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build full block steps starting after the platform
@@ -275,7 +276,7 @@ func (bs *BlockStepAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	stepStartX := int(origin.X)
 	stepStartZ := int(origin.Z)
 	if err := BuildBlockSteps(ctx, rcon, stepStartX, int(origin.Y), stepStartZ, bs.Steps, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build goal platform beyond the last step (no overlap)
@@ -284,11 +285,11 @@ func (bs *BlockStepAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	goalZ := int(origin.Z) + dz*(bs.Steps+2)
 	goalY := int(origin.Y) + bs.Steps
 	if err := BuildPlatform(ctx, rcon, goalX-1, goalY, goalZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -314,7 +315,7 @@ type BlockStepDescent struct {
 
 // Build constructs a block step descent segment
 func (bs *BlockStepDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -324,7 +325,7 @@ func (bs *BlockStepDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	// Start platform is elevated
 	startY := int(origin.Y) + bs.Steps
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, startY, startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build block steps from high to low, starting adjacent to the platform
@@ -332,7 +333,7 @@ func (bs *BlockStepDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	stepStartX := int(origin.X)
 	stepStartZ := int(origin.Z)
 	if err := BuildBlockStepsDescending(ctx, rcon, stepStartX, startY, stepStartZ, bs.Steps, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Goal platform at bottom, beyond the last step (no overlap)
@@ -340,11 +341,11 @@ func (bs *BlockStepDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	goalX := int(origin.X) + dx*(bs.Steps+2)
 	goalZ := int(origin.Z) + dz*(bs.Steps+2)
 	if err := BuildPlatform(ctx, rcon, goalX-1, int(origin.Y), goalZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalX) + 0.5, Y: origin.Y + 1, Z: float64(goalZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalX) + 0.5, Y: origin.Y + 1, Z: float64(goalZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -370,7 +371,7 @@ type VineAscent struct {
 
 // Build constructs a vine ascent segment
 func (va *VineAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -388,12 +389,12 @@ func (va *VineAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	startCenterX := int(origin.X) - dx*2
 	startCenterZ := int(origin.Z) - dz*2
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, int(origin.Y), startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build vines (pillar will be placed at origin by BuildVine)
 	if err := BuildVine(ctx, rcon, vineX, vineZ, int(origin.Y), int(origin.Y)+va.Height, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Goal platform 3 blocks in movement direction (so 3x3 doesn't overlap vines at origin + dx/dz)
@@ -401,7 +402,7 @@ func (va *VineAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	// goalCenterZ := int(origin.Z) + dz*3
 	// goalY := int(origin.Y) + va.Height
 	// if err := BuildPlatform(ctx, rcon, goalCenterX-1, goalY, goalCenterZ-1, 3, 3, "stone"); err != nil {
-	// 	return Position{}, Position{}, err
+	// 	return models.V3{}, models.V3{}, err
 	// }
 
 	// Goal platform 3 blocks on opposite side of pillar from vines (so 3x3 doesn't overlap vines at origin + dx/dz)
@@ -409,11 +410,11 @@ func (va *VineAscent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	goalCenterZ := int(origin.Z) + (-1 * dz * 2)
 	goalY := int(origin.Y) + va.Height
 	if err := BuildPlatform(ctx, rcon, goalCenterX-1, goalY, goalCenterZ-1, 5, 5, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalCenterX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalCenterZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: origin.Y + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalCenterX) + 0.5, Y: float64(goalY) + 1, Z: float64(goalCenterZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -439,7 +440,7 @@ type VineDescent struct {
 
 // Build constructs a vine descent segment
 func (vd *VineDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	dx, dz := orientationVector(orientation)
 
@@ -458,23 +459,23 @@ func (vd *VineDescent) Build(ctx context.Context, rcon testenv.RCONHelper,
 	startCenterZ := int(origin.Z) - dz*2
 	startY := int(origin.Y) + vd.Height
 	if err := BuildPlatform(ctx, rcon, startCenterX-1, startY, startCenterZ-1, 3, 3, "blackstone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Build vines (pillar will be placed at origin by BuildVine)
 	if err := BuildVine(ctx, rcon, vineX, vineZ, int(origin.Y), int(origin.Y)+vd.Height, orientation); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
 	// Goal platform 3 blocks in movement direction (so 3x3 doesn't overlap vines at origin + dx/dz)
 	goalCenterX := int(origin.X) + dx*3
 	goalCenterZ := int(origin.Z) + dz*3
 	if err := BuildPlatform(ctx, rcon, goalCenterX-1, int(origin.Y), goalCenterZ-1, 3, 3, "stone"); err != nil {
-		return Position{}, Position{}, err
+		return models.V3{}, models.V3{}, err
 	}
 
-	start = Position{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
-	goal = Position{X: float64(goalCenterX) + 0.5, Y: origin.Y + 1, Z: float64(goalCenterZ) + 0.5}
+	start = models.V3{X: float64(startCenterX) + 0.5, Y: float64(startY) + 1, Z: float64(startCenterZ) + 0.5}
+	goal = models.V3{X: float64(goalCenterX) + 0.5, Y: origin.Y + 1, Z: float64(goalCenterZ) + 0.5}
 	return start, goal, nil
 }
 
@@ -501,15 +502,15 @@ type ComboSegment struct {
 
 // Build constructs a combo segment by chaining sub-segments
 func (cs *ComboSegment) Build(ctx context.Context, rcon testenv.RCONHelper,
-	origin Position, orientation Orientation) (start, goal Position, err error) {
+	origin models.V3, orientation Orientation) (start, goal models.V3, err error) {
 
 	currentOrigin := origin
-	var finalGoal Position
+	var finalGoal models.V3
 
 	for i, segment := range cs.Segments {
 		s, g, err := segment.Build(ctx, rcon, currentOrigin, orientation)
 		if err != nil {
-			return Position{}, Position{}, fmt.Errorf("segment %d failed: %w", i, err)
+			return models.V3{}, models.V3{}, fmt.Errorf("segment %d failed: %w", i, err)
 		}
 
 		if i == 0 {
@@ -518,7 +519,7 @@ func (cs *ComboSegment) Build(ctx context.Context, rcon testenv.RCONHelper,
 
 		finalGoal = g
 		dx, dz := orientationVector(orientation)
-		currentOrigin = Position{
+		currentOrigin = models.V3{
 			X: g.X - 0.5 + float64(dx*3),
 			Y: g.Y - 1,
 			Z: g.Z - 0.5 + float64(dz*3),

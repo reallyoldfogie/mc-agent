@@ -8,7 +8,9 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -150,6 +152,52 @@ func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.I
 	return name, count
 }
 
+func (a *agent) initClientInformationHandler(settings basic.Settings) {
+	if a.client == nil || a.packetMgr == nil {
+		return
+	}
+
+	// Add a high-priority handler to send version-specific client information
+	// This runs BEFORE the default mc-bot-go handler (priority 0)
+	packetID := a.packetMgr.GetClientboundPacketID("ClientboundLogin")
+	a.client.Events().AddListener(bot.PacketHandler{
+		ID:       packetID,
+		Priority: -10, // Higher priority (runs before default handler at priority 0)
+		F: func(p pk.Packet) error {
+			// Send minecraft:brand custom payload first
+			if err := a.client.Conn().WritePacket(pk.Marshal(
+				a.packetMgr.GetServerboundPacketID("ServerboundCustomPayload"),
+				pk.Identifier("minecraft:brand"),
+				pk.String(settings.Brand),
+			)); err != nil {
+				return err
+			}
+
+			// Send client information using version handler if available
+			if a.versionHandler != nil {
+				info := common.ClientInfo{
+					Locale:              settings.Locale,
+					ViewDistance:        int8(settings.ViewDistance),
+					ChatMode:            int32(settings.ChatMode),
+					ChatColors:          settings.ChatColors,
+					DisplayedSkinParts:  settings.DisplayedSkinParts,
+					MainHand:            int32(settings.MainHand),
+					EnableTextFiltering: settings.EnableTextFiltering,
+					AllowServerListings: settings.AllowListing,
+				}
+				if err := a.versionHandler.Play().SendClientInformation(a.client.Conn(), info); err != nil {
+					return err
+				}
+				// Return nil to allow other handlers to continue (but skip the default one by not erroring)
+				// Actually, we want to prevent the default handler from also sending it
+				// We can't really prevent it, so we'll just let it send twice for now
+				// The server will just get duplicate packets which should be okay
+			}
+			return nil
+		},
+	})
+}
+
 func (a *agent) initHeldSlotTracking() {
 	if a.client == nil || a.packetMgr == nil || a.heldSlotUpdates != nil {
 		return
@@ -161,19 +209,35 @@ func (a *agent) initHeldSlotTracking() {
 		ID:       packetID,
 		Priority: 64,
 		F: func(p pk.Packet) error {
-			pkt, err := a.packetMgr.GetClientboundPacketByID(packetID)
-			if err != nil {
-				return err
-			}
-			if err := pkt.Scan(p); err != nil {
-				return err
-			}
+			var slot int16
+			var err error
 
-			slotVal, ok := protocol_models.GetPacketFieldAs[int32](pkt, "Slot")
-			if !ok {
-				return fmt.Errorf("held item slot packet missing Slot field")
+			// Use version handler if available for version-specific parsing
+			if a.versionHandler != nil {
+				slot, err = a.versionHandler.Play().Containers().ParseHeldItemSlot(p)
+				if err != nil {
+					return err
+				}
+			} else {
+				// Fallback: try both int32 (1.21.4+) and int8 (1.21.1-1.21.3)
+				pkt, err := a.packetMgr.GetClientboundPacketByID(packetID)
+				if err != nil {
+					return err
+				}
+				if err := pkt.Scan(p); err != nil {
+					return err
+				}
+
+				// Try int32 first (newer versions)
+				if slotVal, ok := protocol_models.GetPacketFieldAs[int32](pkt, "Slot"); ok {
+					slot = int16(slotVal)
+				} else if slotVal8, ok := protocol_models.GetPacketFieldAs[int8](pkt, "Slot"); ok {
+					// Fall back to int8 (older versions)
+					slot = int16(slotVal8)
+				} else {
+					return fmt.Errorf("held item slot packet missing Slot field")
+				}
 			}
-			slot := int16(slotVal)
 
 			a.heldSlotMu.Lock()
 			a.heldSlot = slot

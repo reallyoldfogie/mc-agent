@@ -160,7 +160,7 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
 		return horizontalDist2 < (0.18*0.18) &&
 			deltaPos.Y >= -0.6 && // Can be up to 0.6 blocks above target
-			deltaPos.Y <= 0.6     // Can be up to 0.6 blocks below target
+			deltaPos.Y <= 0.6 // Can be up to 0.6 blocks below target
 
 	default:
 		// Default completion threshold for Traverse, Ascend, DiagonalTraverse, etc.

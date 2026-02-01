@@ -46,10 +46,10 @@ func (a *agent) startPositionHeartbeat(tps int) {
 	go func() {
 		defer a.wg.Done()
 
-	ticker := time.NewTicker(time.Second / time.Duration(tps))
-	defer ticker.Stop()
+		ticker := time.NewTicker(time.Second / time.Duration(tps))
+		defer ticker.Stop()
 
-	log.Printf("[Agent %s] Position heartbeat started at %d TPS", a.client.Name(), tps)
+		log.Printf("[Agent %s] Position heartbeat started at %d TPS", a.client.Name(), tps)
 
 		for {
 			select {

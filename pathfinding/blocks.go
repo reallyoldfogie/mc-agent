@@ -32,6 +32,9 @@ func NewBlockShapeManager(
 	// Construct path to blocks directory for this version
 	// e.g., "/path/to/mc-data-gen/data/1.21.5/blocks"
 	blocksPath := filepath.Join(dataBasePath, version, "blocks")
+	fullPath, _ := filepath.Abs(blocksPath)
+
+	log.Printf("[BlockShapeManager] Loading block shapes for version %s from %s", version, fullPath)
 
 	// Load all block shape data for this version
 	data, err := loadBlocksDirInPlace(blocksPath)
@@ -106,7 +109,7 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 
 	info, ok := bsm.shapeData[key]
 	if !ok {
-		log.Printf("[getInfo] StateKey not found: blockID=%s, propsKey=%s (from props=%v)",
+		log.Printf("[BlockShapeManager.getInfo] StateKey not found: blockID=%s, propsKey=%s (from props=%v)",
 			blockID, key.PropsKey, props)
 
 		// If exact match not found and props is nil/empty, try to find ANY state for this block
@@ -116,18 +119,18 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 				if k.BlockID == blockID {
 					// Found a state for this block - use it
 					// (all states of a block should have same solid/passable/dangerous properties)
-					log.Printf("[getInfo] Using fallback state for blockID=%s: propsKey=%s, IsStair=%v, IsSlab=%v",
+					log.Printf("[BlockShapeManager.getInfo] Using fallback state for blockID=%s: propsKey=%s, IsStair=%v, IsSlab=%v",
 						blockID, k.PropsKey, v.IsStair(), v.IsSlab())
 					return v
 				}
 			}
 		}
 		// Return empty/air-like info for unknown blocks
-		log.Printf("[getInfo] No match found, returning Air=true for blockID=%s", blockID)
+		log.Printf("[BlockShapeManager.getInfo] No match found, returning Air=true for blockID=%s", blockID)
 		return mdl.ShapeInfo{Air: true}
 	}
 
-	log.Printf("[getInfo] Found StateKey: blockID=%s, propsKey=%s, IsStair=%v, IsSlab=%v",
+	log.Printf("[BlockShapeManager.getInfo] Found StateKey: blockID=%s, propsKey=%s, IsStair=%v, IsSlab=%v",
 		blockID, key.PropsKey, info.IsStair(), info.IsSlab())
 	return info
 }
@@ -137,26 +140,26 @@ func (bsm *blockShapeManager) blockInfoFromStateID(blockStateID uint32) (string,
 		return "minecraft:air", map[string]string{}
 	}
 	if bsm.blockMgr == nil {
-		log.Printf("[blockInfoFromStateID] blockMgr is nil for stateID=%d", blockStateID)
+		log.Printf("[BlockShapeManager.blockInfoFromStateID] blockMgr is nil for stateID=%d", blockStateID)
 		return "", map[string]string{}
 	}
 	if blockID, ok := bsm.blockMgr.BlockIDByStateID(uint32(blockStateID)); ok {
 		if block, ok := bsm.blockMgr.GetByID(blockID); ok {
 			if block.Name == "" {
-				log.Printf("[blockInfoFromStateID] block.Name is empty for stateID=%d, blockID=%d", blockStateID, blockID)
+				log.Printf("[BlockShapeManager.blockInfoFromStateID] block.Name is empty for stateID=%d, blockID=%d", blockStateID, blockID)
 				return "", map[string]string{}
 			}
 			if bsm.stateProps == nil {
-				log.Printf("[blockInfoFromStateID] stateProps is nil for stateID=%d, returning name=%s with empty props", blockStateID, block.Name)
+				log.Printf("[BlockShapeManager.blockInfoFromStateID] stateProps is nil for stateID=%d, returning name=%s with empty props", blockStateID, block.Name)
 				return block.Name, map[string]string{}
 			}
 			props := bsm.stateProps.GetProperties(uint32(blockStateID))
-			log.Printf("[blockInfoFromStateID] stateID=%d -> name=%s, props=%v", blockStateID, block.Name, props)
+			log.Printf("[BlockShapeManager.blockInfoFromStateID] stateID=%d -> name=%s, props=%v", blockStateID, block.Name, props)
 			return block.Name, props
 		}
 	}
 
-	log.Printf("[blockInfoFromStateID] failed to find block for stateID=%d", blockStateID)
+	log.Printf("[BlockShapeManager.blockInfoFromStateID] failed to find block for stateID=%d", blockStateID)
 	return "", map[string]string{}
 }
 
@@ -211,7 +214,7 @@ func (bsm *blockShapeManager) GetStandingSurfaceHeight(blockStateID uint32) floa
 	// Debug logging for stairs and slabs
 	if info.IsStair() || info.IsSlab() {
 		blockName, props := bsm.blockInfoFromStateID(blockStateID)
-		log.Printf("[GetStandingSurfaceHeight] blockStateID=%d, name=%s, props=%v, height=%.2f",
+		log.Printf("[BlockShapeManager.GetStandingSurfaceHeight] blockStateID=%d, name=%s, props=%v, height=%.2f",
 			blockStateID, blockName, props, height)
 	}
 

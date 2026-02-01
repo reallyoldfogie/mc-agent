@@ -8,6 +8,7 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -40,9 +41,10 @@ const (
 
 // ItemUsage provides methods for using items and placing blocks
 type ItemUsage struct {
-	client    models.PacketSender
-	packetMgr protocol_models.PacketMgr
-	sequence  int32 // Anti-cheat sequence number
+	client           models.PacketSender
+	packetMgr        protocol_models.PacketMgr
+	containerHandler common.ContainerHandler // Version-specific container handler
+	sequence         int32                    // Anti-cheat sequence number
 }
 
 // NewItemUsage creates a new ItemUsage instance
@@ -54,24 +56,41 @@ func NewItemUsage(client models.PacketSender, packetMgr protocol_models.PacketMg
 	}
 }
 
+// SetContainerHandler sets the version-specific container handler.
+// This must be called before using PlaceBlock/UseItemOnBlock for proper version-specific packet handling.
+func (iu *ItemUsage) SetContainerHandler(handler common.ContainerHandler) {
+	iu.containerHandler = handler
+}
+
 // PlaceBlock places a block or uses an item on a block at the specified position.
 // This sends a ServerboundUseItemOn packet.
 // cursorX, cursorY, cursorZ are the click position on the block face (0.0-1.0)
 func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand Hand, cursorX, cursorY, cursorZ float32) error {
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundUseItemOn")
-
 	// Convert position to block coordinates
-	blockPos := pk.Position{
-		X: int(math.Floor(pos.X)),
-		Y: int(math.Floor(pos.Y)),
-		Z: int(math.Floor(pos.Z)),
-	}
+	x := int(math.Floor(pos.X))
+	y := int(math.Floor(pos.Y))
+	z := int(math.Floor(pos.Z))
 
 	// Increment sequence for anti-cheat
 	iu.sequence++
 
-	// Marshal packet: Hand, Position, Face, CursorX, CursorY, CursorZ, InsideBlock, WorldBorderHit, Sequence
-	// Note: WorldBorderHit was added in 1.21.5
+	// Use version-specific container handler if available
+	if iu.containerHandler != nil {
+		return iu.containerHandler.SendUseItemOn(
+			iu.client,
+			int32(hand),
+			x, y, z,
+			int32(face),
+			cursorX, cursorY, cursorZ,
+			false, // insideBlock
+			iu.sequence,
+		)
+	}
+
+	// Fallback: use raw packet marshaling (legacy path, should not be needed)
+	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundUseItemOn")
+	blockPos := pk.Position{X: x, Y: y, Z: z}
+
 	packet := pk.Marshal(
 		packetID,
 		pk.VarInt(hand),
@@ -81,7 +100,6 @@ func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand Hand, cursor
 		pk.Float(cursorY),
 		pk.Float(cursorZ),
 		pk.Boolean(false), // InsideBlock
-		pk.Boolean(false), // WorldBorderHit (added in 1.21.5)
 		pk.VarInt(iu.sequence),
 	)
 

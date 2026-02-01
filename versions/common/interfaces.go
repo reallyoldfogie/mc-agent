@@ -1,0 +1,250 @@
+// Package common provides shared interfaces and utilities for version-specific
+// network traffic handlers.
+package common
+
+import (
+	pk "github.com/Tnze/go-mc/net/packet"
+	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+)
+
+// PacketWriter is a minimal interface for writing packets.
+// Both bot.Conn and mcnet.Conn implement this interface.
+type PacketWriter interface {
+	WritePacket(pk.Packet) error
+}
+
+// VersionHandler is the main interface for version-specific packet handling.
+// Each supported Minecraft version implements this interface independently.
+type VersionHandler interface {
+	// Version returns the Minecraft version string (e.g., "1.21.5")
+	Version() string
+
+	// ProtocolVersion returns the protocol version number
+	ProtocolVersion() uint
+
+	// PacketMgr returns the underlying packet manager for this version
+	PacketMgr() protocol_models.PacketMgr
+
+	// Login returns the login phase handler
+	Login() LoginHandler
+
+	// Configuration returns the configuration phase handler
+	Configuration() ConfigurationHandler
+
+	// Play returns the play phase handler
+	Play() PlayHandler
+}
+
+// LoginHandler handles login phase packets.
+type LoginHandler interface {
+	// SendLoginStart sends the login start packet
+	SendLoginStart(conn PacketWriter, username string, uuid [16]byte) error
+
+	// SendEncryptionResponse sends the encryption response packet
+	SendEncryptionResponse(conn PacketWriter, sharedSecret, verifyToken []byte) error
+
+	// SendLoginAcknowledged sends the login acknowledged packet
+	SendLoginAcknowledged(conn PacketWriter) error
+
+	// ParseLoginSuccess parses a login success packet
+	ParseLoginSuccess(p pk.Packet) (username string, uuid [16]byte, err error)
+
+	// ParseEncryptionRequest parses an encryption request packet
+	ParseEncryptionRequest(p pk.Packet) (serverID string, publicKey, verifyToken []byte, err error)
+}
+
+// ConfigurationHandler handles configuration phase packets.
+type ConfigurationHandler interface {
+	// SendFinishConfiguration sends the finish configuration packet
+	SendFinishConfiguration(conn PacketWriter) error
+
+	// SendKeepAlive sends a keepalive packet during configuration
+	SendKeepAlive(conn PacketWriter, id int64) error
+
+	// SendPong sends a pong packet in response to a ping
+	SendPong(conn PacketWriter, pingID int32) error
+
+	// SendClientInformation sends client settings/information
+	SendClientInformation(conn PacketWriter, info ClientInfo) error
+
+	// ParseRegistryData parses registry data packets
+	ParseRegistryData(p pk.Packet) (registryID string, entries map[string]int32, err error)
+
+	// ParseKeepAlive parses a keepalive packet
+	ParseKeepAlive(p pk.Packet) (id int64, err error)
+
+	// ParsePing parses a ping packet
+	ParsePing(p pk.Packet) (pingID int32, err error)
+}
+
+// ClientInfo contains client information sent during configuration.
+type ClientInfo struct {
+	Locale              string
+	ViewDistance        int8
+	ChatMode            int32
+	ChatColors          bool
+	DisplayedSkinParts  uint8
+	MainHand            int32
+	EnableTextFiltering bool
+	AllowServerListings bool
+}
+
+// PlayHandler provides access to play phase sub-handlers.
+type PlayHandler interface {
+	// Movement returns the movement handler
+	Movement() MovementHandler
+
+	// Entities returns the entity handler
+	Entities() EntityHandler
+
+	// Containers returns the container handler
+	Containers() ContainerHandler
+
+	// Chat returns the chat handler
+	Chat() ChatHandler
+
+	// World returns the world handler
+	World() WorldHandler
+
+	// SendClientInformation sends client settings/information during play phase
+	SendClientInformation(conn PacketWriter, info ClientInfo) error
+}
+
+// MovementHandler handles player movement packets.
+type MovementHandler interface {
+	// SendPosition sends a position update packet (position only, no rotation)
+	SendPosition(conn PacketWriter, x, y, z float64, onGround bool) error
+
+	// SendPositionAndRotation sends a combined position and rotation packet
+	SendPositionAndRotation(conn PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error
+
+	// SendRotation sends a rotation update packet (rotation only, no position)
+	SendRotation(conn PacketWriter, yaw, pitch float32, onGround bool) error
+
+	// SendPlayerCommand sends a player command packet (sprint, sneak, etc.)
+	// actionID: 0=start sneak, 1=stop sneak, 2=leave bed, 3=start sprint, 4=stop sprint, etc.
+	SendPlayerCommand(conn PacketWriter, entityID, actionID int32) error
+
+	// SendTeleportConfirm confirms a server-requested teleport
+	SendTeleportConfirm(conn PacketWriter, teleportID int32) error
+
+	// SendPlayerAbilities sends player abilities (flying, etc.)
+	SendPlayerAbilities(conn PacketWriter, flags byte) error
+
+	// ParsePlayerPosition parses a clientbound player position packet
+	ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float32, flags int32, err error)
+}
+
+// EntityHandler handles entity-related packets.
+type EntityHandler interface {
+	// ParseAddEntity parses an add entity packet
+	ParseAddEntity(p pk.Packet) (entityID, entityType int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, err error)
+
+	// ParseMoveEntityPos parses an entity position update (delta)
+	ParseMoveEntityPos(p pk.Packet) (entityID int32, dx, dy, dz int16, onGround bool, err error)
+
+	// ParseMoveEntityPosRot parses an entity position and rotation update (delta)
+	ParseMoveEntityPosRot(p pk.Packet) (entityID int32, dx, dy, dz int16, yaw, pitch int8, onGround bool, err error)
+
+	// ParseTeleportEntity parses an entity teleport packet (absolute position)
+	ParseTeleportEntity(p pk.Packet) (entityID int32, x, y, z float64, yaw, pitch int8, onGround bool, err error)
+
+	// ParseRemoveEntities parses a remove entities packet
+	ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err error)
+
+	// ParseEntityEvent parses an entity event/status packet
+	ParseEntityEvent(p pk.Packet) (entityID int32, eventID int8, err error)
+}
+
+// ContainerHandler handles container/inventory packets.
+type ContainerHandler interface {
+	// SendContainerClick sends a container click packet
+	SendContainerClick(conn PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]Slot, carriedItem Slot) error
+
+	// SendContainerClose sends a container close packet
+	SendContainerClose(conn PacketWriter, windowID int8) error
+
+	// SendSetCreativeModeSlot sends a creative mode slot update
+	SendSetCreativeModeSlot(conn PacketWriter, slot int16, item Slot) error
+
+	// SendPickItem sends a pick item packet (for creative mode)
+	SendPickItem(conn PacketWriter, slot int32) error
+
+	// SendSetCarriedItem sends a held item change packet
+	SendSetCarriedItem(conn PacketWriter, slot int16) error
+
+	// SendUseItemOn sends a use item on block packet (right-click on block).
+	// This is used for opening containers, placing blocks, and interacting with blocks.
+	// hand: 0=main hand, 1=offhand
+	// x, y, z: block position
+	// face: 0=down, 1=up, 2=north, 3=south, 4=west, 5=east
+	// cursorX, cursorY, cursorZ: click position on block face (0.0-1.0)
+	// insideBlock: whether the player's head is inside a block
+	// sequence: anti-cheat sequence number
+	SendUseItemOn(conn PacketWriter, hand int32, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
+
+	// ParseOpenScreen parses a container open packet
+	ParseOpenScreen(p pk.Packet) (windowID int8, windowType int32, title string, err error)
+
+	// ParseContainerSetContent parses a container content packet
+	ParseContainerSetContent(p pk.Packet) (windowID int8, stateID int32, slots []Slot, carriedItem Slot, err error)
+
+	// ParseContainerSetSlot parses a slot update packet
+	ParseContainerSetSlot(p pk.Packet) (windowID int8, stateID int32, slot int16, item Slot, err error)
+
+	// ParseHeldItemSlot parses a held item slot packet (handles version differences in slot type)
+	ParseHeldItemSlot(p pk.Packet) (slot int16, err error)
+}
+
+// Slot represents an inventory slot.
+type Slot struct {
+	Present bool
+	ItemID  int32
+	Count   int32
+	NBT     []byte // Raw NBT data if present
+}
+
+// ChatHandler handles chat and command packets.
+type ChatHandler interface {
+	// SendChat sends a chat message
+	SendChat(conn PacketWriter, message string) error
+
+	// SendCommand sends a command (without the leading slash)
+	SendCommand(conn PacketWriter, command string) error
+
+	// ParseSystemChat parses a system chat message
+	ParseSystemChat(p pk.Packet) (message string, overlay bool, err error)
+
+	// ParsePlayerChat parses a player chat message
+	ParsePlayerChat(p pk.Packet) (senderUUID [16]byte, message string, err error)
+
+	// ParseDisguisedChat parses a disguised chat message
+	ParseDisguisedChat(p pk.Packet) (message string, err error)
+}
+
+// WorldHandler handles world-related packets (chunks, blocks, etc.).
+type WorldHandler interface {
+	// ParseBlockUpdate parses a single block update packet
+	ParseBlockUpdate(p pk.Packet) (x, y, z int64, blockStateID int32, err error)
+
+	// ParseSectionBlocksUpdate parses a multi-block update packet
+	ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, blocks []BlockUpdate, err error)
+
+	// ParseChunkData parses a chunk data packet
+	// Returns the chunk X/Z coordinates and raw chunk data for further processing
+	ParseChunkData(p pk.Packet) (chunkX, chunkZ int32, data []byte, err error)
+
+	// ParseUnloadChunk parses a chunk unload packet
+	ParseUnloadChunk(p pk.Packet) (chunkX, chunkZ int32, err error)
+
+	// SendChunkBatchReceived sends an acknowledgment for received chunk batches.
+	// This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
+	// The batchCount parameter is the cumulative number of batches received so far.
+	SendChunkBatchReceived(conn PacketWriter, batchCount float32) error
+}
+
+// BlockUpdate represents a single block update within a section.
+type BlockUpdate struct {
+	X, Y, Z      int64
+	BlockStateID int32
+}

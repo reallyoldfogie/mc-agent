@@ -23,19 +23,19 @@ type FollowConfig struct {
 // DefaultFollowConfig returns default configuration
 func DefaultFollowConfig() FollowConfig {
 	return FollowConfig{
-		TargetDistance:       3.0,               // Stay 3 blocks away
-		StopDistance:         0.05,              // Stop when within 5cm
-		TargetStillDistance:  0.05,              // Consider target stationary if it moved less than 5cm
+		TargetDistance:       3.0,                    // Stay 3 blocks away
+		StopDistance:         0.05,                   // Stop when within 5cm
+		TargetStillDistance:  0.05,                   // Consider target stationary if it moved less than 5cm
 		MinRecalcInterval:    500 * time.Millisecond, // Minimum time between recalcs (adaptive)
-		RecalcInterval:       1 * time.Second,   // Maximum time between forced recalcs
-		RecalcDistThreshold:  1.0,               // Recalc if target moves 1+ blocks
-		MaxPathSteps:         20000,             // Search up to 20000 steps (allows ~40 block paths with 500x multiplier)
-		PathfindingTimeout:   2 * time.Second,   // Abort pathfinding after 2 seconds
-		StuckThreshold:       3 * time.Second,   // Stuck after 3 seconds
-		MaxStuckAttempts:     3,                 // Try 3 recovery attempts
-		JumpRecoveryHeight:   0.5,               // Jump 0.5 blocks for recovery
-		SprintDistance:       8.0,               // Sprint when >8 blocks away
-		SneakDistance:        2.5,               // Sneak when <2.5 blocks away
-		TargetVelocityFactor: 0.5,               // Predict 50% ahead for moving targets
+		RecalcInterval:       1 * time.Second,        // Maximum time between forced recalcs
+		RecalcDistThreshold:  1.0,                    // Recalc if target moves 1+ blocks
+		MaxPathSteps:         20000,                  // Search up to 20000 steps (allows ~40 block paths with 500x multiplier)
+		PathfindingTimeout:   2 * time.Second,        // Abort pathfinding after 2 seconds
+		StuckThreshold:       3 * time.Second,        // Stuck after 3 seconds
+		MaxStuckAttempts:     3,                      // Try 3 recovery attempts
+		JumpRecoveryHeight:   0.5,                    // Jump 0.5 blocks for recovery
+		SprintDistance:       8.0,                    // Sprint when >8 blocks away
+		SneakDistance:        2.5,                    // Sneak when <2.5 blocks away
+		TargetVelocityFactor: 0.5,                    // Predict 50% ahead for moving targets
 	}
 }

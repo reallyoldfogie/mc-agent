@@ -17,13 +17,14 @@ import (
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
-	"github.com/reallyoldfogie/mc-bot-go/bot/world"
 	"github.com/stretchr/testify/suite"
 )
 
 // ContainerTestSuite provides a shared test environment for all container tests
 type ContainerTestSuite struct {
 	suite.Suite
+
+	minecraftVersion string
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -32,7 +33,6 @@ type ContainerTestSuite struct {
 	agent     *ManagedAgent
 
 	// Shared resources
-	worldMgr        *world.World
 	screenMgr       mcscreen.Manager
 	itemUsage       *items.ItemUsage
 	invMgr          models.InventoryManager
@@ -54,6 +54,10 @@ type ContainerTestSuite struct {
 // SetupSuite runs once before all tests in the suite
 func (s *ContainerTestSuite) SetupSuite() {
 	var err error
+	if s.minecraftVersion == "" {
+		s.minecraftVersion = "1.21.5"
+	}
+	s.T().Logf("setting up test suite for Minecraft %s...", s.minecraftVersion)
 
 	// Enable debug logging for container clicks and screen close
 	os.Setenv("MC_AGENT_CLICK_DEBUG_PATH", "testing/logs/container_debug.log")
@@ -74,7 +78,7 @@ func (s *ContainerTestSuite) SetupSuite() {
 	serverCfg := DefaultServerConfig()
 	serverCfg.Memory = "1024M" // More memory for complex world
 	serverCfg.MinFreeMemoryMB = 512
-	serverCfg.Version = "1.21.5"
+	serverCfg.Version = s.minecraftVersion
 	serverCfg.GameMode = "survival"
 	serverCfg.WorldGen = WorldGenFlat
 	serverCfg.ExtraEnv = map[string]string{
@@ -84,7 +88,7 @@ func (s *ContainerTestSuite) SetupSuite() {
 		"SPAWN_PROTECTION":    "0",
 	}
 	serverCfg.PullImage = false
-	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "ContainerTestSuite", "1.21.5")
+	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "ContainerTestSuite", s.minecraftVersion)
 	RequireIntegrationEnv(s.T(), serverCfg)
 
 	// Optional memory profile output path (file or directory).
@@ -151,7 +155,6 @@ func (s *ContainerTestSuite) SetupSuite() {
 	s.stopAgent(s.agent)
 	s.agent = nil
 	s.screenMgr = nil
-	s.worldMgr = nil
 	s.itemUsage = nil
 	s.invMgr = nil
 	s.containerHelper = nil
@@ -338,14 +341,14 @@ func (s *ContainerTestSuite) SetupTest() {
 	s.screenMgr = s.agent.ScreenManager()
 	s.Require().NotNil(s.screenMgr, "screen manager should be available")
 
-	worldIface := s.agent.Agent.GetWorld()
-	s.Require().NotNil(worldIface, "world manager should be available")
-	s.worldMgr = worldIface.(*world.World)
-
 	botClient := s.agent.BotClient()
 	s.Require().NotNil(botClient, "bot client should be available")
 
 	s.itemUsage = items.NewItemUsage(botClient.Conn(), s.agent.Config.PacketMgr)
+	// Set version-specific container handler
+	if s.agent.Config.VersionHandler != nil {
+		s.itemUsage.SetContainerHandler(s.agent.Config.VersionHandler.Play().Containers())
+	}
 	s.invMgr = items.NewInventoryManager(s.screenMgr)
 	s.invMgr.SetWaitForUpdates(false) // Use workaround for ServerUpdateVersion issue
 	s.containerHelper = items.NewContainerHelper(s.itemUsage, s.invMgr, s.screenMgr, botClient, s.agent.Config.PacketMgr)
@@ -407,7 +410,6 @@ func (s *ContainerTestSuite) TearDownTest() {
 	}
 	s.agent = nil
 	s.screenMgr = nil
-	s.worldMgr = nil
 	s.itemUsage = nil
 	s.invMgr = nil
 	s.containerHelper = nil
@@ -603,5 +605,12 @@ func (s *ContainerTestSuite) openContainer(pos models.V3, face items.BlockFace) 
 
 // TestContainerSuite runs the entire suite
 func TestContainerSuite(t *testing.T) {
-	suite.Run(t, new(ContainerTestSuite))
+	for _, tt := range standardVersionTests {
+		t.Run(tt.name, func(t *testing.T) {
+			testSuite := new(ContainerTestSuite)
+			testSuite.minecraftVersion = tt.mcVersion
+			suite.Run(t, testSuite)
+		})
+		// suite.Run(t, new(ContainerTestSuite))
+	}
 }

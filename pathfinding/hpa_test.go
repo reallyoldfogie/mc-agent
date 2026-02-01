@@ -174,7 +174,7 @@ func TestAdjacentClusterID(t *testing.T) {
 func TestEntranceGetMethods(t *testing.T) {
 	cluster1 := ClusterID{X: 0, Y: 0, Z: 0}
 	cluster2 := ClusterID{X: 1, Y: 0, Z: 0}
-	
+
 	entrance := &Entrance{
 		Pos1:     models.V3{X: 9, Y: 5, Z: 5},
 		Pos2:     models.V3{X: 10, Y: 5, Z: 5},

@@ -6,7 +6,7 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 
 ## Features
 
-- **Multi-Version Support**: Compatible with Minecraft 1.21.1 through 1.21.10
+- **Multi-Version Support**: Compatible with Minecraft 1.21 through 1.21.8
 - **Microsoft Authentication**: Secure authentication via Microsoft accounts with credential caching
 - **Replay Recording**: Full ReplayMod .mcpr recording with bot visibility and skin texture embedding
 - **Skin Management**: Automatic download and extraction of Minecraft client skins with caching
@@ -17,7 +17,8 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 - **Player Following**: Intelligent pathfinding-based following with obstacle avoidance
 - **Chat Commands**: Bot responds to commands via chat with `>>>ROF_bot<<<` prefix
 - **Event-Driven Architecture**: Clean separation of concerns with manager-based design
-- **Version-Agnostic Protocol Handling**: Uses version managers for protocol differences
+- **Version-Specific Protocol Handling**: Modular per-version handlers for protocol differences
+- **Version Automation**: Scripts to easily add support for new Minecraft versions
 - **Integration Testing**: Docker-based testing framework for navigation and following behavior
 
 ## Quick Start
@@ -25,7 +26,7 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 ### Prerequisites
 
 - Go 1.21 or later
-- Access to a Minecraft Java Edition server (1.21.1-1.21.10)
+- Access to a Minecraft Java Edition server (1.21-1.21.8)
 - Microsoft account for authentication (or use offline mode)
 
 ### Installation
@@ -115,6 +116,10 @@ mc-agent/
 ├── physics/               # Physics engine (movement, projectiles, collision)
 ├── movement/              # Movement execution and physics-based movement
 ├── following/             # Player following system
+├── versions/              # Version-specific protocol handlers
+│   ├── common/            # Shared interfaces for all versions
+│   └── v1_21_*/           # Per-version implementations (1.21.1-1.21.8)
+├── scripts/               # Automation scripts (add_version.sh, verify_versions.sh)
 ├── testing/               # Integration testing framework (Docker-based)
 │
 ├── bot/                   # Bot extensions and wrappers
@@ -124,6 +129,38 @@ mc-agent/
 ├── data/                  # Static data files
 └── logs/                  # Packet logs (auto-rotated)
 ```
+
+### Version-Specific Protocol Handlers
+
+The bot uses a modular architecture for handling Minecraft protocol differences across versions. Each supported version has its own handler package in `versions/`:
+
+```
+versions/
+├── common/       # Shared interfaces (VersionHandler, LoginHandler, etc.)
+├── v1_21_1/      # Minecraft 1.21.1 implementation
+├── v1_21_2/      # Minecraft 1.21.2 implementation
+...
+└── v1_21_8/      # Minecraft 1.21.8 implementation
+```
+
+**Key Components:**
+- **VersionHandler**: Main interface for version-specific behavior
+- **LoginHandler**: Login phase packet handling
+- **ConfigurationHandler**: Configuration phase handling
+- **PlayHandler**: Play phase sub-handlers (movement, entities, containers, chat, world)
+
+**Adding New Versions:**
+Use the automation script to add support for new Minecraft versions:
+
+```bash
+# Add support for a new version
+./scripts/add_version.sh 1.21.9 773
+
+# Specify source version to copy from
+./scripts/add_version.sh 1.21.9 773 1.21.8
+```
+
+See [docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md) for detailed instructions.
 
 ## External Dependencies
 
@@ -313,9 +350,11 @@ go run ./cmd/mc-agent -address "localhost:25565"
 ### Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Comprehensive codebase guide for Claude Code
+- **[docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md)** - Guide for adding new Minecraft version support
 - **[docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md)** - Bow firing commands and ballistics documentation
 - **[docs/HPA_USAGE_EXAMPLE.md](docs/HPA_USAGE_EXAMPLE.md)** - HPA* pathfinding usage guide
 - **[docs/CONTAINER_INTERACTION_GUIDE.md](docs/CONTAINER_INTERACTION_GUIDE.md)** - Container/inventory interaction guide
+- **[scripts/README.md](scripts/README.md)** - Version automation scripts documentation
 - **[testing/README.md](testing/README.md)** - Integration testing framework documentation
 
 ## Legacy Code
@@ -343,12 +382,16 @@ This is a personal project, but suggestions and bug reports are welcome via GitH
 ## Version Support
 
 Currently tested and working with Minecraft Java Edition:
-- 1.21.1
-- 1.21.2
-- 1.21.3
-- 1.21.4
-- 1.21.5 (default)
-- 1.21.6 through 1.21.10
+- 1.21.1 (protocol 767)
+- 1.21.2 (protocol 768)
+- 1.21.3 (protocol 768)
+- 1.21.4 (protocol 769)
+- 1.21.5 (protocol 770, default)
+- 1.21.6 (protocol 771)
+- 1.21.7 (protocol 772)
+- 1.21.8 (protocol 772)
+
+Each version has a dedicated handler in `versions/v1_21_X/`. See [docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md) for adding new versions.
 
 ## Known Issues
 

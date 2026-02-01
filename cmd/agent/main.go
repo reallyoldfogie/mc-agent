@@ -12,9 +12,6 @@ import (
 	"time"
 
 	msauth "github.com/maxsupermanhd/go-mc-ms-auth"
-	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
-	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
@@ -58,57 +55,21 @@ func main() {
 		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 	})
 
-	cfg := agent.Config{
-		Address:                *address,
-		Version:                *mcVersion,
-		Auth:                   auth,
-		MCDataGenPath:          *mcDataPath,
-		MCProtocolGoPath:       *protoGoPath,
-		DisablePhysicsMovement: *disablePhysics,
-		EnableClutchAssist:     *enableClutch,
-
-		// Managers (PacketMgr/BlockMgr/SoundMgr) can be injected later when migrated.
-		StopFilePath:    ".agentStop", // Enable graceful shutdown via stop file
-		EnableReplay:    *enableReplay,
-		ReplayOutput:    *replayOut,
-		ReplayGenerator: *replayGenerator,
-		SkinProvider:    skinProvider,
-	}
-
-	// Auto-detect server version if not specified, otherwise resolve protocol from version
-	if cfg.Version == "" {
-		v, proto, err := rof_utils.CheckServerVersion(cfg.Address, 0)
+	// Handle Microsoft authentication if not in offline mode
+	// This must happen before agent creation to get player name/UUID
+	if !*offline {
+		cid := "88650e7e-efee-4857-b9a9-cf580a00ef43"
+		mauth, err := msauth.GetMCcredentials(".credCacheFile", cid)
 		if err != nil {
-			log.Fatalf("version detect failed: %v", err)
+			log.Fatalf("auth failed: %v", err)
 		}
-		cfg.Version = v
-		cfg.ProtocolVersion = proto
-		log.Printf("Auto-detected server version %s (protocol %d)", v, proto)
-	} else {
-		// Version specified: resolve protocol from version string
-		if proto, ok := mc_versions.VersionProtocol[cfg.Version]; ok {
-			cfg.ProtocolVersion = proto
-			log.Printf("Using specified version %s (protocol %d)", cfg.Version, proto)
-		} else {
-			log.Fatalf("unsupported version: %s", cfg.Version)
-		}
-	}
-
-	// Resolve packet manager for version (best effort).
-	// This enables handler ID resolution and constructing the bot client.
-	packetMgr := mc_versions.GetPacketMgrForVersion(cfg.Version)
-	if packetMgr != nil {
-		cfg.PacketMgr = packetMgr
-	}
-	// Resolve sound manager for version (best effort) and inject for logging.
-	soundMgr := mc_versions.GetSoundMgrForVersion(cfg.Version)
-	if soundMgr != nil {
-		cfg.SoundMgr = soundMgr
+		log.Printf("Authenticated as %s (%s)", mauth.Name, mauth.UUID)
+		auth = agent.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID}
 	}
 
 	// Prepare rotating log for packet logging
 	_ = os.MkdirAll("./logs", 0760)
-	cfg.LogWriter = &lumberjack.Logger{
+	logWriter := &lumberjack.Logger{
 		Filename:   "./logs/" + time.Now().Format(time.RFC3339) + "_receiver.log",
 		MaxSize:    10,
 		MaxBackups: 3,
@@ -117,24 +78,23 @@ func main() {
 		LocalTime:  true,
 	}
 
-	// Construct a real bot client and inject it.
-	var client bot.Client
-	if packetMgr != nil {
-		client = bot.NewClient(packetMgr)
-		// Apply auth
-		if *offline {
-			client.SetAuth(bot.Auth{AccessToken: auth.AccessToken, Name: auth.Name, UUID: auth.UUID})
-		} else {
-			cid := "88650e7e-efee-4857-b9a9-cf580a00ef43"
-			mauth, err := msauth.GetMCcredentials(".credCacheFile", cid)
-			if err != nil {
-				log.Fatalf("auth failed: %v", err)
-			}
-			log.Printf("Authenticated as %s (%s)", mauth.Name, mauth.UUID)
-			client.SetAuth(bot.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID})
-			cfg.Auth = agent.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID}
-		}
-		cfg.Client = client // agent.NewClientFromBot(client)
+	// Build agent config - version detection, manager resolution, and client creation
+	// are now handled automatically by agent.Init() if not provided
+	cfg := agent.Config{
+		Name:                   auth.Name, // Use authenticated name
+		Address:                *address,
+		Version:                *mcVersion, // Empty = auto-detect from server
+		Auth:                   auth,
+		MCDataGenPath:          *mcDataPath,
+		MCProtocolGoPath:       *protoGoPath,
+		DisablePhysicsMovement: *disablePhysics,
+		EnableClutchAssist:     *enableClutch,
+		StopFilePath:           ".agentStop", // Enable graceful shutdown via stop file
+		EnableReplay:           *enableReplay,
+		ReplayOutput:           *replayOut,
+		ReplayGenerator:        *replayGenerator,
+		SkinProvider:           skinProvider,
+		LogWriter:              logWriter,
 	}
 
 	a, err := agent.New(cfg)

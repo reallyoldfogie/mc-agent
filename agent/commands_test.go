@@ -13,7 +13,7 @@ type fakeChat struct{ msgs []string }
 func (f *fakeChat) SendMessage(s string) error { f.msgs = append(f.msgs, s); return nil }
 
 func TestHandleChatCommand_Help(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -30,7 +30,7 @@ func TestHandleChatCommand_Help(t *testing.T) {
 }
 
 func TestHandleChatCommand_Say(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -47,7 +47,7 @@ func TestHandleChatCommand_Say(t *testing.T) {
 }
 
 func TestHandleChatCommand_Pos_Uninitialized(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -64,7 +64,7 @@ func TestHandleChatCommand_Pos_Uninitialized(t *testing.T) {
 }
 
 func TestHandleChatCommand_Pos_Initialized(t *testing.T) {
-	agentInt, err := New(Config{Address: "127.0.0.1:25565"})
+	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

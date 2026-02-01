@@ -92,7 +92,7 @@ func (g *AbstractGraph) GetOrCreateNode(entrance *Entrance) *AbstractNode {
 func (g *AbstractGraph) AddEdge(from, to *Entrance, cost float64, path *Path) {
 	fromNode := g.GetOrCreateNode(from)
 	toNode := g.GetOrCreateNode(to)
-	
+
 	edge := &AbstractEdge{
 		To:   toNode,
 		Cost: cost,
@@ -106,7 +106,7 @@ func (g *AbstractGraph) RemoveNode(node *AbstractNode) {
 	if node.Entrance != nil {
 		delete(g.Nodes, node.Entrance)
 	}
-	
+
 	// Remove edges pointing to this node
 	for _, n := range g.Nodes {
 		newEdges := make([]*AbstractEdge, 0)
@@ -168,26 +168,26 @@ func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNod
 	if len(startNodes) == 0 || len(goalNodes) == 0 {
 		return nil
 	}
-	
+
 	// Create goal set for quick lookup
 	goalSet := make(map[*AbstractNode]bool)
 	for _, node := range goalNodes {
 		goalSet[node] = true
 	}
-	
+
 	// Initialize A* search
 	openSet := &abstractNodeHeap{}
 	heap.Init(openSet)
-	
+
 	closedSet := make(map[*AbstractNode]bool)
 	gScores := make(map[*AbstractNode]float64)
-	
+
 	// Add all start nodes to open set
 	for _, startNode := range startNodes {
 		// Use first goal node for heuristic
 		goalPos := goalNodes[0].GetPosition()
 		startPos := startNode.GetPosition()
-		
+
 		searchNode := &abstractSearchNode{
 			node:   startNode,
 			parent: nil,
@@ -198,39 +198,39 @@ func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNod
 		heap.Push(openSet, searchNode)
 		gScores[startNode] = 0
 	}
-	
+
 	nodesExpanded := 0
-	
+
 	// A* main loop
 	for openSet.Len() > 0 {
 		current := heap.Pop(openSet).(*abstractSearchNode)
-		
+
 		// Check if we reached any goal
 		if goalSet[current.node] {
 			// Reconstruct path (as list of edges)
 			return reconstructAbstractPath(current)
 		}
-		
+
 		closedSet[current.node] = true
-		
+
 		// Explore neighbors
 		nodesExpanded++
 		for _, edge := range current.node.Edges {
 			neighbor := edge.To
-			
+
 			if closedSet[neighbor] {
 				continue
 			}
-			
+
 			tentativeGCost := current.gCost + edge.Cost
-			
+
 			existingGCost, exists := gScores[neighbor]
 			if !exists || tentativeGCost < existingGCost {
 				gScores[neighbor] = tentativeGCost
-				
+
 				goalPos := goalNodes[0].GetPosition()
 				neighborPos := neighbor.GetPosition()
-				
+
 				searchNode := &abstractSearchNode{
 					node:     neighbor,
 					parent:   current,
@@ -243,7 +243,7 @@ func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNod
 			}
 		}
 	}
-	
+
 	// No path found
 	log.Printf("[HPA* Graph] Abstract search failed: expanded %d nodes, no path found", nodesExpanded)
 	return nil
@@ -253,19 +253,19 @@ func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNod
 func reconstructAbstractPath(goalNode *abstractSearchNode) []*AbstractEdge {
 	path := make([]*AbstractEdge, 0)
 	current := goalNode
-	
+
 	for current.parent != nil {
 		if current.fromEdge != nil {
 			path = append(path, current.fromEdge)
 		}
 		current = current.parent
 	}
-	
+
 	// Reverse to get start -> goal order
 	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
 		path[i], path[j] = path[j], path[i]
 	}
-	
+
 	return path
 }
 

@@ -5,6 +5,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/agent/plan"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
@@ -14,6 +15,8 @@ import (
 // Config contains all inputs required to construct and run an Agent.
 // It is intentionally decoupled from concrete implementations to support testing.
 type Config struct {
+	Name string
+
 	// Connection
 	Address         string
 	Version         string
@@ -26,6 +29,10 @@ type Config struct {
 	PacketMgr protocol_models.PacketMgr
 	BlockMgr  mc_versions.BlockMgr
 	SoundMgr  mc_versions.SoundMgr
+
+	// Optional: version-specific packet handler. If nil, falls back to existing packet handling.
+	// When set, enables version-aware packet construction and parsing via the versions/ package.
+	VersionHandler common.VersionHandler
 
 	// Optional: prebuilt client (useful for tests). If nil, Agent may construct one.
 	Client bot.Client
