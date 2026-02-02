@@ -2,9 +2,11 @@ package pathfinding
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"log"
 	"math"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -64,6 +66,8 @@ type AbstractGraph struct {
 	Nodes map[*Entrance]*AbstractNode
 	// ClusterSize is the size of each cluster dimension
 	ClusterSize int
+	// mu protects nodes map for concurrent access during parallel builds
+	mu sync.RWMutex
 }
 
 // NewAbstractGraph creates a new abstract graph
@@ -76,9 +80,23 @@ func NewAbstractGraph(clusterSize int) *AbstractGraph {
 
 // GetOrCreateNode gets or creates an abstract node for an entrance
 func (g *AbstractGraph) GetOrCreateNode(entrance *Entrance) *AbstractNode {
+	// First try read lock for existing node
+	g.mu.RLock()
+	if node, exists := g.Nodes[entrance]; exists {
+		g.mu.RUnlock()
+		return node
+	}
+	g.mu.RUnlock()
+
+	// Need to create - acquire write lock
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Double-check after acquiring write lock
 	if node, exists := g.Nodes[entrance]; exists {
 		return node
 	}
+
 	node := &AbstractNode{
 		Entrance:    entrance,
 		Edges:       make([]*AbstractEdge, 0),
@@ -98,11 +116,18 @@ func (g *AbstractGraph) AddEdge(from, to *Entrance, cost float64, path *Path) {
 		Cost: cost,
 		Path: path,
 	}
+
+	// Lock for edge addition (node's Edges slice)
+	g.mu.Lock()
 	fromNode.Edges = append(fromNode.Edges, edge)
+	g.mu.Unlock()
 }
 
 // RemoveNode removes a node from the graph (used for temporary nodes)
 func (g *AbstractGraph) RemoveNode(node *AbstractNode) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
 	if node.Entrance != nil {
 		delete(g.Nodes, node.Entrance)
 	}
@@ -121,6 +146,8 @@ func (g *AbstractGraph) RemoveNode(node *AbstractNode) {
 
 // Clear removes all nodes and edges from the graph
 func (g *AbstractGraph) Clear() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.Nodes = make(map[*Entrance]*AbstractNode)
 }
 
@@ -164,8 +191,13 @@ func (h *abstractNodeHeap) Pop() any {
 }
 
 // SearchAbstractGraph performs A* search on the abstract graph
-func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNode) []*AbstractEdge {
+func (g *AbstractGraph) SearchAbstractGraph(ctx context.Context, startNodes, goalNodes []*AbstractNode) []*AbstractEdge {
 	if len(startNodes) == 0 || len(goalNodes) == 0 {
+		return nil
+	}
+
+	// Check context before starting
+	if ctx.Err() != nil {
 		return nil
 	}
 
@@ -203,6 +235,16 @@ func (g *AbstractGraph) SearchAbstractGraph(startNodes, goalNodes []*AbstractNod
 
 	// A* main loop
 	for openSet.Len() > 0 {
+		// Check context cancellation periodically (every 100 expansions to reduce overhead)
+		if nodesExpanded%100 == 0 {
+			select {
+			case <-ctx.Done():
+				log.Printf("[HPA* Graph] Abstract search cancelled: expanded %d nodes", nodesExpanded)
+				return nil
+			default:
+			}
+		}
+
 		current := heap.Pop(openSet).(*abstractSearchNode)
 
 		// Check if we reached any goal

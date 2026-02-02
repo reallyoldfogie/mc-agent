@@ -120,7 +120,7 @@ func (a *agent) cmdMoveTo(xs, ys, zs string) {
 		return
 	}
 	if err := a.MoveTo(context.Background(), tx, ty, tz, true); err != nil {
-		_ = a.SendChat(fmt.Sprintf("Pathfinding failed: %v", err))
+		_ = a.SendChat(fmt.Sprintf("MoveTo - Pathfinding failed: %v", err))
 	}
 }
 
@@ -193,7 +193,7 @@ func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) er
 		// Minimum 10000 steps for short segments
 		10000)
 
-	path, err := a.pathfind.FindPath(start, goal, maxSteps)
+	path, err := a.pathfind.FindPath(ctx, start, goal, maxSteps)
 	if err != nil {
 		log.Printf("[pathfindAndFollow] FindPath error: %v", err)
 		return err
@@ -246,7 +246,7 @@ func (a *agent) cmdTestPath() {
 	}
 	start := models.V3{X: x, Y: y, Z: z}
 	goal := models.V3{X: x, Y: y, Z: z + 5}
-	if _, err := a.pathfind.FindPath(start, goal, 200); err != nil {
+	if _, err := a.pathfind.FindPath(context.Background(), start, goal, 200); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
 	}

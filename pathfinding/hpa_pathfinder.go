@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -38,8 +40,30 @@ func NewHPAPathFinder(world models.World, shapeMgr models.BlockShapeManager, low
 	}
 }
 
+// NewHPAPathFinderWithAStar creates an HPA* pathfinder using standard A* for low-level paths.
+// This is the traditional configuration.
+func NewHPAPathFinderWithAStar(world models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+	lowLevel := NewAStarPathFinder(world, shapeMgr)
+	return NewHPAPathFinder(world, shapeMgr, lowLevel, clusterSize)
+}
+
+// NewHPAPathFinderWithBidirectional creates an HPA* pathfinder using bidirectional A*
+// for low-level paths. Bidirectional search typically explores fewer nodes for
+// intra-cluster pathfinding, which can improve performance on complex terrain.
+func NewHPAPathFinderWithBidirectional(world models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+	lowLevel := NewBidirAStarPathFinder(world, shapeMgr)
+	return NewHPAPathFinder(world, shapeMgr, lowLevel, clusterSize)
+}
+
+// NewHPAPathFinderWithEPEAStar creates an HPA* pathfinder using EPEA* for low-level paths.
+// EPEA* can reduce node expansions on uniform terrain through partial expansion.
+func NewHPAPathFinderWithEPEAStar(world models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+	lowLevel := NewEPEAStarPathFinder(world, shapeMgr)
+	return NewHPAPathFinder(world, shapeMgr, lowLevel, clusterSize)
+}
+
 // FindPath finds a path using hierarchical pathfinding
-func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultPath *Path, err error) {
+func (hpa *hpaPathFinder) FindPath(ctx context.Context, start, goal models.V3, maxSteps int) (resultPath *Path, err error) {
 	defer func() {
 		// Visualize final path
 		if hpa.debugViz != nil && hpa.debugViz.IsEnabled() && resultPath != nil {
@@ -48,6 +72,16 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 	}()
 
 	startTime := time.Now()
+
+	// Check context before starting
+	if ctx.Err() != nil {
+		return &Path{
+			Found:      false,
+			StartPos:   start,
+			GoalPos:    goal,
+			SearchTime: float64(time.Since(startTime).Milliseconds()),
+		}, ctx.Err()
+	}
 
 	log.Printf("[HPA*] Finding path from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f)",
 		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z)
@@ -70,7 +104,7 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 	if dist <= float64(hpa.clusterSize) {
 		log.Printf("[HPA*] Short distance %.1f (<= clusterSize %d), using low-level pathfinding",
 			dist, hpa.clusterSize)
-		return hpa.lowLevelPathfinder.FindPath(start, goal, maxSteps)
+		return hpa.lowLevelPathfinder.FindPath(ctx, start, goal, maxSteps)
 	}
 
 	// Step 1: Build clusters containing start and goal
@@ -88,27 +122,27 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 	// If same cluster, just use low-level pathfinding
 	if startClusterID == goalClusterID {
 		log.Printf("[HPA*] Same cluster, using low-level pathfinding")
-		return hpa.lowLevelPathfinder.FindPath(start, goal, maxSteps)
+		return hpa.lowLevelPathfinder.FindPath(ctx, start, goal, maxSteps)
 	}
 	if clustersAdjacent(startClusterID, goalClusterID) {
 		log.Printf("[HPA*] Adjacent clusters, using low-level pathfinding")
-		return hpa.lowLevelPathfinder.FindPath(start, goal, maxSteps)
+		return hpa.lowLevelPathfinder.FindPath(ctx, start, goal, maxSteps)
 	}
 
 	// Step 2: Insert start and goal into abstract graph
-	startNodes, startCleanup := hpa.insertNode(start)
-	goalNodes, goalCleanup := hpa.insertNode(goal)
+	startNodes, startCleanup := hpa.insertNode(ctx, start)
+	goalNodes, goalCleanup := hpa.insertNode(ctx, goal)
 
 	defer startCleanup()
 	defer goalCleanup()
 
 	if len(startNodes) == 0 {
 		log.Printf("[HPA*] Cannot connect start to abstract graph, falling back to low-level pathfinding")
-		return hpa.lowLevelPathfinder.FindPath(start, goal, maxSteps)
+		return hpa.lowLevelPathfinder.FindPath(ctx, start, goal, maxSteps)
 	}
 	if len(goalNodes) == 0 {
 		log.Printf("[HPA*] Cannot connect goal to abstract graph, falling back to low-level pathfinding")
-		return hpa.lowLevelPathfinder.FindPath(start, goal, maxSteps)
+		return hpa.lowLevelPathfinder.FindPath(ctx, start, goal, maxSteps)
 	}
 
 	filterStartEdges := filterTempNodeEdges(startNodes, "start")
@@ -154,8 +188,18 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 	// Step 3: Try each goal entrance until we find a refinable path
 	var refinedPath *Path
 	for i, goalEntrance := range goalEntrances {
+		// Check context cancellation before each entrance attempt
+		if ctx.Err() != nil {
+			return &Path{
+				Found:      false,
+				StartPos:   start,
+				GoalPos:    goal,
+				SearchTime: float64(time.Since(startTime).Milliseconds()),
+			}, ctx.Err()
+		}
+
 		// Search abstract graph to this specific goal entrance
-		abstractPath := hpa.builder.GetAbstractGraph().SearchAbstractGraph(startNodes, []*AbstractNode{goalEntrance})
+		abstractPath := hpa.builder.GetAbstractGraph().SearchAbstractGraph(ctx, startNodes, []*AbstractNode{goalEntrance})
 		if abstractPath == nil {
 			log.Printf("[HPA*] No abstract path to goal entrance %d/%d at (%.0f,%.0f,%.0f)",
 				i+1, len(goalEntrances), goalEntrance.GetPosition().X, goalEntrance.GetPosition().Y, goalEntrance.GetPosition().Z)
@@ -171,7 +215,7 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 		}
 
 		// Step 4: Try to refine this abstract path + final segment to goal
-		refinedPath = hpa.refinePathThroughEntrance(abstractPath, start, goal, goalNodes[0])
+		refinedPath = hpa.refinePathThroughEntrance(ctx, abstractPath, start, goal, goalNodes[0])
 		if refinedPath != nil {
 			log.Printf("[HPA*] Successfully refined path through goal entrance %d/%d", i+1, len(goalEntrances))
 			break // Success!
@@ -197,7 +241,7 @@ func (hpa *hpaPathFinder) FindPath(start, goal models.V3, maxSteps int) (resultP
 			i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
 	}
 
-	normalized, err := hpa.normalizePath(refinedPath)
+	normalized, err := hpa.normalizePath(ctx, refinedPath)
 	if err != nil {
 		return nil, fmt.Errorf("refined path normalization failed: %w", err)
 	}
@@ -219,12 +263,12 @@ func (hpa *hpaPathFinder) SetEntranceLimits(maxCount int, maxCost float64) {
 
 // insertNode inserts a temporary node into the abstract graph
 // Returns the created node (as single-element slice) and a cleanup function
-func (hpa *hpaPathFinder) insertNode(pos models.V3) ([]*AbstractNode, func()) {
+func (hpa *hpaPathFinder) insertNode(ctx context.Context, pos models.V3) ([]*AbstractNode, func()) {
 	clusterID := hpa.builder.GetClusterManager().GetClusterID(pos)
 	cluster := hpa.builder.GetClusterManager().GetCluster(clusterID)
 
 	// Ensure cluster is built
-	if cluster.Dirty {
+	if cluster.IsDirty() {
 		hpa.builder.BuildCluster(clusterID)
 	}
 
@@ -279,7 +323,7 @@ func (hpa *hpaPathFinder) insertNode(pos models.V3) ([]*AbstractNode, func()) {
 				maxSteps = 1000 // Increased minimum from 500 to 1000
 			}
 
-			path, err := hpa.lowLevelPathfinder.FindPath(pos, entrancePos, maxSteps)
+			path, err := hpa.lowLevelPathfinder.FindPath(ctx, pos, entrancePos, maxSteps)
 			if err != nil || !path.Found {
 				continue // Try next position
 			}
@@ -378,7 +422,7 @@ func (hpa *hpaPathFinder) insertNode(pos models.V3) ([]*AbstractNode, func()) {
 }
 
 // refinePathThroughEntrance refines an abstract path to an entrance, then adds the final segment to goal
-func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge, start, goal models.V3, goalTempNode *AbstractNode) *Path {
+func (hpa *hpaPathFinder) refinePathThroughEntrance(ctx context.Context, abstractPath []*AbstractEdge, start, goal models.V3, goalTempNode *AbstractNode) *Path {
 	// First refine the abstract path to the entrance
 	if len(abstractPath) == 0 {
 		// No abstract path, just need to go from start to goal directly through temp node's edge
@@ -415,7 +459,7 @@ func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge
 						bridgeMaxSteps = 100
 					}
 
-					bridgePath, err := hpa.lowLevelPathfinder.FindPath(currentPos, firstStep, bridgeMaxSteps)
+					bridgePath, err := hpa.lowLevelPathfinder.FindPath(ctx, currentPos, firstStep, bridgeMaxSteps)
 					if err != nil || !bridgePath.Found {
 						log.Printf("[HPA*] Failed to bridge gap in abstract edge %d/%d from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f): %v",
 							i+1, len(abstractPath), currentPos.X, currentPos.Y, currentPos.Z, firstStep.X, firstStep.Y, firstStep.Z, err)
@@ -456,7 +500,7 @@ func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge
 				maxSteps = 1000 // Minimum 1000 steps for complex terrain
 			}
 
-			path, err := hpa.lowLevelPathfinder.FindPath(currentPos, nextPos, maxSteps)
+			path, err := hpa.lowLevelPathfinder.FindPath(ctx, currentPos, nextPos, maxSteps)
 			if err != nil || !path.Found {
 				log.Printf("[HPA*] Failed to refine abstract edge %d/%d from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f) with maxSteps=%d",
 					i+1, len(abstractPath), currentPos.X, currentPos.Y, currentPos.Z, nextPos.X, nextPos.Y, nextPos.Z, maxSteps)
@@ -514,7 +558,7 @@ func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge
 			maxSteps = 500
 		}
 		var err error
-		finalSegment, err = hpa.lowLevelPathfinder.FindPath(currentPos, goal, maxSteps)
+		finalSegment, err = hpa.lowLevelPathfinder.FindPath(ctx, currentPos, goal, maxSteps)
 		if err != nil || !finalSegment.Found {
 			log.Printf("[HPA*] Failed to find final segment from entrance (%.0f,%.0f,%.0f) to goal (%.0f,%.0f,%.0f)",
 				currentPos.X, currentPos.Y, currentPos.Z, goal.X, goal.Y, goal.Z)
@@ -546,7 +590,7 @@ func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge
 				bridgeMaxSteps = 100
 			}
 
-			bridgePath, err := hpa.lowLevelPathfinder.FindPath(currentPos, firstStep, bridgeMaxSteps)
+			bridgePath, err := hpa.lowLevelPathfinder.FindPath(ctx, currentPos, firstStep, bridgeMaxSteps)
 			if err != nil || !bridgePath.Found {
 				log.Printf("[HPA*] Failed to bridge gap from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f): %v",
 					currentPos.X, currentPos.Y, currentPos.Z, firstStep.X, firstStep.Y, firstStep.Z, err)
@@ -596,7 +640,7 @@ func (hpa *hpaPathFinder) refinePathThroughEntrance(abstractPath []*AbstractEdge
 		}
 	}
 
-	normalized, err := hpa.normalizePath(raw)
+	normalized, err := hpa.normalizePath(ctx, raw)
 	if err != nil {
 		log.Printf("[HPA*] RefinePath normalization failed: %v", err)
 		return nil
@@ -790,7 +834,7 @@ func (hpa *hpaPathFinder) logAbstractPath(abstractPath []*AbstractEdge) {
 	}
 }
 
-func (hpa *hpaPathFinder) normalizePath(path *Path) (*Path, error) {
+func (hpa *hpaPathFinder) normalizePath(ctx context.Context, path *Path) (*Path, error) {
 	if path == nil || len(path.Steps) == 0 {
 		return nil, fmt.Errorf("empty path")
 	}
@@ -805,6 +849,11 @@ func (hpa *hpaPathFinder) normalizePath(path *Path) (*Path, error) {
 	for i, step := range path.Steps {
 		if positionsEqual(prev, step.Position) {
 			continue
+		}
+
+		// Check context cancellation periodically
+		if i%50 == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 
 		// Try direct move first (optimization for adjacent steps)
@@ -823,7 +872,7 @@ func (hpa *hpaPathFinder) normalizePath(path *Path) (*Path, error) {
 
 		// No direct move - need to pathfind between waypoints
 		// This handles long segments from abstract path refinement
-		microPath, err := hpa.lowLevelPathfinder.FindPath(prev, step.Position, 1000)
+		microPath, err := hpa.lowLevelPathfinder.FindPath(ctx, prev, step.Position, 1000)
 		if err != nil || !microPath.Found {
 			return nil, fmt.Errorf("cannot pathfind between waypoints %d: from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f): %v",
 				i+1, prev.X, prev.Y, prev.Z, step.Position.X, step.Position.Y, step.Position.Z, err)
@@ -868,7 +917,7 @@ func (hpa *hpaPathFinder) findMove(from, to models.V3) (PathStep, bool) {
 }
 
 // refinePath refines an abstract path into a low-level path
-func (hpa *hpaPathFinder) refinePath(abstractPath []*AbstractEdge, start, goal models.V3) *Path {
+func (hpa *hpaPathFinder) refinePath(ctx context.Context, abstractPath []*AbstractEdge, start, goal models.V3) *Path {
 	if len(abstractPath) == 0 {
 		return nil
 	}
@@ -880,6 +929,11 @@ func (hpa *hpaPathFinder) refinePath(abstractPath []*AbstractEdge, start, goal m
 
 	// For each edge in the abstract path
 	for i, edge := range abstractPath {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return nil
+		}
+
 		nextPos := edge.To.GetPosition()
 
 		// Check if we already have a cached path
@@ -894,7 +948,7 @@ func (hpa *hpaPathFinder) refinePath(abstractPath []*AbstractEdge, start, goal m
 			}
 		} else {
 			// No cached path - compute on-demand
-			path, err := hpa.lowLevelPathfinder.FindPath(currentPos, nextPos, 500)
+			path, err := hpa.lowLevelPathfinder.FindPath(ctx, currentPos, nextPos, 500)
 			if err != nil || !path.Found {
 				log.Printf("[HPA*] Warning: Failed to refine edge %d/%d from (%.0f,%.0f,%.0f) to (%.0f,%.0f,%.0f)",
 					i+1, len(abstractPath), currentPos.X, currentPos.Y, currentPos.Z, nextPos.X, nextPos.Y, nextPos.Z)
@@ -920,7 +974,7 @@ func (hpa *hpaPathFinder) refinePath(abstractPath []*AbstractEdge, start, goal m
 		if maxSteps < 500 {
 			maxSteps = 500 // Minimum 500 steps
 		}
-		finalPath, err := hpa.lowLevelPathfinder.FindPath(currentPos, goal, maxSteps)
+		finalPath, err := hpa.lowLevelPathfinder.FindPath(ctx, currentPos, goal, maxSteps)
 		if err != nil || !finalPath.Found {
 			log.Printf("[HPA*] Failed to find path from last entrance (%.0f,%.0f,%.0f) to goal (%.0f,%.0f,%.0f): %v",
 				currentPos.X, currentPos.Y, currentPos.Z, goal.X, goal.Y, goal.Z, err)
@@ -950,24 +1004,79 @@ func (hpa *hpaPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearc
 // BuildClustersInRegion builds all clusters in a rectangular region
 // This can be called proactively to preprocess a known area
 func (hpa *hpaPathFinder) BuildClustersInRegion(minPos, maxPos models.V3) {
+	hpa.BuildClustersInRegionWithContext(context.Background(), minPos, maxPos)
+}
+
+// BuildClustersInRegionWithContext builds all clusters in a rectangular region with context support
+// Uses parallel goroutines for faster cluster building (2-4x speedup on multi-core systems)
+func (hpa *hpaPathFinder) BuildClustersInRegionWithContext(ctx context.Context, minPos, maxPos models.V3) error {
 	minClusterID := hpa.builder.GetClusterManager().GetClusterID(minPos)
 	maxClusterID := hpa.builder.GetClusterManager().GetClusterID(maxPos)
 
-	log.Printf("[HPA*] Building clusters in region %s to %s",
-		minClusterID.String(), maxClusterID.String())
-
-	clustersBuilt := 0
+	// Collect all cluster IDs to build
+	var clusterIDs []ClusterID
 	for x := minClusterID.X; x <= maxClusterID.X; x++ {
 		for y := minClusterID.Y; y <= maxClusterID.Y; y++ {
 			for z := minClusterID.Z; z <= maxClusterID.Z; z++ {
-				clusterID := ClusterID{X: x, Y: y, Z: z}
-				hpa.builder.BuildCluster(clusterID)
-				clustersBuilt++
+				clusterIDs = append(clusterIDs, ClusterID{X: x, Y: y, Z: z})
 			}
 		}
 	}
 
-	log.Printf("[HPA*] Built %d clusters", clustersBuilt)
+	totalClusters := len(clusterIDs)
+	log.Printf("[HPA*] Building %d clusters in region %s to %s (parallel, %d workers)",
+		totalClusters, minClusterID.String(), maxClusterID.String(), runtime.NumCPU())
+
+	startTime := time.Now()
+
+	// Use semaphore to limit concurrent goroutines
+	numWorkers := runtime.NumCPU()
+	sem := make(chan struct{}, numWorkers)
+
+	var wg sync.WaitGroup
+	var clustersBuilt int64
+	var mu sync.Mutex // Protects clustersBuilt counter
+
+	for _, id := range clusterIDs {
+		// Check context cancellation before starting new goroutine
+		select {
+		case <-ctx.Done():
+			log.Printf("[HPA*] Cluster building cancelled after %d/%d clusters", clustersBuilt, totalClusters)
+			return ctx.Err()
+		default:
+		}
+
+		// Acquire semaphore slot
+		sem <- struct{}{}
+		wg.Add(1)
+
+		go func(clusterID ClusterID) {
+			defer wg.Done()
+			defer func() { <-sem }() // Release semaphore slot
+
+			// Check context inside goroutine
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			hpa.builder.BuildCluster(clusterID)
+
+			mu.Lock()
+			clustersBuilt++
+			mu.Unlock()
+		}(id)
+	}
+
+	// Wait for all goroutines to complete
+	wg.Wait()
+
+	elapsed := time.Since(startTime)
+	log.Printf("[HPA*] Built %d clusters in %v (%.1f clusters/sec)",
+		clustersBuilt, elapsed, float64(clustersBuilt)/elapsed.Seconds())
+
+	return nil
 }
 
 // GetBuilder returns the HPA builder for external access

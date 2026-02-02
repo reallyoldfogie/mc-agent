@@ -16,20 +16,12 @@ import (
 //
 // Based on phys archive bot/path/path.go:193-211 (Tile.IsComplete() logic).
 func IsComplete(currentPos models.V3, targetStep PathStep) bool {
-	// For jump movements, adjust target to block center to match input generator behavior
-	// This ensures completion checker and input generator use the same target coordinates
+	// Use the original target position for completion checking
+	// (The input generator may adjust to block center for aiming, but completion
+	// is based on reaching the pathfinding target, not the precise landing spot)
 	targetPos := targetStep.Position
-	switch targetStep.Movement {
-	case AscendJump, DiagonalAscend, JumpToClimb, Jump2ToClimb, Jump2:
-		// These movements need precise landing - adjust to block center
-		targetPos = models.V3{
-			X: math.Floor(targetStep.Position.X) + 0.5,
-			Y: targetStep.Position.Y,
-			Z: math.Floor(targetStep.Position.Z) + 0.5,
-		}
-	}
 
-	// Calculate delta from current position to (adjusted) target
+	// Calculate delta from current position to target
 	deltaPos := V3Sub(targetPos, currentPos)
 
 	// Movement-specific completion thresholds
@@ -49,23 +41,25 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 	case Climb:
 		// Ladder climbing (both ascent and descent)
 		//
-		// CRITICAL: The target position is the ladder BLOCK coordinates (e.g., 108, 6, 100),
-		// but when climbing, the player's FEET should be ON TOP of that block (Y = 7.0).
-		// This is because in Minecraft, when you finish climbing a ladder block, you stand
-		// on top of it, not inside it.
+		// The target position is the ladder BLOCK coordinates (e.g., 108, 6, 100).
+		// Completion can happen when:
+		// 1. Player is horizontally close to the ladder block
+		// 2. Player is vertically at or near the target height
 		//
-		// For horizontal position, player should be centered at (108.5, 100.5).
-		deltaFromCenter := models.V3{
-			X: (targetStep.Position.X + 0.5) - currentPos.X,
-			Y: (targetStep.Position.Y + 1.0) - currentPos.Y, // +1.0 because feet on TOP of block
-			Z: (targetStep.Position.Z + 0.5) - currentPos.Z,
+		// We use generous tolerances because:
+		// - Player may not land exactly centered on the ladder
+		// - Y position varies during climbing animation
+		// - The goal is to be "close enough" to proceed to next step
+		deltaFromTarget := models.V3{
+			X: targetStep.Position.X - currentPos.X,
+			Y: targetStep.Position.Y - currentPos.Y,
+			Z: targetStep.Position.Z - currentPos.Z,
 		}
-		horizontalDist2 := deltaFromCenter.X*deltaFromCenter.X + deltaFromCenter.Z*deltaFromCenter.Z
+		horizontalDist2 := deltaFromTarget.X*deltaFromTarget.X + deltaFromTarget.Z*deltaFromTarget.Z
 
-		// Complete when horizontally centered and vertically on top of block
-		// For ascending: currentPos.Y should be >= targetPos.Y + 0.9 (on top)
-		// For descending: different logic (TODO if needed)
-		return horizontalDist2 < (0.2*0.2) && math.Abs(deltaFromCenter.Y) <= 0.15
+		// Complete when within ~0.5 blocks horizontally of ladder block corner
+		// and within 0.5 blocks vertically of target (allows for standing on/in ladder)
+		return horizontalDist2 < (0.5*0.5) && math.Abs(deltaFromTarget.Y) <= 0.5
 
 	case ExitClimb:
 		// Exiting ladder onto adjacent platform
@@ -128,9 +122,10 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 
 	case Jump2:
 		// Jump across 2-block gap
-		// Slightly tighter horizontal tolerance, allow being slightly below target
+		// Allow landing within 0.25 blocks horizontally of target
+		// and slightly below target Y (common when landing from a jump)
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (0.22*0.22) && deltaPos.Y >= -0.065
+		return horizontalDist2 < (0.25*0.25) && deltaPos.Y >= -0.1 && deltaPos.Y <= 0.1
 
 	case SneakThrough, SneakTraverse:
 		// Sneaking movements (slow, precise)

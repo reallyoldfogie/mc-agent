@@ -236,7 +236,7 @@ func (a *agent) FindPath(ctx context.Context, tx, ty, tz float64) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	path, err := a.pathfind.FindPath(start, goal, maxSteps)
+	path, err := a.pathfind.FindPath(ctx, start, goal, maxSteps)
 	if err != nil {
 		return err
 	}
@@ -344,7 +344,7 @@ func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 	// Use HPA* to find and follow the full path directly
 	if err := a.pathfindAndFollow(ctx, currentPos, finalGoal); err != nil {
 		if notifyChat {
-			_ = a.SendChat(fmt.Sprintf("Pathfinding failed: %v", err.Error()))
+			_ = a.SendChat(fmt.Sprintf("pathfindAndFollow - Pathfinding failed: %v", err.Error()))
 			return fmt.Errorf("pathfinding failed: %w", err)
 		}
 	}

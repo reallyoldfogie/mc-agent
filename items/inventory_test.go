@@ -80,6 +80,49 @@ func (f *fakeScreen) ServerUpdateVersion() int64 {
 	return f.updateVersion
 }
 
+type fakeScreenManager struct {
+	screens   map[int]mcscreen.Container
+	inventory mcscreen.Inventory
+	cursor    mcscreen.Slot
+}
+
+func (f *fakeScreenManager) ContainerClick(id int, slot int16, button byte, mode int32, slots mcscreen.ChangedSlots, carried *mcscreen.Slot) error {
+	return nil
+}
+func (f *fakeScreenManager) ForceCloseScreen(windowID int) error {
+	return nil
+}
+func (f *fakeScreenManager) GetCursorSlot() mcscreen.Slot {
+	return f.cursor
+}
+func (f *fakeScreenManager) GetPlayerInventory() *mcscreen.Inventory {
+	return &f.inventory
+}
+func (f *fakeScreenManager) GetScreenByID(windowID int) mcscreen.Container {
+	return f.screens[windowID]
+}
+func (f *fakeScreenManager) ServerUpdateVersion() int64 {
+	return 0
+}
+func (f *fakeScreenManager) Screens() map[int]mcscreen.Container {
+	return f.screens
+}
+func (f *fakeScreenManager) SetScreens(screens map[int]mcscreen.Container) {
+	f.screens = screens
+}
+func (f *fakeScreenManager) Cursor() mcscreen.Slot {
+	return f.cursor
+}
+func (f *fakeScreenManager) SetCursor(slot mcscreen.Slot) {
+	f.cursor = slot
+}
+func (f *fakeScreenManager) Inventory() mcscreen.Inventory {
+	return f.inventory
+}
+func (f *fakeScreenManager) SetInventory(in mcscreen.Inventory) {
+	f.inventory = in
+}
+
 func TestSlotConversionComponents(t *testing.T) {
 	stack := models.ItemStack{
 		ItemID: 7,
@@ -494,18 +537,19 @@ func TestScreenManagerAdapterNil(t *testing.T) {
 }
 
 func TestScreenManagerAdapterSlotAt(t *testing.T) {
+	// Create a fake screen implementation instead of using NewManager
+	fakeScreenMgr := &fakeScreenManager{
+		screens:   make(map[int]mcscreen.Container),
+		inventory: mcscreen.Inventory{},
+	}
+
 	chest := &mcscreen.Chest{Slots: make([]mcscreen.Slot, 9)}
 	chest.Slots[2] = *slotFromItemStack(models.ItemStack{ItemID: 3, Count: 1})
-	manager := mcscreen.NewManager(nil, nil, nil)
-	manager.SetScreens(map[int]mcscreen.Container{
-		1: chest,
-	})
+	fakeScreenMgr.screens[1] = chest
 
-	inventory := manager.Inventory()
-	inventory.Slots[4] = *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})
-	manager.SetInventory(inventory)
+	fakeScreenMgr.inventory.Slots[4] = *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})
 
-	adapter := screenManagerAdapter{manager: manager}
+	adapter := screenManagerAdapter{manager: fakeScreenMgr}
 	slot, ok := adapter.SlotAt(0, 4)
 	require.True(t, ok)
 	require.Equal(t, pk.VarInt(8), slot.ID)

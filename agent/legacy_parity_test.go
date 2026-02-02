@@ -177,7 +177,7 @@ func TestMoveUp_Negative(t *testing.T) {
 // findPath invalid args and error propagation
 type fakePFFail struct{}
 
-func (fakePFFail) FindPath(_, _ models.V3, _ int) (*models.Path, error) {
+func (fakePFFail) FindPath(ctx context.Context, _, _ models.V3, _ int) (*models.Path, error) {
 	return nil, errors.New("pf error")
 }
 func (fakePFFail) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {

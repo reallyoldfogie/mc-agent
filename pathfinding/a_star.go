@@ -2,6 +2,7 @@ package pathfinding
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -16,6 +17,7 @@ type aStarPathFinder struct {
 	shapeMgr          models.BlockShapeManager
 	movementValidator *MovementValidator
 	goalRadius        float64
+	contextCheckFreq  int
 }
 
 // NewAStarPathFinder creates a new A* pathfinder
@@ -26,11 +28,13 @@ func NewAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) model
 // NewAStarPathFinderWithConfig creates a new A* pathfinder with custom settings.
 func NewAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
 	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
+	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
 	return &aStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
 		movementValidator: NewMovementValidator(w, shapeMgr),
 		goalRadius:        goalRadius,
+		contextCheckFreq:  contextCheckFreq,
 	}
 }
 
@@ -137,8 +141,18 @@ func manhattanHeuristic(pos, goal models.V3) float64 {
 // (Pathfinding from)|(A\*)|(Pathfinding straight line distance)|(\(\d+,?\s?74+,?\s?\d+\))
 
 // FindPath finds a path from start to goal using A* algorithm
-func (pf *aStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Path, error) {
+func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, maxSteps int) (*Path, error) {
 	startTime := time.Now()
+
+	// Check context before starting
+	if ctx.Err() != nil {
+		return &Path{
+			Found:      false,
+			StartPos:   start,
+			GoalPos:    goal,
+			SearchTime: float64(time.Since(startTime).Milliseconds()),
+		}, ctx.Err()
+	}
 
 	// Validate start and goal positions
 	if start.DistanceTo(goal) <= pf.goalRadius {
@@ -194,6 +208,20 @@ func (pf *aStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Path,
 	// A* main loop
 	for openSet.Len() > 0 {
 		stepsProcessed++
+
+		// Check context cancellation periodically to reduce overhead
+		if stepsProcessed%pf.contextCheckFreq == 0 {
+			select {
+			case <-ctx.Done():
+				return &Path{
+					Found:      false,
+					StartPos:   start,
+					GoalPos:    goal,
+					SearchTime: float64(time.Since(startTime).Milliseconds()),
+				}, ctx.Err()
+			default:
+			}
+		}
 
 		// Check step limit
 		if maxSteps > 0 && stepsProcessed > maxSteps {

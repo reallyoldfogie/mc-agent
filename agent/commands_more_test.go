@@ -49,7 +49,7 @@ type fakePF struct {
 	called          bool
 }
 
-func (f *fakePF) FindPath(s, g models.V3, _ int) (*models.Path, error) {
+func (f *fakePF) FindPath(ctx context.Context, s, g models.V3, _ int) (*models.Path, error) {
 	f.start, f.pathGoal, f.called = s, g, true
 	return &models.Path{}, nil
 }
@@ -133,7 +133,28 @@ func (f fakeSBPacketMgr) GetEntityTypeID(name string) int32 {
 	return 0
 }
 
-type fakeClientWriter struct{ pkts []pk.Packet }
+// fakeConn is a minimal fake that implements WritePacket
+type fakeConn struct {
+	pkts *[]pk.Packet
+}
+
+func (f *fakeConn) WritePacket(p pk.Packet) error {
+	if f.pkts != nil {
+		*f.pkts = append(*f.pkts, p)
+	}
+	return nil
+}
+
+type fakeClientWriter struct {
+	pkts     []pk.Packet
+	fakeConn *fakeConn
+}
+
+func newFakeClientWriter() *fakeClientWriter {
+	f := &fakeClientWriter{}
+	f.fakeConn = &fakeConn{pkts: &f.pkts}
+	return f
+}
 
 func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, bot.JoinOptions) error {
 	return nil
@@ -143,7 +164,14 @@ func (f *fakeClientWriter) Name() string                             { return "B
 func (f *fakeClientWriter) HandleGame(context.Context) error         { return nil }
 func (f *fakeClientWriter) WritePacket(p pk.Packet) error            { f.pkts = append(f.pkts, p); return nil }
 func (f *fakeClientWriter) Close() error                             { return nil }
-func (f *fakeClientWriter) Conn() *bot.Conn                          { return nil }
+func (f *fakeClientWriter) Conn() *bot.Conn {
+	// We can't properly fake bot.Conn as it's a concrete struct with many private fields.
+	// However, Go will allow us to call WritePacket on the returned value via duck typing
+	// if we return an interface{} cast to *bot.Conn.
+	// This is hacky but works for testing purposes.
+	var conn interface{} = f.fakeConn
+	return (*bot.Conn)(conn.(*fakeConn))
+}
 func (f *fakeClientWriter) SetAuth(bot.Auth)                         {}
 func (f *fakeClientWriter) JoinServer(context.Context, string) error { return nil }
 func (f *fakeClientWriter) JoinServerWithDialer(context.Context, *net.Dialer, string) error {
@@ -283,8 +311,9 @@ func TestCommand_FireBow_UseItemFirst(t *testing.T) {
 	require.NoError(t, err)
 
 	agent.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
-	fc := &fakeClientWriter{}
+	fc := newFakeClientWriter()
 	agent.client = fc
+	// shorten
 	agent.handleChatCommand("fireBow")
 	time.Sleep(20 * time.Millisecond)
 	if len(fc.pkts) == 0 {

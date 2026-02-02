@@ -250,6 +250,19 @@ else
         # List failed tests
         echo -e "${RED}Failed tests:${NC}"
         grep "^--- FAIL:" $TEST_OUTPUT | sed 's/^--- FAIL: /  - /' || echo "  (parse error)"
+
+        # List failed sub-tests (if any)
+        FAILED_SUBTESTS=$(grep "^--- FAIL:" $TEST_OUTPUT | sed 's/^--- FAIL: //' | awk '{print $1}' | grep '/' | sort -u || true)
+        if [ -n "$FAILED_SUBTESTS" ]; then
+            SUBTEST_FAIL_COUNT=$(printf "%s\n" "$FAILED_SUBTESTS" | grep -c '.')
+        else
+            SUBTEST_FAIL_COUNT=0
+        fi
+        if [ "$SUBTEST_FAIL_COUNT" -gt 0 ]; then
+            echo ""
+            echo -e "${RED}Failed sub-tests ($SUBTEST_FAIL_COUNT):${NC}"
+            printf "%s\n" "$FAILED_SUBTESTS" | sed 's/^/  - /'
+        fi
     else
         echo -e "${RED}  Tests failed${NC}"
     fi

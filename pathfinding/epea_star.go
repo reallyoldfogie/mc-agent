@@ -2,6 +2,7 @@ package pathfinding
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -20,6 +21,7 @@ type epeaStarPathFinder struct {
 	shapeMgr          models.BlockShapeManager
 	movementValidator *MovementValidator
 	goalRadius        float64
+	contextCheckFreq  int
 }
 
 // NewEPEAStarPathFinder creates a new EPEA* pathfinder
@@ -30,11 +32,13 @@ func NewEPEAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) mo
 // NewEPEAStarPathFinderWithConfig creates a new EPEA* pathfinder with custom settings.
 func NewEPEAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
 	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
+	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
 	return &epeaStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
 		movementValidator: NewMovementValidator(w, shapeMgr),
 		goalRadius:        goalRadius,
+		contextCheckFreq:  contextCheckFreq,
 	}
 }
 
@@ -81,8 +85,18 @@ func (h *epeaNodeHeap) Pop() any {
 }
 
 // FindPath finds a path from start to goal using EPEA* algorithm
-func (pf *epeaStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Path, error) {
+func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, maxSteps int) (*Path, error) {
 	startTime := time.Now()
+
+	// Check context before starting
+	if ctx.Err() != nil {
+		return &Path{
+			Found:      false,
+			StartPos:   start,
+			GoalPos:    goal,
+			SearchTime: float64(time.Since(startTime).Milliseconds()),
+		}, ctx.Err()
+	}
 
 	// Validate start and goal positions
 	if start.DistanceTo(goal) <= pf.goalRadius {
@@ -145,6 +159,23 @@ func (pf *epeaStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Pa
 	for openSet.Len() > 0 {
 		stepsProcessed++
 
+		// Check context cancellation periodically to reduce overhead
+		if stepsProcessed%pf.contextCheckFreq == 0 {
+			select {
+			case <-ctx.Done():
+				log.Printf("[EPEA*] Stats: steps=%d, successors generated=%d, skipped=%d (%.1f%% reduction)",
+					stepsProcessed, successorsGenerated, successorsSkipped,
+					100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
+				return &Path{
+					Found:      false,
+					StartPos:   start,
+					GoalPos:    goal,
+					SearchTime: float64(time.Since(startTime).Milliseconds()),
+				}, ctx.Err()
+			default:
+			}
+		}
+
 		// Check step limit
 		if maxSteps > 0 && stepsProcessed > maxSteps {
 			log.Printf("[EPEA*] Stats: steps=%d, successors generated=%d, skipped=%d (%.1f%% reduction)",
@@ -200,10 +231,12 @@ func (pf *epeaStarPathFinder) FindPath(start, goal models.V3, maxSteps int) (*Pa
 			tentativeHCost := heuristic(neighborPos, goal)
 			tentativeFCost := tentativeGCost + tentativeHCost
 
-			// EPEA* optimization: skip generating this successor if its f-cost
-			// would be worse than the next best node in OPEN
-			// This is safe because we'll reconsider this node later if needed
-			if openSet.Len() > 0 && tentativeFCost > (*openSet)[0].fCost {
+			// EPEA* optimization: defer generating successors with significantly worse f-cost
+			// Use a threshold margin to avoid being too aggressive with pruning
+			// This allows paths through terrain with elevation changes (stairs, etc.)
+			// where the heuristic may underestimate actual costs
+			const fCostMargin = 2.0 // Allow successors within 2.0 of best f-cost
+			if openSet.Len() > 0 && tentativeFCost > (*openSet)[0].fCost+fCostMargin {
 				// Check if we've already generated this successor at this f-threshold
 				if !current.generatedSuccessors[neighborIdx] {
 					successorsSkipped++

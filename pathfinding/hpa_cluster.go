@@ -3,6 +3,7 @@ package pathfinding
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -113,6 +114,8 @@ type Cluster struct {
 	InternalPaths map[EntranceKey]*Path
 	// Dirty indicates whether this cluster needs to be rebuilt
 	Dirty bool
+	// mu protects cluster fields for concurrent access during parallel builds
+	mu sync.RWMutex
 }
 
 // NewCluster creates a new cluster with the given ID and size
@@ -142,28 +145,62 @@ func (c *Cluster) String() string {
 
 // AddEntrance adds an entrance to this cluster
 func (c *Cluster) AddEntrance(entrance *Entrance) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Entrances = append(c.Entrances, entrance)
+}
+
+// GetEntrances returns a copy of the entrances slice for safe iteration
+func (c *Cluster) GetEntrances() []*Entrance {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	// Return a copy to avoid race conditions during iteration
+	entrancesCopy := make([]*Entrance, len(c.Entrances))
+	copy(entrancesCopy, c.Entrances)
+	return entrancesCopy
 }
 
 // GetInternalPath retrieves a cached path between two entrances
 func (c *Cluster) GetInternalPath(from, to *Entrance) *Path {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	key := EntranceKey{From: from, To: to}
 	return c.InternalPaths[key]
 }
 
 // SetInternalPath caches a path between two entrances
 func (c *Cluster) SetInternalPath(from, to *Entrance, path *Path) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	key := EntranceKey{From: from, To: to}
 	c.InternalPaths[key] = path
 }
 
 // MarkDirty marks this cluster as needing rebuilding
 func (c *Cluster) MarkDirty() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Dirty = true
+}
+
+// IsDirty returns whether this cluster needs rebuilding
+func (c *Cluster) IsDirty() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Dirty
+}
+
+// SetDirty sets the dirty flag (used after building)
+func (c *Cluster) SetDirty(dirty bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Dirty = dirty
 }
 
 // Clear removes all entrances and cached paths from this cluster
 func (c *Cluster) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Entrances = make([]*Entrance, 0)
 	c.InternalPaths = make(map[EntranceKey]*Path)
 	c.Dirty = true
@@ -173,6 +210,7 @@ func (c *Cluster) Clear() {
 type ClusterManager struct {
 	clusters    map[ClusterID]*Cluster
 	clusterSize int
+	mu          sync.RWMutex // Protects clusters map for concurrent access
 }
 
 // NewClusterManager creates a new cluster manager
@@ -194,9 +232,23 @@ func (cm *ClusterManager) GetClusterID(pos models.V3) ClusterID {
 
 // GetCluster retrieves or creates a cluster for the given ID
 func (cm *ClusterManager) GetCluster(id ClusterID) *Cluster {
+	// First try read lock for existing cluster
+	cm.mu.RLock()
+	if cluster, exists := cm.clusters[id]; exists {
+		cm.mu.RUnlock()
+		return cluster
+	}
+	cm.mu.RUnlock()
+
+	// Need to create - acquire write lock
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// Double-check after acquiring write lock
 	if cluster, exists := cm.clusters[id]; exists {
 		return cluster
 	}
+
 	// Create new cluster on demand
 	cluster := NewCluster(id, cm.clusterSize)
 	cm.clusters[id] = cluster
@@ -231,12 +283,16 @@ func (cm *ClusterManager) GetAdjacentClusterID(id ClusterID, direction Direction
 
 // ClusterExists checks if a cluster exists for the given ID
 func (cm *ClusterManager) ClusterExists(id ClusterID) bool {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
 	_, exists := cm.clusters[id]
 	return exists
 }
 
 // MarkClusterDirty marks a cluster as needing rebuilding
 func (cm *ClusterManager) MarkClusterDirty(id ClusterID) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
 	if cluster, exists := cm.clusters[id]; exists {
 		cluster.MarkDirty()
 	}

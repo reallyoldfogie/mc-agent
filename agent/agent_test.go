@@ -135,14 +135,15 @@ func TestInitRegistersCoreHandlers(t *testing.T) {
 
 	agent := agentInt.(*agent)
 
-	// Inject fakes
-	agent.packetMgr = fakeCBPacketMgr{ids: map[string]protocol_models.ClientboundPacketID{
+	// Inject fakes into config so they persist through Init()
+	fakePM := fakeCBPacketMgr{ids: map[string]protocol_models.ClientboundPacketID{
 		"ClientboundAddEntity":        1,
 		"ClientboundMoveEntityPosRot": 2,
 		"ClientboundMoveEntityPos":    3,
 		"ClientboundTeleportEntity":   4,
 		"ClientboundRemoveEntities":   5,
 	}}
+	agent.cfg.PacketMgr = fakePM
 	bus := &fakeEventBus{}
 	agent.client = &fakeClient{bus: bus}
 

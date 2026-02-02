@@ -2175,7 +2175,7 @@ func testPathCommand() {
 
 	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
-	path, err := pathFinder.FindPath(start, goal, 100)
+	path, err := pathFinder.FindPath(context.Background(), start, goal, 100)
 	if err != nil {
 		chatHandler.SendMessage(fmt.Sprintf("Pathfinding failed: %v", err))
 		fmt.Printf("testPathCommand error: %v\n", err)
@@ -2234,7 +2234,7 @@ func findPathCommand(xStr, yStr, zStr string) {
 
 	chatHandler.SendMessage(fmt.Sprintf("Finding path from (%f, %f, %f) to (%f, %f, %f)", start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z))
 
-	path, err := pathFinder.FindPath(start, goal, 200)
+	path, err := pathFinder.FindPath(context.Background(), start, goal, 200)
 	if err != nil {
 		chatHandler.SendMessage(fmt.Sprintf("Pathfinding failed: %v", err))
 		fmt.Printf("findPathCommand error: %v\n", err)

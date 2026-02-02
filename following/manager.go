@@ -1,6 +1,7 @@
 package following
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"math"
@@ -721,7 +722,7 @@ func (fm *followManager) calculateNewPath(botX, botY, botZ, targetX, targetY, ta
 	resultCh := make(chan pathResult, 1)
 
 	go func() {
-		path, err := fm.pathFinder.FindPath(start, goal, maxPathSteps)
+		path, err := fm.pathFinder.FindPath(context.Background(), start, goal, maxPathSteps)
 		resultCh <- pathResult{path: path, err: err}
 	}()
 
@@ -1003,7 +1004,7 @@ func (fm *followManager) tryAlternateDestination(botX, botY, botZ, targetX, targ
 		log.Printf("[FollowManager %s] Trying alternate destination %d: (%f, %f, %f)", fm.getFollowerName(), i+1, goal.X, goal.Y, goal.Z)
 
 		// Try to find path to alternate destination
-		path, err := fm.pathFinder.FindPath(start, goal, fm.config.MaxPathSteps)
+		path, err := fm.pathFinder.FindPath(context.Background(), start, goal, fm.config.MaxPathSteps)
 		if err == nil && path.Found {
 			log.Printf("[FollowManager %s] Found alternate path with %d steps", fm.getFollowerName(), len(path.Steps))
 			fm.currentPath = path

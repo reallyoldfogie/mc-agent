@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -12,9 +13,9 @@ type fallbackPathFinder struct {
 	fallback models.PathFinder
 }
 
-func (pf fallbackPathFinder) FindPath(start, goal models.V3, maxSteps int) (*models.Path, error) {
+func (pf fallbackPathFinder) FindPath(ctx context.Context, start, goal models.V3, maxSteps int) (*models.Path, error) {
 	if pf.primary != nil {
-		path, err := pf.primary.FindPath(start, goal, maxSteps)
+		path, err := pf.primary.FindPath(ctx, start, goal, maxSteps)
 		if err == nil && path != nil && path.Found {
 			return path, nil
 		}
@@ -24,7 +25,7 @@ func (pf fallbackPathFinder) FindPath(start, goal models.V3, maxSteps int) (*mod
 			}
 			return path, fmt.Errorf("no path found")
 		}
-		fallbackPath, fallbackErr := pf.fallback.FindPath(start, goal, maxSteps)
+		fallbackPath, fallbackErr := pf.fallback.FindPath(ctx, start, goal, maxSteps)
 		if fallbackErr == nil && fallbackPath != nil && fallbackPath.Found {
 			return fallbackPath, nil
 		}
@@ -40,7 +41,7 @@ func (pf fallbackPathFinder) FindPath(start, goal models.V3, maxSteps int) (*mod
 	if pf.fallback == nil {
 		return nil, fmt.Errorf("no pathfinder available")
 	}
-	return pf.fallback.FindPath(start, goal, maxSteps)
+	return pf.fallback.FindPath(ctx, start, goal, maxSteps)
 }
 
 func (pf fallbackPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {

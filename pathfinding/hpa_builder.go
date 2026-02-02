@@ -3,6 +3,7 @@ package pathfinding
 import (
 	"context"
 	"log"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -16,6 +17,11 @@ type HPABuilder struct {
 	abstractGraph      *AbstractGraph
 	movementValidator  *MovementValidator
 	DebugViz           *HPADebugVisualizer
+
+	// buildMu protects concurrent cluster building
+	buildMu sync.Mutex
+	// building tracks clusters currently being built to prevent double-building
+	building map[ClusterID]bool
 }
 
 // NewHPABuilder creates a new HPA* builder
@@ -27,17 +33,50 @@ func NewHPABuilder(world models.World, shapeMgr models.BlockShapeManager, lowLev
 		clusterManager:     NewClusterManager(clusterSize),
 		abstractGraph:      NewAbstractGraph(clusterSize),
 		movementValidator:  NewMovementValidator(world, shapeMgr),
+		building:           make(map[ClusterID]bool),
 	}
 }
 
 // BuildCluster builds a single cluster: finds entrances and computes internal paths
+// Thread-safe: can be called concurrently from multiple goroutines
 func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 	cluster := b.clusterManager.GetCluster(clusterID)
 
-	if !cluster.Dirty {
-		// Cluster is already built
+	// Fast path: check if already built (uses RLock inside IsDirty)
+	if !cluster.IsDirty() {
 		return cluster
 	}
+
+	// Acquire build lock to prevent concurrent builds of the same cluster
+	b.buildMu.Lock()
+
+	// Double-check after acquiring lock
+	if !cluster.IsDirty() {
+		b.buildMu.Unlock()
+		return cluster
+	}
+
+	// Check if another goroutine is already building this cluster
+	if b.building[clusterID] {
+		b.buildMu.Unlock()
+		// Wait for the other goroutine to finish by polling IsDirty
+		// This is a simple approach - could use channels for more efficiency
+		for cluster.IsDirty() {
+			// Yield to other goroutines
+		}
+		return cluster
+	}
+
+	// Mark as building
+	b.building[clusterID] = true
+	b.buildMu.Unlock()
+
+	// Ensure we clean up building flag when done
+	defer func() {
+		b.buildMu.Lock()
+		delete(b.building, clusterID)
+		b.buildMu.Unlock()
+	}()
 
 	log.Printf("[HPABuilder] Building cluster %s", cluster.String())
 
@@ -77,7 +116,7 @@ func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 	// Phase 3: Add edges to abstract graph
 	b.addClusterToAbstractGraph(cluster)
 
-	cluster.Dirty = false
+	cluster.SetDirty(false)
 	return cluster
 }
 
@@ -364,7 +403,7 @@ func (b *HPABuilder) getOrComputeInternalPath(cluster *Cluster, from, to *Entran
 	start := from.Pos1
 	goal := to.Pos1
 
-	path, err := b.lowLevelPathfinder.FindPath(start, goal, 500)
+	path, err := b.lowLevelPathfinder.FindPath(context.Background(), start, goal, 500)
 	if err != nil || !path.Found {
 		return nil
 	}
@@ -442,7 +481,7 @@ func (b *HPABuilder) addClusterToAbstractGraph(cluster *Cluster) {
 
 		// Build adjacent cluster if dirty
 		adjacentCluster := b.clusterManager.GetCluster(adjacentClusterID)
-		if adjacentCluster.Dirty {
+		if adjacentCluster.IsDirty() {
 			// Don't build now - will be built when needed
 			continue
 		}
@@ -453,7 +492,7 @@ func (b *HPABuilder) addClusterToAbstractGraph(cluster *Cluster) {
 			if entrance.Matches(adjEntrance) {
 				// Compute actual path between the two entrance positions
 				// (handles stairs, ladders, etc.)
-				forwardPath, err := b.lowLevelPathfinder.FindPath(entrance.Pos1, entrance.Pos2, 50)
+				forwardPath, err := b.lowLevelPathfinder.FindPath(context.Background(), entrance.Pos1, entrance.Pos2, 50)
 				if err == nil && forwardPath.Found {
 					// Add bidirectional edges with actual paths
 					reversePath := b.reversePath(forwardPath)

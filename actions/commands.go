@@ -81,7 +81,7 @@ func (MoveTo) Execute(agent CommandAgent, args []string) error {
 	}
 	go func() {
 		if err := agent.MoveToWithChat(context.Background(), tx, ty, tz); err != nil {
-			_ = agent.SendChat(fmt.Sprintf("Pathfinding failed: %v", err))
+			_ = agent.SendChat(fmt.Sprintf("MoveToWithChat - Pathfinding failed: %v", err))
 		}
 	}()
 	return nil

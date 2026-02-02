@@ -536,7 +536,7 @@ func (a *agent) Init(ctx context.Context) error {
 				distance := snappedStart.DistanceTo(snappedGoal)
 				maxSteps := max(int(distance*150), 10000)
 
-				path, err := lowLevelPathfinder.FindPath(snappedStart, snappedGoal, maxSteps)
+				path, err := lowLevelPathfinder.FindPath(context.Background(), snappedStart, snappedGoal, maxSteps)
 				if err != nil {
 					log.Printf("[Agent %s] Stuck recovery pathfinding failed: %v", a.client.Name(), err)
 					return nil
