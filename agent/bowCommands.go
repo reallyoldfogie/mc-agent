@@ -85,6 +85,7 @@ func (a *agent) FireBowAt(x, y, z float64) error {
 
 	// Visualize trajectory with particles for debugging (uses RCON if available)
 	a.visualizeArrowTrajectory(botX, botY, botZ, yaw, pitch, powerFactor, x, y, z)
+
 	// Map the power factor back to a hold duration for your bot's action system (e.g., 0.1 to 1.0 seconds)
 	holdDurationSeconds := powerFactor * 1.0
 	holdDuration := durationFromSeconds(holdDurationSeconds)
@@ -162,7 +163,8 @@ func findBestShot(horizontalDist, verticalDist float64) (float64, float64) {
 	minError := math.MaxFloat64
 	log.Printf("[findBestShot] horizontalDist=%.2f, verticalDist=%.2f", horizontalDist, verticalDist)
 
-	for power := minPower; power <= maxPower; power += powerStep {
+	// Search from high power to low power to prefer higher power when accuracy is similar
+	for power := maxPower; power >= minPower; power -= powerStep {
 		for pitch := minPitch; pitch <= maxPitch; pitch += pitchStep {
 			pitchRad := pitch * math.Pi / 180.0
 
@@ -183,12 +185,14 @@ func findBestShot(horizontalDist, verticalDist float64) (float64, float64) {
 					bestPitch = pitch
 					bestPower = power
 					log.Printf("  [findBestShot] Better match: pitch=%.1f, power=%.2f, hitX=%.2f, hitY=%.2f, error=%.2f", pitch, power, hitX, hitY, error)
-				} else if math.Abs(error-minError) < epsilon && math.Abs(pitch) < math.Abs(bestPitch) {
-					// Errors are similar, prefer lower angle
-					minError = error
-					bestPitch = pitch
-					bestPower = power
-					log.Printf("  [findBestShot] Better match (lower angle): pitch=%.1f, power=%.2f, hitX=%.2f, hitY=%.2f, error=%.2f", pitch, power, hitX, hitY, error)
+				} else if math.Abs(error-minError) < epsilon && (math.Abs(pitch) < math.Abs(bestPitch) || math.Abs(bestPitch) == 0) {
+					// Errors are similar, prefer lower angle (or higher power if same angle already selected)
+					if math.Abs(pitch) < math.Abs(bestPitch) || (math.Abs(pitch) == math.Abs(bestPitch) && power > bestPower) {
+						minError = error
+						bestPitch = pitch
+						bestPower = power
+						log.Printf("  [findBestShot] Better match (lower angle or higher power): pitch=%.1f, power=%.2f, hitX=%.2f, hitY=%.2f, error=%.2f", pitch, power, hitX, hitY, error)
+					}
 				}
 			}
 		}
@@ -209,7 +213,10 @@ func simulateArrow(pitchRad, powerFactor, targetHorizontalDist, targetVerticalDi
 
 	posX, posY := 0.0, 0.0 // Simplified 2D plane simulation (horizontal distance, vertical position)
 
-	for range 400 {
+	// Calculate distance to target to estimate simulation time needed
+	maxTicks := 200 + int(targetHorizontalDist*20) // ~20 ticks per block of horizontal distance
+
+	for range maxTicks {
 		posX += velXZ
 		posY += velY
 
@@ -301,11 +308,11 @@ func (a *agent) visualizeArrowTrajectory(botX, botY, botZ, yaw, pitch, power, ta
 	log.Printf("[visualizeArrowTrajectory] Sending %d position markers via RCON", len(positions))
 	ctx := context.Background()
 	for i, cmd := range positions {
-		if i%5 == 0 { // Sample particles to avoid spam
-			log.Printf("[visualizeArrowTrajectory] Particle %d: %s", i, cmd)
-			_, _ = a.cfg.RCON.Exec(ctx, cmd)
-			time.Sleep(5 * time.Millisecond) // Small delay to avoid rate limiting
-		}
+		// if i%5 == 0 { // Sample particles to avoid spam
+		log.Printf("[visualizeArrowTrajectory] Particle %d: %s", i, cmd)
+		_, _ = a.cfg.RCON.Exec(ctx, cmd)
+		time.Sleep(5 * time.Millisecond) // Small delay to avoid rate limiting
+		// }
 	}
 
 	// Also mark the target with a different particle
