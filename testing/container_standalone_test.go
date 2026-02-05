@@ -44,16 +44,20 @@ func setupStandaloneTest(t *testing.T, testName string, mcVersion string) *Stand
 // setupStandaloneTestForEntity creates a fresh server and agent for entity container tests
 // Unlike setupStandaloneTest, this does NOT place a block - entities are spawned by the test
 func setupStandaloneTestForEntity(t *testing.T, testName string, mcVersion string) *StandaloneTestEnv {
-	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, "survival", false, mcVersion)
+	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, "survival", false, mcVersion, DifficultyEasy, false)
+}
+
+func setupStandaloneTestForEntityWithReplay(t *testing.T, testName string, mcVersion string) *StandaloneTestEnv {
+	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, "survival", false, mcVersion, DifficultyEasy, true)
 }
 
 // setupStandaloneTestWithMode creates a fresh server and agent with specified game mode
 func setupStandaloneTestWithMode(t *testing.T, testName string, gameMode GameMode, mcVersion string) *StandaloneTestEnv {
-	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, gameMode, true, mcVersion)
+	return setupStandaloneTestWithModeAndBlockPlacement(t, testName, gameMode, true, mcVersion, DifficultyEasy, false)
 }
 
 // setupStandaloneTestWithModeAndBlockPlacement creates a fresh server and agent with specified game mode and optional block placement
-func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string, gameMode GameMode, placeBlock bool, mcVersion string) *StandaloneTestEnv {
+func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string, gameMode GameMode, placeBlock bool, mcVersion string, difficulty Difficulty, enableReplay bool) *StandaloneTestEnv {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 
 	// Get working directory
@@ -67,10 +71,11 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 
 	// Configure server
 	serverCfg := DefaultServerConfig()
-	serverCfg.Memory = "1024M"
-	serverCfg.MinFreeMemoryMB = 512
+	serverCfg.Memory = "512M"
+	serverCfg.MinFreeMemoryMB = 256
 	serverCfg.Version = mcVersion
 	serverCfg.GameMode = gameMode
+	serverCfg.Difficulty = difficulty
 	serverCfg.PullImage = false
 	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", testName, mcVersion)
 	RequireIntegrationEnv(t, serverCfg)
@@ -109,7 +114,12 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 		Name:           botName,
 		ServerAddress:  addr,
 		Version:        serverCfg.Version,
-		EnableCamAgent: false, // temporarily disable to simplify logging
+		EnableCamAgent: true, // Enable camera agent to observe main agent
+	}
+	if enableReplay {
+		agentCfg.EnableReplay = true
+		agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("%s_%s_%s.mcpr", testName, serverCfg.Version, time.Now().Format("20060102_150405")), agentCfg.Name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(agentCfg.ReplayOutput), 0755), "create replay directory")
 	}
 
 	// Version handler is auto-detected by the framework
@@ -221,6 +231,10 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 
 	// Wait for chunks to load
 	time.Sleep(3 * time.Second)
+
+	if enableReplay {
+		t.Logf("replay enabled: %s", agentCfg.ReplayOutput)
+	}
 
 	return &StandaloneTestEnv{
 		Inst:            inst,

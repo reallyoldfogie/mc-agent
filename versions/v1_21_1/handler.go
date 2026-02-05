@@ -2,9 +2,12 @@
 package v1_21_1
 
 import (
+	"bytes"
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/basetypes"
+	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/play/serverbound"
+	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -86,6 +89,7 @@ type playHandler struct {
 	containers *containerHandler
 	chat       *chatHandler
 	world      *worldHandler
+	actions    *actionHandler
 }
 
 func (p *playHandler) Movement() common.MovementHandler {
@@ -123,6 +127,13 @@ func (p *playHandler) World() common.WorldHandler {
 	return p.world
 }
 
+func (p *playHandler) Actions() common.ActionHandler {
+	if p.actions == nil {
+		p.actions = &actionHandler{packetMgr: p.packetMgr}
+	}
+	return p.actions
+}
+
 // SendClientInformation sends client settings/information.
 // In 1.21.1, CommonSettings has 8 fields (no ParticleStatus).
 func (p *playHandler) SendClientInformation(conn common.PacketWriter, info common.ClientInfo) error {
@@ -142,6 +153,73 @@ func (p *playHandler) SendClientInformation(conn common.PacketWriter, info commo
 		return common.ErrPacketSend{PacketName: "CommonSettings", Cause: err}
 	}
 	return nil
+}
+
+// SendCustomPayload sends a custom payload packet (plugin channels).
+func (p *playHandler) SendCustomPayload(conn common.PacketWriter, channel string, payload string) error {
+	pkt := sb.NewCustomPayload()
+	pkt.Channel = pk.String(channel)
+	var buf bytes.Buffer
+	if _, err := pk.String(payload).WriteTo(&buf); err != nil {
+		return common.ErrPacketSend{PacketName: "CustomPayload", Cause: err}
+	}
+	pkt.Data = models.RestBuffer{Data: buf.Bytes()}
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "CustomPayload", Cause: err}
+	}
+	return nil
+}
+
+// ParseLogin parses the ClientboundLogin packet to extract entity ID.
+func (p *playHandler) ParseLogin(pkt pk.Packet) (entityID int32, err error) {
+	var id pk.Int
+	if err = pkt.Scan(&id); err != nil {
+		return 0, common.ErrPacketParse{PacketName: "Login", Cause: err}
+	}
+	return int32(id), nil
+}
+
+// ParseSound parses a ClientboundSound packet.
+func (p *playHandler) ParseSound(pkt pk.Packet) (soundID, category int32, x, y, z int32, volume, pitch float32, seed int64, err error) {
+	var (
+		soundIDVar          pk.VarInt
+		categoryVar         pk.VarInt
+		xVar, yVar, zVar    pk.Int
+		volumeVar, pitchVar pk.Float
+		seedVar             pk.Long
+	)
+	if err = pkt.Scan(&soundIDVar, &categoryVar, &xVar, &yVar, &zVar, &volumeVar, &pitchVar, &seedVar); err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "Sound", Cause: err}
+	}
+	return int32(soundIDVar), int32(categoryVar), int32(xVar), int32(yVar), int32(zVar), float32(volumeVar), float32(pitchVar), int64(seedVar), nil
+}
+
+// ParseViewDistance parses a ClientboundSetChunkCacheRadius packet.
+func (p *playHandler) ParseViewDistance(pkt pk.Packet) (viewDistance int32, err error) {
+	var vd pk.VarInt
+	if err = pkt.Scan(&vd); err != nil {
+		return 0, common.ErrPacketParse{PacketName: "SetChunkCacheRadius", Cause: err}
+	}
+	return int32(vd), nil
+}
+
+// ParseSimulationDistance parses a ClientboundSetSimulationDistance packet.
+func (p *playHandler) ParseSimulationDistance(pkt pk.Packet) (simulationDistance int32, err error) {
+	var sd pk.VarInt
+	if err = pkt.Scan(&sd); err != nil {
+		return 0, common.ErrPacketParse{PacketName: "SetSimulationDistance", Cause: err}
+	}
+	return int32(sd), nil
+}
+
+// ParseDisconnect parses a ClientboundDisconnect packet.
+func (p *playHandler) ParseDisconnect(pkt pk.Packet) (reason string, err error) {
+	var r pk.String
+	if err = pkt.Scan(&r); err != nil {
+		return "", common.ErrPacketParse{PacketName: "Disconnect", Cause: err}
+	}
+	return string(r), nil
 }
 
 // entityHandler is implemented in entities.go

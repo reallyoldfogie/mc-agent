@@ -83,7 +83,7 @@ func TestPathfindingSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/pathfinding_single_%s_%s_%s.mcpr", tt.name, agentCfg.Name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_single_%s_%s_%s.mcpr", tt.name, agentCfg.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -211,7 +211,7 @@ func TestPathfindingMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/pathfinding_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -337,7 +337,7 @@ func TestPathfindingVerticalMovement(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/pathfinding_vertical_movement_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_vertical_movement_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

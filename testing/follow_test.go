@@ -60,7 +60,7 @@ func TestFollowSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = fmt.Sprintf("./replays/follow_test_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "lime"
 
 			// Version handler is auto-detected by the framework
@@ -77,7 +77,7 @@ func TestFollowSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = fmt.Sprintf("./replays/follow_test_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "blue"
 
 			// Version handler is auto-detected by the framework
@@ -231,7 +231,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = fmt.Sprintf("./replays/multi_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "red"
 
 			// Version handler is auto-detected by the framework
@@ -251,7 +251,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 					serverCfg.Version,
 				)
 				cfg.EnableReplay = true
-				cfg.ReplayOutput = fmt.Sprintf("./replays/multi_follow_%s_%s_%s.mcpr", name, tt.name, time.Now().Format("20060102_150405"))
+				cfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_%s_%s_%s.mcpr", name, tt.name, time.Now().Format("20060102_150405")), cfg.Name)
 				switch name {
 				case "Follower1":
 					cfg.HPADebugPathColor = "orange"
@@ -390,7 +390,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = fmt.Sprintf("./replays/dynamic_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "cyan"
 
 			// Version handler is auto-detected by the framework
@@ -405,7 +405,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = fmt.Sprintf("./replays/dynamic_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "magenta"
 
 			// Version handler is auto-detected by the framework
@@ -507,7 +507,7 @@ func TestFollowStopCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = fmt.Sprintf("./replays/stop_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "purple"
 
 			// Version handler is auto-detected by the framework
@@ -522,7 +522,7 @@ func TestFollowStopCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = fmt.Sprintf("./replays/stop_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "brown"
 
 			// Version handler is auto-detected by the framework

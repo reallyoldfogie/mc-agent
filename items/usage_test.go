@@ -158,7 +158,7 @@ func TestPlaceBlock(t *testing.T) {
 		name      string
 		pos       models.V3
 		face      BlockFace
-		hand      Hand
+		hand      models.Hand
 		cursorX   float32
 		cursorY   float32
 		cursorZ   float32
@@ -168,7 +168,7 @@ func TestPlaceBlock(t *testing.T) {
 			name:      "Place block on top face with main hand",
 			pos:       models.V3{X: 10.5, Y: 64.0, Z: 20.3},
 			face:      FaceUp,
-			hand:      MainHand,
+			hand:      models.MainHand,
 			cursorX:   0.5,
 			cursorY:   0.5,
 			cursorZ:   0.5,
@@ -178,7 +178,7 @@ func TestPlaceBlock(t *testing.T) {
 			name:      "Place block on north face with offhand",
 			pos:       models.V3{X: 5.0, Y: 70.0, Z: 15.0},
 			face:      FaceNorth,
-			hand:      OffHand,
+			hand:      models.OffHand,
 			cursorX:   0.3,
 			cursorY:   0.7,
 			cursorZ:   0.2,
@@ -188,7 +188,7 @@ func TestPlaceBlock(t *testing.T) {
 			name:      "Place block at edge cursor position",
 			pos:       models.V3{X: 0.0, Y: 0.0, Z: 0.0},
 			face:      FaceDown,
-			hand:      MainHand,
+			hand:      models.MainHand,
 			cursorX:   0.0,
 			cursorY:   0.0,
 			cursorZ:   1.0,
@@ -224,7 +224,7 @@ func TestPlaceBlock_SequenceIncrement(t *testing.T) {
 
 	// Place multiple blocks and verify sequence increments
 	for i := 1; i <= 10; i++ {
-		err := usage.PlaceBlock(pos, FaceUp, MainHand, 0.5, 0.5, 0.5)
+		err := usage.PlaceBlock(pos, FaceUp, models.MainHand, 0.5, 0.5, 0.5)
 		require.NoError(t, err)
 		assert.Equal(t, int32(i), usage.GetSequence(), "Sequence should be %d", i)
 	}
@@ -235,19 +235,19 @@ func TestUseItemOnBlock(t *testing.T) {
 		name string
 		pos  models.V3
 		face BlockFace
-		hand Hand
+		hand models.Hand
 	}{
 		{
 			name: "Use bucket on powder snow",
 			pos:  models.V3{X: 10, Y: 64, Z: 20},
 			face: FaceUp,
-			hand: MainHand,
+			hand: models.MainHand,
 		},
 		{
 			name: "Use bucket on water source",
 			pos:  models.V3{X: -5, Y: 60, Z: 100},
 			face: FaceUp,
-			hand: OffHand,
+			hand: models.OffHand,
 		},
 	}
 
@@ -273,25 +273,25 @@ func TestUseItemOnEntity(t *testing.T) {
 	tests := []struct {
 		name     string
 		entityID int32
-		hand     Hand
+		hand     models.Hand
 		sneaking bool
 	}{
 		{
 			name:     "Catch fish with bucket",
 			entityID: 123,
-			hand:     MainHand,
+			hand:     models.MainHand,
 			sneaking: false,
 		},
 		{
 			name:     "Catch axolotl while sneaking",
 			entityID: 456,
-			hand:     MainHand,
+			hand:     models.MainHand,
 			sneaking: true,
 		},
 		{
 			name:     "Use offhand on entity",
 			entityID: 789,
-			hand:     OffHand,
+			hand:     models.OffHand,
 			sneaking: false,
 		},
 	}
@@ -316,7 +316,7 @@ func TestUseItemOnEntityAt(t *testing.T) {
 	packetMgr := newMockPacketManager()
 	usage := NewItemUsage(client, packetMgr)
 
-	err := usage.UseItemOnEntityAt(123, 1.5, 2.5, 3.5, MainHand, false)
+	err := usage.UseItemOnEntityAt(123, 1.5, 2.5, 3.5, models.MainHand, false)
 
 	require.NoError(t, err)
 	require.Len(t, client.packets, 1, "Should send exactly one packet")
@@ -426,11 +426,11 @@ func TestGetSequence(t *testing.T) {
 	assert.Equal(t, int32(0), usage.GetSequence(), "Initial sequence should be 0")
 
 	// Place a block
-	_ = usage.PlaceBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, MainHand, 0.5, 0.5, 0.5)
+	_ = usage.PlaceBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, models.MainHand, 0.5, 0.5, 0.5)
 	assert.Equal(t, int32(1), usage.GetSequence(), "Sequence should be 1 after one placement")
 
 	// Use item on block
-	_ = usage.UseItemOnBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, MainHand)
+	_ = usage.UseItemOnBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, models.MainHand)
 	assert.Equal(t, int32(2), usage.GetSequence(), "Sequence should be 2 after two operations")
 }
 
@@ -487,8 +487,8 @@ func TestCatchAxolotl(t *testing.T) {
 }
 
 func TestHandEnumValues(t *testing.T) {
-	assert.Equal(t, Hand(0), MainHand, "MainHand should be 0")
-	assert.Equal(t, Hand(1), OffHand, "OffHand should be 1")
+	assert.Equal(t, models.Hand(0), models.MainHand, "MainHand should be 0")
+	assert.Equal(t, models.Hand(1), models.OffHand, "OffHand should be 1")
 }
 
 func TestBlockFaceEnumValues(t *testing.T) {
@@ -512,7 +512,7 @@ func TestPacketSenderError(t *testing.T) {
 	packetMgr := newMockPacketManager()
 	usage := NewItemUsage(client, packetMgr)
 
-	err := usage.PlaceBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, MainHand, 0.5, 0.5, 0.5)
+	err := usage.PlaceBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, models.MainHand, 0.5, 0.5, 0.5)
 
 	require.Error(t, err)
 	assert.Equal(t, assert.AnError, err)
@@ -527,19 +527,19 @@ func TestMultipleOperations(t *testing.T) {
 	pos := models.V3{X: 0, Y: 64, Z: 0}
 
 	// Place block (sends 1 packet)
-	err := usage.PlaceBlock(pos, FaceUp, MainHand, 0.5, 0.5, 0.5)
+	err := usage.PlaceBlock(pos, FaceUp, models.MainHand, 0.5, 0.5, 0.5)
 	require.NoError(t, err)
 	assert.Equal(t, 1, len(client.packets))
 	assert.Equal(t, int32(1), usage.GetSequence())
 
 	// Use item on block (sends 2 packets: use_item_on + swing)
-	err = usage.UseItemOnBlock(pos, FaceNorth, MainHand)
+	err = usage.UseItemOnBlock(pos, FaceNorth, models.MainHand)
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(client.packets), "PlaceBlock(1) + UseItemOnBlock(2) = 3 packets")
 	assert.Equal(t, int32(2), usage.GetSequence())
 
 	// Use item on entity (sends 3 packets: interact + interact-at + swing)
-	err = usage.UseItemOnEntity(123, MainHand, false)
+	err = usage.UseItemOnEntity(123, models.MainHand, false)
 	require.NoError(t, err)
 	assert.Equal(t, 6, len(client.packets), "Previous(3) + UseItemOnEntity(3) = 6 packets")
 	// Note: UseItemOnEntity doesn't increment sequence (uses different packet type)

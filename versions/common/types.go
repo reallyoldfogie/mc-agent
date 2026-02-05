@@ -45,7 +45,16 @@ func (e ErrPacketSend) Unwrap() error {
 	return e.Cause
 }
 
-// Player command action IDs (common across versions)
+// ErrHandlerNotSet is returned when a required handler has not been set.
+type ErrHandlerNotSet struct {
+	HandlerName string
+}
+
+func (e ErrHandlerNotSet) Error() string {
+	return fmt.Sprintf("%s not set: call Set%s() before using this method", e.HandlerName, e.HandlerName)
+}
+
+// Player command action IDs (ServerboundPlayerCommand/EntityAction)
 const (
 	ActionStartSneaking     = 0
 	ActionStopSneaking      = 1
@@ -56,4 +65,28 @@ const (
 	ActionStopJumpHorse     = 6
 	ActionOpenVehicleInv    = 7
 	ActionStartFlyingElytra = 8
+)
+
+// Player action status IDs (ServerboundPlayerAction/BlockDig)
+const (
+	PlayerActionStartDigging    = 0
+	PlayerActionAbortDigging    = 1
+	PlayerActionFinishDigging   = 2
+	PlayerActionDropStack       = 3
+	PlayerActionDropItem        = 4
+	PlayerActionReleaseUseItem  = 5 // Release bow, stop eating, etc.
+	PlayerActionSwapItemInHands = 6
+)
+
+// Entity interaction types (ServerboundInteract/UseEntity)
+const (
+	InteractionTypeInteract   = 0 // Simple right-click interaction
+	InteractionTypeAttack     = 1 // Left-click attack
+	InteractionTypeInteractAt = 2 // Right-click at specific position
+)
+
+// Hand IDs
+const (
+	HandMain = 0
+	HandOff  = 1
 )

@@ -22,8 +22,8 @@ type CommandAgent interface {
 	PlanStatus() PlanStatus
 	StopPlan() error
 
-	FireBow()
-	FireBowAt(x, y, z float64)
+	FireBow() error
+	FireBowAt(x, y, z float64) error
 
 	NearestPlayerInfo() (NearestPlayerInfo, bool)
 	FindPlayerByName(name string) (x, y, z float64, found bool, err error)

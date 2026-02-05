@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 
@@ -31,6 +31,7 @@ type ContainerHelper struct {
 	screenMgr        mcscreen.Manager
 	client           bot.Client
 	packetMgr        protocol_models.PacketMgr
+	movementHandler  common.MovementHandler // Version-specific movement handler
 	currentWindowID  byte
 	entityIDProvider EntityIDProvider // Optional: for entity containers that need player's entity ID
 }
@@ -44,6 +45,12 @@ func NewContainerHelper(itemUsage *ItemUsage, invMgr models.InventoryManager, sc
 		client:    client,
 		packetMgr: packetMgr,
 	}
+}
+
+// SetMovementHandler sets the version-specific movement handler.
+// This must be called before using OpenEntityContainer for proper version-specific packet handling.
+func (ch *ContainerHelper) SetMovementHandler(handler common.MovementHandler) {
+	ch.movementHandler = handler
 }
 
 // SetEntityIDProvider sets the entity ID provider (needed for entity container interactions)
@@ -65,7 +72,7 @@ func (ch *ContainerHelper) OpenContainer(pos models.V3, face BlockFace, timeout 
 
 	for _, attemptFace := range faces {
 		fmt.Printf("[OpenContainer] → Attempting open at pos=%v face=%d\n", pos, attemptFace)
-		if err := ch.itemUsage.UseItemOnBlockWithCursor(pos, attemptFace, MainHand, cursorX, cursorY, cursorZ); err != nil {
+		if err := ch.itemUsage.UseItemOnBlockWithCursor(pos, attemptFace, models.MainHand, cursorX, cursorY, cursorZ); err != nil {
 			return 0, err
 		}
 
@@ -170,7 +177,7 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 	// STEP 1: Interact with the entity to mount it (for horses/rideable entities)
 	// This sends the 3-packet sequence: InteractWith + InteractAt + Swing
 	fmt.Printf("[OpenEntityContainer] → Step 1: Mounting entity %d\n", entityID)
-	if err := ch.itemUsage.UseItemOnEntity(entityID, MainHand, false); err != nil {
+	if err := ch.itemUsage.UseItemOnEntity(entityID, models.MainHand, false); err != nil {
 		return 0, fmt.Errorf("mount entity: %w", err)
 	}
 
@@ -183,19 +190,15 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 	// This is what the real Minecraft client does for horse/llama inventories
 	// NOTE: The packet uses the PLAYER's entity ID, not the horse's!
 	fmt.Printf("[OpenEntityContainer] → Step 3: Sending OPEN_INVENTORY command\n")
-	packetID := ch.packetMgr.GetServerboundPacketID("ServerboundPlayerCommand")
 	const OpenInventoryAction = 7 // OPEN_INVENTORY command type
 
-	packet := pk.Marshal(
-		packetID,
-		pk.VarInt(playerEntityID),      // PLAYER's Entity ID (not horse's!)
-		pk.VarInt(OpenInventoryAction), // Action: OPEN_INVENTORY
-		pk.VarInt(0),                   // Data (unused for OPEN_INVENTORY)
-	)
+	if ch.movementHandler == nil {
+		return 0, common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
+	}
 
 	fmt.Printf("[OpenEntityContainer] → Sending ServerboundPlayerCommand (action=OPEN_INVENTORY) player_id=%d (horse_id=%d)\n",
 		playerEntityID, entityID)
-	if err := ch.client.Conn().WritePacket(packet); err != nil {
+	if err := ch.movementHandler.SendPlayerCommand(ch.client.Conn(), playerEntityID, OpenInventoryAction); err != nil {
 		return 0, fmt.Errorf("send player command: %w", err)
 	}
 

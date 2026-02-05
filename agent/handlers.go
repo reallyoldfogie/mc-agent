@@ -51,6 +51,11 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onRemoveEntities,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetEntityData"),
+			Priority: 0,
+			F:        a.onSetEntityMetadata,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundLogin"),
 			Priority: 100,
 			F:        a.onLogin,
@@ -100,6 +105,21 @@ func (a *agent) handlers() []bot.PacketHandler {
 			Priority: 0,
 			F:        a.onDisconnect2,
 		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetSlot"),
+			Priority: 0,
+			F:        a.onSetSlot,
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundContainerSetContent"),
+			Priority: 0,
+			F:        a.onWindowItems,
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetEquipment"),
+			Priority: 0,
+			F:        a.onSetEquipment,
+		},
 	}
 	// Include config-phase registry capture
 	handlers = append(handlers, a.registryHandlers()...)
@@ -113,69 +133,50 @@ func (a *agent) handlers() []bot.PacketHandler {
 // onDisconnect handles cleanup on disconnect packet.
 func (a *agent) onDisconnect2(p pk.Packet) error {
 	a.setEntityID(-1)
-	pkt, err := a.packetMgr.GetClientboundPacketByID(a.packetMgr.GetClientboundPacketID("ClientboundDisconnect"))
-	if err != nil {
-		return err
-	}
-	err = pkt.Scan(p)
-	if err != nil {
-		return err
-	}
 
 	name := ""
 	if a.client != nil {
 		name = a.client.Name()
 	}
 
-	fields := pkt.GetFields()
-	if reasonField, ok := fields["Reason"]; ok {
-		reason, ok := reasonField.(pk.String)
-		if ok {
-			log.Printf("[Agent %s] Disconnected from server: %s", name, string(reason))
-		} else {
-			log.Printf("[Agent %s] Disconnected from server.", name)
-		}
-	} else {
+	if a.versionHandler == nil {
 		log.Printf("[Agent %s] Disconnected from server.", name)
+		return nil
 	}
+
+	reason, err := a.versionHandler.Play().ParseDisconnect(p)
+	if err != nil {
+		log.Printf("[Agent %s] Disconnected from server.", name)
+		return nil
+	}
+
+	log.Printf("[Agent %s] Disconnected from server: %s", name, reason)
 	return nil
 }
 
 // onAddEntity tracks new or respawned entities.
 func (a *agent) onAddEntity(p pk.Packet) error {
-	var entityID, entityType int32
-	var uuid [16]byte
-	var x, y, z float64
-	var yaw, pitch int8
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version handler if available, otherwise fall back to manual parsing
-	if a.versionHandler != nil {
-		var err error
-		entityID, entityType, uuid, x, y, z, yaw, pitch, err = a.versionHandler.Play().Entities().ParseAddEntity(p)
-		if err != nil {
-			return nil // ignore malformed packets
+	entityID, entityType, uuid, x, y, z, yaw, pitch, err := a.versionHandler.Play().Entities().ParseAddEntity(p)
+	if err != nil {
+		return nil // ignore malformed packets
+	}
+
+	// Debug logging: Log entity spawns with type name lookup
+	var entityTypeName string
+	reg := a.GetRegistry("minecraft:entity_type")
+	if reg != nil && reg.IsReady() {
+		if name, ok := reg.GetNameByID(entityType); ok {
+			entityTypeName = name
 		}
-	} else {
-		var (
-			EntityID   pk.VarInt
-			EntityUUID pk.UUID
-			EntityType pk.VarInt
-			X, Y, Z    pk.Double
-			Velocity   LpVec3 // Velocity moved BEFORE pitch/yaw in 1.21.5+
-			Pitch      pk.Angle
-			Yaw        pk.Angle
-			HeadYaw    pk.Angle
-			Data       pk.VarInt
-		)
-		// Fixed field order for 1.21.5+: EntityID, UUID, Type, X, Y, Z, Velocity(LpVec3), Pitch, Yaw, HeadYaw, Data
-		if err := p.Scan(&EntityID, &EntityUUID, &EntityType, &X, &Y, &Z, &Velocity, &Pitch, &Yaw, &HeadYaw, &Data); err != nil {
-			return nil // ignore malformed packets here
-		}
-		entityID = int32(EntityID)
-		entityType = int32(EntityType)
-		copy(uuid[:], EntityUUID[:])
-		x, y, z = float64(X), float64(Y), float64(Z)
-		yaw, pitch = int8(Yaw), int8(Pitch)
+	}
+	if entityTypeName == "minecraft:arrow" {
+		log.Printf("[onAddEntity] ARROW SPAWN: entityID=%d, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f", entityID, x, y, z, yaw, pitch)
+	} else if entityTypeName != "" {
+		log.Printf("[onAddEntity] Entity spawn: entityID=%d, type=%s, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f", entityID, entityTypeName, x, y, z, yaw, pitch)
 	}
 
 	a.entitiesMu.Lock()
@@ -207,36 +208,31 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 
 // onMoveEntityPosRot updates incremental position and rotation.
 func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
-	var entityID int32
-	var dx, dy, dz int16
-	var yaw, pitch int8
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version handler if available, otherwise fall back to manual parsing
-	if a.versionHandler != nil {
-		var onGround bool
-		var err error
-		entityID, dx, dy, dz, yaw, pitch, onGround, err = a.versionHandler.Play().Entities().ParseMoveEntityPosRot(p)
-		if err != nil {
-			return nil // ignore malformed packets
-		}
-		_ = onGround
-	} else {
-		var (
-			EntityID   pk.VarInt
-			DX, DY, DZ pk.Short
-			Yaw, Pitch pk.Angle
-			OnGround   pk.Boolean
-		)
-		if err := p.Scan(&EntityID, &DX, &DY, &DZ, &Yaw, &Pitch, &OnGround); err != nil {
-			return nil
-		}
-		entityID = int32(EntityID)
-		dx, dy, dz = int16(DX), int16(DY), int16(DZ)
-		yaw, pitch = int8(Yaw), int8(Pitch)
+	entityID, dx, dy, dz, yaw, pitch, _, err := a.versionHandler.Play().Entities().ParseMoveEntityPosRot(p)
+	if err != nil {
+		return nil // ignore malformed packets
 	}
 
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
+		// Debug logging for arrows
+		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+			if name, ok := reg.GetNameByID(e.EntityType); ok && name == "minecraft:arrow" {
+				deltaX := float64(dx) / (128 * 32)
+				deltaY := float64(dy) / (128 * 32)
+				deltaZ := float64(dz) / (128 * 32)
+				newX := e.X + deltaX
+				newY := e.Y + deltaY
+				newZ := e.Z + deltaZ
+				// Also calculate velocity from position change (velocity = delta / tick)
+				log.Printf("[onMoveEntityPosRot] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), delta=(%.4f, %.4f, %.4f), newPos=(%.2f, %.2f, %.2f), vel/tick=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
+					entityID, e.X, e.Y, e.Z, deltaX, deltaY, deltaZ, newX, newY, newZ, deltaX, deltaY, deltaZ, yaw, pitch)
+			}
+		}
 		e.X += float64(dx) / (128 * 32)
 		e.Y += float64(dy) / (128 * 32)
 		e.Z += float64(dz) / (128 * 32)
@@ -251,29 +247,13 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 
 // onMoveEntityPos updates incremental position without rotation.
 func (a *agent) onMoveEntityPos(p pk.Packet) error {
-	var entityID int32
-	var dx, dy, dz int16
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version handler if available, otherwise fall back to manual parsing
-	if a.versionHandler != nil {
-		var onGround bool
-		var err error
-		entityID, dx, dy, dz, onGround, err = a.versionHandler.Play().Entities().ParseMoveEntityPos(p)
-		if err != nil {
-			return nil // ignore malformed packets
-		}
-		_ = onGround
-	} else {
-		var (
-			EntityID   pk.VarInt
-			DX, DY, DZ pk.Short
-			OnGround   pk.Boolean
-		)
-		if err := p.Scan(&EntityID, &DX, &DY, &DZ, &OnGround); err != nil {
-			return nil
-		}
-		entityID = int32(EntityID)
-		dx, dy, dz = int16(DX), int16(DY), int16(DZ)
+	entityID, dx, dy, dz, _, err := a.versionHandler.Play().Entities().ParseMoveEntityPos(p)
+	if err != nil {
+		return nil // ignore malformed packets
 	}
 
 	a.entitiesMu.Lock()
@@ -291,36 +271,24 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 
 // onTeleportEntity handles absolute teleports.
 func (a *agent) onTeleportEntity(p pk.Packet) error {
-	var entityID int32
-	var x, y, z float64
-	var yaw, pitch int8
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version handler if available, otherwise fall back to manual parsing
-	if a.versionHandler != nil {
-		var onGround bool
-		var err error
-		entityID, x, y, z, yaw, pitch, onGround, err = a.versionHandler.Play().Entities().ParseTeleportEntity(p)
-		if err != nil {
-			return nil // ignore malformed packets
-		}
-		_ = onGround
-	} else {
-		var (
-			EntityID   pk.VarInt
-			X, Y, Z    pk.Double
-			Yaw, Pitch pk.Angle
-			OnGround   pk.Boolean
-		)
-		if err := p.Scan(&EntityID, &X, &Y, &Z, &Yaw, &Pitch, &OnGround); err != nil {
-			return nil
-		}
-		entityID = int32(EntityID)
-		x, y, z = float64(X), float64(Y), float64(Z)
-		yaw, pitch = int8(Yaw), int8(Pitch)
+	entityID, x, y, z, yaw, pitch, _, err := a.versionHandler.Play().Entities().ParseTeleportEntity(p)
+	if err != nil {
+		return nil // ignore malformed packets
 	}
 
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
+		// Debug logging for arrows
+		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+			if name, ok := reg.GetNameByID(e.EntityType); ok && name == "minecraft:arrow" {
+				log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
+					entityID, e.X, e.Y, e.Z, x, y, z, yaw, pitch)
+			}
+		}
 		e.X, e.Y, e.Z = x, y, z
 		e.Yaw, e.Pitch = yaw, pitch
 		if e.Removed {
@@ -333,30 +301,13 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 
 // onRemoveEntities marks entities as softly removed, allowing grace period before purge.
 func (a *agent) onRemoveEntities(p pk.Packet) error {
-	var entityIDs []int32
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version handler if available, otherwise fall back to manual parsing
-	if a.versionHandler != nil {
-		var err error
-		entityIDs, err = a.versionHandler.Play().Entities().ParseRemoveEntities(p)
-		if err != nil {
-			return nil // ignore malformed packets
-		}
-	} else {
-		var count pk.VarInt
-		if err := p.Scan(&count); err != nil {
-			return nil
-		}
-		ids := make([]pk.VarInt, int(count))
-		for i := 0; i < int(count); i++ {
-			if err := p.Scan(&ids[i]); err != nil {
-				return nil
-			}
-		}
-		entityIDs = make([]int32, len(ids))
-		for i, id := range ids {
-			entityIDs[i] = int32(id)
-		}
+	entityIDs, err := a.versionHandler.Play().Entities().ParseRemoveEntities(p)
+	if err != nil {
+		return nil // ignore malformed packets
 	}
 
 	now := time.Now()
@@ -371,13 +322,60 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	return nil
 }
 
+// onSetEntityMetadata updates entity health and other metadata.
+func (a *agent) onSetEntityMetadata(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
+
+	entityID, health, maxHealth, err := a.versionHandler.Play().Entities().ParseSetEntityMetadata(p)
+	if err != nil {
+		return nil // ignore malformed packets
+	}
+
+	a.entitiesMu.Lock()
+	if e, ok := a.entities[entityID]; ok {
+		// Only update if health was actually provided in metadata
+		if health >= 0 {
+			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d health updated: %.1f / %.1f", a.client.Name(), entityID, health, maxHealth)
+			e.Health = health
+		}
+		e.MaxHealth = maxHealth
+	}
+	a.entitiesMu.Unlock()
+	return nil
+}
+
+// onSetSlot handles inventory slot changes.
+func (a *agent) onSetSlot(p pk.Packet) error {
+	// Packets are automatically recorded by the bot client's replay recorder
+	return nil
+}
+
+// onWindowItems handles container/window inventory updates.
+func (a *agent) onWindowItems(p pk.Packet) error {
+	// Packets are automatically recorded by the bot client's replay recorder
+	return nil
+}
+
+// onSetEquipment handles entity equipment changes (held items, armor).
+func (a *agent) onSetEquipment(p pk.Packet) error {
+	// Packets are automatically recorded by the bot client's replay recorder
+	return nil
+}
+
 // onLogin captures the bot's entity ID.
 func (a *agent) onLogin(p pk.Packet) error {
-	var entityID pk.Int
-	if err := p.Scan(&entityID); err != nil {
-		return nil
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
 	}
-	a.setEntityID(int32(entityID))
+
+	entityID, err := a.versionHandler.Play().ParseLogin(p)
+	if err != nil {
+		return nil // ignore malformed packets
+	}
+
+	a.setEntityID(entityID)
 	if a.rec != nil {
 		// Set selfId to -1 to match ReplayMod's standard behavior.
 		// This indicates no special camera entity - all players render normally.
@@ -388,7 +386,7 @@ func (a *agent) onLogin(p pk.Packet) error {
 		if parsed, err := uuid.Parse(a.cfg.Auth.UUID); err == nil {
 			copy(id[:], parsed[:])
 		}
-		a.moveMirror.SetEntityMeta(int32(entityID), a.cfg.Auth.Name, id)
+		a.moveMirror.SetEntityMeta(entityID, a.cfg.Auth.Name, id)
 		// Entity type is set via registry callback during configuration phase
 	}
 	return nil
@@ -396,39 +394,13 @@ func (a *agent) onLogin(p pk.Packet) error {
 
 // onClientboundPosition updates absolute position and applies rotation flags.
 func (a *agent) onClientboundPosition(p pk.Packet) error {
-	var (
-		TeleportID int32
-		X, Y, Z    float64
-		Yaw, Pitch float32
-		Flags      int32
-	)
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
+	}
 
-	// Use version-specific parsing if available (packet format varies between versions)
-	if a.versionHandler != nil {
-		var err error
-		TeleportID, X, Y, Z, Yaw, Pitch, Flags, err = a.versionHandler.Play().Movement().ParsePlayerPosition(p)
-		if err != nil {
-			return nil // Silently ignore parse errors
-		}
-	} else {
-		// Fallback to hardcoded 1.21.5+ format parsing
-		var (
-			teleportID pk.VarInt
-			x, y, z    pk.Double
-			dx, dy, dz pk.Double
-			yaw, pitch pk.Float
-			flags      pk.VarInt
-		)
-		if err := p.Scan(&teleportID, &x, &y, &z, &dx, &dy, &dz, &yaw, &pitch, &flags); err != nil {
-			return nil
-		}
-		TeleportID = int32(teleportID)
-		X, Y, Z = float64(x), float64(y), float64(z)
-		Yaw, Pitch = float32(yaw), float32(pitch)
-		Flags = int32(flags)
-		_ = dx
-		_ = dy
-		_ = dz // deltas currently unused
+	TeleportID, X, Y, Z, Yaw, Pitch, Flags, err := a.versionHandler.Play().Movement().ParsePlayerPosition(p)
+	if err != nil {
+		return nil // Silently ignore parse errors
 	}
 
 	if a.moveMirror != nil {
@@ -492,27 +464,35 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 
 // onUpdateViewDistance handles server-sent view distance updates.
 func (a *agent) onUpdateViewDistance(p pk.Packet) error {
-	var viewDistance pk.VarInt
-	if err := p.Scan(&viewDistance); err != nil {
-		return nil
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
 	}
+
+	viewDistance, err := a.versionHandler.Play().ParseViewDistance(p)
+	if err != nil {
+		return nil // ignore malformed packets
+	}
+
 	// Currently just logging for awareness
 	// Could be used to update client state if needed
-	log.Printf("view distance: %d", int32(viewDistance))
-
+	log.Printf("view distance: %d", viewDistance)
 	return nil
 }
 
 // onSimulationDistance handles server-sent simulation distance updates.
 func (a *agent) onSimulationDistance(p pk.Packet) error {
-	var simulationDistance pk.VarInt
-	if err := p.Scan(&simulationDistance); err != nil {
-		return nil
+	if a.versionHandler == nil {
+		return nil // silently ignore if no version handler
 	}
+
+	simulationDistance, err := a.versionHandler.Play().ParseSimulationDistance(p)
+	if err != nil {
+		return nil // ignore malformed packets
+	}
+
 	// Currently just logging for awareness
 	// Could be used to update client state if needed
-	log.Printf("simulation distance: %d", int32(simulationDistance))
-
+	log.Printf("simulation distance: %d", simulationDistance)
 	return nil
 }
 

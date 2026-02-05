@@ -1,8 +1,11 @@
-// Package v1_21_5 provides version-specific packet handling for Minecraft 1.21.4.
+// Package v1_21_4 provides version-specific packet handling for Minecraft 1.21.4.
 package v1_21_4
 
 import (
+	"log"
+
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.4/basetypes"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.4/play/clientbound"
@@ -101,7 +104,7 @@ func (c *containerHandler) SendSetCarriedItem(conn common.PacketWriter, slot int
 // SendUseItemOn sends a use item on block packet (right-click on block).
 // This is used for opening containers, placing blocks, and interacting with blocks.
 // Note: 1.21.4+ includes the WorldBorderHit field (added in 1.21.2/protocol 768).
-func (c *containerHandler) SendUseItemOn(conn common.PacketWriter, hand int32, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
+func (c *containerHandler) SendUseItemOn(conn common.PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
 	pkt := sb.NewBlockPlace()
 	pkt.Hand = pk.VarInt(hand)
 	pkt.Location = basetypes.Position{X: int64(x), Y: int64(y), Z: int64(z)}
@@ -199,4 +202,15 @@ func (c *containerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 
 	// In 1.21.4, Slot is pk.VarInt (int32)
 	return int16(pkt.Slot), nil
+}
+
+func (c *containerHandler) SendContainerButtonClick(conn common.PacketWriter, windowID int8, buttonID int8) error {
+	pkt := sb.NewEnchantItem()
+	pkt.WindowId = basetypes.ContainerID(windowID)
+	pkt.Enchantment = pk.Byte(buttonID)
+	log.Printf("[v1.21.4 Container] SendContainerButtonClick: windowID=%d buttonID=%d", windowID, buttonID)
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "EnchantItem", Cause: err}
+	}
+	return nil
 }

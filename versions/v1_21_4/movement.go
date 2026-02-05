@@ -144,6 +144,64 @@ func (m *movementHandler) ParsePlayerPosition(p pk.Packet) (teleportID int32, x,
 	return
 }
 
+// ParseServerboundPos parses a serverbound position packet.
+func (m *movementHandler) ParseServerboundPos(p pk.Packet) (x, y, z float64, onGround bool, err error) {
+	var pktX, pktY, pktZ pk.Double
+	var pktOnGround pk.Boolean
+	if scanErr := p.Scan(&pktX, &pktY, &pktZ, &pktOnGround); scanErr != nil {
+		err = common.ErrPacketParse{PacketName: "ServerboundPos", Cause: scanErr}
+		return
+	}
+	x = float64(pktX)
+	y = float64(pktY)
+	z = float64(pktZ)
+	onGround = bool(pktOnGround)
+	return
+}
+
+// ParseServerboundPosRot parses a serverbound position+rotation packet.
+func (m *movementHandler) ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float32, onGround bool, err error) {
+	var pktX, pktY, pktZ pk.Double
+	var pktYaw, pktPitch pk.Float
+	var pktOnGround pk.Boolean
+	if scanErr := p.Scan(&pktX, &pktY, &pktZ, &pktYaw, &pktPitch, &pktOnGround); scanErr != nil {
+		err = common.ErrPacketParse{PacketName: "ServerboundPosRot", Cause: scanErr}
+		return
+	}
+	x = float64(pktX)
+	y = float64(pktY)
+	z = float64(pktZ)
+	yaw = float32(pktYaw)
+	pitch = float32(pktPitch)
+	onGround = bool(pktOnGround)
+	return
+}
+
+// ParseServerboundRot parses a serverbound rotation packet.
+func (m *movementHandler) ParseServerboundRot(p pk.Packet) (yaw, pitch float32, onGround bool, err error) {
+	var pktYaw, pktPitch pk.Float
+	var pktOnGround pk.Boolean
+	if scanErr := p.Scan(&pktYaw, &pktPitch, &pktOnGround); scanErr != nil {
+		err = common.ErrPacketParse{PacketName: "ServerboundRot", Cause: scanErr}
+		return
+	}
+	yaw = float32(pktYaw)
+	pitch = float32(pktPitch)
+	onGround = bool(pktOnGround)
+	return
+}
+
+// ParseServerboundStatus parses a serverbound status-only packet.
+func (m *movementHandler) ParseServerboundStatus(p pk.Packet) (onGround bool, err error) {
+	var pktOnGround pk.Boolean
+	if scanErr := p.Scan(&pktOnGround); scanErr != nil {
+		err = common.ErrPacketParse{PacketName: "ServerboundStatus", Cause: scanErr}
+		return
+	}
+	onGround = bool(pktOnGround)
+	return
+}
+
 // Convenience methods for common actions
 
 // SendStartSneaking sends a command to start sneaking.

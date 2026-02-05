@@ -544,7 +544,7 @@ func main() {
 		} else {
 			log.Printf("[replay] initialized")
 			replayRecGlobal = rec
-			replayMirrorGlobal = agentpkg.NewReplayMovementMirror(rec, packetMgr, skinProvider)
+			replayMirrorGlobal = agentpkg.NewReplayMovementMirror(rec, packetMgr, nil, skinProvider)
 
 			// Use bundle delimiter filtering to avoid recording unconsumed buffer data
 			// Login phase packets (including Set Compression) are filtered at the bot client level

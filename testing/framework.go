@@ -92,6 +92,38 @@ func (ma *ManagedAgent) FindNearestEntityByType(entityType int32, x, y, z float6
 	return ma.Agent.FindNearestEntityByType(entityType, x, y, z)
 }
 
+// EquipItemByName equips an item from the hotbar by name
+func (ma *ManagedAgent) EquipItemByName(ctx context.Context, itemName string) error {
+	// Get the concrete agent implementation
+	if agentImpl, ok := ma.Agent.(interface {
+		EquipItemByName(ctx context.Context, itemName string) error
+	}); ok {
+		return agentImpl.EquipItemByName(ctx, itemName)
+	}
+	return fmt.Errorf("agent does not support EquipItemByName")
+}
+
+// FaceEntity makes the bot look at a target entity
+func (ma *ManagedAgent) FaceEntity(entityID int32) error {
+	// Get the concrete agent implementation
+	if agentImpl, ok := ma.Agent.(interface {
+		FaceEntity(entityID int32) error
+	}); ok {
+		return agentImpl.FaceEntity(entityID)
+	}
+	return fmt.Errorf("agent does not support FaceEntity")
+}
+
+// LookAt makes the bot look at a target position (head only)
+func (ma *ManagedAgent) LookAt(ctx context.Context, x, y, z float64) error {
+	return ma.Agent.LookAt(ctx, x, y, z)
+}
+
+// TurnTowards rotates the bot's body to face a target position
+func (ma *ManagedAgent) TurnTowards(ctx context.Context, x, y, z float64) error {
+	return ma.Agent.TurnTowards(ctx, x, y, z)
+}
+
 // NewFramework creates a new testing framework.
 func NewFramework() (*Framework, error) {
 	mgr, err := testenv.NewManager()
@@ -509,7 +541,7 @@ type AgentConfig struct {
 	SkinNetEnabled    bool
 	HPADebugPathBlock string                // Explicit block name to use (expects <color>_stained_glass)
 	HPADebugPathColor string                // Color name to use when block is not specified
-	VersionHandler common.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
+	VersionHandler    common.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
 
 	EnableCamAgent bool // Whether to spawn a companion cam agent
 }
@@ -537,7 +569,11 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 	camCfg := cfg
 	camCfg.Name = camAgentName(cfg.Name)
 	camCfg.EnableReplay = true
-	camCfg.ReplayOutput = camReplayOutput(cfg.ReplayOutput, camCfg.Name)
+	if cfg.ReplayOutput != "" {
+		camCfg.ReplayOutput = camReplayOutput(cfg.ReplayOutput, camCfg.Name)
+	} else {
+		camCfg.ReplayOutput = ""
+	}
 
 	managed, err := f.spawnAgentInternal(ctx, inst, cfg, true)
 	if err != nil {
@@ -586,6 +622,14 @@ func camReplayOutput(base, name string) string {
 	return base + "_cam"
 }
 
+func normalizeReplayOutput(version, output, name string) string {
+	if output == "" {
+		output = fmt.Sprintf("%s_%s.mcpr", name, time.Now().Format("20060102_150405"))
+	}
+	base := filepath.Base(output)
+	return filepath.Join("./replays", version, base)
+}
+
 func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, cfg AgentConfig, addToInstance bool) (*ManagedAgent, error) {
 	// Setup agent logging (redirects log package to file + stdout)
 	// This is done once globally for all agents
@@ -602,6 +646,13 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	if mcVersion != cfg.Version {
 		log.Printf("[%s] Warning: server version %s differs from agent config version %s", cfg.Name, mcVersion, cfg.Version)
 	}
+
+	cfg.EnableReplay = true
+	cfg.ReplayOutput = normalizeReplayOutput(mcVersion, cfg.ReplayOutput, cfg.Name)
+	if err := os.MkdirAll(filepath.Dir(cfg.ReplayOutput), 0755); err != nil {
+		return nil, fmt.Errorf("create replay directory: %w", err)
+	}
+	log.Printf("[%s] Replay enabled: %s", cfg.Name, cfg.ReplayOutput)
 
 	// Get packet manager for version
 	packetMgr := mc_versions.GetPacketMgrForVersion(mcVersion)

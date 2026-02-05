@@ -32,16 +32,6 @@ func (a *agent) StopTracking() {
 	a.cmdStopTracking()
 }
 
-// FireBow executes the bow fire command.
-func (a *agent) FireBow() {
-	a.cmdFireBow()
-}
-
-// FireBowAt executes the bow fire at position command.
-func (a *agent) FireBowAt(x, y, z float64) {
-	a.cmdFireBowAt(x, y, z)
-}
-
 // HasFollowManager reports whether follow behavior is available.
 func (a *agent) HasFollowManager() bool {
 	a.mu.Lock()

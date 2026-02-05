@@ -1,16 +1,16 @@
 package items
 
 import (
-	pk "github.com/Tnze/go-mc/net/packet"
-
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
 // ButtonClicker handles clicking buttons in container screens
 type ButtonClicker struct {
-	client    models.PacketSender
-	packetMgr protocol_models.PacketMgr
+	client           models.PacketSender
+	packetMgr        protocol_models.PacketMgr
+	containerHandler common.ContainerHandler
 }
 
 // NewButtonClicker creates a new ButtonClicker
@@ -19,6 +19,12 @@ func NewButtonClicker(client models.PacketSender, packetMgr protocol_models.Pack
 		client:    client,
 		packetMgr: packetMgr,
 	}
+}
+
+// SetContainerHandler sets the version-specific container handler.
+// This must be called before using ClickButton for proper version-specific packet handling.
+func (bc *ButtonClicker) SetContainerHandler(handler common.ContainerHandler) {
+	bc.containerHandler = handler
 }
 
 // ClickButton sends a ServerboundContainerButtonClick packet to the server
@@ -33,14 +39,9 @@ func NewButtonClicker(client models.PacketSender, packetMgr protocol_models.Pack
 // windowID: The container window ID (from OpenContainer)
 // buttonID: The button/option to select (meaning depends on container type)
 func (bc *ButtonClicker) ClickButton(windowID byte, buttonID byte) error {
-	packetID := bc.packetMgr.GetServerboundPacketID("ServerboundContainerButtonClick")
+	if bc.containerHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "ContainerHandler"}
+	}
 
-	// Marshal packet: Window ID (Byte), Button ID (Byte)
-	packet := pk.Marshal(
-		packetID,
-		pk.Byte(windowID),
-		pk.Byte(buttonID),
-	)
-
-	return bc.client.WritePacket(packet)
+	return bc.containerHandler.SendContainerButtonClick(bc.client, int8(windowID), int8(buttonID))
 }

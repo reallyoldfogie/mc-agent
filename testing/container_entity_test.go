@@ -47,7 +47,7 @@ func getHorseNBT(version string) string {
 func TestHorse_Standalone(t *testing.T) {
 	for _, tt := range standardVersionTests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "entity_horse", tt.mcVersion)
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_horse", tt.mcVersion)
 			defer env.Cancel()
 
 			// Spawn a horse near the bot
@@ -127,7 +127,7 @@ func TestHorse_Standalone(t *testing.T) {
 func TestChestBoat_Standalone(t *testing.T) {
 	for _, tt := range standardVersionTests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "entity_chest_boat", tt.mcVersion)
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_boat", tt.mcVersion)
 			defer env.Cancel()
 
 			// Spawn a chest boat near the bot
@@ -202,7 +202,7 @@ func TestChestBoat_Standalone(t *testing.T) {
 func TestChestMinecart_Standalone(t *testing.T) {
 	for _, tt := range standardVersionTests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "entity_chest_minecart", tt.mcVersion)
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_minecart", tt.mcVersion)
 			defer env.Cancel()
 
 			// Spawn a chest minecart near the bot

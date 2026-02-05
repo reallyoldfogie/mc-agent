@@ -246,7 +246,7 @@ func (a *agent) FindPath(ctx context.Context, tx, ty, tz float64) error {
 	return nil
 }
 
-// LookAt rotates the bot to face a target position.
+// LookAt rotates the bot's head to face a target position (head only, body stays in place).
 func (a *agent) LookAt(ctx context.Context, x, y, z float64) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -255,6 +255,34 @@ func (a *agent) LookAt(ctx context.Context, x, y, z float64) error {
 		return errors.New("movement executor not available")
 	}
 	return a.moveExec.LookAt(x, y, z, true)
+}
+
+// TurnTowards rotates the bot's body to face a target position (entire body turns).
+func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if a.moveExec == nil {
+		return errors.New("movement executor not available")
+	}
+
+	// Get current position
+	botX, botY, botZ, _, _, initialized := a.GetPosition()
+	if !initialized {
+		return errors.New("bot position not initialized")
+	}
+
+	// Calculate look angles
+	dx := x - botX
+	dz := z - botZ
+	yaw := float32(math.Atan2(-dx, dz) * 180 / math.Pi)
+
+	dy := y - (botY + 1.62) // Account for eye height
+	horizontalDist := math.Sqrt(dx*dx + dz*dz)
+	pitch := float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
+
+	// Send position and rotation to update body orientation
+	return a.moveExec.SendPositionAndRotation(botX, botY, botZ, yaw, pitch, true)
 }
 
 // Follow starts following a target player by name.
@@ -448,7 +476,7 @@ func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face int, h
 	cursorX := float32(clampFloat64(hitX-blockX, 0, 1))
 	cursorY := float32(clampFloat64(hitY-blockY, 0, 1))
 	cursorZ := float32(clampFloat64(hitZ-blockZ, 0, 1))
-	return usage.UseItemOnBlockWithCursor(models.V3{X: x, Y: y, Z: z}, items.BlockFace(face), items.Hand(hand), cursorX, cursorY, cursorZ)
+	return usage.UseItemOnBlockWithCursor(models.V3{X: x, Y: y, Z: z}, items.BlockFace(face), models.Hand(hand), cursorX, cursorY, cursorZ)
 }
 
 // UseItemOnEntity uses the held item on an entity.
@@ -460,7 +488,7 @@ func (a *agent) UseItemOnEntity(ctx context.Context, entityID int32, hand int, s
 	if err != nil {
 		return err
 	}
-	return usage.UseItemOnEntity(entityID, items.Hand(hand), sneaking)
+	return usage.UseItemOnEntity(entityID, models.Hand(hand), sneaking)
 }
 
 // HasLineOfSight checks if the agent can see the target position.

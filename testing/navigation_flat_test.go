@@ -55,7 +55,7 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_movement_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_movement_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -160,7 +160,7 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -245,7 +245,7 @@ func TestFlatMovementVertical(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_vertical_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_vertical_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -367,7 +367,7 @@ func TestLongLadderClimbAndHold(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/long_ladder_climb_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("long_ladder_climb_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -509,7 +509,7 @@ func TestFlatMovementForwardCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/flat_forward_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_forward_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

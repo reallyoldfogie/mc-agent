@@ -2,9 +2,13 @@
 package v1_21_8
 
 import (
+	"log"
+
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/play/clientbound"
+	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/play/serverbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -119,4 +123,106 @@ func (e *entityHandler) ParseEntityEvent(p pk.Packet) (entityID int32, eventID i
 	eventID = int8(pkt.EntityStatus)
 
 	return entityID, eventID, nil
+}
+
+// ParseSetEntityMetadata parses an entity metadata update packet.
+// Extracts health and max health from metadata entries.
+func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, health, maxHealth float32, err error) {
+	pkt := cb.NewEntityMetadata()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, common.ErrPacketParse{PacketName: "EntityMetadata", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+
+	// Default values - these won't change if metadata doesn't include health
+	health = -1.0    // -1 indicates not set
+	maxHealth = 20.0 // Default max health for most entities
+
+	// Parse metadata entries to find health
+	// Entity metadata indices vary by entity type. See:
+	// https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity_Metadata
+	//
+	// For Living Entities (index 9 = Health):
+	// - Index 0-7: Base Entity metadata
+	// - Index 8: Fire ticks (byte)
+	// - Index 9: Health (float) ← We use this for damage tracking
+	// - Index 10: Potion effect color (int)
+	// - Index 11+: Entity-specific fields
+	for _, entry := range pkt.Metadata.Entries {
+		if entry.Key == 9 { // Health is at index 9 for living entities (zombies, players, etc.)
+			// Try to extract as float
+			if floatVal, ok := entry.Value.(*pk.Float); ok {
+				health = float32(*floatVal)
+			}
+		}
+		// Note: MaxHealth could be at another index for some entities, but we'll use default for now
+		// This can be extended later if needed
+	}
+
+	log.Printf("[ParseSetEntityMetadata] returning %d, %f,%f, nil", entityID, health, maxHealth)
+	return entityID, health, maxHealth, nil
+}
+
+// SendInteract sends an entity interaction packet (right-click with hand).
+func (e *entityHandler) SendInteract(conn common.PacketWriter, entityID int32, hand models.Hand, sneaking bool) error {
+	pkt := sb.NewUseEntity()
+	pkt.Target = pk.VarInt(entityID)
+	pkt.Mouse = pk.VarInt(common.InteractionTypeInteract)
+	pkt.X = &protocol_models.Void{}
+	pkt.Y = &protocol_models.Void{}
+	pkt.Z = &protocol_models.Void{}
+	handVal := pk.VarInt(hand)
+	pkt.Hand = &handVal
+	pkt.Sneaking = pk.Boolean(sneaking)
+
+	log.Printf("[v1.21.8 Entity] SendInteract: entityID=%d hand=%d sneaking=%v", entityID, hand, sneaking)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
+	}
+	return nil
+}
+
+// SendInteractAt sends an entity interaction packet at a specific position.
+func (e *entityHandler) SendInteractAt(conn common.PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
+	pkt := sb.NewUseEntity()
+	pkt.Target = pk.VarInt(entityID)
+	pkt.Mouse = pk.VarInt(common.InteractionTypeInteractAt)
+	xVal := pk.Float(targetX)
+	yVal := pk.Float(targetY)
+	zVal := pk.Float(targetZ)
+	pkt.X = &xVal
+	pkt.Y = &yVal
+	pkt.Z = &zVal
+	handVal := pk.VarInt(hand)
+	pkt.Hand = &handVal
+	pkt.Sneaking = pk.Boolean(sneaking)
+
+	log.Printf("[v1.21.8 Entity] SendInteractAt: entityID=%d pos=(%.2f,%.2f,%.2f) hand=%d sneaking=%v",
+		entityID, targetX, targetY, targetZ, hand, sneaking)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
+	}
+	return nil
+}
+
+// SendAttack sends an attack packet to hit an entity (left-click).
+func (e *entityHandler) SendAttack(conn common.PacketWriter, entityID int32, sneaking bool) error {
+	pkt := sb.NewUseEntity()
+	pkt.Target = pk.VarInt(entityID)
+	pkt.Mouse = pk.VarInt(common.InteractionTypeAttack)
+	pkt.X = &protocol_models.Void{}
+	pkt.Y = &protocol_models.Void{}
+	pkt.Z = &protocol_models.Void{}
+	pkt.Hand = &protocol_models.Void{}
+	pkt.Sneaking = pk.Boolean(sneaking)
+
+	log.Printf("[v1.21.8 Entity] SendAttack: entityID=%d sneaking=%v", entityID, sneaking)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
+	}
+	return nil
 }

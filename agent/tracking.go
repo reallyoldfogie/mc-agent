@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"math"
 	"time"
 
@@ -15,6 +16,8 @@ type trackedEntity struct {
 	X, Y, Z    float64
 	Yaw        int8
 	Pitch      int8
+	Health     float32 // Current health (0 = dead)
+	MaxHealth  float32 // Maximum health (typically 20.0 for mobs)
 	Removed    bool
 	RemovedAt  time.Time
 }
@@ -125,6 +128,8 @@ func (a *agent) GetTrackedEntities() map[int32]TrackedEntityInfo {
 			Z:          e.Z,
 			Yaw:        e.Yaw,
 			Pitch:      e.Pitch,
+			Health:     e.Health,
+			MaxHealth:  e.MaxHealth,
 			Removed:    e.Removed,
 		}
 	}
@@ -160,4 +165,75 @@ func (a *agent) FindNearestEntityByType(entityType int32, x, y, z float64) (int3
 	}
 
 	return nearestID, nearestDist, found
+}
+
+// FaceEntity makes the bot look at a target entity by calculating and sending rotation.
+func (a *agent) FaceEntity(entityID int32) error {
+	if a.versionHandler == nil || a.client == nil {
+		return fmt.Errorf("version handler or client not initialized")
+	}
+
+	// Get current bot position
+	botX, botY, botZ, initialized := a.GetPositionSimple()
+	if !initialized {
+		return fmt.Errorf("bot position not initialized")
+	}
+
+	// Get target entity position
+	a.entitiesMu.RLock()
+	targetEnt, exists := a.entities[entityID]
+	a.entitiesMu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("target entity %d not found", entityID)
+	}
+
+	// Calculate eye-level position (add player eye height)
+	botEyeY := botY + 1.62 // Minecraft player eye height
+
+	// Calculate deltas
+	dx := targetEnt.X - botX
+	dy := targetEnt.Y - botEyeY
+	dz := targetEnt.Z - botZ
+
+	// Calculate yaw (horizontal rotation)
+	yaw := math.Atan2(-dx, -dz) * 180 / math.Pi
+
+	// Calculate pitch (vertical rotation)
+	horizontalDist := math.Sqrt(dx*dx + dz*dz)
+	pitch := math.Atan2(-dy, horizontalDist) * 180 / math.Pi
+
+	// Send rotation packet
+	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), float32(yaw), float32(pitch), true)
+}
+
+// FacePosition makes the bot look at a specific position.
+func (a *agent) FacePosition(targetX, targetY, targetZ float64) error {
+	if a.versionHandler == nil || a.client == nil {
+		return fmt.Errorf("version handler or client not initialized")
+	}
+
+	// Get current bot position
+	botX, botY, botZ, initialized := a.GetPositionSimple()
+	if !initialized {
+		return fmt.Errorf("bot position not initialized")
+	}
+
+	// Calculate eye-level position (add player eye height)
+	botEyeY := botY + 1.62 // Minecraft player eye height
+
+	// Calculate deltas
+	dx := targetX - botX
+	dy := targetY - botEyeY
+	dz := targetZ - botZ
+
+	// Calculate yaw (horizontal rotation)
+	yaw := math.Atan2(-dx, -dz) * 180 / math.Pi
+
+	// Calculate pitch (vertical rotation)
+	horizontalDist := math.Sqrt(dx*dx + dz*dz)
+	pitch := math.Atan2(-dy, horizontalDist) * 180 / math.Pi
+
+	// Send rotation packet
+	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), float32(yaw), float32(pitch), true)
 }

@@ -165,12 +165,10 @@ func (f *fakeClientWriter) HandleGame(context.Context) error         { return ni
 func (f *fakeClientWriter) WritePacket(p pk.Packet) error            { f.pkts = append(f.pkts, p); return nil }
 func (f *fakeClientWriter) Close() error                             { return nil }
 func (f *fakeClientWriter) Conn() *bot.Conn {
-	// We can't properly fake bot.Conn as it's a concrete struct with many private fields.
-	// However, Go will allow us to call WritePacket on the returned value via duck typing
-	// if we return an interface{} cast to *bot.Conn.
-	// This is hacky but works for testing purposes.
-	var conn interface{} = f.fakeConn
-	return (*bot.Conn)(conn.(*fakeConn))
+	// Return nil - tests that need actual Conn should use fakeConn directly.
+	// The agent code that calls Conn() should use the version-specific handlers
+	// rather than directly accessing the connection.
+	return nil
 }
 func (f *fakeClientWriter) SetAuth(bot.Auth)                         {}
 func (f *fakeClientWriter) JoinServer(context.Context, string) error { return nil }

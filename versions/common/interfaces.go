@@ -4,6 +4,7 @@ package common
 
 import (
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -106,8 +107,32 @@ type PlayHandler interface {
 	// World returns the world handler
 	World() WorldHandler
 
+	// Actions returns the action handler for player actions (item usage, bow, etc.)
+	Actions() ActionHandler
+
 	// SendClientInformation sends client settings/information during play phase
 	SendClientInformation(conn PacketWriter, info ClientInfo) error
+
+	// SendCustomPayload sends a custom payload packet (plugin channels).
+	// channel: the channel identifier (e.g., "minecraft:brand")
+	// payload: the payload data (e.g., brand string)
+	SendCustomPayload(conn PacketWriter, channel string, payload string) error
+
+	// ParseLogin parses the ClientboundLogin packet to extract entity ID.
+	ParseLogin(p pk.Packet) (entityID int32, err error)
+
+	// ParseSound parses a ClientboundSound packet.
+	// Returns soundID (0-based), category, position (fixed-point x8), volume, pitch, seed.
+	ParseSound(p pk.Packet) (soundID, category int32, x, y, z int32, volume, pitch float32, seed int64, err error)
+
+	// ParseViewDistance parses a ClientboundSetChunkCacheRadius packet.
+	ParseViewDistance(p pk.Packet) (viewDistance int32, err error)
+
+	// ParseSimulationDistance parses a ClientboundSetSimulationDistance packet.
+	ParseSimulationDistance(p pk.Packet) (simulationDistance int32, err error)
+
+	// ParseDisconnect parses a ClientboundDisconnect packet.
+	ParseDisconnect(p pk.Packet) (reason string, err error)
 }
 
 // MovementHandler handles player movement packets.
@@ -133,6 +158,38 @@ type MovementHandler interface {
 
 	// ParsePlayerPosition parses a clientbound player position packet
 	ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float32, flags int32, err error)
+
+	// ParseServerboundPos parses a serverbound position packet (for replay recording)
+	ParseServerboundPos(p pk.Packet) (x, y, z float64, onGround bool, err error)
+
+	// ParseServerboundPosRot parses a serverbound position+rotation packet (for replay recording)
+	ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float32, onGround bool, err error)
+
+	// ParseServerboundRot parses a serverbound rotation packet (for replay recording)
+	ParseServerboundRot(p pk.Packet) (yaw, pitch float32, onGround bool, err error)
+
+	// ParseServerboundStatus parses a serverbound status-only packet (for replay recording)
+	ParseServerboundStatus(p pk.Packet) (onGround bool, err error)
+}
+
+// ActionHandler handles player action packets (item usage, attacks, etc.).
+type ActionHandler interface {
+	// SendUseItem sends a use item packet (e.g., start drawing bow, use item in hand).
+	// hand: 0=main hand, 1=offhand
+	// sequence: anti-cheat sequence number
+	// yaw, pitch: player rotation at time of use
+	SendUseItem(conn PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error
+
+	// SendPlayerAction sends a player action packet (dig, release bow, swap hands, etc.).
+	// status: action ID (see PlayerAction constants)
+	// x, y, z: block position (for digging actions, use 0,0,0 for non-position actions)
+	// face: block face for digging (0-5)
+	// sequence: anti-cheat sequence number
+	SendPlayerAction(conn PacketWriter, status int32, x, y, z int, face int32, sequence int32) error
+
+	// SendSwing sends an arm swing animation packet.
+	// hand: 0=main hand, 1=offhand
+	SendSwing(conn PacketWriter, hand models.Hand) error
 }
 
 // EntityHandler handles entity-related packets.
@@ -154,6 +211,28 @@ type EntityHandler interface {
 
 	// ParseEntityEvent parses an entity event/status packet
 	ParseEntityEvent(p pk.Packet) (entityID int32, eventID int8, err error)
+
+	// ParseSetEntityMetadata parses an entity metadata update packet
+	// Returns entityID, health, maxHealth, and error
+	ParseSetEntityMetadata(p pk.Packet) (entityID int32, health, maxHealth float32, err error)
+
+	// SendInteract sends an entity interaction packet (right-click with hand).
+	// entityID: target entity
+	// hand: 0=main hand, 1=offhand
+	// sneaking: whether player is sneaking
+	SendInteract(conn PacketWriter, entityID int32, hand models.Hand, sneaking bool) error
+
+	// SendInteractAt sends an entity interaction packet at a specific position.
+	// entityID: target entity
+	// targetX, targetY, targetZ: position on entity to interact with
+	// hand: 0=main hand, 1=offhand
+	// sneaking: whether player is sneaking
+	SendInteractAt(conn PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error
+
+	// SendAttack sends an attack packet to hit an entity (left-click).
+	// entityID: target entity
+	// sneaking: whether player is sneaking
+	SendAttack(conn PacketWriter, entityID int32, sneaking bool) error
 }
 
 // ContainerHandler handles container/inventory packets.
@@ -181,7 +260,7 @@ type ContainerHandler interface {
 	// cursorX, cursorY, cursorZ: click position on block face (0.0-1.0)
 	// insideBlock: whether the player's head is inside a block
 	// sequence: anti-cheat sequence number
-	SendUseItemOn(conn PacketWriter, hand int32, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
+	SendUseItemOn(conn PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
 
 	// ParseOpenScreen parses a container open packet
 	ParseOpenScreen(p pk.Packet) (windowID int8, windowType int32, title string, err error)
@@ -194,6 +273,13 @@ type ContainerHandler interface {
 
 	// ParseHeldItemSlot parses a held item slot packet (handles version differences in slot type)
 	ParseHeldItemSlot(p pk.Packet) (slot int16, err error)
+
+	// SendContainerButtonClick sends a container button click packet.
+	// Used for: enchanting table (slot 0-2), stonecutter (recipe index),
+	// loom (pattern index), beacon (confirm), lectern (page navigation).
+	// windowID: container window ID
+	// buttonID: button/option to select (meaning depends on container type)
+	SendContainerButtonClick(conn PacketWriter, windowID int8, buttonID int8) error
 }
 
 // Slot represents an inventory slot.

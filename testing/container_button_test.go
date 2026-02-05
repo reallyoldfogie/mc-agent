@@ -62,6 +62,9 @@ func TestStonecutter_Standalone(t *testing.T) {
 
 			// Create button clicker
 			buttonClicker := items.NewButtonClicker(env.Agent.BotClient().Conn(), env.Agent.Config.PacketMgr)
+			if env.Agent.Config.VersionHandler != nil {
+				buttonClicker.SetContainerHandler(env.Agent.Config.VersionHandler.Play().Containers())
+			}
 
 			// Click button to select a recipe (e.g., stone -> stone stairs)
 			// Button ID corresponds to recipe index in the stonecutter's recipe list
@@ -129,6 +132,9 @@ func TestLoom_Survival(t *testing.T) {
 
 	// Create button clicker
 	buttonClicker := items.NewButtonClicker(env.Agent.BotClient().Conn(), env.Agent.Config.PacketMgr)
+	if env.Agent.Config.VersionHandler != nil {
+		buttonClicker.SetContainerHandler(env.Agent.Config.VersionHandler.Play().Containers())
+	}
 
 	// Click button to select a pattern
 	err = buttonClicker.ClickButton(byte(windowID), 1) // Select first pattern
@@ -205,6 +211,9 @@ func TestLoom_Standalone(t *testing.T) {
 
 			// Create button clicker
 			buttonClicker := items.NewButtonClicker(env.Agent.BotClient().Conn(), env.Agent.Config.PacketMgr)
+			if env.Agent.Config.VersionHandler != nil {
+				buttonClicker.SetContainerHandler(env.Agent.Config.VersionHandler.Play().Containers())
+			}
 
 			// Click button to select a pattern
 			// Button ID corresponds to pattern index (0 = no pattern, 1+ = pattern types)
@@ -266,6 +275,9 @@ func TestEnchantingTable_Standalone(t *testing.T) {
 
 			// Create button clicker
 			buttonClicker := items.NewButtonClicker(env.Agent.BotClient().Conn(), env.Agent.Config.PacketMgr)
+			if env.Agent.Config.VersionHandler != nil {
+				buttonClicker.SetContainerHandler(env.Agent.Config.VersionHandler.Play().Containers())
+			}
 
 			// Click button to select an enchantment
 			// Button ID 0-2 corresponds to the three enchantment options
@@ -351,6 +363,9 @@ func TestBeacon_Standalone(t *testing.T) {
 
 			// Create button clicker
 			buttonClicker := items.NewButtonClicker(env.Agent.BotClient().Conn(), env.Agent.Config.PacketMgr)
+			if env.Agent.Config.VersionHandler != nil {
+				buttonClicker.SetContainerHandler(env.Agent.Config.VersionHandler.Play().Containers())
+			}
 
 			// Click button to confirm effect selection
 			// Button ID 0 confirms the selected primary/secondary effects

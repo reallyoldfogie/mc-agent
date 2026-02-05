@@ -657,7 +657,7 @@ func (a *agent) Init(ctx context.Context) error {
 			})
 			if err == nil {
 				a.rec = rec
-				a.moveMirror = NewReplayMovementMirror(rec, a.packetMgr, a.cfg.SkinProvider)
+				a.moveMirror = NewReplayMovementMirror(rec, a.packetMgr, a.versionHandler, a.cfg.SkinProvider)
 				// If movement executor was configured earlier, wire its packet callback now.
 				if a.moveMirror != nil && a.moveExec != nil {
 					type packetCallbackSetter interface {
@@ -1199,6 +1199,54 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 	a.blockMgr = a.cfg.BlockMgr
 
 	return versionAutoDetected, nil
+}
+
+// getNextSequence returns and increments the anti-cheat sequence number.
+// Each action that requires a sequence number should call this to get the next value.
+func (a *agent) getNextSequence() int32 {
+	a.posMu.Lock()
+	defer a.posMu.Unlock()
+	// Use the current position as a simple sequence counter starting at 0
+	// In practice, this should track actual sequence numbers from the server
+	// For now, we use a simple incrementing counter
+	if !hasSequenceCounter() {
+		initSequenceCounter()
+	}
+	return nextSequence()
+}
+
+// getRotation returns the player's current yaw and pitch
+func (a *agent) getRotation() (float32, float32) {
+	a.posMu.RLock()
+	defer a.posMu.RUnlock()
+	return a.posYaw, a.posPitch
+}
+
+var (
+	sequenceCounterMu sync.Mutex
+	sequenceCounter   int32
+	sequenceInitialized bool
+)
+
+func hasSequenceCounter() bool {
+	sequenceCounterMu.Lock()
+	defer sequenceCounterMu.Unlock()
+	return sequenceInitialized
+}
+
+func initSequenceCounter() {
+	sequenceCounterMu.Lock()
+	defer sequenceCounterMu.Unlock()
+	sequenceCounter = 0
+	sequenceInitialized = true
+}
+
+func nextSequence() int32 {
+	sequenceCounterMu.Lock()
+	defer sequenceCounterMu.Unlock()
+	result := sequenceCounter
+	sequenceCounter++
+	return result
 }
 
 // String returns a human-friendly description for logging.

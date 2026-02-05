@@ -6,19 +6,10 @@ import (
 	"math/rand"
 	"time"
 
-	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
-)
-
-// Hand represents which hand to use (main or offhand)
-type Hand int
-
-const (
-	MainHand Hand = 0
-	OffHand  Hand = 1
 )
 
 const (
@@ -44,7 +35,9 @@ type ItemUsage struct {
 	client           models.PacketSender
 	packetMgr        protocol_models.PacketMgr
 	containerHandler common.ContainerHandler // Version-specific container handler
-	sequence         int32                    // Anti-cheat sequence number
+	actionHandler    common.ActionHandler    // Version-specific action handler
+	entityHandler    common.EntityHandler    // Version-specific entity handler
+	sequence         int32                   // Anti-cheat sequence number
 }
 
 // NewItemUsage creates a new ItemUsage instance
@@ -62,10 +55,26 @@ func (iu *ItemUsage) SetContainerHandler(handler common.ContainerHandler) {
 	iu.containerHandler = handler
 }
 
+// SetActionHandler sets the version-specific action handler.
+// This must be called before using UseItemOnBlockWithCursor/UseItemOnEntity for proper version-specific packet handling.
+func (iu *ItemUsage) SetActionHandler(handler common.ActionHandler) {
+	iu.actionHandler = handler
+}
+
+// SetEntityHandler sets the version-specific entity handler.
+// This must be called before using UseItemOnEntity/AttackEntity for proper version-specific packet handling.
+func (iu *ItemUsage) SetEntityHandler(handler common.EntityHandler) {
+	iu.entityHandler = handler
+}
+
 // PlaceBlock places a block or uses an item on a block at the specified position.
 // This sends a ServerboundUseItemOn packet.
 // cursorX, cursorY, cursorZ are the click position on the block face (0.0-1.0)
-func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand Hand, cursorX, cursorY, cursorZ float32) error {
+func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
+	if iu.containerHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "ContainerHandler"}
+	}
+
 	// Convert position to block coordinates
 	x := int(math.Floor(pos.X))
 	y := int(math.Floor(pos.Y))
@@ -74,36 +83,15 @@ func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand Hand, cursor
 	// Increment sequence for anti-cheat
 	iu.sequence++
 
-	// Use version-specific container handler if available
-	if iu.containerHandler != nil {
-		return iu.containerHandler.SendUseItemOn(
-			iu.client,
-			int32(hand),
-			x, y, z,
-			int32(face),
-			cursorX, cursorY, cursorZ,
-			false, // insideBlock
-			iu.sequence,
-		)
-	}
-
-	// Fallback: use raw packet marshaling (legacy path, should not be needed)
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundUseItemOn")
-	blockPos := pk.Position{X: x, Y: y, Z: z}
-
-	packet := pk.Marshal(
-		packetID,
-		pk.VarInt(hand),
-		blockPos,
-		pk.VarInt(face),
-		pk.Float(cursorX),
-		pk.Float(cursorY),
-		pk.Float(cursorZ),
-		pk.Boolean(false), // InsideBlock
-		pk.VarInt(iu.sequence),
+	return iu.containerHandler.SendUseItemOn(
+		iu.client,
+		hand,
+		x, y, z,
+		int32(face),
+		cursorX, cursorY, cursorZ,
+		false, // insideBlock
+		iu.sequence,
 	)
-
-	return iu.client.WritePacket(packet)
 }
 
 // GetRealisticCursorPosition returns a randomized cursor position that looks natural.
@@ -122,7 +110,7 @@ func GetRealisticCursorPosition() (x, y, z float32) {
 }
 
 // UseItemOnBlockWithCursor uses the held item on a block with an explicit cursor position.
-func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, hand Hand, cursorX, cursorY, cursorZ float32) error {
+func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
 	fmt.Printf("[UseItemOnBlock] → Interacting with block at pos=(%v) face=%d hand=%d\n", pos, face, hand)
 	fmt.Printf("[UseItemOnBlock] → Using cursor position (%.3f, %.3f, %.3f)\n", cursorX, cursorY, cursorZ)
 
@@ -135,13 +123,11 @@ func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, han
 	fmt.Printf("[UseItemOnBlock] ✓ use_item_on packet sent\n")
 
 	// Send swing packet (required for some blocks like loom/beacon in 1.21.5+)
-	swingPacketID := iu.packetMgr.GetServerboundPacketID("ServerboundSwing")
-	swingPacket := pk.Marshal(
-		swingPacketID,
-		pk.VarInt(hand),
-	)
+	if iu.actionHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "ActionHandler"}
+	}
 
-	if err := iu.client.WritePacket(swingPacket); err != nil {
+	if err := iu.actionHandler.SendSwing(iu.client, hand); err != nil {
 		fmt.Printf("[UseItemOnBlock] ✗ Error sending swing: %v\n", err)
 		return err
 	}
@@ -153,7 +139,7 @@ func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, han
 // UseItemOnBlock uses the held item on a block (e.g., empty bucket on water source).
 // Uses randomized cursor position to avoid anti-bot detection (Minecraft 1.21.5+).
 // Sends use_item_on packet followed by swing packet to match vanilla client behavior.
-func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face BlockFace, hand Hand) error {
+func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face BlockFace, hand models.Hand) error {
 	cursorX, cursorY, cursorZ := GetRealisticCursorPosition()
 	return iu.UseItemOnBlockWithCursor(pos, face, hand, cursorX, cursorY, cursorZ)
 }
@@ -164,7 +150,7 @@ func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face BlockFace, hand Hand) er
 // 1. InteractWith (type 2) with a hit position
 // 2. InteractAt (type 0) simple interact
 // This method now sends both to match real client behavior (required in 1.21.5+).
-func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand Hand, sneaking bool) error {
+func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand models.Hand, sneaking bool) error {
 	fmt.Printf("[UseItemOnEntity] → Sending 3-packet sequence for entity %d\n", entityID)
 
 	// First, send InteractWith packet with a hit position (type 2)
@@ -176,32 +162,22 @@ func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand Hand, sneaking bool) e
 		return fmt.Errorf("send interact-with: %w", err)
 	}
 
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundInteract")
-
 	// Then send simple InteractAt packet (type 0)
 	fmt.Printf("[UseItemOnEntity]   2/3: InteractAt (type 0)\n")
-	packet := pk.Marshal(
-		packetID,
-		pk.VarInt(entityID),
-		pk.VarInt(InteractAt), // Type: Interact
-		pk.VarInt(hand),
-		pk.Boolean(sneaking),
-	)
-
-	if err := iu.client.WritePacket(packet); err != nil {
+	if iu.entityHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "EntityHandler"}
+	}
+	if err := iu.entityHandler.SendInteract(iu.client, entityID, hand, sneaking); err != nil {
 		fmt.Printf("[UseItemOnEntity] ✗ Error sending InteractAt: %v\n", err)
 		return fmt.Errorf("send interact-at: %w", err)
 	}
 
 	// Finally, send swing packet (matches real client behavior)
 	fmt.Printf("[UseItemOnEntity]   3/3: Swing\n")
-	swingPacketID := iu.packetMgr.GetServerboundPacketID("ServerboundSwing")
-	swingPacket := pk.Marshal(
-		swingPacketID,
-		pk.VarInt(hand),
-	)
-
-	if err := iu.client.WritePacket(swingPacket); err != nil {
+	if iu.actionHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "ActionHandler"}
+	}
+	if err := iu.actionHandler.SendSwing(iu.client, hand); err != nil {
 		fmt.Printf("[UseItemOnEntity] ✗ Error sending Swing: %v\n", err)
 		return err
 	}
@@ -212,37 +188,19 @@ func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand Hand, sneaking bool) e
 
 // UseItemOnEntityAt uses an item on an entity at a specific position.
 // Used for more precise interactions.
-func (iu *ItemUsage) UseItemOnEntityAt(entityID int32, targetX, targetY, targetZ float32, hand Hand, sneaking bool) error {
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundInteract")
-
-	// Marshal packet: EntityID, Type (2=InteractAt), TargetX/Y/Z, Hand, Sneaking
-	packet := pk.Marshal(
-		packetID,
-		pk.VarInt(entityID),
-		pk.VarInt(InteractWith), // Type: Interact at position
-		pk.Float(targetX),
-		pk.Float(targetY),
-		pk.Float(targetZ),
-		pk.VarInt(hand),
-		pk.Boolean(sneaking),
-	)
-
-	return iu.client.WritePacket(packet)
+func (iu *ItemUsage) UseItemOnEntityAt(entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
+	if iu.entityHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "EntityHandler"}
+	}
+	return iu.entityHandler.SendInteractAt(iu.client, entityID, targetX, targetY, targetZ, hand, sneaking)
 }
 
 // AttackEntity attacks an entity (left-click).
 func (iu *ItemUsage) AttackEntity(entityID int32, sneaking bool) error {
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundInteract")
-
-	// Marshal packet: EntityID, Type (1=Attack), Sneaking
-	packet := pk.Marshal(
-		packetID,
-		pk.VarInt(entityID),
-		pk.VarInt(Attack), // Type: Attack
-		pk.Boolean(sneaking),
-	)
-
-	return iu.client.WritePacket(packet)
+	if iu.entityHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "EntityHandler"}
+	}
+	return iu.entityHandler.SendAttack(iu.client, entityID, sneaking)
 }
 
 // SwitchToSlot switches the active hotbar slot (0-8).
@@ -252,14 +210,11 @@ func (iu *ItemUsage) SwitchToSlot(slotIndex int) error {
 		return nil // Invalid slot, ignore
 	}
 
-	packetID := iu.packetMgr.GetServerboundPacketID("ServerboundSetCarriedItem")
+	if iu.containerHandler == nil {
+		return common.ErrHandlerNotSet{HandlerName: "ContainerHandler"}
+	}
 
-	packet := pk.Marshal(
-		packetID,
-		pk.Short(int16(slotIndex)),
-	)
-
-	return iu.client.WritePacket(packet)
+	return iu.containerHandler.SendSetCarriedItem(iu.client, int16(slotIndex))
 }
 
 // GetSequence returns the current sequence number (for debugging/testing)
@@ -271,22 +226,22 @@ func (iu *ItemUsage) GetSequence() int32 {
 
 // PlaceWaterBucket places water at a position (clutch mechanic)
 func (iu *ItemUsage) PlaceWaterBucket(pos models.V3, face BlockFace) error {
-	return iu.UseItemOnBlock(pos, face, MainHand)
+	return iu.UseItemOnBlock(pos, face, models.MainHand)
 }
 
 // CollectPowderSnow collects powder snow with an empty bucket
 func (iu *ItemUsage) CollectPowderSnow(pos models.V3, face BlockFace) error {
-	return iu.UseItemOnBlock(pos, face, MainHand)
+	return iu.UseItemOnBlock(pos, face, models.MainHand)
 }
 
 // CatchFish catches a fish with a water bucket
 func (iu *ItemUsage) CatchFish(entityID int32) error {
-	return iu.UseItemOnEntity(entityID, MainHand, false)
+	return iu.UseItemOnEntity(entityID, models.MainHand, false)
 }
 
 // CatchAxolotl catches an axolotl with a water bucket
 func (iu *ItemUsage) CatchAxolotl(entityID int32) error {
-	return iu.UseItemOnEntity(entityID, MainHand, false)
+	return iu.UseItemOnEntity(entityID, models.MainHand, false)
 }
 
 // FindItemInInventory searches for an item by ID in any inventory.

@@ -187,7 +187,7 @@ func TestFindAndOpenContainer(t *testing.T) {
 				ServerAddress: addr,
 				Version:       serverCfg.Version,
 				EnableReplay:  true,
-				ReplayOutput:  fmt.Sprintf("./replays/find_open_test_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")),
+				ReplayOutput:  normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("find_open_test_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), botName),
 			}
 
 			// Version handler is auto-detected by the framework

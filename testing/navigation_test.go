@@ -56,7 +56,7 @@ func TestNavigationSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/nav_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -170,7 +170,7 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = fmt.Sprintf("./replays/nav_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405"))
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

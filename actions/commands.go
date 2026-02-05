@@ -427,7 +427,11 @@ type FireBow struct{}
 func (FireBow) Name() string  { return "firebow" }
 func (FireBow) Usage() string { return "fireBow" }
 func (FireBow) Execute(agent CommandAgent, _ []string) error {
-	go agent.FireBow()
+	go func() {
+		if err := agent.FireBow(); err != nil {
+			_ = agent.SendChat("Fire bow error: " + err.Error())
+		}
+	}()
 	return nil
 }
 
@@ -439,20 +443,32 @@ func (FireBowAt) Usage() string {
 }
 func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 	if len(args) == 0 {
-		agent.FireBow()
+		go func() {
+			if err := agent.FireBow(); err != nil {
+				_ = agent.SendChat("Fire bow error: " + err.Error())
+			}
+		}()
 		return nil
 	}
 	if len(args) == 1 {
 		if args[0] == "nearest" {
 			playerInfo, found := agent.NearestPlayerInfo()
 			if found {
-				go agent.FireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z)
+				go func() {
+					if err := agent.FireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {
+						_ = agent.SendChat("Fire bow at error: " + err.Error())
+					}
+				}()
 				return nil
 			}
 		} else {
 			x, y, z, found, err := agent.FindPlayerByName(args[0])
 			if err == nil && found {
-				go agent.FireBowAt(x, y, z)
+				go func() {
+					if err := agent.FireBowAt(x, y, z); err != nil {
+						_ = agent.SendChat("Fire bow at error: " + err.Error())
+					}
+				}()
 				return nil
 			}
 			_ = agent.SendChat("Player not found: " + args[0])
@@ -478,6 +494,10 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 		_ = agent.SendChat("Invalid Z coordinate")
 		return nil
 	}
-	go agent.FireBowAt(tx, ty, tz)
+	go func() {
+		if err := agent.FireBowAt(tx, ty, tz); err != nil {
+			_ = agent.SendChat("Fire bow at error: " + err.Error())
+		}
+	}()
 	return nil
 }

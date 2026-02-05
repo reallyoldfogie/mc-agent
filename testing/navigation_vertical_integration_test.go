@@ -192,8 +192,8 @@ func runVerticalNavigationTest(t *testing.T, mcVersion string, segment CourseSeg
 	// Version handler is auto-detected by the framework
 
 	agentCfg.EnableReplay = true
-	agentCfg.ReplayOutput = fmt.Sprintf("./replays/%s_%s_%s_%s.mcpr",
-		segment.Name(), strings.ToUpper(string(orientation.String()[0])), mcVersion, time.Now().Format("20060102_150405"))
+	agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("%s_%s_%s_%s.mcpr",
+		segment.Name(), strings.ToUpper(string(orientation.String()[0])), mcVersion, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 	agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 	require.NoError(t, err, "spawn agent")

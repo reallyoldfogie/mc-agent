@@ -15,6 +15,7 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 	gouuid "github.com/google/uuid"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 
@@ -25,8 +26,9 @@ import (
 // replayMovementMirror converts select serverbound packets (movement) into
 // synthetic clientbound packets for replay visibility of the local player.
 type replayMovementMirror struct {
-	rec *recorder.Recorder
-	pm  protocol_models.PacketMgr
+	rec             *recorder.Recorder
+	pm              protocol_models.PacketMgr
+	versionHandler  common.VersionHandler
 
 	mu                   sync.Mutex
 	entityID             int32
@@ -65,24 +67,25 @@ type replayMovementMirror struct {
 
 // NewReplayMovementMirror constructs a movement mirror if both recorder and
 // packet manager are provided. It returns nil when either dependency is nil.
-func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, sp models.SkinProvider) MovementMirror {
+func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, versionHandler common.VersionHandler, sp models.SkinProvider) MovementMirror {
 	if rec == nil || pm == nil {
 		return nil
 	}
 	return &replayMovementMirror{
-		rec:            rec,
-		pm:             pm,
-		sbidPos:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
-		sbidPosRot:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
-		sbidRot:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
-		sbidStatus:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerStatusOnly")),
-		cbidTeleport:   int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
-		cbidAddEnt:     int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
-		cbidPlayerInfo: int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
-		cbidMovePos:    int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
-		cbidMovePosRot: int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
-		cbidRotateHead: int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
-		skinProvider:   sp,
+		rec:             rec,
+		pm:              pm,
+		versionHandler:  versionHandler,
+		sbidPos:         int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
+		sbidPosRot:      int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
+		sbidRot:         int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
+		sbidStatus:      int32(pm.GetServerboundPacketID("ServerboundMovePlayerStatusOnly")),
+		cbidTeleport:    int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
+		cbidAddEnt:      int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
+		cbidPlayerInfo:  int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
+		cbidMovePos:     int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
+		cbidMovePosRot:  int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
+		cbidRotateHead:  int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
+		skinProvider:    sp,
 	}
 }
 
@@ -253,6 +256,16 @@ func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 }
 
 func (m *replayMovementMirror) handlePos(p pk.Packet) {
+	// Use version handler if available, fallback to direct packet parsing
+	if m.versionHandler != nil {
+		x, y, z, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPos(p)
+		if err == nil {
+			m.emitTeleport(x, y, z, m.lastYaw, m.lastPitch, onGround)
+			return
+		}
+	}
+
+	// Fallback to direct packet parsing
 	var x, y, z pk.Double
 	var onGround pk.Boolean
 	if err := p.Scan(&x, &y, &z, &onGround); err != nil {
@@ -262,6 +275,18 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 }
 
 func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
+	// Use version handler if available, fallback to direct packet parsing
+	if m.versionHandler != nil {
+		x, y, z, yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPosRot(p)
+		if err == nil {
+			log.Printf("[ReplayMirror] handlePosRot: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+				x, y, z, yaw, pitch)
+			m.emitTeleport(x, y, z, yaw, pitch, onGround)
+			return
+		}
+	}
+
+	// Fallback to direct packet parsing
 	var x, y, z pk.Double
 	var yaw, pitch pk.Float
 	var onGround pk.Boolean
@@ -274,6 +299,16 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 }
 
 func (m *replayMovementMirror) handleRot(p pk.Packet) {
+	// Use version handler if available, fallback to direct packet parsing
+	if m.versionHandler != nil {
+		yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundRot(p)
+		if err == nil {
+			m.emitTeleport(m.lastX, m.lastY, m.lastZ, yaw, pitch, onGround)
+			return
+		}
+	}
+
+	// Fallback to direct packet parsing
 	var yaw, pitch pk.Float
 	var onGround pk.Boolean
 	if err := p.Scan(&yaw, &pitch, &onGround); err != nil {
@@ -283,6 +318,16 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 }
 
 func (m *replayMovementMirror) handleStatus(p pk.Packet) {
+	// Use version handler if available, fallback to direct packet parsing
+	if m.versionHandler != nil {
+		onGround, err := m.versionHandler.Play().Movement().ParseServerboundStatus(p)
+		if err == nil {
+			m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, onGround)
+			return
+		}
+	}
+
+	// Fallback to direct packet parsing
 	var onGround pk.Boolean
 	if err := p.Scan(&onGround); err != nil {
 		return

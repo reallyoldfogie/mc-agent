@@ -696,6 +696,14 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	// sneaking could never be disabled once enabled (e.g., from sideways recovery).
 	// This caused agents to get stuck on ladders since sneaking prevents descent.
 	inputs := pe.inputGen.GenerateInputs(pe.physicsState, step, 0)
+	if inputs.Jump {
+		_, _, _, onGround := pe.physicsState.GetPosition()
+		if !onGround {
+			log.Printf("[PhysicsExecutor] Jump input while not onGround at step %d/%d (%s) pos=(%.2f, %.2f, %.2f) target=(%.2f, %.2f, %.2f)",
+				stepNum+1, totalSteps, step.Movement,
+				pos.X, pos.Y, pos.Z, step.Position.X, step.Position.Y, step.Position.Z)
+		}
+	}
 	return inputs
 }
 
@@ -855,6 +863,19 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 		pe.recoveryAttempt = 0 // Reset so we can try again later
 		return
 	}
+
+	// Log the step we are stuck on (if any) for debugging.
+	pe.pathMu.RLock()
+	stepDesc := "<none>"
+	stepIdx := pe.currentStep
+	if pe.currentPath != nil && pe.currentStep < len(pe.currentPath.Steps) {
+		stepDesc = pe.currentPath.Steps[pe.currentStep].Movement.String()
+	}
+	pe.pathMu.RUnlock()
+
+	log.Printf("[PhysicsExecutor] Repath recovery (attempt %d) at step %d (%s): pos=(%.2f, %.2f, %.2f) goal=(%.2f, %.2f, %.2f)",
+		pe.recoveryAttempt, stepIdx, stepDesc,
+		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z)
 
 	log.Printf("[PhysicsExecutor] Attempting re-path recovery from (%.2f, %.2f, %.2f) to goal (%.0f, %.0f, %.0f)",
 		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z)
