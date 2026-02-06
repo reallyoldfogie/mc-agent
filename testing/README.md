@@ -179,6 +179,75 @@ Tests that followers can stop following on command.
 - **Validates**: Follower remains stationary after stop command
 - **Replays**: Leader and follower
 
+## Custom Mods and Configurations
+
+The testing framework supports custom Fabric mods and their configuration files for advanced test scenarios.
+
+### Mods Directory
+
+Place mod JAR files in `testing/mods/v<version>/` to automatically load them in tests:
+
+```bash
+# Create directory for Minecraft 1.21.5 mods
+mkdir -p testing/mods/v1_21_5
+
+# Copy mod JAR files
+cp /path/to/protocol-dumper.jar testing/mods/v1_21_5/
+cp /path/to/custom-mod.jar testing/mods/v1_21_5/
+```
+
+Mods are automatically:
+- Detected and mounted at `/data/mods` in the server container
+- Loaded by the Fabric mod loader
+- Cached across test runs
+
+For detailed instructions, see [mods/README.md](mods/README.md).
+
+### Configs Directory
+
+Place mod configuration files in `testing/configs/v<version>/` to customize mod behavior:
+
+```bash
+# Create directory for Minecraft 1.21.5 configs
+mkdir -p testing/configs/v1_21_5/modname
+
+# Add mod config files (mirrors /data/config structure)
+cp /path/to/modname/config.toml testing/configs/v1_21_5/modname/
+```
+
+Configs are automatically:
+- Detected and mounted at `/data/config` in the server container
+- Used by mods during initialization
+- Preserved across test runs
+
+For detailed instructions, see [configs/README.md](configs/README.md).
+
+### Use Cases
+
+**Protocol Dumping**: Configure a mod to log network packets
+```bash
+testing/mods/v1_21_5/protocol-dumper.jar
+testing/configs/v1_21_5/protocol-dumper/config.toml  # Enable verbose logging
+```
+
+**Test-Specific Settings**: Customize mod behavior for testing
+```bash
+testing/configs/v1_21_5/custom-mod/config.toml  # Enable test mode
+```
+
+**Multiple Mods**: Load several mods with coordinated configs
+```bash
+testing/mods/v1_21_5/
+├── mod-a.jar
+├── mod-b.jar
+└── mod-c.jar
+
+testing/configs/v1_21_5/
+├── mod-a/config.toml
+├── mod-b/config.toml
+└── shared/settings.json
+```
+
 ## Configuration
 
 ### Server Configuration

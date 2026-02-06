@@ -72,7 +72,7 @@ const (
 	// Arrow physics (from agent/bowCommands.go)
 	ArrowGravity      = 0.05 // Arrow gravity (different from player)
 	ArrowDrag         = 0.99 // Arrow air resistance
-	ArrowInitialSpeed = 3.1  // Max arrow speed (fully charged bow)
+	ArrowInitialSpeed = 3.25 // Max arrow speed (fully charged bow) - empirically determined for Minecraft 1.21.8
 
 	// Snowball/Egg physics
 	SnowballGravity      = 0.03 // Snowball/egg gravity

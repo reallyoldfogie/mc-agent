@@ -44,6 +44,10 @@ logs/
 bot.log
 test.log
 testing/logs
+testing/mods
+testing/mods.disabled
+testing/configs
+testing/outputs
 
 # Temporary files
 /tmp/

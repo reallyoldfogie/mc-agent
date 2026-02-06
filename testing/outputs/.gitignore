@@ -1,0 +1,9 @@
+# Output files from tests (e.g., protocol dumps, logs, data exports)
+# These are generated at test runtime and should not be committed
+
+# Minecraft-generated output files
+/v*/
+/*.log
+/*.jsonl
+/*.json
+/*.txt

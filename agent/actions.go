@@ -830,7 +830,7 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 	dz := tz - oz
 	dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	if dist == 0 {
-		return []losBlock{{x: targetX, y: targetY, z: targetZ, name: a.blockNameAt(targetX, targetY, targetZ)}}
+		return []losBlock{{x: targetX, y: targetY, z: targetZ, name: a.BlockNameAt(targetX, targetY, targetZ)}}
 	}
 	dirX := dx / dist
 	dirY := dy / dist
@@ -849,11 +849,11 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 	remainingExtra := 0
 	maxSteps := int(dist*3) + extraBlocks + 16
 
-	for stepCount := 0; stepCount < maxSteps; stepCount++ {
+	for range maxSteps {
 		if ctx.Err() != nil {
 			break
 		}
-		blocks = append(blocks, losBlock{x: ix, y: iy, z: iz, name: a.blockNameAt(ix, iy, iz)})
+		blocks = append(blocks, losBlock{x: ix, y: iy, z: iz, name: a.BlockNameAt(ix, iy, iz)})
 		if ix == targetX && iy == targetY && iz == targetZ && !reachedTarget {
 			reachedTarget = true
 			remainingExtra = extraBlocks
@@ -886,7 +886,7 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 	return blocks
 }
 
-func (a *agent) blockNameAt(ix, iy, iz int) string {
+func (a *agent) BlockNameAt(ix, iy, iz int) string {
 	world := a.GetWorld()
 	if world == nil || a.blockMgr == nil {
 		return "unknown"

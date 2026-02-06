@@ -726,6 +726,8 @@ func (a *agent) Start(ctx context.Context) error {
 		}
 		// Set registry callback to handle entity types and other registry data
 		opts.RegistryDataCallback = a.onRegistryDataCallback
+		// Enable bidirectional packet logging for debugging
+		opts.PacketLogWriter = a.logw
 		if err := a.client.JoinServerWithOptions(baseCtx, a.cfg.Address, opts); err != nil {
 			return err
 		}

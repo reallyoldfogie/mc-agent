@@ -1,0 +1,7 @@
+# Ignore all mod configuration files
+# Users can place mod configs in version-specific subdirectories: v1_21_5/, v1_21_7/, etc.
+# The testing framework will automatically detect and mount them when the server starts.
+# Configs mirror the /data/config structure in the Fabric server.
+*
+!.gitignore
+!README.md

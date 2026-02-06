@@ -174,9 +174,9 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 		}
 	}
 	if entityTypeName == "minecraft:arrow" {
-		log.Printf("[onAddEntity] ARROW SPAWN: entityID=%d, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f", entityID, x, y, z, yaw, pitch)
+		log.Printf("[onAddEntity] ARROW SPAWN: entityID=%d, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d", entityID, x, y, z, yaw, pitch)
 	} else if entityTypeName != "" {
-		log.Printf("[onAddEntity] Entity spawn: entityID=%d, type=%s, pos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f", entityID, entityTypeName, x, y, z, yaw, pitch)
+		log.Printf("[onAddEntity] Entity spawn: entityID=%d, type=%s, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d", entityID, entityTypeName, x, y, z, yaw, pitch)
 	}
 
 	a.entitiesMu.Lock()
@@ -285,7 +285,7 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 		// Debug logging for arrows
 		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
 			if name, ok := reg.GetNameByID(e.EntityType); ok && name == "minecraft:arrow" {
-				log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%.2f, pitch=%.2f",
+				log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d",
 					entityID, e.X, e.Y, e.Z, x, y, z, yaw, pitch)
 			}
 		}

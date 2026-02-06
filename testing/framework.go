@@ -48,10 +48,11 @@ type Framework struct {
 
 // TestInstance represents a complete test environment with server and agents.
 type TestInstance struct {
-	Server *testenv.Instance
-	RCON   testenv.RCONHelper
-	Agents []*ManagedAgent
-	mu     sync.RWMutex
+	Server         *testenv.Instance
+	RCON           testenv.RCONHelper
+	Agents         []*ManagedAgent
+	AgentLogFile   string // Path to the agent log file
+	mu             sync.RWMutex
 }
 
 // ManagedAgent wraps an agent instance with lifecycle tracking.
@@ -150,6 +151,72 @@ func clearServerWorldData(cacheDir string) {
 			log.Printf("[Framework.StartServer] failed to remove world data %s: %v", path, err)
 		}
 	}
+}
+
+// getModsDir returns the path to the mods directory for a given Minecraft version,
+// or empty string if the directory doesn't exist.
+// Looks in: mods/v{version} relative to current working directory.
+// Version format: "1.21.5" -> looks for "mods/v1_21_5"
+func getModsDir(version string) string {
+	if version == "" {
+		return ""
+	}
+	
+	// Convert version format: 1.21.5 -> v1_21_5
+	modsPath := filepath.Join("mods", "v"+strings.ReplaceAll(version, ".", "_"))
+	
+	// Check if directory exists and convert to absolute path for Docker binding
+	if _, err := os.Stat(modsPath); err == nil {
+		if abs, err := filepath.Abs(modsPath); err == nil {
+			return abs
+		}
+	}
+	
+	return ""
+}
+
+// getConfigDir returns the path to the config directory for a given Minecraft version,
+// or empty string if the directory doesn't exist.
+// Looks in: configs/v{version} relative to current working directory (tests run from testing dir).
+// Version format: "1.21.5" -> looks for "configs/v1_21_5"
+func getConfigDir(version string) string {
+	if version == "" {
+		return ""
+	}
+	
+	// Convert version format: 1.21.5 -> v1_21_5
+	configPath := filepath.Join( "configs", "v"+strings.ReplaceAll(version, ".", "_"))
+	
+	// Check if directory exists and convert to absolute path for Docker binding
+	if _, err := os.Stat(configPath); err == nil {
+		if abs, err := filepath.Abs(configPath); err == nil {
+			return abs
+		}
+	}
+	
+	return ""
+}
+
+// getOutputDir returns the path to the output directory for a given Minecraft version,
+// or empty string if the directory doesn't exist.
+// Looks in: outputs/v{version} relative to current working directory (tests run from testing dir).
+// Version format: "1.21.5" -> looks for "outputs/v1_21_5"
+func getOutputDir(version string) string {
+	if version == "" {
+		return ""
+	}
+	
+	// Convert version format: 1.21.5 -> v1_21_5
+	outputPath := filepath.Join("outputs", "v"+strings.ReplaceAll(version, ".", "_"))
+	
+	// Check if directory exists and convert to absolute path for Docker binding
+	if _, err := os.Stat(outputPath); err == nil {
+		if abs, err := filepath.Abs(outputPath); err == nil {
+			return abs
+		}
+	}
+	
+	return ""
 }
 
 // WorldGenType specifies the terrain generation mode for tests.
@@ -372,6 +439,9 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		OnlineMode: false, // offline mode for tests
 		NamePrefix: "mc-agent-test-",
 		DataDir:    cacheDir, // Use persistent cache for server JARs
+		ModsDir:    getModsDir(cfg.Version), // Load mods if they exist for this version
+		ConfigDir:  getConfigDir(cfg.Version), // Load configs if they exist for this version
+		OutputDir:  getOutputDir(cfg.Version), // Load output dir if it exists for this version
 		ExtraEnv:   extraEnv,
 	}
 
@@ -409,10 +479,17 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		return nil, fmt.Errorf("initialize world state: %w", err)
 	}
 
+	// Setup agent logging if not already done
+	if err := f.setupAgentLogging(); err != nil {
+		_ = f.serverMgr.Stop(context.Background(), inst, true)
+		return nil, fmt.Errorf("setup agent logging: %w", err)
+	}
+
 	testInst := &TestInstance{
-		Server: inst,
-		RCON:   helper,
-		Agents: []*ManagedAgent{},
+		Server:        inst,
+		RCON:          helper,
+		Agents:        []*ManagedAgent{},
+		AgentLogFile:  f.GetAgentLogFilename(),
 	}
 
 	return testInst, nil
@@ -660,10 +737,10 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		return nil, fmt.Errorf("no packet manager found for version %s", mcVersion)
 	}
 
-	// Setup receiver packet logging (raw packet captures for debugging)
-	_ = os.MkdirAll("./logs/receiver", 0760)
+	// Setup packet logging (raw packet captures for debugging)
+	_ = os.MkdirAll("./logs/packets", 0760)
 	receiverLog := &lumberjack.Logger{
-		Filename:   fmt.Sprintf("./logs/receiver/%s_%s.log", cfg.Name, time.Now().Format("20060102_150405")),
+		Filename:   fmt.Sprintf("./logs/packets/%s_%s.log", cfg.Name, time.Now().Format("20060102_150405")),
 		MaxSize:    10, // megabytes
 		MaxBackups: 3,
 		MaxAge:     28, // days

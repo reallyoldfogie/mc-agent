@@ -1,6 +1,9 @@
 package physics
 
-import "math"
+import (
+	"log"
+	"math"
+)
 
 // ProjectileType represents different types of throwable projectiles
 type ProjectileType int
@@ -83,7 +86,7 @@ func SimulateProjectile(pType ProjectileType, pitchRad, powerFactor float64,
 	posX, posY := 0.0, 0.0 // Simplified 2D simulation (horizontal distance, vertical position)
 
 	// Simulate up to 400 ticks (20 seconds)
-	for tick := 0; tick < 400; tick++ {
+	for range 400 {
 		posX += velXZ
 		posY += velY
 
@@ -118,7 +121,7 @@ func SimulateProjectileTrajectory(pType ProjectileType, origin, velocity V3, max
 	vel := velocity
 	trajectory := make([]TrajectoryPoint, 0, maxTicks)
 
-	for tick := 0; tick < maxTicks; tick++ {
+	for tick := range maxTicks {
 		// Update position
 		pos.X += vel.X
 		pos.Y += vel.Y
@@ -146,41 +149,90 @@ func SimulateProjectileTrajectory(pType ProjectileType, origin, velocity V3, max
 	return trajectory
 }
 
-// FindOptimalTrajectory searches for the best pitch and power to hit a target.
-// Returns the optimal pitch (degrees), power factor, and minimum error.
+// FindOptimalTrajectory searches for the best pitch with full power to hit a target.
+// Prefers low-angle shots (below 45 degrees) for reliability and realism.
+// Returns the optimal pitch (degrees), power factor (always 1.0), and minimum error.
 func FindOptimalTrajectory(pType ProjectileType, horizontalDist, verticalDist float64) (pitch, power, minError float64) {
+	pitch, power, minError, _ = FindOptimalAiming(pType, horizontalDist, verticalDist)
+	return
+}
+
+// FindOptimalAiming searches for the best pitch with full power to hit a target.
+// Also returns the 3D trajectory points of the selected solution.
+// Prefers low-angle shots (below 45 degrees) for reliability and realism.
+// Returns optimal pitch (degrees), power (always 1.0), minimum error, and trajectory points.
+func FindOptimalAiming(pType ProjectileType, horizontalDist, verticalDist float64) (pitch, power, minError float64, trajectory []TrajectoryPoint) {
+
+	log.Printf("[FindOptimalAiming] horizontalDist=%.2f, verticalDist=%.2f", horizontalDist, verticalDist)
 	const (
 		minPitch  = -90.0
 		maxPitch  = 90.0
 		pitchStep = 0.1
-		minPower  = 0.1
-		maxPower  = 1.0
-		powerStep = 0.05
+		maxPower  = 1.0 // Always use full power
+		epsilon   = 0.5 // Tolerance for considering hits equivalent
 	)
 
 	bestPitch := 0.0
-	bestPower := 1.0
+	bestPower := maxPower // Use full power
 	minError = math.MaxFloat64
+	var lowAnglePitch *float64 // Track the best low angle solution
+	var lowAngleError float64
+	var bestTrajectory []TrajectoryPoint
 
-	for p := minPower; p <= maxPower; p += powerStep {
-		for pitch := minPitch; pitch <= maxPitch; pitch += pitchStep {
-			pitchRad := pitch * math.Pi / 180.0
+	// Get projectile physics for calculating velocity
+	projectilePhys := GetProjectilePhysics(pType)
 
-			hitX, _, hit := SimulateProjectile(pType, pitchRad, p, horizontalDist, verticalDist)
+	for pitch := minPitch; pitch <= maxPitch; pitch += pitchStep {
+		pitchRad := pitch * math.Pi / 180.0
+		hitX, _, hit := SimulateProjectile(pType, pitchRad, maxPower, horizontalDist, verticalDist)
 
-			if hit {
-				error := math.Abs(hitX - horizontalDist)
+		if hit {
+			error := math.Abs(hitX - horizontalDist)
 
-				if error < minError {
-					minError = error
-					bestPitch = pitch
-					bestPower = p
+			// Check if this is a low-angle shot (preferred for reliability)
+			isLowAngle := math.Abs(pitch) <= 45.0
+
+			if error < minError-epsilon {
+				// Clearly better error
+				minError = error
+				bestPitch = pitch
+				// Only update low angle tracker if this is low angle
+				if isLowAngle {
+					lowAnglePitch = &pitch
+					lowAngleError = error
+					// Capture trajectory for this solution
+					initialSpeed := projectilePhys.InitialSpeed * maxPower
+					velY := math.Sin(pitchRad) * initialSpeed
+					velXZ := math.Cos(pitchRad) * initialSpeed
+					// For 2D search, use a placeholder origin and Z-direction velocity
+					velocity := V3{X: 0, Y: velY, Z: velXZ}
+					bestTrajectory = SimulateProjectileTrajectory(pType, V3{}, velocity, 400)
 				}
+			} else if math.Abs(error-minError) < epsilon && isLowAngle && lowAnglePitch == nil {
+				// Error is similar and this is a low angle, prefer it
+				bestPitch = pitch
+				lowAnglePitch = &pitch
+				lowAngleError = error
+				// Capture trajectory for this solution
+				initialSpeed := projectilePhys.InitialSpeed * maxPower
+				velY := math.Sin(pitchRad) * initialSpeed
+				velXZ := math.Cos(pitchRad) * initialSpeed
+				velocity := V3{X: 0, Y: velY, Z: velXZ}
+				bestTrajectory = SimulateProjectileTrajectory(pType, V3{}, velocity, 400)
 			}
 		}
 	}
 
-	return bestPitch, bestPower, minError
+	// If we found a low-angle solution, prefer it over high-angle solutions with similar error
+	if lowAnglePitch != nil && math.Abs(lowAngleError-minError) < epsilon {
+		bestPitch = *lowAnglePitch
+		minError = lowAngleError
+	}
+
+	log.Printf("[FindOptimalAiming] Final: pitch=%.1f, power=%.2f, minError=%.2f, trajectoryPoints=%d",
+		bestPitch, bestPower, minError, len(bestTrajectory))
+
+	return bestPitch, bestPower, minError, bestTrajectory
 }
 
 // CalculateAiming calculates yaw, pitch, and power needed to hit a target.

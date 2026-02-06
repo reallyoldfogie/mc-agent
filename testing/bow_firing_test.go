@@ -3,14 +3,46 @@ package testing
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// analyzeArrowTrajectory parses arrow trajectory from agent logs and compares with predictions
+func analyzeArrowTrajectory(t *testing.T, inst *TestInstance, agent *ManagedAgent,
+	botX, botY, botZ float64,
+	targetX, targetY, targetZ float64,
+	trajectory []physics.TrajectoryPoint) {
+	if inst.AgentLogFile == "" {
+		t.Logf("[TEST] No agent log file path available for trajectory analysis")
+		return
+	}
+
+	logFile := inst.AgentLogFile
+
+	// Parse trajectory from logs
+	positions, err := AnalyzeArrowTrajectory(logFile)
+	if err != nil {
+		t.Logf("[TEST] Failed to analyze arrow trajectory: %v", err)
+		return
+	}
+
+	if len(positions) == 0 {
+		t.Logf("[TEST] No arrow trajectory data found in logs")
+		return
+	}
+
+	// Compare with predictions
+	botOrigin := physics.V3{X: botX, Y: botY, Z: botZ}
+	targetOrigin := physics.V3{X: targetX, Y: targetY, Z: targetZ}
+	CompareTrajectories(positions, botOrigin, targetOrigin, trajectory)
+}
 
 // setupTargetMechanism places:
 // - a target block (to be hit by arrow)
@@ -39,7 +71,7 @@ func setupTargetMechanism(ctx context.Context, t *testing.T, rcon testenv.RCONHe
 
 	// Normal piston directly east of target, facing west (toward the target)
 	pistonX, pistonY, pistonZ := targetX+1, targetY, targetZ
-	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:piston[facing=west]`, pistonX, pistonY, pistonZ)); err != nil {
+	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:piston[facing=east]`, pistonX, pistonY, pistonZ)); err != nil {
 		return 0, 0, 0, fmt.Errorf("set piston: %w", err)
 	}
 
@@ -56,25 +88,30 @@ func setupTargetMechanism(ctx context.Context, t *testing.T, rcon testenv.RCONHe
 	return glowstoneX, glowstoneY, glowstoneZ, nil
 }
 
-// verifyBlockAtPosition returns true if block is at (gx,gy,gz).
-// Uses Java Edition-friendly execute-if/unless.
-func verifyBlockAtPosition(ctx context.Context, rcon testenv.RCONHelper, gx, gy, gz int, block string) (bool, error) {
-	// If the block at (gx,gy,gz) matches, execute run say to confirm.
-	// Presence of the chat message indicates the block is still there.
-	validationStr := fmt.Sprintf("BlockFound_%d_%d_%d", gx, gy, gz)
-	cmd := fmt.Sprintf(`execute if block %d %d %d %s run say %s`, gx, gy, gz, block, validationStr)
-	resp, err := rcon.Exec(ctx, cmd)
-	if err != nil {
-		return false, err
+// verifyBlockAtPosition returns true if block is at (gx,gy,gz) using agent's world data.
+// This checks the blocks the agent received in chunk updates, so it knows immediately
+// when blocks are modified (like when a piston pushes glowstone).
+func verifyBlockAtPosition(agent *ManagedAgent, gx, gy, gz int, expectedBlockName string) (bool, error) {
+	// Get the block from the agent's world view
+	blockName := agent.Agent.BlockNameAt(gx, gy, gz)
+
+	// Check if the block name matches (handle both "glowstone" and "minecraft:glowstone")
+	expectedName := expectedBlockName
+	if !strings.Contains(expectedName, ":") {
+		expectedName = "minecraft:" + expectedBlockName
 	}
-	// If the say command ran, the block is still there. If no message, block moved/changed.
-	return strings.Contains(resp, validationStr), nil
+
+	log.Printf("[TEST] verifyBlockAtPosition: expected=%s, got=%s at (%d, %d, %d)", expectedName, blockName, gx, gy, gz)
+
+	return blockName == expectedName, nil
 }
 
 // fireAt builds a target mechanism in front of the bot and fires the bow at it.
 func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+
+	agent.Agent.SendChat(fmt.Sprintf("FireBow at target. Distance %d blocks", distance))
 
 	// Make sure bow is equipped explicitly (active slot cannot be assumed)
 	require.NoError(t, agent.EquipItemByName(ctx, "minecraft:bow"))
@@ -95,24 +132,51 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int)
 	// Wait for server to process the rotation update
 	time.Sleep(400 * time.Millisecond)
 
+	var trajectory []physics.TrajectoryPoint
+	var fireErr error
+	if agnt, ok := agent.Agent.(interface {
+		FireBowAtDebug(x, y, z float64) ([]physics.TrajectoryPoint, error)
+	}); ok {
+		if traj, err := agnt.FireBowAtDebug(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5); err == nil {
+			trajectory = traj
+			fireErr = err
+		} else {
+			fireErr = err
+		}
+	} else {
+		fireErr = agent.Agent.FireBowAt(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
+	}
+
 	// Fire using the new API at the center of the target block
-	fireErr := agent.Agent.FireBowAt(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
 	if fireErr != nil {
 		t.Logf("FireBowAt error: %v", fireErr)
 	}
 	require.NoError(t, fireErr)
-	// Allow time for arrow flight and piston action
-	time.Sleep(1800 * time.Millisecond)
 
-	glowstoneStillThere, err := verifyBlockAtPosition(ctx, inst.RCON, gx, gy, gz, "minecraft:glowstone")
-	require.NoError(t, err, "verify target impact")
-	glowstoneMoved, err := verifyBlockAtPosition(ctx, inst.RCON, gx+1, gy, gz, "minecraft:glowstone")
-	assert.False(t, glowstoneStillThere, "glowstone should have moved if target was hit")
+	// Allow time for arrow flight and piston action
+	time.Sleep(5 * time.Second)
+
+	glowstoneStillThere, err := verifyBlockAtPosition(agent, gx, gy, gz, "minecraft:glowstone")
+	require.NoError(t, err, "verify original glowstone position")
+	glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
+	require.NoError(t, err, "verify glowstone moved")
+
+	if glowstoneMoved {
+		agent.Agent.SendChat("Success: Target hit and glowstone moved!")
+	} else {
+		agent.Agent.SendChat("Failure: Target not hit, glowstone did not move.")
+	}
+
+	// Analyze arrow trajectory from logs
+	analyzeArrowTrajectory(t, inst, agent, float64(botX)+0.5, float64(botY)+0.5, float64(botZ)+0.5,
+		float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, trajectory)
+
+	assert.False(t, glowstoneStillThere, "glowstone should have moved from original position if target was hit")
 	assert.True(t, glowstoneMoved, "glowstone should be at new position if target was hit")
 }
 
-// TestBowFiring_FireBowAt_TargetAndPiston verifies FireBowAt hits a target block that triggers a piston
-func TestBowFiring_FireBowAt_TargetAndPiston(t *testing.T) {
+// TestBowFiring_FireBowAt verifies FireBowAt hits a target block that triggers a piston
+func TestBowFiring_FireBowAt(t *testing.T) {
 	for _, tt := range standardVersionTests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -189,23 +253,27 @@ func TestBowFiring_MultipleDistances(t *testing.T) {
 				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 				srv.Version,
 			)
-			ag, err := fw.SpawnAgent(ctx, inst, agCfg)
+			agnt, err := fw.SpawnAgent(ctx, inst, agCfg)
 			require.NoError(t, err)
 			defer func() {
-				if ag != nil && ag.BotClient() != nil {
-					_ = ag.BotClient().Close()
+				if agnt != nil && agnt.BotClient() != nil {
+					_ = agnt.BotClient().Close()
 				}
 			}()
 
 			// Join + give items
 			time.Sleep(2 * time.Second)
-			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:bow`, ag.Name))
+			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:bow`, agnt.Name))
 			require.NoError(t, err)
-			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:arrow 128`, ag.Name))
+			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:arrow 128`, agnt.Name))
 			require.NoError(t, err)
 
-			for _, d := range []int{5, 10, 15, 30} {
-				fireAt(t, inst, ag, d)
+			time.Sleep(1 * time.Second)
+
+			for _, distance := range []int{5, 10, 15, 30} {
+				t.Run(fmt.Sprintf("%d blocks", distance), func(t *testing.T) {
+					fireAt(t, inst, agnt, distance)
+				})
 			}
 		})
 	}
