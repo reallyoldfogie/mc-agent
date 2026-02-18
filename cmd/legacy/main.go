@@ -2456,7 +2456,9 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 
 	// Calculate yaw (rotation around Y axis)
-	// Yaw 0 is south (+Z), 90 is west (-X), 180 is north (-Z), 270 is east (+X)
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
 	yaw = float32(math.Atan2(-dx, dz) * 180 / math.Pi)
 
 	// Calculate pitch (rotation around X axis)

@@ -94,8 +94,8 @@ type PhysicsMovementExecutor struct {
 
 	// Stuck detection and recovery
 	stepStartTime     time.Time       // When current step started
-	stepStartPos      physics.V3      // Position when current step started
-	lastProgressPos   physics.V3      // Last position where meaningful progress was made
+	stepStartPos      models.V3       // Position when current step started
+	lastProgressPos   models.V3       // Last position where meaningful progress was made
 	lastProgressTime  time.Time       // Time of last progress
 	stuckThreshold    time.Duration   // How long without progress before considered stuck
 	stuckRecovery     StuckRecoveryFn // Callback for recovery when stuck
@@ -136,7 +136,7 @@ func NewPhysicsMovementExecutor(
 	x, y, z, yaw, pitch, initialized := getBotPos()
 	if initialized {
 		physicsState.SetPosition(
-			physics.V3{X: x, Y: y, Z: z},
+			models.V3{X: x, Y: y, Z: z},
 			float64(yaw),
 			float64(pitch),
 			true, // Assume on ground initially
@@ -209,7 +209,7 @@ func (pe *PhysicsMovementExecutor) SendPosition(x, y, z float64, onGround bool) 
 	// Sync physics state FIRST so tick loop doesn't send stale position
 	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
 	pe.physicsState.SetPosition(
-		physics.V3{X: x, Y: y, Z: z},
+		models.V3{X: x, Y: y, Z: z},
 		currentYaw,
 		currentPitch,
 		onGround,
@@ -222,7 +222,7 @@ func (pe *PhysicsMovementExecutor) SendPosition(x, y, z float64, onGround bool) 
 func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
 	// Sync physics state FIRST so tick loop doesn't send stale position
 	pe.physicsState.SetPosition(
-		physics.V3{X: x, Y: y, Z: z},
+		models.V3{X: x, Y: y, Z: z},
 		float64(yaw),
 		float64(pitch),
 		onGround,
@@ -301,7 +301,7 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 
 	// Sync physics state with server
 	pe.physicsState.SetPosition(
-		physics.V3{X: x, Y: y, Z: z},
+		models.V3{X: x, Y: y, Z: z},
 		float64(yaw),
 		float64(pitch),
 		onGround,
@@ -587,7 +587,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		pe.pathMu.Lock()
 		pe.currentStep++
 		pe.stepStartTime = time.Now()
-		pe.stepStartPos = physics.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
 		pe.lastProgressPos = pe.stepStartPos
 		pe.lastProgressTime = time.Now()
 
@@ -624,7 +624,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 
 		// If we've made meaningful progress (moved at least 0.1 blocks closer), update tracking and reset recovery
 		if lastDistToTarget-distToTarget > 0.1 {
-			pe.lastProgressPos = physics.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+			pe.lastProgressPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
 			pe.lastProgressTime = time.Now()
 			// Progress made - reset recovery state
 			if pe.recoveryAttempt > 0 {
@@ -818,6 +818,9 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 	}
 
 	// Calculate yaw to face the combined direction
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
 	yaw := math.Atan2(-throttleX, throttleZ) * 180.0 / math.Pi
 
 	return physics.Inputs{
@@ -898,7 +901,7 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	pe.currentStep = 0
 	pe.stepStartTime = time.Now()
 	pos, _, _, _ := pe.physicsState.GetPosition()
-	pe.stepStartPos = physics.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+	pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
 	pe.lastProgressPos = pe.stepStartPos
 	pe.lastProgressTime = time.Now()
 	pe.recoveryAttempt = 0 // Reset recovery state after successful re-path
@@ -1027,7 +1030,7 @@ func (pe *PhysicsMovementExecutor) SetPath(path *pathfinding.Path) error {
 	// Initialize progress tracking for stuck detection
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	pe.stepStartTime = time.Now()
-	pe.stepStartPos = physics.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+	pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
 	pe.lastProgressPos = pe.stepStartPos
 	pe.lastProgressTime = time.Now()
 	pe.isRecovering = false

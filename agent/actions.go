@@ -11,6 +11,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
@@ -272,12 +273,21 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 		return errors.New("bot position not initialized")
 	}
 
-	// Calculate look angles
+	// Use physics package to calculate yaw consistently with arrow firing
+	// CRITICAL: Use arrow spawn height (1.52), not eye height (1.62)
+	// This ensures pitch calculation matches physics system expectations
+	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
+	targetPos := models.V3{X: x, Y: y, Z: z}
+
+	// Calculate yaw using physics formula: atan2(dZ, dX) - 90
+	// This matches YawForStartTarget and ensures consistency
+	yaw := float32(physics.YawForStartTarget(botOrigin, targetPos))
+
+	// Calculate pitch based on arrow spawn height (1.52, not 1.62)
+	// Arrow spawns at: eye - 0.1 = (standing height 1.62) - 0.1 = 1.52
+	dy := y - (botY + 1.52)
 	dx := x - botX
 	dz := z - botZ
-	yaw := float32(math.Atan2(-dx, dz) * 180 / math.Pi)
-
-	dy := y - (botY + 1.62) // Account for eye height
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 	pitch := float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
 

@@ -350,7 +350,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	// For each direction, check what moves could have arrived here
 	for _, dir := range cardinalDirs {
 		// If we can traverse FROM neighbor TO here, then neighbor is a valid reverse move
-		from := to.Add(dir.dx, 0, dir.dz)
+		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if pf.movementValidator.CanTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
@@ -360,7 +360,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		}
 
 		// If we can ascend FROM neighbor (1 below) TO here, then that neighbor is valid
-		fromBelow := to.Add(dir.dx, -1, dir.dz)
+		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if pf.movementValidator.CanAscend(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
@@ -378,7 +378,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 		// If we can descend FROM neighbor (1-3 above) TO here, then that neighbor is valid
 		for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
-			fromAbove := to.Add(dir.dx, dropHeight, dir.dz)
+			fromAbove := to.Add(models.V3{X: dir.dx, Y: dropHeight, Z: dir.dz})
 			if pf.movementValidator.CanDescend(fromAbove, to) {
 				moves = append(moves, PathStep{
 					Position: fromAbove,
@@ -390,7 +390,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		}
 
 		// Descend stairs reverse
-		fromAbove := to.Add(dir.dx, 1, dir.dz)
+		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if pf.movementValidator.CanDescendStairs(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,
@@ -400,7 +400,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		}
 
 		// Jump2 reverse - could have jumped 2 blocks to get here
-		fromJump := to.Add(dir.dx*2, 0, dir.dz*2)
+		fromJump := to.Add(models.V3{X: dir.dx * 2, Y: 0, Z: dir.dz * 2})
 		if pf.movementValidator.CanJump2(fromJump, to) {
 			moves = append(moves, PathStep{
 				Position: fromJump,
@@ -410,7 +410,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		}
 
 		// Jump2 up reverse - could have jumped 2 blocks and up 1 to get here
-		fromJumpBelow := to.Add(dir.dx*2, -1, dir.dz*2)
+		fromJumpBelow := to.Add(models.V3{X: dir.dx * 2, Y: -1, Z: dir.dz * 2})
 		if pf.movementValidator.CanJump2(fromJumpBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromJumpBelow,
@@ -422,7 +422,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 	// Diagonal movements
 	for _, dir := range diagonalDirs {
-		from := to.Add(dir.dx, 0, dir.dz)
+		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if pf.movementValidator.CanDiagonalTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
@@ -431,7 +431,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 
-		fromBelow := to.Add(dir.dx, -1, dir.dz)
+		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if pf.movementValidator.CanDiagonalAscend(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
@@ -446,7 +446,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		if dy == 0 {
 			continue
 		}
-		from := to.Add(0, dy, 0)
+		from := to.Add(models.V3{X: 0, Y: dy, Z: 0})
 		if pf.movementValidator.CanClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
@@ -458,7 +458,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 	// EnterClimb reverse - could have entered climb from adjacent
 	for _, dir := range cardinalDirs {
-		from := to.Add(dir.dx, 0, dir.dz)
+		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if pf.movementValidator.CanEnterClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
@@ -466,7 +466,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Cost:     EnterClimb.BaseCost(),
 			})
 		}
-		fromBelow := to.Add(dir.dx, -1, dir.dz)
+		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if pf.movementValidator.CanEnterClimb(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
@@ -474,7 +474,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Cost:     JumpToClimb.BaseCost(),
 			})
 		}
-		fromAbove := to.Add(dir.dx, 1, dir.dz)
+		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if pf.movementValidator.CanEnterClimb(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,
@@ -487,7 +487,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	// Swimming reverse
 	allDirs := append(cardinalDirs, diagonalDirs...)
 	for _, dir := range allDirs {
-		from := to.Add(dir.dx, 0, dir.dz)
+		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if pf.movementValidator.CanSwim(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
@@ -495,7 +495,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Cost:     Swim.BaseCost(),
 			})
 		}
-		fromBelow := to.Add(dir.dx, -1, dir.dz)
+		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if pf.movementValidator.CanSwimUp(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
@@ -503,7 +503,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Cost:     SwimUp.BaseCost(),
 			})
 		}
-		fromAbove := to.Add(dir.dx, 1, dir.dz)
+		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if pf.movementValidator.CanSwimDown(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,

@@ -16,8 +16,8 @@ type Inputs = models.Inputs
 // This includes position, velocity, rotation, and ground contact flags.
 type state struct {
 	// Position and velocity
-	Pos V3 // Player position (feet level)
-	Vel V3 // Player velocity (blocks per tick)
+	Pos models.V3 // Player position (feet level)
+	Vel models.V3 // Player velocity (blocks per tick)
 
 	// Rotation
 	yaw   float64 // Horizontal look direction (degrees, 0=south, 90=west, 180=north, 270=east)
@@ -56,7 +56,7 @@ func NewState(shapeProvider BlockShapeProvider) models.PhysicsState {
 
 // SetPosition updates the player's position and rotation (for server corrections).
 // This resets velocity and collision flags, as the server has teleported the player.
-func (s *state) SetPosition(pos V3, yaw, pitch float64, onGround bool) {
+func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 	// Calculate delta for debugging (server corrections should be rare)
 	deltaX := pos.X - s.Pos.X
 	deltaY := pos.Y - s.Pos.Y
@@ -70,29 +70,29 @@ func (s *state) SetPosition(pos V3, yaw, pitch float64, onGround bool) {
 	s.Pos = pos
 	s.yaw = yaw
 	s.pitch = pitch
-	s.Vel = V3{X: 0, Y: 0, Z: 0} // Reset velocity
+	s.Vel = models.V3{X: 0, Y: 0, Z: 0} // Reset velocity
 	s.onGround = onGround
 	s.collision.vertical = false
 	s.collision.horizontal = false
 }
 
 // GetPosition returns the current position and rotation.
-func (s *state) GetPosition() (pos V3, yaw, pitch float64, onGround bool) {
+func (s *state) GetPosition() (pos models.V3, yaw, pitch float64, onGround bool) {
 	return s.Pos, s.yaw, s.pitch, s.onGround
 }
 
 // GetVelocity returns the current velocity.
-func (s *state) GetVelocity() V3 {
+func (s *state) GetVelocity() models.V3 {
 	return s.Vel
 }
 
 // Position returns the current position.
-func (s *state) Position() V3 {
+func (s *state) Position() models.V3 {
 	return s.Pos
 }
 
 // Velocity returns the current velocity.
-func (s *state) Velocity() V3 {
+func (s *state) Velocity() models.V3 {
 	return s.Vel
 }
 
@@ -122,7 +122,7 @@ func (s *state) GetDimensions() (width, height, eyeHeight float64) {
 }
 
 // SetPositionSimple updates the position without changing rotation or ground status.
-func (s *state) SetPositionSimple(pos V3) {
+func (s *state) SetPositionSimple(pos models.V3) {
 	s.Pos = pos
 }
 
@@ -137,7 +137,7 @@ func (s *state) SetPitch(pitch float64) {
 }
 
 // SetVelocity updates the velocity.
-func (s *state) SetVelocity(vel V3) {
+func (s *state) SetVelocity(vel models.V3) {
 	s.Vel = vel
 }
 
@@ -383,7 +383,7 @@ func (s *state) tickPosition(w World) {
 		// Check all four corners of the player's hitbox at the new position
 		// This matches vanilla Minecraft behavior
 		halfWidth := s.width / 2
-		corners := []V3{
+		corners := []models.V3{
 			{X: newPosX + halfWidth, Y: newPosY, Z: newPosZ + halfWidth}, // +X +Z
 			{X: newPosX + halfWidth, Y: newPosY, Z: newPosZ - halfWidth}, // +X -Z
 			{X: newPosX - halfWidth, Y: newPosY, Z: newPosZ + halfWidth}, // -X +Z
@@ -441,7 +441,7 @@ func (s *state) tickPosition(w World) {
 
 // tryStepUp attempts to step up a small obstacle (max StepHeight).
 // Returns the resulting bounding box and velocity if step-up succeeds.
-func (s *state) tryStepUp(playerBB AABB, vel V3, w World) (AABB, V3) {
+func (s *state) tryStepUp(playerBB AABB, vel models.V3, w World) (AABB, models.V3) {
 	// Query collision boxes in the step-up range
 	queryBB := playerBB.Offset(vel.X, StepHeight, vel.Z)
 	surroundings := s.getSurroundingBoxes(queryBB, w)
@@ -487,7 +487,7 @@ func (s *state) tryStepUp(playerBB AABB, vel V3, w World) (AABB, V3) {
 
 // computeCollisionYXZ performs collision detection and resolution in YXZ order.
 // Returns the resulting bounding box and clamped velocity.
-func (s *state) computeCollisionYXZ(playerBB AABB, vel V3, w World) (AABB, V3) {
+func (s *state) computeCollisionYXZ(playerBB AABB, vel models.V3, w World) (AABB, models.V3) {
 	// Query collision boxes in the movement range
 	queryBB := playerBB.Offset(vel.X, vel.Y, vel.Z)
 	surroundings := s.getSurroundingBoxes(queryBB, w)
@@ -591,7 +591,7 @@ func (s *state) PredictMovement(inputs []Inputs, maxTicks int, w World) []models
 // This simulates free fall or ballistic motion for 'ticks' iterations.
 // Useful for quick fall distance calculations. This is an approximate prediction
 // that doesn't account for full collision physics.
-func (s *state) PredictPosition(vel V3, ticks int, w World) V3 {
+func (s *state) PredictPosition(vel models.V3, ticks int, w World) models.V3 {
 	pos := s.Pos
 	currentVel := vel
 
@@ -632,7 +632,7 @@ func (s *state) PredictPosition(vel V3, ticks int, w World) V3 {
 // WillCollide performs a quick collision check to see if moving to targetPos would collide.
 // This is a simplified check that doesn't account for full physics simulation.
 // Returns true if collision is detected, false otherwise.
-func (s *state) WillCollide(targetPos V3, w World) bool {
+func (s *state) WillCollide(targetPos models.V3, w World) bool {
 	// Create AABB at target position
 	height := s.height
 	if s.isSneaking {
@@ -659,7 +659,7 @@ func (s *state) WillCollide(targetPos V3, w World) bool {
 }
 
 // HasGroundSupportAt exposes ground support checks for callers needing edge detection.
-func (s *state) HasGroundSupportAt(pos V3, w World) bool {
+func (s *state) HasGroundSupportAt(pos models.V3, w World) bool {
 	return s.hasGroundSupportAt(pos, w)
 }
 
@@ -676,7 +676,7 @@ func (s *state) GetSurroundingBoxes(queryBB AABB, w World) []AABB {
 // extend beyond supported blocks. A corner is supported if:
 // 1. It's safely within a block (not too close to edges), OR
 // 2. It's near an edge but there's an adjacent block providing support
-func (s *state) hasGroundSupportAt(pos V3, w World) bool {
+func (s *state) hasGroundSupportAt(pos models.V3, w World) bool {
 	// Check for solid block directly below
 	checkY := int(math.Floor(pos.Y - 0.05))
 	checkX := int(math.Floor(pos.X))

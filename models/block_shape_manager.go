@@ -33,6 +33,9 @@ type BlockShapeManager interface {
 	IsHoneyBlock(blockStateID uint32) bool
 	IsSlimeBlock(blockStateID uint32) bool
 	IsPowderSnow(blockStateID uint32) bool
+
+	BlockName(blockStateID uint32) string
+	FullBlockName(blockStateID uint32) string
 }
 
 // BlockRegistry provides block state ID lookup for world building.

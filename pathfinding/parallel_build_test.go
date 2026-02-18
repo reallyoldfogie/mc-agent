@@ -135,6 +135,17 @@ func (m *testMockShapeManager) IsPowderSnow(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) BlockName(stateID uint32) string {
+	if stateID == 0 {
+		return "minecraft:air"
+	}
+	return "minecraft:stone"
+}
+
+func (m *testMockShapeManager) FullBlockName(stateID uint32) string {
+	return m.BlockName(stateID)
+}
+
 // TestParallelClusterBuilding tests that parallel cluster building works correctly
 // and provides a performance benefit over sequential building.
 func TestParallelClusterBuilding(t *testing.T) {

@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/physics"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ import (
 func analyzeArrowTrajectory(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 	botX, botY, botZ float64,
 	targetX, targetY, targetZ float64,
-	trajectory []physics.TrajectoryPoint) {
+	trajectory []models.TrajectoryPoint) {
 	if inst.AgentLogFile == "" {
 		t.Logf("[TEST] No agent log file path available for trajectory analysis")
 		return
@@ -39,8 +40,8 @@ func analyzeArrowTrajectory(t *testing.T, inst *TestInstance, agent *ManagedAgen
 	}
 
 	// Compare with predictions
-	botOrigin := physics.V3{X: botX, Y: botY, Z: botZ}
-	targetOrigin := physics.V3{X: targetX, Y: targetY, Z: targetZ}
+	botOrigin := models.V3{X: botX, Y: botY, Z: botZ}
+	targetOrigin := models.V3{X: targetX, Y: targetY, Z: targetZ}
 	CompareTrajectories(positions, botOrigin, targetOrigin, trajectory)
 }
 
@@ -107,7 +108,9 @@ func verifyBlockAtPosition(agent *ManagedAgent, gx, gy, gz int, expectedBlockNam
 }
 
 // fireAt builds a target mechanism in front of the bot and fires the bow at it.
-func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int) {
+// fireAt fires an arrow at a target distance and optionally validates via callback
+// Accepts optional callbacks that will be registered with the arrow projectile
+func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int, callbacks ...models.ProjectileHitCallback) (target models.V3) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -118,9 +121,14 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int)
 
 	botX, botY, botZ, ok := agent.Agent.GetPositionSimple()
 	require.True(t, ok, "bot position initialized")
-	targetX := int(botX) + distance
-	targetY := int(botY)
-	targetZ := int(botZ)
+	// Use math.Floor() to properly convert world coordinates to block coordinates
+	// int() truncates towards zero, which breaks negative coordinates (e.g., int(-0.50) = 0, not -1)
+	// math.Floor() properly rounds down for all values
+	targetX := int(math.Floor(botX)) + distance
+	targetY := int(math.Floor(botY))
+	targetZ := int(math.Floor(botZ))
+
+	target = models.V3{X: float64(targetX), Y: float64(targetY), Z: float64(targetZ)}
 
 	gx, gy, gz, err := setupTargetMechanism(ctx, t, inst.RCON, targetX, targetY, targetZ)
 	require.NoError(t, err, "build target mechanism")
@@ -132,19 +140,24 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int)
 	// Wait for server to process the rotation update
 	time.Sleep(400 * time.Millisecond)
 
-	var trajectory []physics.TrajectoryPoint
+	var trajectory []models.TrajectoryPoint
 	var fireErr error
-	if agnt, ok := agent.Agent.(interface {
-		FireBowAtDebug(x, y, z float64) ([]physics.TrajectoryPoint, error)
-	}); ok {
-		if traj, err := agnt.FireBowAtDebug(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5); err == nil {
-			trajectory = traj
-			fireErr = err
-		} else {
-			fireErr = err
-		}
+
+	packetWriter := agent.Agent.GetPacketLogWriter()
+
+	var projectileHitEvent models.ProjectileHitEvent
+	callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
+		projectileHitEvent = evt
+		fmt.Fprintf(packetWriter, ">>>>> End FireBowAtDebug %d blocks <<<<<\n", distance)
+	})
+
+	// Fire bow with optional callback(s)
+	fmt.Fprintf(packetWriter, ">>>>> Start FireBowAtDebug %d blocks <<<<<\n", distance)
+	if traj, err := agent.Agent.FireBowAtDebug(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...); err == nil {
+		trajectory = traj
+		fireErr = err
 	} else {
-		fireErr = agent.Agent.FireBowAt(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
+		fireErr = err
 	}
 
 	// Fire using the new API at the center of the target block
@@ -161,10 +174,14 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int)
 	glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
 	require.NoError(t, err, "verify glowstone moved")
 
+	distFromTarget := projectileHitEvent.Position.DistanceTo(target)
+	t.Logf("ProjectileHitEvent: HitType=%v, ProjectileType=%v, landed=(%.2f %.2f %.2f - %.02f blocks)", projectileHitEvent.HitType, projectileHitEvent.ProjectileType,
+		projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget)
+
 	if glowstoneMoved {
 		agent.Agent.SendChat("Success: Target hit and glowstone moved!")
 	} else {
-		agent.Agent.SendChat("Failure: Target not hit, glowstone did not move.")
+		agent.Agent.SendChat(fmt.Sprintf("Failure: Target not hit, glowstone did not move. (landed at %.2f, %.2f, %.2f - %.2f blocks away)", projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget))
 	}
 
 	// Analyze arrow trajectory from logs
@@ -173,6 +190,7 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int)
 
 	assert.False(t, glowstoneStillThere, "glowstone should have moved from original position if target was hit")
 	assert.True(t, glowstoneMoved, "glowstone should be at new position if target was hit")
+	return target
 }
 
 // TestBowFiring_FireBowAt verifies FireBowAt hits a target block that triggers a piston
@@ -198,7 +216,7 @@ func TestBowFiring_FireBowAt(t *testing.T) {
 			}()
 
 			agCfg := DefaultAgentConfig(
-				"BowBot",
+				"BowBot_FireBowAt",
 				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 				srv.Version,
 			)
@@ -219,7 +237,24 @@ func TestBowFiring_FireBowAt(t *testing.T) {
 			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:arrow 64`, ag.Name))
 			require.NoError(t, err)
 
-			fireAt(t, inst, ag, 10)
+			// Setup callback channel for arrow
+			hitCh := make(chan models.ProjectileHitEvent, 1)
+			callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
+
+			target := fireAt(t, inst, ag, 10, callback)
+
+			// Wait for callback (non-blocking)
+			select {
+			case evt := <-hitCh:
+				distanceFromTarget := evt.Position.DistanceTo(target)
+
+				t.Logf("✓ Arrow callback: HitType=%v, ProjectileType=%v, landed=(%.2f %.2f %.2f - %.2f blocks away)",
+					evt.HitType, evt.ProjectileType, evt.Position.X, evt.Position.Y, evt.Position.Z, distanceFromTarget)
+				// Verify callback matches this projectile type
+				assert.Equal(t, models.Arrow, evt.ProjectileType, "callback projectile type should be Arrow")
+			case <-time.After(5 * time.Second):
+				t.Logf("⚠ Arrow callback did not fire (timeout)")
+			}
 
 			time.Sleep(3 * time.Second) // give a little time after the test for inspection etc.
 		})
@@ -249,7 +284,7 @@ func TestBowFiring_MultipleDistances(t *testing.T) {
 			}()
 
 			agCfg := DefaultAgentConfig(
-				"BowBot",
+				"BowBot_MultiDist",
 				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 				srv.Version,
 			)
@@ -272,7 +307,21 @@ func TestBowFiring_MultipleDistances(t *testing.T) {
 
 			for _, distance := range []int{5, 10, 15, 30} {
 				t.Run(fmt.Sprintf("%d blocks", distance), func(t *testing.T) {
-					fireAt(t, inst, agnt, distance)
+					// Setup callback channel for arrow
+					hitCh := make(chan models.ProjectileHitEvent, 1)
+					callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
+
+					fireAt(t, inst, agnt, distance, callback)
+
+					// Wait for callback (non-blocking)
+					select {
+					case evt := <-hitCh:
+						t.Logf("✓ Arrow callback at %d blocks: HitType=%v, ProjectileType=%v, landed=(%.2f %.2f %.2f)", distance, evt.HitType, evt.ProjectileType, evt.Position.X, evt.Position.Y, evt.Position.Z)
+						// Verify callback matches this projectile type
+						assert.Equal(t, models.Arrow, evt.ProjectileType, "callback projectile type should be Arrow")
+					case <-time.After(5 * time.Second):
+						t.Logf("⚠ Arrow callback at %d blocks did not fire (timeout)", distance)
+					}
 				})
 			}
 		})

@@ -23,7 +23,7 @@ type CommandAgent interface {
 	StopPlan() error
 
 	FireBow() error
-	FireBowAt(x, y, z float64) error
+	FireBowAt(x, y, z float64, callbacks ...ProjectileHitCallback) error
 
 	NearestPlayerInfo() (NearestPlayerInfo, bool)
 	FindPlayerByName(name string) (x, y, z float64, found bool, err error)

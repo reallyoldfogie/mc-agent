@@ -277,6 +277,16 @@ func (msm *MockShapeManager) IsPowderSnow(blockStateID uint32) bool {
 	return msm.blockName(blockStateID) == "minecraft:powder_snow"
 }
 
+// BlockName returns the block name for a given block state ID
+func (msm *MockShapeManager) BlockName(blockStateID uint32) string {
+	return msm.blockName(blockStateID)
+}
+
+// FullBlockName returns the full block name (same as BlockName in this mock)
+func (msm *MockShapeManager) FullBlockName(blockStateID uint32) string {
+	return msm.blockName(blockStateID)
+}
+
 // TestLogger provides logging for tests
 type TestLogger struct {
 	messages []string

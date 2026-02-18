@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"io"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 )
@@ -75,4 +76,6 @@ type Agent interface {
 
 	// String returns a human-friendly description for logging.
 	String() string
+
+	GetPacketLogWriter() io.Writer //TODO: use to log start/stop of projectiles
 }

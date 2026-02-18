@@ -3,6 +3,8 @@ package physics
 import (
 	"math"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Mock implementations for testing
@@ -161,6 +163,27 @@ func (m *mockShapeProvider) IsPowderSnow(blockID uint32) bool {
 	return m.powderSnowBlocks[blockID]
 }
 
+func (m *mockShapeProvider) BlockName(blockStateID uint32) string {
+	switch blockStateID {
+	case BlockAir:
+		return "minecraft:air"
+	case BlockStone:
+		return "minecraft:stone"
+	case BlockWater:
+		return "minecraft:water"
+	case BlockLadder:
+		return "minecraft:ladder"
+	case BlockHalfSlab:
+		return "minecraft:oak_slab"
+	default:
+		return "minecraft:unknown"
+	}
+}
+
+func (m *mockShapeProvider) FullBlockName(blockStateID uint32) string {
+	return m.BlockName(blockStateID)
+}
+
 func (m *mockShapeProvider) GetCollisionBoxes(blockStateID uint32, x, y, z int) []AABB {
 	// Air (0) has no collision
 	if blockStateID == 0 {
@@ -258,7 +281,7 @@ func TestState_SetPosition(t *testing.T) {
 	shapes := newMockShapeProvider()
 	state := NewState(shapes)
 
-	pos := V3{X: 10.5, Y: 64.0, Z: 20.3}
+	pos := models.V3{X: 10.5, Y: 64.0, Z: 20.3}
 	yaw, pitch := 45.0, -30.0
 
 	state.SetPosition(pos, yaw, pitch, true)
@@ -287,7 +310,7 @@ func TestState_SetPosition(t *testing.T) {
 func TestState_GetAABB(t *testing.T) {
 	shapes := newMockShapeProvider()
 	state := NewState(shapes)
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 
 	bb := state.GetAABB()
 
@@ -318,8 +341,8 @@ func TestState_Freefall(t *testing.T) {
 	state := NewState(shapes)
 
 	// Place player in the air
-	state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Simulate 20 ticks of freefall
 	for i := 0; i < 20; i++ {
@@ -356,8 +379,8 @@ func TestState_HorizontalMovement(t *testing.T) {
 	state := NewState(shapes)
 
 	// Place player well above ground and let physics settle them
-	state.SetPositionSimple(V3{X: 0, Y: 5, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 5, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Let player fall and settle on ground
 	groundTicks := 0
@@ -412,8 +435,8 @@ func TestState_Jump(t *testing.T) {
 	state := NewState(shapes)
 
 	// Place player on ground and let them settle
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Let player settle on ground first
 	for i := 0; i < 20; i++ {
@@ -461,8 +484,8 @@ func TestState_JumpCooldown(t *testing.T) {
 	state := NewState(shapes)
 
 	// Place player on ground and let them settle
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Let player settle on ground first
 	for i := 0; i < 20; i++ {
@@ -526,8 +549,8 @@ func TestState_StepUp_Success(t *testing.T) {
 	// Place half slab in front of player
 	world.SetBlock(1, 1, 0, BlockHalfSlab)
 
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 	state.SetOnGround(true)
 
 	// Move forward into the half slab
@@ -560,8 +583,8 @@ func TestState_StepUp_TooHigh(t *testing.T) {
 	// Place a full-height block as obstacle
 	world.SetBlock(1, 1, 0, BlockStone)
 
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Let player settle on ground first
 	for i := 0; i < 20; i++ {
@@ -607,8 +630,8 @@ func TestState_LadderClimbing(t *testing.T) {
 	world.SetBlock(0, 3, 1, BlockStone)
 	world.SetBlock(0, 4, 1, BlockStone)
 
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	// Let player settle on ground first
 	for i := 0; i < 20; i++ {
@@ -654,8 +677,8 @@ func TestState_LadderSneakingPreventsDescend(t *testing.T) {
 	world.SetBlock(0, 4, 1, BlockStone)
 
 	// Start player at Y=3 on the ladder (mid-height)
-	state.SetPositionSimple(V3{X: 0.5, Y: 3.0, Z: 0.5})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0.5, Y: 3.0, Z: 0.5})
+	state.SetVelocity(models.V3{})
 
 	startY := state.Position().Y
 
@@ -694,8 +717,8 @@ func TestState_LadderDescendWithoutSneak(t *testing.T) {
 	world.SetBlock(0, 4, 1, BlockStone)
 
 	// Start player at Y=3 on the ladder (mid-height)
-	state.SetPositionSimple(V3{X: 0.5, Y: 3.0, Z: 0.5})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0.5, Y: 3.0, Z: 0.5})
+	state.SetVelocity(models.V3{})
 
 	startY := state.Position().Y
 
@@ -721,8 +744,8 @@ func TestState_VelocityDeadzone(t *testing.T) {
 	state := NewState(shapes)
 
 	// Set very small velocities (below deadzone threshold)
-	state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
-	state.SetVelocity(V3{
+	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
+	state.SetVelocity(models.V3{
 		X: ResetVelocity / 2,
 		Y: ResetVelocity / 2,
 		Z: ResetVelocity / 2,
@@ -767,8 +790,8 @@ func TestState_CollisionDetection(t *testing.T) {
 			state := NewState(shapes)
 
 			// Start player on ground at origin (same as TestState_StepUp_TooHigh)
-			state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-			state.SetVelocity(V3{})
+			state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+			state.SetVelocity(models.V3{})
 
 			// Let player settle on ground (same pattern as TestState_StepUp_TooHigh)
 			for i := 0; i < 20; i++ {
@@ -840,7 +863,7 @@ func TestState_LookRateLimiting(t *testing.T) {
 	world, shapes := createFlatWorld()
 	state := NewState(shapes)
 
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetYaw(0.0)
 	state.SetPitch(0.0)
 
@@ -866,8 +889,8 @@ func TestState_SprintMultiplier(t *testing.T) {
 	world, shapes := createFlatWorld()
 	state := NewState(shapes)
 
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 	state.SetOnGround(true)
 
 	// Move without sprint
@@ -876,8 +899,8 @@ func TestState_SprintMultiplier(t *testing.T) {
 	normalVel := math.Abs(state.Velocity().Z)
 
 	// Reset
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	state.SetVelocity(models.V3{})
 	state.SetOnGround(true)
 
 	// Move with sprint
@@ -899,7 +922,7 @@ func TestState_SprintMultiplier(t *testing.T) {
 func BenchmarkState_Tick(b *testing.B) {
 	world, shapes := createFlatWorld()
 	state := NewState(shapes)
-	state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
 	input := Inputs{
 		ThrottleX: 0.5,
@@ -926,7 +949,7 @@ func BenchmarkState_Tick_WithCollisions(b *testing.B) {
 	}
 
 	state := NewState(shapes)
-	state.SetPositionSimple(V3{X: 0, Y: 1, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetOnGround(true)
 
 	input := Inputs{

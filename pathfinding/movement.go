@@ -110,7 +110,7 @@ func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 	}
 
 	// Check if there's headroom to jump
-	jumpSpace := from.Add(0, 2, 0)
+	jumpSpace := from.Add(models.V3{X: 0, Y: 2, Z: 0})
 	if !mv.isBlockPassable(jumpSpace) {
 		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
 			log.Printf("[DEBUG CanAscend] FAILED: no headroom at (%.0f,%.0f,%.0f)",
@@ -149,7 +149,7 @@ func (mv *MovementValidator) CanAscendStairs(from, to models.V3) bool {
 	}
 
 	// Check if the ground block at target is a stair
-	groundPos := to.Add(0, -1, 0)
+	groundPos := to.Add(models.V3{X: 0, Y: -1, Z: 0})
 	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
 	if !loaded || groundStateID == 0 {
 		return false
@@ -198,7 +198,7 @@ func (mv *MovementValidator) CanDescendStairs(from, to models.V3) bool {
 
 	// Check if the ground block at current position is a stair
 	// (we're descending FROM a stair)
-	groundPos := from.Add(0, -1, 0)
+	groundPos := from.Add(models.V3{X: 0, Y: -1, Z: 0})
 	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
 	if !loaded || groundStateID == 0 {
 		return false
@@ -263,7 +263,7 @@ func (mv *MovementValidator) isPositionPassable(pos models.V3) bool {
 	}
 
 	// Check head level (1 block above feet)
-	head := pos.Add(0, 1, 0)
+	head := pos.Add(models.V3{X: 0, Y: 1, Z: 0})
 	return mv.isBlockPassable(head)
 }
 
@@ -288,7 +288,7 @@ func (mv *MovementValidator) isBlockPassable(pos models.V3) bool {
 // hasGroundSupport checks if there's solid ground below the position
 func (mv *MovementValidator) hasGroundSupport(pos models.V3) bool {
 	// Check block directly below feet
-	groundPos := pos.Add(0, -1, 0)
+	groundPos := pos.Add(models.V3{X: 0, Y: -1, Z: 0})
 	stateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
 
 	if !loaded {
@@ -331,8 +331,8 @@ func (mv *MovementValidator) CanDiagonalTraverse(from, to models.V3) bool {
 	}
 
 	// Check that the two adjacent cardinal squares are also passable (no corner cutting)
-	adj1 := from.Add(dx, 0, 0)
-	adj2 := from.Add(0, 0, dz)
+	adj1 := from.Add(models.V3{X: dx, Y: 0, Z: 0})
+	adj2 := from.Add(models.V3{X: 0, Y: 0, Z: dz})
 	if !mv.isPositionPassable(adj1) || !mv.isPositionPassable(adj2) {
 		return false
 	}
@@ -367,14 +367,14 @@ func (mv *MovementValidator) CanDiagonalAscend(from, to models.V3) bool {
 	}
 
 	// Check headroom to jump
-	jumpSpace := from.Add(0, 2, 0)
+	jumpSpace := from.Add(models.V3{X: 0, Y: 2, Z: 0})
 	if !mv.isBlockPassable(jumpSpace) {
 		return false
 	}
 
 	// Check adjacent squares are passable (no corner cutting)
-	adj1 := from.Add(dx, 0, 0)
-	adj2 := from.Add(0, 0, dz)
+	adj1 := from.Add(models.V3{X: dx, Y: 0, Z: 0})
+	adj2 := from.Add(models.V3{X: 0, Y: 0, Z: dz})
 	if !mv.isPositionPassable(adj1) || !mv.isPositionPassable(adj2) {
 		return false
 	}
@@ -409,7 +409,7 @@ func (mv *MovementValidator) CanJump2(from, to models.V3) bool {
 	}
 
 	// Check headroom to jump
-	jumpSpace := from.Add(0, 2, 0)
+	jumpSpace := from.Add(models.V3{X: 0, Y: 2, Z: 0})
 	return mv.isBlockPassable(jumpSpace)
 }
 
@@ -622,7 +622,7 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 
 	// Scenario 2: Step-up exit (to is solid floor, step up onto it)
 	// Check if to+1 is passable (air above the floor)
-	toUp := to.Add(0, 1, 0)
+	toUp := to.Add(models.V3{X: 0, Y: 1, Z: 0})
 	toUpStateID, toUpLoaded := mv.world.GetBlockAt(toUp.X, toUp.Y, toUp.Z)
 	if !toUpLoaded {
 		return false
@@ -635,7 +635,7 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 		toSolid := toStateID != 0 && mv.shapeMgr.IsSolid(toStateID)
 		if toSolid {
 			// Check head clearance at to+2
-			toUp2 := to.Add(0, 2, 0)
+			toUp2 := to.Add(models.V3{X: 0, Y: 2, Z: 0})
 			if mv.isBlockPassable(toUp2) {
 				log.Printf("[CanExitClimb] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: step-up exit to (%.0f,%.0f,%.0f)",
 					from.X, from.Y, from.Z, to.X, to.Y, to.Z, toUp.X, toUp.Y, toUp.Z)
@@ -793,7 +793,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 
 	// Check if we're on a climbable (affects which moves are valid)
 	onClimbable := mv.isOnClimbable(from)
-	atTopOfClimbable := onClimbable && !mv.CanClimb(from, from.Add(0, 1, 0))
+	atTopOfClimbable := onClimbable && !mv.CanClimb(from, from.Add(models.V3{X: 0, Y: 1, Z: 0}))
 
 	// Cardinal directions (N, S, E, W)
 	cardinalDirs := []struct {
@@ -818,7 +818,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	// Cardinal movements
 	for _, dir := range cardinalDirs {
 		// Try traverse (same level)
-		to := from.Add(dir.dx, 0, dir.dz)
+		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if mv.CanTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: to,
@@ -829,7 +829,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 
 		// Try ascend (1 block up)
 		// IMPORTANT: Skip when at top of climbable - use ExitClimb instead
-		toUp := from.Add(dir.dx, 1, dir.dz)
+		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if !atTopOfClimbable {
 			// First try AscendStairs (walking up stairs naturally, no jump needed)
 			if mv.CanAscendStairs(from, toUp) {
@@ -849,7 +849,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Try descend (1 block down first for stairs, then 1-3 blocks for drops)
-		toDown := from.Add(dir.dx, -1, dir.dz)
+		toDown := from.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		// First try DescendStairs (walking down stairs naturally)
 		if mv.CanDescendStairs(from, toDown) {
 			moves = append(moves, PathStep{
@@ -860,7 +860,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		} else {
 			// Fall back to Descend (dropping 1-3 blocks)
 			for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
-				toDropDown := from.Add(dir.dx, -dropHeight, dir.dz)
+				toDropDown := from.Add(models.V3{X: dir.dx, Y: -dropHeight, Z: dir.dz})
 				if mv.CanDescend(from, toDropDown) {
 					moves = append(moves, PathStep{
 						Position: toDropDown,
@@ -873,7 +873,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Try jump2 (2-block gap)
-		toJump := from.Add(dir.dx*2, 0, dir.dz*2)
+		toJump := from.Add(models.V3{X: dir.dx * 2, Y: 0, Z: dir.dz * 2})
 		if mv.CanJump2(from, toJump) {
 			moves = append(moves, PathStep{
 				Position: toJump,
@@ -883,7 +883,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Try jump2 up (2-block gap, 1 block higher)
-		toJumpUp := from.Add(dir.dx*2, 1, dir.dz*2)
+		toJumpUp := from.Add(models.V3{X: dir.dx * 2, Y: 1, Z: dir.dz * 2})
 		if mv.CanJump2(from, toJumpUp) {
 			moves = append(moves, PathStep{
 				Position: toJumpUp,
@@ -896,7 +896,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	// Diagonal movements
 	for _, dir := range diagonalDirs {
 		// Try diagonal traverse
-		to := from.Add(dir.dx, 0, dir.dz)
+		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if mv.CanDiagonalTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: to,
@@ -907,7 +907,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 
 		// Try diagonal ascend
 		// IMPORTANT: Skip when at top of climbable - use ExitClimb instead
-		toUp := from.Add(dir.dx, 1, dir.dz)
+		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if !atTopOfClimbable && mv.CanDiagonalAscend(from, toUp) {
 			moves = append(moves, PathStep{
 				Position: toUp,
@@ -922,7 +922,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		if dy == 0 {
 			continue
 		}
-		to := from.Add(0, dy, 0)
+		to := from.Add(models.V3{X: 0, Y: dy, Z: 0})
 		if mv.CanClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: to,
@@ -935,7 +935,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	// EnterClimb - entering a climbable block from adjacent position
 	for _, dir := range cardinalDirs {
 		// Same level enter
-		to := from.Add(dir.dx, 0, dir.dz)
+		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if mv.CanEnterClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: to,
@@ -945,7 +945,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Enter from below (jumping to grab ladder)
-		toUp := from.Add(dir.dx, 1, dir.dz)
+		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if mv.CanEnterClimb(from, toUp) {
 			moves = append(moves, PathStep{
 				Position: toUp,
@@ -955,7 +955,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Enter from above (dropping onto ladder)
-		toDown := from.Add(dir.dx, -1, dir.dz)
+		toDown := from.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if mv.CanEnterClimb(from, toDown) {
 			moves = append(moves, PathStep{
 				Position: toDown,
@@ -968,12 +968,12 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	// ExitClimb - exiting from a climbable block onto adjacent platform
 	// Only check if we're currently on a climbable and can't climb further up
 	isOnClimb := mv.isOnClimbable(from)
-	canClimbUp := mv.CanClimb(from, from.Add(0, 1, 0))
+	canClimbUp := mv.CanClimb(from, from.Add(models.V3{X: 0, Y: 1, Z: 0}))
 
 	if isOnClimb && !canClimbUp {
 		// At top of ladder/vine - check for exits in cardinal directions
 		for _, dir := range cardinalDirs {
-			to := from.Add(dir.dx, 0, dir.dz)
+			to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 			if mv.CanExitClimb(from, to) {
 				// Determine correct Y coordinate for the exit
 				targetY := mv.getExitClimbTargetY(from, to)
@@ -992,7 +992,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	allDirs := append(cardinalDirs, diagonalDirs...)
 	for _, dir := range allDirs {
 		// Horizontal swim
-		to := from.Add(dir.dx, 0, dir.dz)
+		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if mv.CanSwim(from, to) {
 			moves = append(moves, PathStep{
 				Position: to,
@@ -1002,7 +1002,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Swim up
-		toUp := from.Add(dir.dx, 1, dir.dz)
+		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if mv.CanSwimUp(from, toUp) {
 			moves = append(moves, PathStep{
 				Position: toUp,
@@ -1012,7 +1012,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		// Swim down
-		toDown := from.Add(dir.dx, -1, dir.dz)
+		toDown := from.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
 		if mv.CanSwimDown(from, toDown) {
 			moves = append(moves, PathStep{
 				Position: toDown,

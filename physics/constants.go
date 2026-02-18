@@ -69,15 +69,23 @@ const (
 
 // Projectile physics constants (arrows, snowballs, etc.)
 const (
-	// Arrow physics (from agent/bowCommands.go)
-	ArrowGravity      = 0.05 // Arrow gravity (different from player)
-	ArrowDrag         = 0.99 // Arrow air resistance
-	ArrowInitialSpeed = 3.25 // Max arrow speed (fully charged bow) - empirically determined for Minecraft 1.21.8
+	// Arrow physics (from Minecraft 1.21.8 decompiled source)
+	// BowItem.onStoppedUsing passes speed = f * 3.0F where f = pull progress (0.0 to 1.0)
+	// At full draw, f = 1.0, so max speed = 1.0 * 3.0 = 3.0 blocks/tick
+	// Source: /work/1.21.8/extractedSrc/net/minecraft/item/BowItem.java:42
+	ArrowGravity      = 0.05 // Arrow gravity - PersistentProjectileEntity.java:302
+	ArrowDrag         = 0.99 // Arrow air resistance - PersistentProjectileEntity.java:247
+	ArrowInitialSpeed = 3.0  // Max arrow speed (fully charged bow) - BowItem.java:42 (f * 3.0F)
 
-	// Snowball/Egg physics
+	// Snowball physics
 	SnowballGravity      = 0.03 // Snowball/egg gravity
 	SnowballDrag         = 0.99 // Snowball/egg drag
 	SnowballInitialSpeed = 1.5  // Snowball/egg throw speed
+
+	// Egg physics
+	EggGravity      = 0.03 // Snowball/egg gravity
+	EggDrag         = 0.99 // Snowball/egg drag
+	EggInitialSpeed = 1.5  // Snowball/egg throw speed
 
 	// Ender Pearl physics
 	EnderPearlGravity      = 0.03 // Ender pearl gravity
@@ -88,6 +96,16 @@ const (
 	SplashPotionGravity      = 0.05 // Splash potion gravity
 	SplashPotionDrag         = 0.99 // Splash potion drag
 	SplashPotionInitialSpeed = 0.5  // Splash potion throw speed (slower arc)
+
+	// Experience Bottle physics
+	ExperienceBottleGravity      = 0.07 // Experience bottle gravity (heavier than potions)
+	ExperienceBottleDrag         = 0.99 // Experience bottle drag
+	ExperienceBottleInitialSpeed = 0.7  // Experience bottle throw speed
+
+	// Wind Charge physics (1.21+)
+	WindChargeGravity      = 0.02 // Wind charge gravity (light, affected by wind)
+	WindChargeDrag         = 0.99 // Wind charge drag
+	WindChargeInitialSpeed = 1.5  // Wind charge throw speed
 )
 
 // Block-specific slipperiness values (for future use)
@@ -95,3 +113,13 @@ const (
 // - Ice: 0.98
 // - Slime block: 0.8
 // - Most blocks: 0.6
+
+const (
+	// Specific block slipperiness constants
+	IceSlipperiness        = 0.98  // Ice and similar blocks (slippery)
+	BlueIceSlipperiness    = 0.989 // Blue ice (even slipperier than regular ice)
+	SlimeBlockSlipperiness = 0.80  // Slime blocks (some slide but also bounce)
+	DefaultSlipperiness    = 0.60  // Default for most blocks (normal friction)
+	HoneyBlockSlipperiness = 0.4   // Honey blocks (sticky, very low slipperiness)
+	// Note: Packed ice / blue ice may have slightly different values; add as needed.
+)

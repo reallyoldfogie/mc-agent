@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -11,42 +12,42 @@ import (
 func TestGetProjectilePhysics(t *testing.T) {
 	tests := []struct {
 		name              string
-		projectileType    ProjectileType
+		projectileType    models.ProjectileType
 		expectedGravity   float64
 		expectedDrag      float64
 		expectedInitSpeed float64
 	}{
 		{
 			name:              "Arrow physics",
-			projectileType:    Arrow,
+			projectileType:    models.Arrow,
 			expectedGravity:   ArrowGravity,      // 0.05
 			expectedDrag:      ArrowDrag,         // 0.99
 			expectedInitSpeed: ArrowInitialSpeed, // 3.1
 		},
 		{
 			name:              "Snowball physics",
-			projectileType:    Snowball,
+			projectileType:    models.Snowball,
 			expectedGravity:   SnowballGravity,      // 0.03
 			expectedDrag:      SnowballDrag,         // 0.99
 			expectedInitSpeed: SnowballInitialSpeed, // 1.5
 		},
 		{
 			name:              "Egg physics (same as snowball)",
-			projectileType:    Egg,
+			projectileType:    models.Egg,
 			expectedGravity:   SnowballGravity,
 			expectedDrag:      SnowballDrag,
 			expectedInitSpeed: SnowballInitialSpeed,
 		},
 		{
 			name:              "Ender pearl physics",
-			projectileType:    EnderPearl,
+			projectileType:    models.EnderPearl,
 			expectedGravity:   EnderPearlGravity,      // 0.03
 			expectedDrag:      EnderPearlDrag,         // 0.99
 			expectedInitSpeed: EnderPearlInitialSpeed, // 1.5
 		},
 		{
 			name:              "Splash potion physics",
-			projectileType:    SplashPotion,
+			projectileType:    models.SplashPotion,
 			expectedGravity:   SplashPotionGravity,      // 0.05
 			expectedDrag:      SplashPotionDrag,         // 0.99
 			expectedInitSpeed: SplashPotionInitialSpeed, // 0.5
@@ -66,7 +67,7 @@ func TestGetProjectilePhysics(t *testing.T) {
 
 func TestGetProjectilePhysics_DefaultFallback(t *testing.T) {
 	// Test that unknown projectile types get snowball physics as default
-	invalidType := ProjectileType(999)
+	invalidType := models.ProjectileType(999)
 	phys := GetProjectilePhysics(invalidType)
 
 	assert.Equal(t, 0.03, phys.Gravity, "Should default to snowball gravity")
@@ -81,7 +82,7 @@ func TestSimulateProjectile_HitTarget(t *testing.T) {
 	horizontalDist := 20.0
 	verticalDist := -2.0 // 2 blocks below
 
-	hitX, hitY, hit := SimulateProjectile(Arrow, pitchRad, powerFactor, horizontalDist, verticalDist)
+	hitX, hitY, hit := SimulateProjectile(models.Arrow, pitchRad, powerFactor, horizontalDist, verticalDist)
 
 	// Should hit somewhere near target
 	if hit {
@@ -97,18 +98,18 @@ func TestSimulateProjectile_MissTarget(t *testing.T) {
 	horizontalDist := 5.0
 	verticalDist := 0.0
 
-	_, _, hit := SimulateProjectile(Arrow, pitchRad, powerFactor, horizontalDist, verticalDist)
+	_, _, hit := SimulateProjectile(models.Arrow, pitchRad, powerFactor, horizontalDist, verticalDist)
 
 	// With 45 degree angle, should overshoot a close target
 	assert.False(t, hit, "Should miss target with wrong angle")
 }
 
 func TestSimulateProjectileTrajectory_BasicTrajectory(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
-	velocity := V3{X: 1.0, Y: 1.0, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	velocity := models.V3{X: 1.0, Y: 1.0, Z: 0}
 	maxTicks := 100
 
-	trajectory := SimulateProjectileTrajectory(Arrow, origin, velocity, maxTicks)
+	trajectory := SimulateProjectileTrajectory(models.Arrow, origin, velocity, maxTicks)
 
 	require.NotEmpty(t, trajectory, "Should have trajectory points")
 	require.LessOrEqual(t, len(trajectory), maxTicks, "Should not exceed maxTicks")
@@ -127,11 +128,11 @@ func TestSimulateProjectileTrajectory_BasicTrajectory(t *testing.T) {
 }
 
 func TestSimulateProjectileTrajectory_GravityEffect(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
-	velocity := V3{X: 1.0, Y: 0, Z: 0} // Horizontal velocity only
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	velocity := models.V3{X: 1.0, Y: 0, Z: 0} // Horizontal velocity only
 	maxTicks := 50
 
-	trajectory := SimulateProjectileTrajectory(Arrow, origin, velocity, maxTicks)
+	trajectory := SimulateProjectileTrajectory(models.Arrow, origin, velocity, maxTicks)
 
 	require.NotEmpty(t, trajectory, "Should have trajectory points")
 
@@ -143,11 +144,11 @@ func TestSimulateProjectileTrajectory_GravityEffect(t *testing.T) {
 }
 
 func TestSimulateProjectileTrajectory_VelocityDecay(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
-	velocity := V3{X: 2.0, Y: 0, Z: 2.0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	velocity := models.V3{X: 2.0, Y: 0, Z: 2.0}
 	maxTicks := 400 // More ticks to allow full decay
 
-	trajectory := SimulateProjectileTrajectory(Arrow, origin, velocity, maxTicks)
+	trajectory := SimulateProjectileTrajectory(models.Arrow, origin, velocity, maxTicks)
 
 	require.NotEmpty(t, trajectory, "Should have trajectory points")
 
@@ -160,12 +161,15 @@ func TestSimulateProjectileTrajectory_VelocityDecay(t *testing.T) {
 	}
 }
 
-func TestFindOptimalTrajectory_HorizontalShot(t *testing.T) {
+func TestFindOptimalAiming_HorizontalShot(t *testing.T) {
 	// Find optimal trajectory for horizontal shot (same height)
 	horizontalDist := 20.0
 	verticalDist := 0.0
 
-	pitch, power, minError := FindOptimalTrajectory(Arrow, horizontalDist, verticalDist)
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	target := models.V3{X: horizontalDist, Y: 64 + verticalDist, Z: 0}
+
+	pitch, power, minError, _ := FindOptimalAiming(models.Arrow, origin, target)
 
 	assert.Greater(t, power, 0.0, "Power should be positive")
 	assert.LessOrEqual(t, power, 1.0, "Power should not exceed 1.0")
@@ -176,7 +180,7 @@ func TestFindOptimalTrajectory_HorizontalShot(t *testing.T) {
 
 	// Verify the solution actually works
 	pitchRad := pitch * math.Pi / 180.0
-	hitX, hitY, hit := SimulateProjectile(Arrow, pitchRad, power, horizontalDist, verticalDist)
+	hitX, hitY, hit := SimulateProjectile(models.Arrow, pitchRad, power, horizontalDist, verticalDist)
 
 	if minError < 0.5 {
 		assert.True(t, hit, "Optimal trajectory should hit target")
@@ -185,12 +189,15 @@ func TestFindOptimalTrajectory_HorizontalShot(t *testing.T) {
 	}
 }
 
-func TestFindOptimalTrajectory_DownwardShot(t *testing.T) {
+func TestFindOptimalAiming_DownwardShot(t *testing.T) {
 	// Find optimal trajectory for shooting down
 	horizontalDist := 15.0
 	verticalDist := -10.0 // 10 blocks below
 
-	pitch, power, minError := FindOptimalTrajectory(Arrow, horizontalDist, verticalDist)
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	target := models.V3{X: horizontalDist, Y: 64 + verticalDist, Z: 0}
+
+	pitch, power, minError, _ := FindOptimalAiming(models.Arrow, origin, target)
 
 	assert.Greater(t, power, 0.0, "Power should be positive")
 	assert.LessOrEqual(t, power, 1.0, "Power should not exceed 1.0")
@@ -205,34 +212,34 @@ func TestFindOptimalTrajectory_DownwardShot(t *testing.T) {
 func TestCalculateAiming(t *testing.T) {
 	tests := []struct {
 		name   string
-		origin V3
-		target V3
+		origin models.V3
+		target models.V3
 	}{
 		{
 			name:   "Target to the north",
-			origin: V3{X: 0, Y: 64, Z: 0},
-			target: V3{X: 0, Y: 64, Z: -20},
+			origin: models.V3{X: 0, Y: 64, Z: 0},
+			target: models.V3{X: 0, Y: 64, Z: -20},
 		},
 		{
 			name:   "Target to the east",
-			origin: V3{X: 0, Y: 64, Z: 0},
-			target: V3{X: 20, Y: 64, Z: 0},
+			origin: models.V3{X: 0, Y: 64, Z: 0},
+			target: models.V3{X: 20, Y: 64, Z: 0},
 		},
 		{
 			name:   "Target above",
-			origin: V3{X: 0, Y: 64, Z: 0},
-			target: V3{X: 10, Y: 74, Z: 10},
+			origin: models.V3{X: 0, Y: 64, Z: 0},
+			target: models.V3{X: 10, Y: 74, Z: 10},
 		},
 		{
 			name:   "Target below",
-			origin: V3{X: 0, Y: 64, Z: 0},
-			target: V3{X: 10, Y: 54, Z: 10},
+			origin: models.V3{X: 0, Y: 64, Z: 0},
+			target: models.V3{X: 10, Y: 54, Z: 10},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			yaw, pitch, power := CalculateAiming(Arrow, tt.origin, tt.target)
+			yaw, pitch, power := CalculateAiming(models.Arrow, tt.origin, tt.target)
 
 			// Validate ranges
 			assert.LessOrEqual(t, math.Abs(yaw), 180.0, "Yaw should be within [-180, 180]")
@@ -250,12 +257,12 @@ func TestCalculateAiming(t *testing.T) {
 }
 
 func TestPredictLandingPosition_HorizontalThrow(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
 	yaw := 0.0   // North
 	pitch := 0.0 // Horizontal
 	power := 1.0
 
-	landing := PredictLandingPosition(Arrow, origin, yaw, pitch, power)
+	landing := PredictLandingPosition(models.Arrow, origin, yaw, pitch, power)
 
 	// Should land north of origin
 	assert.Less(t, landing.Z, origin.Z, "Should land north (negative Z)")
@@ -266,12 +273,12 @@ func TestPredictLandingPosition_HorizontalThrow(t *testing.T) {
 }
 
 func TestPredictLandingPosition_UpwardThrow(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
 	yaw := 90.0   // East
 	pitch := 45.0 // 45 degrees up
 	power := 1.0
 
-	landing := PredictLandingPosition(Arrow, origin, yaw, pitch, power)
+	landing := PredictLandingPosition(models.Arrow, origin, yaw, pitch, power)
 
 	// Should land east of origin
 	assert.Greater(t, landing.X, origin.X, "Should land east (positive X)")
@@ -280,12 +287,12 @@ func TestPredictLandingPosition_UpwardThrow(t *testing.T) {
 }
 
 func TestPredictLandingPosition_DownwardThrow(t *testing.T) {
-	origin := V3{X: 0, Y: 64, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
 	yaw := 180.0   // South
 	pitch := -45.0 // 45 degrees down
 	power := 1.0
 
-	landing := PredictLandingPosition(Arrow, origin, yaw, pitch, power)
+	landing := PredictLandingPosition(models.Arrow, origin, yaw, pitch, power)
 
 	// Should land south of origin
 	assert.Greater(t, landing.Z, origin.Z, "Should land south (positive Z)")
@@ -295,7 +302,7 @@ func TestPredictLandingPosition_DownwardThrow(t *testing.T) {
 
 func TestProjectileType_AllTypes(t *testing.T) {
 	// Verify all projectile types have physics defined
-	types := []ProjectileType{Arrow, Snowball, Egg, EnderPearl, SplashPotion, Trident, FishingBobber}
+	types := []models.ProjectileType{models.Arrow, models.Snowball, models.Egg, models.EnderPearl, models.SplashPotion, models.Trident, models.FishingBobber}
 
 	for _, pType := range types {
 		phys := GetProjectilePhysics(pType)
@@ -309,9 +316,9 @@ func TestProjectileType_AllTypes(t *testing.T) {
 
 func TestTrajectoryPoint_Structure(t *testing.T) {
 	// Verify TrajectoryPoint structure works as expected
-	point := TrajectoryPoint{
-		Pos:  V3{X: 1, Y: 2, Z: 3},
-		Vel:  V3{X: 0.5, Y: 0.3, Z: 0.4},
+	point := models.TrajectoryPoint{
+		Pos:  models.V3{X: 1, Y: 2, Z: 3},
+		Vel:  models.V3{X: 0.5, Y: 0.3, Z: 0.4},
 		Tick: 10,
 		Hit:  true,
 	}
@@ -327,39 +334,41 @@ func TestTrajectoryPoint_Structure(t *testing.T) {
 // Benchmarks
 func BenchmarkSimulateProjectile(b *testing.B) {
 	pitchRad := -10.0 * math.Pi / 180.0
-	for i := 0; i < b.N; i++ {
-		SimulateProjectile(Arrow, pitchRad, 1.0, 20.0, -2.0)
+	for b.Loop() {
+		SimulateProjectile(models.Arrow, pitchRad, 1.0, 20.0, -2.0)
 	}
 }
 
 func BenchmarkSimulateProjectileTrajectory(b *testing.B) {
-	origin := V3{X: 0, Y: 64, Z: 0}
-	velocity := V3{X: 1.0, Y: 1.0, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	velocity := models.V3{X: 1.0, Y: 1.0, Z: 0}
 
-	for i := 0; i < b.N; i++ {
-		SimulateProjectileTrajectory(Arrow, origin, velocity, 100)
+	for b.Loop() {
+		SimulateProjectileTrajectory(models.Arrow, origin, velocity, 100)
 	}
 }
 
 func BenchmarkFindOptimalTrajectory(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		FindOptimalTrajectory(Arrow, 20.0, 0.0)
+	for b.Loop() {
+		origin := models.V3{X: 0, Y: 64, Z: 0}
+		target := models.V3{X: 20.0, Y: 64.0, Z: 0}
+		FindOptimalAiming(models.Arrow, origin, target)
 	}
 }
 
 func BenchmarkCalculateAiming(b *testing.B) {
-	origin := V3{X: 0, Y: 64, Z: 0}
-	target := V3{X: 10, Y: 64, Z: 10}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
+	target := models.V3{X: 10, Y: 64, Z: 10}
 
-	for i := 0; i < b.N; i++ {
-		CalculateAiming(Arrow, origin, target)
+	for b.Loop() {
+		CalculateAiming(models.Arrow, origin, target)
 	}
 }
 
 func BenchmarkPredictLandingPosition(b *testing.B) {
-	origin := V3{X: 0, Y: 64, Z: 0}
+	origin := models.V3{X: 0, Y: 64, Z: 0}
 
-	for i := 0; i < b.N; i++ {
-		PredictLandingPosition(Arrow, origin, 0.0, 0.0, 1.0)
+	for b.Loop() {
+		PredictLandingPosition(models.Arrow, origin, 0.0, 0.0, 1.0)
 	}
 }

@@ -47,8 +47,8 @@ func (m *movementHandler) SendPositionAndRotation(conn common.PacketWriter, x, y
 	pkt.Pitch = pk.Float(pitch)
 	pkt.Flags.SetOnGround(onGround)
 
-	log.Printf("[v1.21.8 Movement] SendPositionAndRotation: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v",
-		x, y, z, yaw, pitch, onGround)
+	log.Printf("[v1.21.8 Movement] SendPositionAndRotation[ID=%d (0x%X)]: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v",
+		pkt.PacketID(), pkt.PacketID(), x, y, z, yaw, pitch, onGround)
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "PositionLook", Cause: err}

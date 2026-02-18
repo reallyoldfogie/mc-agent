@@ -13,6 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,9 +166,7 @@ func (f *fakeClientWriter) HandleGame(context.Context) error         { return ni
 func (f *fakeClientWriter) WritePacket(p pk.Packet) error            { f.pkts = append(f.pkts, p); return nil }
 func (f *fakeClientWriter) Close() error                             { return nil }
 func (f *fakeClientWriter) Conn() *bot.Conn {
-	// Return nil - tests that need actual Conn should use fakeConn directly.
-	// The agent code that calls Conn() should use the version-specific handlers
-	// rather than directly accessing the connection.
+	// Return nil - getPacketWriter() will detect fakeClientWriter implements PacketWriter
 	return nil
 }
 func (f *fakeClientWriter) SetAuth(bot.Auth)                         {}
@@ -308,17 +307,20 @@ func TestCommand_FireBow_UseItemFirst(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	agent.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
+	// Get real packet manager for version 1.21.5 to get correct packet IDs
+	packetMgr := protocol_versions.GetPacketMgrForVersion("1.21.5")
+	require.NotNil(t, packetMgr, "PacketMgr for 1.21.5 should not be nil")
+	useItemID := int32(packetMgr.GetServerboundPacketID("ServerboundUseItem"))
+
 	fc := newFakeClientWriter()
 	agent.client = fc
-	// shorten
 	agent.handleChatCommand("fireBow")
 	time.Sleep(20 * time.Millisecond)
 	if len(fc.pkts) == 0 {
 		t.Fatalf("expected at least one packet write")
 	}
-	if int(fc.pkts[0].ID) != 123 {
-		t.Fatalf("expected first packet ID 123, got %d", fc.pkts[0].ID)
+	if fc.pkts[0].ID != useItemID {
+		t.Fatalf("expected first packet ID %d (UseItem), got %d", useItemID, fc.pkts[0].ID)
 	}
 }
 
@@ -331,25 +333,28 @@ func TestCommand_FireBow_ShootAfterHold(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	agent.packetMgr = fakeSBPacketMgr{srv: map[string]protocol_models.ServerboundPacketID{"ServerboundUseItem": 123, "ServerboundPlayerAction": 456}}
-	fc := &fakeClientWriter{}
+	// Get real packet manager for version 1.21.5 to get correct packet IDs
+	packetMgr := protocol_versions.GetPacketMgrForVersion("1.21.5")
+	require.NotNil(t, packetMgr, "PacketMgr for 1.21.5 should not be nil")
+	playerActionID := int32(packetMgr.GetServerboundPacketID("ServerboundPlayerAction"))
+
+	fc := newFakeClientWriter()
 	agent.client = fc
-	// shorten
 	bowHoldIterations = 0
 	bowHoldSleep = 1 * time.Millisecond
 	agent.handleChatCommand("fireBow")
-	time.Sleep(20 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	if len(fc.pkts) < 2 {
 		t.Fatalf("expected multiple packets (use + shoot), got %d", len(fc.pkts))
 	}
-	foundShoot := false
+	foundPlayerAction := false
 	for _, p := range fc.pkts {
-		if int(p.ID) == 456 {
-			foundShoot = true
+		if p.ID == playerActionID {
+			foundPlayerAction = true
 			break
 		}
 	}
-	if !foundShoot {
-		t.Fatalf("expected shoot action packet (456) among writes")
+	if !foundPlayerAction {
+		t.Fatalf("expected shoot action packet (ID %d) among writes", playerActionID)
 	}
 }

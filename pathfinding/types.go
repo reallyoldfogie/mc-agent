@@ -2,9 +2,6 @@ package pathfinding
 
 import "github.com/reallyoldfogie/mc-agent/models"
 
-// V3Sub is an alias to models.V3Sub for backward compatibility.
-var V3Sub = models.V3Sub
-
 // MovementType is an alias to models.MovementType for backward compatibility.
 type MovementType = models.MovementType
 

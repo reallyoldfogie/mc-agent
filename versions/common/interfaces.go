@@ -133,6 +133,10 @@ type PlayHandler interface {
 
 	// ParseDisconnect parses a ClientboundDisconnect packet.
 	ParseDisconnect(p pk.Packet) (reason string, err error)
+
+	// ParseGameEvent parses a ClientboundGameEvent packet.
+	// Returns eventType, position (x, y, z), and value.
+	ParseGameEvent(p pk.Packet) (eventType int, x, y, z, value float64, err error)
 }
 
 // MovementHandler handles player movement packets.
@@ -195,7 +199,8 @@ type ActionHandler interface {
 // EntityHandler handles entity-related packets.
 type EntityHandler interface {
 	// ParseAddEntity parses an add entity packet
-	ParseAddEntity(p pk.Packet) (entityID, entityType int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, err error)
+	// Includes objectData (projectile owner ID) and velocity components
+	ParseAddEntity(p pk.Packet) (entityID, entityType, objectData int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, velX, velY, velZ float64, err error)
 
 	// ParseMoveEntityPos parses an entity position update (delta)
 	ParseMoveEntityPos(p pk.Packet) (entityID int32, dx, dy, dz int16, onGround bool, err error)
@@ -213,8 +218,29 @@ type EntityHandler interface {
 	ParseEntityEvent(p pk.Packet) (entityID int32, eventID int8, err error)
 
 	// ParseSetEntityMetadata parses an entity metadata update packet
-	// Returns entityID, health, maxHealth, and error
-	ParseSetEntityMetadata(p pk.Packet) (entityID int32, health, maxHealth float32, err error)
+	// Returns entityID and all metadata entries (caller is responsible for interpreting the data)
+	ParseSetEntityMetadata(p pk.Packet) (entityID int32, entries []MetadataEntry, err error)
+
+	// ParseSyncEntityPosition parses a sync entity position packet (absolute position update with velocity)
+	// Returns entityID, absolute position (x, y, z), velocity deltas (dx, dy, dz), rotation (yaw, pitch), and onGround
+	ParseSyncEntityPosition(p pk.Packet) (entityID int32, x, y, z float64, dx, dy, dz float64, yaw, pitch int8, onGround bool, err error)
+
+	// ParseEntityVelocityUpdate parses an entity velocity update packet
+	// Returns entityID and velocity components in blocks per tick
+	ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, velX, velY, velZ float64, err error)
+
+	// ParseEntityEquipment parses an entity equipment packet
+	// Returns entityID and a slice of equipment entries (slot + item pairs)
+	// Each entry contains a slot index (0=main hand, 1=off hand, 2-5=armor) and the item data
+	ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []EquipmentEntry, err error)
+
+	// ParseEntityHeadRotation parses an entity head rotation packet
+	// Returns entityID and head yaw (in 1/256ths of a full turn)
+	ParseEntityHeadRotation(p pk.Packet) (entityID int32, headYaw int8, err error)
+
+	// ParseEntityLook parses an entity look packet (rotation only, no position change)
+	// Returns entityID, yaw, pitch, and onGround
+	ParseEntityLook(p pk.Packet) (entityID int32, yaw, pitch int8, onGround bool, err error)
 
 	// SendInteract sends an entity interaction packet (right-click with hand).
 	// entityID: target entity
@@ -288,6 +314,12 @@ type Slot struct {
 	ItemID  int32
 	Count   int32
 	NBT     []byte // Raw NBT data if present
+}
+
+// EquipmentEntry represents a single equipment slot update (slot + item).
+type EquipmentEntry struct {
+	Slot int32 // Equipment slot (0=main hand, 1=off hand, 2-5=armor)
+	Item Slot  // The item in this equipment slot
 }
 
 // ChatHandler handles chat and command packets.

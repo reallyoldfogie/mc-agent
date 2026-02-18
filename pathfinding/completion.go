@@ -22,7 +22,7 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 	targetPos := targetStep.Position
 
 	// Calculate delta from current position to target
-	deltaPos := V3Sub(targetPos, currentPos)
+	deltaPos := targetPos.Sub(currentPos)
 
 	// Movement-specific completion thresholds
 	switch targetStep.Movement {
@@ -213,7 +213,7 @@ func IsStuck(
 
 	// Check if we're making progress
 	// If we're very close to target, we're probably just settling into position
-	deltaPos := V3Sub(targetStep.Position, currentPos)
+	deltaPos := targetStep.Position.Sub(currentPos)
 	dist := deltaPos.DistanceTo(models.V3{X: 0, Y: 0, Z: 0})
 	if dist < 0.5 {
 		// Very close, probably fine

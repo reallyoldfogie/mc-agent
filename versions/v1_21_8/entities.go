@@ -5,6 +5,7 @@ import (
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/play/clientbound"
@@ -18,15 +19,17 @@ type entityHandler struct {
 }
 
 // ParseAddEntity parses a SpawnEntity packet (clientbound ID 1).
-// Returns entity information including position, rotation, and type.
-func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, err error) {
+// Returns entity information including position, rotation, type, objectData (projectile owner ID), and velocity.
+// Velocity is encoded as fixed-point and needs to be divided by 8000.0.
+func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType, objectData int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, velX, velY, velZ float64, err error) {
 	pkt := cb.NewSpawnEntity()
 	if err = pkt.Scan(p); err != nil {
-		return 0, 0, uuid, 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "SpawnEntity", Cause: err}
+		return 0, 0, 0, uuid, 0, 0, 0, 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "SpawnEntity", Cause: err}
 	}
 
 	entityID = int32(pkt.EntityId)
 	entityType = int32(pkt.Type)
+	objectData = int32(pkt.ObjectData)
 	uuid = [16]byte(pkt.ObjectUUID)
 	x = float64(pkt.X)
 	y = float64(pkt.Y)
@@ -34,8 +37,14 @@ func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType int32,
 	// Protocol uses bytes for angles (0-255 maps to 0-360 degrees)
 	yaw = int8(pkt.Yaw)
 	pitch = int8(pkt.Pitch)
+	// Velocity is encoded as fixed-point and needs to be divided by 8000
+	velX = float64(pkt.VelocityX) / 8000.0
+	velY = float64(pkt.VelocityY) / 8000.0
+	velZ = float64(pkt.VelocityZ) / 8000.0
 
-	return entityID, entityType, uuid, x, y, z, yaw, pitch, nil
+	log.Printf("[1.21.8][ParseAddEntity] returning %d %d %d %v %.2f %.2f %.2f %d %d vel=(%.4f,%.4f,%.4f) <nil>", entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ)
+
+	return entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ, nil
 }
 
 // ParseMoveEntityPos parses a RelEntityMove packet (clientbound ID 46).
@@ -51,6 +60,9 @@ func (e *entityHandler) ParseMoveEntityPos(p pk.Packet) (entityID int32, dx, dy,
 	dy = int16(pkt.DY)
 	dz = int16(pkt.DZ)
 	onGround = bool(pkt.OnGround)
+
+	log.Printf("[1.21.8][ParseMoveEntityPos] %d received %s", entityID, spew.Sdump(pkt))
+	log.Printf("[1.21.8][ParseMoveEntityPos] returning %d %d %d %d %v <nil>", entityID, dx, dy, dz, onGround)
 
 	return entityID, dx, dy, dz, onGround, nil
 }
@@ -71,6 +83,8 @@ func (e *entityHandler) ParseMoveEntityPosRot(p pk.Packet) (entityID int32, dx, 
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
+	log.Printf("[1.21.8][ParseMoveEntityPosRot] returning %d %d %d %d %d %d %v <nil>", entityID, dx, dy, dz, yaw, pitch, onGround)
+
 	return entityID, dx, dy, dz, yaw, pitch, onGround, nil
 }
 
@@ -90,7 +104,35 @@ func (e *entityHandler) ParseTeleportEntity(p pk.Packet) (entityID int32, x, y, 
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
+	log.Printf("[1.21.8][ParseTeleportEntity] returning %d %.2f %.2f %.2f %d %d %v <nil>", entityID, x, y, z, yaw, pitch, onGround)
+
 	return entityID, x, y, z, yaw, pitch, onGround, nil
+}
+
+// ParseSyncEntityPosition parses a SyncEntityPosition packet (clientbound ID 31).
+// Returns entity ID, absolute position, velocity deltas, rotation, and onGround.
+func (e *entityHandler) ParseSyncEntityPosition(p pk.Packet) (entityID int32, x, y, z float64, dx, dy, dz float64, yaw, pitch int8, onGround bool, err error) {
+	pkt := cb.NewSyncEntityPosition()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, 0, 0, false, common.ErrPacketParse{PacketName: "SyncEntityPosition", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	x = float64(pkt.X)
+	y = float64(pkt.Y)
+	z = float64(pkt.Z)
+	// Velocity deltas are encoded as doubles
+	dx = float64(pkt.Dx)
+	dy = float64(pkt.Dy)
+	dz = float64(pkt.Dz)
+	yaw = int8(pkt.Yaw)
+	pitch = int8(pkt.Pitch)
+	onGround = bool(pkt.OnGround)
+
+	log.Printf("[1.21.8][ParseSyncEntityPosition] returning %d pos=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) rot=(%d,%d) ground=%v <nil>",
+		entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
+
+	return entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround, nil
 }
 
 // ParseRemoveEntities parses an EntityDestroy packet (clientbound ID 70).
@@ -108,6 +150,8 @@ func (e *entityHandler) ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err
 		entityIDs[i] = int32(id)
 	}
 
+	log.Printf("[1.21.8][ParseRemoveEntities] returning %v <nil>", entityIDs)
+
 	return entityIDs, nil
 }
 
@@ -122,46 +166,134 @@ func (e *entityHandler) ParseEntityEvent(p pk.Packet) (entityID int32, eventID i
 	entityID = int32(pkt.EntityId)
 	eventID = int8(pkt.EntityStatus)
 
+	log.Printf("[1.21.8][ParseEntityEvent] returning %d %d <nil>", entityID, eventID)
+
 	return entityID, eventID, nil
 }
 
 // ParseSetEntityMetadata parses an entity metadata update packet.
-// Extracts health and max health from metadata entries.
-func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, health, maxHealth float32, err error) {
+// Returns all metadata entries with handler IDs extracted from the protocol packet.
+// Entity metadata indices vary by entity type. See:
+// https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity_Metadata
+func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, entries []common.MetadataEntry, err error) {
 	pkt := cb.NewEntityMetadata()
 	if err = pkt.Scan(p); err != nil {
-		return 0, 0, 0, common.ErrPacketParse{PacketName: "EntityMetadata", Cause: err}
+		return 0, nil, common.ErrPacketParse{PacketName: "EntityMetadata", Cause: err}
 	}
 
 	entityID = int32(pkt.EntityId)
+	entries = make([]common.MetadataEntry, len(pkt.Metadata.Entries))
 
-	// Default values - these won't change if metadata doesn't include health
-	health = -1.0    // -1 indicates not set
-	maxHealth = 20.0 // Default max health for most entities
+	for i, entry := range pkt.Metadata.Entries {
+		// Extract the handler type from the metadata entry
+		// The Type field contains the handler type string (e.g., "byte", "float", "vector3")
+		handlerID := common.HandlerTypeFromString(entry.Type.Value)
 
-	// Parse metadata entries to find health
-	// Entity metadata indices vary by entity type. See:
-	// https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity_Metadata
-	//
-	// For Living Entities (index 9 = Health):
-	// - Index 0-7: Base Entity metadata
-	// - Index 8: Fire ticks (byte)
-	// - Index 9: Health (float) ← We use this for damage tracking
-	// - Index 10: Potion effect color (int)
-	// - Index 11+: Entity-specific fields
-	for _, entry := range pkt.Metadata.Entries {
-		if entry.Key == 9 { // Health is at index 9 for living entities (zombies, players, etc.)
-			// Try to extract as float
-			if floatVal, ok := entry.Value.(*pk.Float); ok {
-				health = float32(*floatVal)
-			}
+		entries[i] = common.MetadataEntry{
+			Key:       int32(entry.Key),
+			HandlerID: handlerID,
+			Value:     entry.Value,
 		}
-		// Note: MaxHealth could be at another index for some entities, but we'll use default for now
-		// This can be extended later if needed
+
+		log.Printf("[1.21.8][ParseSetEntityMetadata] Entry %d: key=%d handler=%s value=%T",
+			i, entry.Key, handlerID.String(), entry.Value)
 	}
 
-	log.Printf("[ParseSetEntityMetadata] returning %d, %f,%f, nil", entityID, health, maxHealth)
-	return entityID, health, maxHealth, nil
+	log.Printf("[1.21.8][ParseSetEntityMetadata] returning entityID=%d with %d metadata entries <nil>", entityID, len(entries))
+	return entityID, entries, nil
+}
+
+
+// ParseEntityVelocityUpdate parses an entity velocity update packet (EntityVelocity).
+// Returns entity ID and velocity components in blocks per tick.
+// Velocity is encoded as fixed-point and needs to be divided by 8000.0.
+func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, velX, velY, velZ float64, err error) {
+	pkt := cb.NewEntityVelocity()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, 0, common.ErrPacketParse{PacketName: "EntityVelocity", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	// Velocity is encoded as fixed-point divided by 8000
+	velX = float64(pkt.VelocityX) / 8000.0
+	velY = float64(pkt.VelocityY) / 8000.0
+	velZ = float64(pkt.VelocityZ) / 8000.0
+
+	log.Printf("[1.21.8][ParseEntityVelocityUpdate] returning %d %.6f %.6f %.6f <nil>", entityID, velX, velY, velZ)
+
+	return entityID, velX, velY, velZ, nil
+}
+
+// ParseEntityEquipment parses an entity equipment packet.
+// Returns entity ID and a slice of equipment entries (slot + item pairs).
+func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []common.EquipmentEntry, err error) {
+	pkt := cb.NewEntityEquipment()
+	if err = pkt.Scan(p); err != nil {
+		return 0, nil, common.ErrPacketParse{PacketName: "EntityEquipment", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	equipment = make([]common.EquipmentEntry, 0, len(pkt.Equipments.Values))
+
+	// Equipments is a TopBitSetTerminatedArray of EquipmentEntry objects
+	// Each entry contains both slot index and item data
+	for _, entry := range pkt.Equipments.Values {
+		if entry == nil {
+			continue
+		}
+
+		// Convert protocol Slot to common Slot format
+		item := common.Slot{
+			Present: int32(entry.Item.ItemCount) != 0,
+			ItemID:  0, // TODO: Extract from entry.Item complex structure
+			Count:   int32(entry.Item.ItemCount),
+			NBT:     nil, // TODO: Extract from entry.Item complex structure
+		}
+
+		equipment = append(equipment, common.EquipmentEntry{
+			Slot: int32(entry.Slot),
+			Item: item,
+		})
+
+		log.Printf("[v1.21.8 Entity][ParseEntityEquipment]: entityID=%d, slot=%d, itemCount=%d",
+			entityID, entry.Slot, entry.Item.ItemCount)
+	}
+
+	return entityID, equipment, nil
+}
+
+// ParseEntityHeadRotation parses an entity head rotation packet.
+// Returns entity ID and head yaw (0-255, where 256 represents a full rotation).
+func (e *entityHandler) ParseEntityHeadRotation(p pk.Packet) (entityID int32, headYaw int8, err error) {
+	pkt := cb.NewEntityHeadRotation()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, common.ErrPacketParse{PacketName: "EntityHeadRotation", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	headYaw = int8(pkt.HeadYaw)
+
+	log.Printf("[1.21.8][ParseEntityHeadRotation] returning %d %d <nil>", entityID, headYaw)
+
+	return entityID, headYaw, nil
+}
+
+// ParseEntityLook parses an entity look packet (rotation only, no position change).
+// Returns entity ID, yaw, pitch, and onGround status.
+func (e *entityHandler) ParseEntityLook(p pk.Packet) (entityID int32, yaw, pitch int8, onGround bool, err error) {
+	pkt := cb.NewEntityLook()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, false, common.ErrPacketParse{PacketName: "EntityLook", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	yaw = int8(pkt.Yaw)
+	pitch = int8(pkt.Pitch)
+	onGround = bool(pkt.OnGround)
+
+	log.Printf("[1.21.8][ParseEntityLook] returning %d %d %d %v <nil>", entityID, yaw, pitch, onGround)
+
+	return entityID, yaw, pitch, onGround, nil
 }
 
 // SendInteract sends an entity interaction packet (right-click with hand).

@@ -201,7 +201,7 @@ if eval $TEST_CMD 2>&1 | tee $TEST_OUTPUT; then
     if [ "$REPLAY_COUNT" -gt 0 ]; then
         echo ""
         echo -e "${GREEN}Replay recordings ($REPLAY_COUNT files):${NC}"
-        ls -lh ./replays/*.mcpr | tail -n 10
+        ls -lh ./replays/*/*.mcpr | tail -n 10
         if [ "$REPLAY_COUNT" -gt 10 ]; then
             echo "  ... and $((REPLAY_COUNT - 10)) more files"
         fi
@@ -281,7 +281,7 @@ else
     echo -e "${YELLOW}Troubleshooting:${NC}"
     echo "  1. Review server logs: ls -lh ./logs/servers/"
     echo "  2. Review test output above"
-    echo "  3. Examine replay files: ls -lh ./replays/"
+    echo "  3. Examine replay files: ls -lh ./replays/*/*"
     echo "  4. Check Docker containers: docker ps -a | grep mc-agent-test"
     echo ""
 
@@ -289,7 +289,7 @@ else
     REPLAY_COUNT=$(find ./replays -name "*.mcpr" 2>/dev/null | wc -l)
     if [ "$REPLAY_COUNT" -gt 0 ]; then
         echo -e "${YELLOW}Available replays for debugging ($REPLAY_COUNT files):${NC}"
-        ls -lh ./replays/*.mcpr | tail -n 5
+        ls -lh ./replays/*/*.mcpr | tail -n 5
     fi
 
     # List server logs

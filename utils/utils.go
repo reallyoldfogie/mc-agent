@@ -61,12 +61,16 @@ func DumpEntity(ent *entity.Entity) {
 	fmt.Println("entityJson:" + string(empJSON))
 }
 
-// GetYawAndPitch ...
+// GetYawAndPitch calculates yaw and pitch to look from src to dest.
 func GetYawAndPitch(src, dest player.Pos) (yaw, pitch float64) {
 	dx := dest.X - src.X
 	dy := dest.Y - src.Y
 	dz := dest.Z - src.Z
 	r := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	// Calculate yaw for horizontal rotation
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
 	yaw = -math.Atan2(dx, dz) / math.Pi * 180
 	if yaw < 0 {
 		yaw = 360 + yaw

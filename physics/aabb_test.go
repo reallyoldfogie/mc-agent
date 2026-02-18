@@ -3,6 +3,8 @@ package physics
 import (
 	"math"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // TestMinMax_Extend tests the Extend method for MinMax.
@@ -390,7 +392,7 @@ func TestAABB_Center(t *testing.T) {
 	bb := NewAABB(0, 0, 0, 10, 20, 30)
 	center := bb.Center()
 
-	expected := V3{X: 5, Y: 10, Z: 15}
+	expected := models.V3{X: 5, Y: 10, Z: 15}
 	if center.X != expected.X || center.Y != expected.Y || center.Z != expected.Z {
 		t.Errorf("Center() = %v, want %v", center, expected)
 	}
@@ -398,7 +400,7 @@ func TestAABB_Center(t *testing.T) {
 
 // TestNewPlayerAABB tests player AABB creation.
 func TestNewPlayerAABB(t *testing.T) {
-	pos := V3{X: 10, Y: 64, Z: 20}
+	pos := models.V3{X: 10, Y: 64, Z: 20}
 	bb := NewPlayerAABB(pos)
 
 	// Player should be 0.6 wide (0.3 on each side of center)

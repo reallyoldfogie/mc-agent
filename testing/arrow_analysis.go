@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/reallyoldfogie/mc-agent/physics"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // ArrowPosition represents a single position update of an arrow
@@ -32,7 +32,8 @@ func AnalyzeArrowTrajectory(logFilePath string) ([]ArrowPosition, error) {
 
 	// Regex patterns for different log messages
 	spawnPattern := regexp.MustCompile(`\[onAddEntity\] ARROW SPAWN: entityID=(\d+), pos=\(([\d.]+), ([\d.]+), ([\d.]+)\)`)
-	movePattern := regexp.MustCompile(`\[onMoveEntityPosRot\] ARROW: entityID=(\d+), oldPos=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\), delta=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\), newPos=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\)`)
+	// Updated pattern to match the actual log output format which includes yaw/pitch and vel/tick
+	movePattern := regexp.MustCompile(`\[onMoveEntityPosRot\] ARROW: entityID=(\d+), oldPos=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\), delta=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\), newPos=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\), vel/tick=\(([\d.-]+), ([\d.-]+), ([\d.-]+)\)`)
 
 	tick := 0
 	for scanner.Scan() {
@@ -58,17 +59,18 @@ func AnalyzeArrowTrajectory(logFilePath string) ([]ArrowPosition, error) {
 			newX, _ := strconv.ParseFloat(matches[8], 64)
 			newY, _ := strconv.ParseFloat(matches[9], 64)
 			newZ, _ := strconv.ParseFloat(matches[10], 64)
-			deltaX, _ := strconv.ParseFloat(matches[5], 64)
-			deltaY, _ := strconv.ParseFloat(matches[6], 64)
-			deltaZ, _ := strconv.ParseFloat(matches[7], 64)
+			// Use vel/tick from groups 11,12,13 instead of delta
+			velX, _ := strconv.ParseFloat(matches[11], 64)
+			velY, _ := strconv.ParseFloat(matches[12], 64)
+			velZ, _ := strconv.ParseFloat(matches[13], 64)
 			positions = append(positions, ArrowPosition{
 				Tick: tick,
 				X:    newX,
 				Y:    newY,
 				Z:    newZ,
-				VelX: deltaX,
-				VelY: deltaY,
-				VelZ: deltaZ,
+				VelX: velX,
+				VelY: velY,
+				VelZ: velZ,
 			})
 			tick++
 		}
@@ -82,7 +84,7 @@ func AnalyzeArrowTrajectory(logFilePath string) ([]ArrowPosition, error) {
 }
 
 // CompareTrajectories compares actual arrow trajectory with physics predictions
-func CompareTrajectories(actualPositions []ArrowPosition, botOrigin physics.V3, targetOrigin physics.V3, predictedTrajectory []physics.TrajectoryPoint) {
+func CompareTrajectories(actualPositions []ArrowPosition, botOrigin models.V3, targetOrigin models.V3, predictedTrajectory []models.TrajectoryPoint) {
 	if len(actualPositions) < 2 {
 		log.Printf("[Arrow Analysis] Not enough position data (got %d positions)", len(actualPositions))
 		return
@@ -90,7 +92,7 @@ func CompareTrajectories(actualPositions []ArrowPosition, botOrigin physics.V3, 
 
 	// Get arrow spawn position (first actual position)
 	arrowSpawn := actualPositions[0]
-	arrowSpawnPos := physics.V3{X: arrowSpawn.X, Y: arrowSpawn.Y, Z: arrowSpawn.Z}
+	arrowSpawnPos := models.V3{X: arrowSpawn.X, Y: arrowSpawn.Y, Z: arrowSpawn.Z}
 
 	// Calculate horizontal distance from bot to target
 	dx := targetOrigin.X - botOrigin.X
@@ -99,7 +101,10 @@ func CompareTrajectories(actualPositions []ArrowPosition, botOrigin physics.V3, 
 	verticalDist := targetOrigin.Y - botOrigin.Y
 
 	// Calculate yaw for rotating trajectory from Z-axis to actual direction
-	yaw := math.Atan2(-dx, -dz) * 180 / math.Pi
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
+	yaw := math.Atan2(-dx, dz) * 180 / math.Pi
 	yawRad := yaw * math.Pi / 180
 
 	log.Printf("[Arrow Analysis] === Arrow Trajectory Analysis ===")
@@ -124,18 +129,18 @@ func CompareTrajectories(actualPositions []ArrowPosition, botOrigin physics.V3, 
 	if len(predictedTrajectory) > 0 {
 		// Find where predicted trajectory landed (last point with significant Z position)
 		lastPredicted := predictedTrajectory[len(predictedTrajectory)-1]
-		
+
 		// Trajectory is in relative coordinates: Z=horizontal distance, Y=vertical position
 		// Need to apply yaw rotation and offset to world coordinates
 		predictedHorizontalDist := lastPredicted.Pos.Z
 		predictedVerticalDrop := -lastPredicted.Pos.Y // Negative because Y decreases as arrow falls
-		
+
 		// Rotate trajectory to world coordinates (for comparison)
 		// Using yaw: X' = Z*sin(yaw), Z' = -Z*cos(yaw)
 		predictedWorldX := arrowSpawnPos.X + lastPredicted.Pos.Z*math.Sin(yawRad)
 		predictedWorldZ := arrowSpawnPos.Z - lastPredicted.Pos.Z*math.Cos(yawRad)
 		predictedWorldY := arrowSpawnPos.Y + lastPredicted.Pos.Y
-		
+
 		log.Printf("[Arrow Analysis] ")
 		log.Printf("[Arrow Analysis] Predicted landing (relative): Z=%.2f, Y=%.2f", predictedHorizontalDist, lastPredicted.Pos.Y)
 		log.Printf("[Arrow Analysis] Predicted landing (world): (%.2f, %.2f, %.2f)", predictedWorldX, predictedWorldY, predictedWorldZ)

@@ -64,11 +64,12 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 	}
 
 	// Calculate delta from current position to target
-	deltaPos := V3Sub(targetPos, pos)
+	deltaPos := targetPos.Sub(pos)
 
 	// Calculate desired yaw based on movement direction
-	// Minecraft yaw: 0=south(+Z), 90=west(-X), 180=north(-Z), 270=east(+X)
-	// Formula: atan2(-deltaX, deltaZ) gives correct yaw to face the target
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
 	desiredYaw := math.Atan2(-deltaPos.X, deltaPos.Z) * 180.0 / math.Pi
 
 	// Calculate throttle as normalized direction vector (simpler and more direct than yaw conversion)
@@ -278,6 +279,10 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 				out.ThrottleX = deltaX / dist
 				out.ThrottleZ = deltaZ / dist
 			}
+			// Calculate yaw for horizontal rotation
+			// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+			// Yaw formula must convert from world delta to firing direction
+			// atan2(-dx, dz) accounts for the coordinate system rotation
 			ladderYaw := math.Atan2(-deltaX, deltaZ) * 180.0 / math.Pi
 			out.Yaw = ladderYaw
 		}

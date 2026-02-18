@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -331,7 +332,7 @@ func TestPredictFallDistance_WithGround(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			startPos := V3{X: 2.5, Y: tt.startY, Z: 2.5}
+			startPos := models.V3{X: 2.5, Y: tt.startY, Z: 2.5}
 			fall, landingY := PredictFallDistance(startPos, world, shapeProvider)
 
 			assert.InDelta(t, tt.expectedFall, fall, 0.1, "Fall distance should match")
@@ -345,7 +346,7 @@ func TestPredictFallDistance_NoGround(t *testing.T) {
 	world := newMockWorld()
 
 	// No solid blocks, all air (passable)
-	startPos := V3{X: 0, Y: 64, Z: 0}
+	startPos := models.V3{X: 0, Y: 64, Z: 0}
 	fall, landingY := PredictFallDistance(startPos, world, shapeProvider)
 
 	assert.Equal(t, 256.0, fall, "Should return max fall distance when no ground")
@@ -365,22 +366,22 @@ func TestGetLandingBlock(t *testing.T) {
 
 	tests := []struct {
 		name            string
-		pos             V3
+		pos             models.V3
 		expectedBlockID uint32
 	}{
 		{
 			name:            "Above grass layer",
-			pos:             V3{X: 0, Y: 70, Z: 0},
+			pos:             models.V3{X: 0, Y: 70, Z: 0},
 			expectedBlockID: testGrassBlockID,
 		},
 		{
 			name:            "Just above grass",
-			pos:             V3{X: 0, Y: 66, Z: 0},
+			pos:             models.V3{X: 0, Y: 66, Z: 0},
 			expectedBlockID: testGrassBlockID,
 		},
 		{
 			name:            "No ground below",
-			pos:             V3{X: 10, Y: 70, Z: 10},
+			pos:             models.V3{X: 10, Y: 70, Z: 10},
 			expectedBlockID: 0, // Air
 		},
 	}
@@ -407,38 +408,38 @@ func TestCalculateFallDamageForDrop(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		from           V3
-		to             V3
+		from           models.V3
+		to             models.V3
 		expectedDamage float64
 	}{
 		{
 			name:           "Drop 5 blocks onto stone",
-			from:           V3{X: 0, Y: 66, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 66, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedDamage: 2.0, // 5 - 3 safe distance
 		},
 		{
 			name:           "Drop 10 blocks onto stone",
-			from:           V3{X: 0, Y: 71, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 71, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedDamage: 7.0, // 10 - 3 safe distance
 		},
 		{
 			name:           "Drop 100 blocks into water",
-			from:           V3{X: 5, Y: 161, Z: 0},
-			to:             V3{X: 5, Y: 61, Z: 0},
+			from:           models.V3{X: 5, Y: 161, Z: 0},
+			to:             models.V3{X: 5, Y: 61, Z: 0},
 			expectedDamage: 0.0, // Water negates all damage
 		},
 		{
 			name:           "No fall (going up)",
-			from:           V3{X: 0, Y: 61, Z: 0},
-			to:             V3{X: 0, Y: 66, Z: 0},
+			from:           models.V3{X: 0, Y: 61, Z: 0},
+			to:             models.V3{X: 0, Y: 66, Z: 0},
 			expectedDamage: 0.0,
 		},
 		{
 			name:           "Short safe fall",
-			from:           V3{X: 0, Y: 63, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 63, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedDamage: 0.0, // 2 blocks < 3 safe distance
 		},
 	}
@@ -465,20 +466,20 @@ func TestIsWaterDrop(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		from        V3
-		to          V3
+		from        models.V3
+		to          models.V3
 		expectWater bool
 	}{
 		{
 			name:        "Drop into water",
-			from:        V3{X: 5, Y: 100, Z: 0},
-			to:          V3{X: 5, Y: 61, Z: 0},
+			from:        models.V3{X: 5, Y: 100, Z: 0},
+			to:          models.V3{X: 5, Y: 61, Z: 0},
 			expectWater: true,
 		},
 		{
 			name:        "Drop onto stone",
-			from:        V3{X: 0, Y: 100, Z: 0},
-			to:          V3{X: 0, Y: 61, Z: 0},
+			from:        models.V3{X: 0, Y: 100, Z: 0},
+			to:          models.V3{X: 0, Y: 61, Z: 0},
 			expectWater: false,
 		},
 	}
@@ -507,44 +508,44 @@ func TestGetDropSafety(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		from           V3
-		to             V3
+		from           models.V3
+		to             models.V3
 		expectedSafety DropSafety
 	}{
 		{
 			name:           "No fall (same level)",
-			from:           V3{X: 0, Y: 61, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 61, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedSafety: DropSafeNoFall,
 		},
 		{
 			name:           "Going up",
-			from:           V3{X: 0, Y: 61, Z: 0},
-			to:             V3{X: 0, Y: 70, Z: 0},
+			from:           models.V3{X: 0, Y: 61, Z: 0},
+			to:             models.V3{X: 0, Y: 70, Z: 0},
 			expectedSafety: DropSafeNoFall,
 		},
 		{
 			name:           "Water landing from any height",
-			from:           V3{X: 5, Y: 161, Z: 0},
-			to:             V3{X: 5, Y: 61, Z: 0},
+			from:           models.V3{X: 5, Y: 161, Z: 0},
+			to:             models.V3{X: 5, Y: 61, Z: 0},
 			expectedSafety: DropSafeWater,
 		},
 		{
 			name:           "Short fall (1 heart damage)",
-			from:           V3{X: 0, Y: 65, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 65, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedSafety: DropSafeShortFall, // 4 blocks = 1 heart < 2 hearts
 		},
 		{
 			name:           "Dangerous fall (5 hearts damage)",
-			from:           V3{X: 0, Y: 69, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 69, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedSafety: DropDangerous, // 8 blocks = 5 hearts < 10 hearts (50% health)
 		},
 		{
 			name:           "Lethal fall (15 hearts damage)",
-			from:           V3{X: 0, Y: 79, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 79, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedSafety: DropLethal, // 18 blocks = 15 hearts > 10 hearts (50% health)
 		},
 	}
@@ -568,14 +569,14 @@ func TestGetDropSafety_LowHealth(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		from           V3
-		to             V3
+		from           models.V3
+		to             models.V3
 		expectedSafety DropSafety
 	}{
 		{
 			name:           "3 heart damage with 2 hearts health",
-			from:           V3{X: 0, Y: 67, Z: 0}, // 6 blocks = 3 hearts damage
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 67, Z: 0}, // 6 blocks = 3 hearts damage
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			expectedSafety: DropLethal, // 3 > 2 (50% of 4)
 		},
 	}
@@ -596,20 +597,20 @@ func TestPathfindingDropCost_NoFall(t *testing.T) {
 
 	tests := []struct {
 		name         string
-		from         V3
-		to           V3
+		from         models.V3
+		to           models.V3
 		expectedCost float64
 	}{
 		{
 			name:         "Same level",
-			from:         V3{X: 0, Y: 64, Z: 0},
-			to:           V3{X: 1, Y: 64, Z: 0},
+			from:         models.V3{X: 0, Y: 64, Z: 0},
+			to:           models.V3{X: 1, Y: 64, Z: 0},
 			expectedCost: baseMoveCost,
 		},
 		{
 			name:         "Going up",
-			from:         V3{X: 0, Y: 64, Z: 0},
-			to:           V3{X: 0, Y: 65, Z: 0},
+			from:         models.V3{X: 0, Y: 64, Z: 0},
+			to:           models.V3{X: 0, Y: 65, Z: 0},
 			expectedCost: baseMoveCost,
 		},
 	}
@@ -634,8 +635,8 @@ func TestPathfindingDropCost_WaterDrop(t *testing.T) {
 	shapeProvider.SetPassable(BlockWater, true)
 
 	baseMoveCost := 1.0
-	from := V3{X: 0, Y: 100, Z: 0}
-	to := V3{X: 0, Y: 61, Z: 0}
+	from := models.V3{X: 0, Y: 100, Z: 0}
+	to := models.V3{X: 0, Y: 61, Z: 0}
 
 	cost := PathfindingDropCost(from, to, baseMoveCost, world, shapeProvider)
 
@@ -656,22 +657,22 @@ func TestPathfindingDropCost_LandDrop(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		from           V3
-		to             V3
+		from           models.V3
+		to             models.V3
 		fallDistance   float64
 		expectedDamage float64
 	}{
 		{
 			name:           "4 block drop (1 heart)",
-			from:           V3{X: 0, Y: 65, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 65, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			fallDistance:   4.0,
 			expectedDamage: 1.0,
 		},
 		{
 			name:           "10 block drop (7 hearts)",
-			from:           V3{X: 0, Y: 71, Z: 0},
-			to:             V3{X: 0, Y: 61, Z: 0},
+			from:           models.V3{X: 0, Y: 71, Z: 0},
+			to:             models.V3{X: 0, Y: 61, Z: 0},
 			fallDistance:   10.0,
 			expectedDamage: 7.0,
 		},
@@ -731,7 +732,7 @@ func BenchmarkPredictFallDistance(b *testing.B) {
 	}
 	shapeProvider.SetPassable(testStoneBlockID, false)
 
-	pos := V3{X: 5, Y: 80, Z: 5}
+	pos := models.V3{X: 5, Y: 80, Z: 5}
 
 	for i := 0; i < b.N; i++ {
 		PredictFallDistance(pos, world, shapeProvider)
@@ -745,8 +746,8 @@ func BenchmarkGetDropSafety(b *testing.B) {
 	world.SetBlock(0, 60, 0, testStoneBlockID)
 	shapeProvider.SetPassable(testStoneBlockID, false)
 
-	from := V3{X: 0, Y: 70, Z: 0}
-	to := V3{X: 0, Y: 61, Z: 0}
+	from := models.V3{X: 0, Y: 70, Z: 0}
+	to := models.V3{X: 0, Y: 61, Z: 0}
 
 	for i := 0; i < b.N; i++ {
 		GetDropSafety(from, to, 20.0, world, shapeProvider)
@@ -760,8 +761,8 @@ func BenchmarkPathfindingDropCost(b *testing.B) {
 	world.SetBlock(0, 60, 0, testStoneBlockID)
 	shapeProvider.SetPassable(testStoneBlockID, false)
 
-	from := V3{X: 0, Y: 70, Z: 0}
-	to := V3{X: 0, Y: 61, Z: 0}
+	from := models.V3{X: 0, Y: 70, Z: 0}
+	to := models.V3{X: 0, Y: 61, Z: 0}
 
 	for i := 0; i < b.N; i++ {
 		PathfindingDropCost(from, to, 1.0, world, shapeProvider)

@@ -17,7 +17,7 @@ func (a *agent) packetLogger() bot.PacketHandler {
 	return bot.PacketHandler{
 		Priority: 0,
 		F: func(p pk.Packet) error {
-			if a.logw != nil {
+			if a.packetLogWriter != nil {
 				name := ""
 				if a.packetMgr != nil {
 					name = a.packetMgr.ClientboundToString(protocol_models.ClientboundPacketID(p.ID))
@@ -29,9 +29,12 @@ func (a *agent) packetLogger() bot.PacketHandler {
 					Timestamp:       time.Now(),
 					Version:         ver,
 					ProtocolVersion: proto,
+					Direction:       "clientbound",
+					State:           "play",
+					Source:          "agent",
 				}
 				copy(pl.Data, p.Data)
-				if err := json.NewEncoder(a.logw).Encode(pl); err != nil {
+				if err := json.NewEncoder(a.packetLogWriter).Encode(pl); err != nil {
 					log.Printf("[ERROR] failed to write packet log: %v", err)
 					return err
 				}

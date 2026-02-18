@@ -32,8 +32,11 @@ func CalculateAiming(botPos, targetPos Point) (yaw, pitch, power float64) {
 
 	horizontalDistance := math.Sqrt(dx*dx + dz*dz)
 
-	// Yaw calculation: Standard atan2 for horizontal direction
-	yaw = math.Atan2(-dx, -dz) * 180 / math.Pi
+	// Calculate yaw for horizontal rotation
+	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
+	// Yaw formula must convert from world delta to firing direction
+	// atan2(-dx, dz) accounts for the coordinate system rotation
+	yaw = math.Atan2(-dx, dz) * 180 / math.Pi
 
 	// Pitch calculation: Use the iterative solver from before, passing the correct distances
 	// pitch = findBestPitch(horizontalDistance, dy)

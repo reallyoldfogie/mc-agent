@@ -20,7 +20,7 @@ func TestEntityHandler_ParseAddEntity(t *testing.T) {
 	pkt.Yaw = pk.Byte(-128) // ~180 degrees (signed byte)
 	pkt.Pitch = pk.Byte(64) // ~90 degrees
 	pkt.HeadPitch = pk.Byte(-128)
-	pkt.ObjectData = pk.VarInt(0)
+	pkt.ObjectData = pk.VarInt(1) // Creator player ID (for entities like arrows)
 	pkt.VelocityX = pk.Short(0)
 	pkt.VelocityY = pk.Short(0)
 	pkt.VelocityZ = pk.Short(0)
@@ -33,7 +33,7 @@ func TestEntityHandler_ParseAddEntity(t *testing.T) {
 	// Parse it
 	handler := &entityHandler{}
 	marshaled := pkt.Marshal()
-	entityID, entityType, uuid, x, y, z, yaw, pitch, err := handler.ParseAddEntity(marshaled)
+	entityID, entityType, creatorEntityID, uuid, x, y, z, yaw, pitch, velX, velY, velZ, err := handler.ParseAddEntity(marshaled)
 
 	if err != nil {
 		t.Fatalf("ParseAddEntity failed: %v", err)
@@ -62,6 +62,18 @@ func TestEntityHandler_ParseAddEntity(t *testing.T) {
 	}
 	if pitch != 64 {
 		t.Errorf("Expected pitch 64, got %d", pitch)
+	}
+	if creatorEntityID != 1 {
+		t.Errorf("Expected entityCreator 1, got %d", creatorEntityID)
+	}
+	if velX != 0 {
+		t.Errorf("Expected velX 0, got %f", velX)
+	}
+	if velY != 0 {
+		t.Errorf("Expected velY 0, got %f", velY)
+	}
+	if velZ != 0 {
+		t.Errorf("Expected velZ 0, got %f", velZ)
 	}
 }
 

@@ -3,6 +3,7 @@ package v1_21_8
 
 import (
 	"bytes"
+
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/basetypes"
@@ -222,10 +223,15 @@ func (p *playHandler) ParseDisconnect(pkt pk.Packet) (reason string, err error) 
 	return string(r), nil
 }
 
-// entityHandler is implemented in entities.go
-
-// containerHandler is implemented in containers.go
-
-// chatHandler is implemented in chat.go
-
-// worldHandler is implemented in world.go
+// ParseGameEvent parses a ClientboundGameEvent packet.
+func (p *playHandler) ParseGameEvent(pkt pk.Packet) (eventType int, x, y, z, value float64, err error) {
+	var (
+		eventTypeVar     pk.VarInt
+		xVar, yVar, zVar pk.Double
+		valueVar         pk.Float
+	)
+	if err = pkt.Scan(&eventTypeVar, &xVar, &yVar, &zVar, &valueVar); err != nil {
+		return 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "GameEvent", Cause: err}
+	}
+	return int(eventTypeVar), float64(xVar), float64(yVar), float64(zVar), float64(valueVar), nil
+}

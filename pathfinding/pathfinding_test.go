@@ -163,7 +163,7 @@ func TestEPEAStarVsAStar(t *testing.T) {
 	world := mctesting.NewWorldBuilder(registry).
 		FlatGround(0, 0, 60, 60, 64, "grass_block"). // Base grass layer at Y=64
 		// Add some obstacles (walls) - placed to not block test paths
-		Wall(8, 0, 8, 3, 65, 68, "stone").   // Stone wall (3 blocks high)
+		Wall(8, 0, 8, 3, 65, 68, "stone").     // Stone wall (3 blocks high)
 		Wall(55, 55, 55, 58, 65, 66, "stone"). // Another wall - far corner
 		// Create elevated platform at Y=68 (4 blocks higher)
 		// Platform from (18, 20) to (35, 35) to accommodate stairs starting at X=18
@@ -400,7 +400,7 @@ func TestAscendStairsMovement(t *testing.T) {
 
 	if !canAscendStairs {
 		// Debug: check individual conditions
-		groundPos := to.Add(0, -1, 0)
+		groundPos := to.Add(models.V3{X: 0, Y: -1, Z: 0})
 		groundStateID, loaded := world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
 		t.Logf("  Ground at (%v): stateID=%d, loaded=%v, isStair=%v",
 			groundPos, groundStateID, loaded, shapeMgr.IsStair(groundStateID))
@@ -528,8 +528,8 @@ type PathFinderFactory func(w models.World, shapeMgr models.BlockShapeManager) m
 
 // algorithmTestSuite defines all available pathfinding algorithms for comparison
 var algorithmTestSuite = map[string]PathFinderFactory{
-	"A*":           pathfinding.NewAStarPathFinder,
-	"EPEA*":        pathfinding.NewEPEAStarPathFinder,
+	"A*":            pathfinding.NewAStarPathFinder,
+	"EPEA*":         pathfinding.NewEPEAStarPathFinder,
 	"Bidirectional": pathfinding.NewBidirAStarPathFinder,
 }
 
@@ -539,11 +539,11 @@ func TestAlgorithmCorrectness(t *testing.T) {
 	shapeMgr := mctesting.NewMockShapeManager()
 
 	testCases := []struct {
-		name      string
+		name       string
 		buildWorld func() *mctesting.MockWorld
-		start     models.V3
-		goal      models.V3
-		maxSteps  int
+		start      models.V3
+		goal       models.V3
+		maxSteps   int
 	}{
 		{
 			name: "FlatGround",

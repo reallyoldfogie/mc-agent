@@ -66,6 +66,42 @@ func (r *rconAdapter) SummonEntity(ctx context.Context, x, y, z float64, entityT
 }
 
 // agent is the top-level orchestrator of bot/client, state, and event wiring.
+// pendingProjectileInfo represents a projectile waiting to spawn with an optional callback
+type pendingProjectileInfo struct {
+	projectileType models.ProjectileType
+	callbacks      []models.ProjectileHitCallback // Multiple callbacks supported
+}
+
+// activeProjectileInfo tracks information about a fired projectile
+type activeProjectileInfo struct {
+	projectileType  models.ProjectileType
+	firedAt         time.Time
+	callbacks       []models.ProjectileHitCallback // Multiple callbacks supported
+	callbacksFired  bool                           // Whether callbacks have already been fired (prevents double-firing)
+	isInGround      bool                           // For arrows: whether they've hit a block
+	shake           int8                           // Shake animation counter (0-7)
+	criticalHit     bool                           // From CRITICAL_FLAG metadata
+	pierceLevel     int8                           // From PIERCE_LEVEL metadata
+	potionColor     int32                          // From COLOR metadata (-1 = no potion)
+	soundEventCount int                            // Track sound events received
+	// Position history for render loop interpolation
+	lastServerPos     models.V3 // Previous position from server
+	currentServerPos  models.V3 // Current position from server
+	lastServerTime    time.Time // Timestamp of last position update
+	currentServerTime time.Time // Timestamp of current position update
+	interpolatedPos   models.V3 // Current interpolated position
+	// Spawn data for pre-update interpolation
+	spawnPos      models.V3 // Position when projectile spawned
+	spawnTime     time.Time // Time when projectile spawned
+	spawnVelocity models.V3 // Velocity from spawn packet
+
+	// Server-authoritative position confirmation for persistent projectiles
+	pendingCallbackFire bool                  // Whether callback should fire when server position arrives
+	pendingHitType      models.ProjectileHitType // Hit type for pending callback
+	pendingHitPos       models.V3             // Fallback position if server doesn't send one (client prediction)
+	collisionDetectTime time.Time             // When collision was first detected (for timeout tracking)
+}
+
 type agent struct {
 	cfg Config
 
@@ -76,7 +112,7 @@ type agent struct {
 	wg     sync.WaitGroup
 
 	// logging
-	logw io.Writer
+	packetLogWriter io.Writer
 
 	// dependencies (to be filled in during Init)
 	client         bot.Client
@@ -179,6 +215,16 @@ type agent struct {
 	heldSlot        int16
 	heldSlotSet     bool
 	heldSlotUpdates chan int16
+
+	// projectile hit callbacks and tracking
+	pendingProjectilesMu sync.Mutex
+	pendingProjectiles   []pendingProjectileInfo
+	activeProjectilesMu  sync.Mutex
+	activeProjectiles    map[int32]*activeProjectileInfo
+
+	// entity metadata handling
+	entityRegistry  *common.EntityRegistry
+	metadataHandler common.MetadataHandler
 }
 
 // New constructs an agent with the provided configuration.
@@ -214,9 +260,17 @@ func New(cfg Config) (models.Agent, error) {
 		}
 	}
 
-	a := &agent{cfg: cfg, logw: cfg.LogWriter, chatEvents: make(chan string, 64)}
-	a.commandRegistry = actions.NewRegistry()
+	a := &agent{
+		cfg:                cfg,
+		packetLogWriter:    cfg.LogWriter,
+		chatEvents:         make(chan string, 64),
+		commandRegistry:    actions.NewRegistry(),
+		pendingProjectiles: []pendingProjectileInfo{},
+		activeProjectiles:  map[int32]*activeProjectileInfo{},
+		entityRegistry:     common.NewEntityRegistry(),
+	}
 	a.planRunner = plan.NewRunner(a)
+
 	return a, nil
 }
 
@@ -292,6 +346,12 @@ func (a *agent) Init(ctx context.Context) error {
 		a.entities = make(map[int32]*trackedEntity)
 	}
 	a.entitiesMu.Unlock()
+
+	// Initialize entity metadata handler with entity registry
+	if a.entityRegistry != nil {
+		a.metadataHandler = common.NewBasicMetadataProcessor(a.entityRegistry)
+		log.Printf("[Agent] Entity metadata handler initialized")
+	}
 
 	// Create core subsystems automatically (Player, World, Chat, Screen)
 	// These are created if client and packetMgr are available
@@ -629,10 +689,12 @@ func (a *agent) Init(ctx context.Context) error {
 		for _, h := range a.handlers() {
 			a.client.Events().AddListener(h)
 		}
+
 		// Register generic packet logger if provided
-		if a.logw != nil {
-			a.client.Events().AddGeneric(a.packetLogger())
-		}
+		// Disable for now - the connection also logs packets using the same writer.
+		// if a.logw != nil {
+		// 	a.client.Events().AddGeneric(a.packetLogger())
+		// }
 
 		// Optional: register ReplayMod recorder alongside logger
 		if a.cfg.EnableReplay {
@@ -724,10 +786,12 @@ func (a *agent) Start(ctx context.Context) error {
 			opts.MovementMirror = a.moveMirror
 			// opts.SkinProvider = a.cfg.SkinProvider
 		}
+
 		// Set registry callback to handle entity types and other registry data
 		opts.RegistryDataCallback = a.onRegistryDataCallback
+
 		// Enable bidirectional packet logging for debugging
-		opts.PacketLogWriter = a.logw
+		opts.PacketLogWriter = a.packetLogWriter
 		if err := a.client.JoinServerWithOptions(baseCtx, a.cfg.Address, opts); err != nil {
 			return err
 		}
@@ -761,10 +825,15 @@ func (a *agent) Start(ctx context.Context) error {
 					a.client.Name(), a.cfg.Auth.Name, a.cfg.Auth.UUID)
 			}
 		}
+	} else {
+		return fmt.Errorf("no client available to connect to server")
 	}
 
 	// Start background cleanup goroutine for entity tracking
 	a.startEntityCleanup(baseCtx.Done())
+
+	// Start render loop for projectile position interpolation
+	a.startRenderLoop(baseCtx.Done())
 
 	// Start stop file watcher if configured
 	if a.cfg.StopFilePath != "" {
@@ -814,6 +883,10 @@ func (a *agent) Start(ctx context.Context) error {
 	a.startInitialPlan()
 
 	return nil
+}
+
+func (a *agent) GetPacketLogWriter() io.Writer {
+	return a.packetLogWriter
 }
 
 func (a *agent) waitForGroundData(ctx context.Context, timeout time.Duration) {
@@ -1225,8 +1298,8 @@ func (a *agent) getRotation() (float32, float32) {
 }
 
 var (
-	sequenceCounterMu sync.Mutex
-	sequenceCounter   int32
+	sequenceCounterMu   sync.Mutex
+	sequenceCounter     int32
 	sequenceInitialized bool
 )
 

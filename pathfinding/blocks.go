@@ -171,9 +171,24 @@ func (bsm *blockShapeManager) getInfoFromStateID(blockStateID uint32) mdl.ShapeI
 	return bsm.getInfo(blockName, props)
 }
 
-func (bsm *blockShapeManager) blockName(blockStateID uint32) string {
+func (bsm *blockShapeManager) BlockName(blockStateID uint32) string {
 	blockName, _ := bsm.blockInfoFromStateID(blockStateID)
 	return blockName
+}
+
+func (bsm *blockShapeManager) FullBlockName(blockStateID uint32) string {
+	blockName, props := bsm.blockInfoFromStateID(blockStateID)
+	if blockName == "" {
+		return ""
+	}
+	if len(props) == 0 {
+		return blockName
+	}
+	propsParts := make([]string, 0, len(props))
+	for k, v := range props {
+		propsParts = append(propsParts, fmt.Sprintf("%s=%s", k, v))
+	}
+	return fmt.Sprintf("%s[%s]", blockName, strings.Join(propsParts, ","))
 }
 
 // IsPassable checks if a block allows entity movement
@@ -255,7 +270,7 @@ func (bsm *blockShapeManager) IsDangerous(blockStateID uint32) bool {
 	}
 
 	// Check for other dangerous blocks by ID
-	switch bsm.blockName(blockStateID) {
+	switch bsm.BlockName(blockStateID) {
 	case "minecraft:fire", "minecraft:soul_fire":
 		return true
 	case "minecraft:magma_block":
@@ -303,26 +318,26 @@ func (bsm *blockShapeManager) IsLogOrLeaf(blockStateID uint32) bool {
 
 // IsHayBale checks if block is a hay bale.
 func (bsm *blockShapeManager) IsHayBale(blockStateID uint32) bool {
-	return bsm.blockName(blockStateID) == "minecraft:hay_block"
+	return bsm.BlockName(blockStateID) == "minecraft:hay_block"
 }
 
 // IsBed checks if block is a bed (any color).
 func (bsm *blockShapeManager) IsBed(blockStateID uint32) bool {
-	name := bsm.blockName(blockStateID)
+	name := bsm.BlockName(blockStateID)
 	return name != "" && strings.HasSuffix(name, "_bed")
 }
 
 // IsHoneyBlock checks if block is a honey block.
 func (bsm *blockShapeManager) IsHoneyBlock(blockStateID uint32) bool {
-	return bsm.blockName(blockStateID) == "minecraft:honey_block"
+	return bsm.BlockName(blockStateID) == "minecraft:honey_block"
 }
 
 // IsSlimeBlock checks if block is a slime block.
 func (bsm *blockShapeManager) IsSlimeBlock(blockStateID uint32) bool {
-	return bsm.blockName(blockStateID) == "minecraft:slime_block"
+	return bsm.BlockName(blockStateID) == "minecraft:slime_block"
 }
 
 // IsPowderSnow checks if block is powder snow.
 func (bsm *blockShapeManager) IsPowderSnow(blockStateID uint32) bool {
-	return bsm.blockName(blockStateID) == "minecraft:powder_snow"
+	return bsm.BlockName(blockStateID) == "minecraft:powder_snow"
 }

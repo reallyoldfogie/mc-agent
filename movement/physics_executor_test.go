@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
@@ -120,6 +121,17 @@ func (msp *MockShapeProvider) IsSlimeBlock(blockStateID uint32) bool {
 
 func (msp *MockShapeProvider) IsPowderSnow(blockStateID uint32) bool {
 	return false // No powder snow in mock
+}
+
+func (msp *MockShapeProvider) BlockName(blockStateID uint32) string {
+	if blockStateID == 0 {
+		return "minecraft:air"
+	}
+	return "minecraft:stone"
+}
+
+func (msp *MockShapeProvider) FullBlockName(blockStateID uint32) string {
+	return msp.BlockName(blockStateID)
 }
 
 // Test helper: Create physics executor for testing
@@ -293,13 +305,13 @@ func TestPhysicsExecutor_ExecutePath_SimpleTraverse(t *testing.T) {
 	// Create a simple 3-step path
 	path := &pathfinding.Path{
 		Steps: []pathfinding.PathStep{
-			{Position: physics.V3{X: 1, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
-			{Position: physics.V3{X: 2, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
-			{Position: physics.V3{X: 3, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
+			{Position: models.V3{X: 1, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
+			{Position: models.V3{X: 2, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
+			{Position: models.V3{X: 3, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
 		},
 		TotalCost: 3.0,
-		StartPos:  physics.V3{X: 0, Y: 64, Z: 0},
-		GoalPos:   physics.V3{X: 3, Y: 64, Z: 0},
+		StartPos:  models.V3{X: 0, Y: 64, Z: 0},
+		GoalPos:   models.V3{X: 3, Y: 64, Z: 0},
 		Found:     true,
 	}
 
@@ -342,8 +354,8 @@ func TestPhysicsExecutor_ExecutePath_NotFound(t *testing.T) {
 	path := &pathfinding.Path{
 		Steps:     []pathfinding.PathStep{},
 		TotalCost: 0,
-		StartPos:  physics.V3{X: 0, Y: 64, Z: 0},
-		GoalPos:   physics.V3{X: 100, Y: 64, Z: 100},
+		StartPos:  models.V3{X: 0, Y: 64, Z: 0},
+		GoalPos:   models.V3{X: 100, Y: 64, Z: 100},
 		Found:     false,
 	}
 

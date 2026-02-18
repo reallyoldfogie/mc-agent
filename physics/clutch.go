@@ -17,7 +17,7 @@ const (
 // ClutchPlan describes a potential clutch action based on fall prediction.
 type ClutchPlan struct {
 	Type          ClutchType
-	PlacePos      V3
+	PlacePos      models.V3
 	LandingY      float64
 	FallDistance  float64
 	TicksToImpact int
@@ -43,7 +43,7 @@ func PlanClutch(state models.PhysicsState, w World, shapeProvider BlockShapeProv
 		return ClutchPlan{}, false
 	}
 
-	placePos := V3{
+	placePos := models.V3{
 		X: math.Floor(state.Position().X),
 		Y: landingY - 1,
 		Z: math.Floor(state.Position().Z),

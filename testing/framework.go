@@ -48,11 +48,11 @@ type Framework struct {
 
 // TestInstance represents a complete test environment with server and agents.
 type TestInstance struct {
-	Server         *testenv.Instance
-	RCON           testenv.RCONHelper
-	Agents         []*ManagedAgent
-	AgentLogFile   string // Path to the agent log file
-	mu             sync.RWMutex
+	Server       *testenv.Instance
+	RCON         testenv.RCONHelper
+	Agents       []*ManagedAgent
+	AgentLogFile string // Path to the agent log file
+	mu           sync.RWMutex
 }
 
 // ManagedAgent wraps an agent instance with lifecycle tracking.
@@ -161,17 +161,17 @@ func getModsDir(version string) string {
 	if version == "" {
 		return ""
 	}
-	
+
 	// Convert version format: 1.21.5 -> v1_21_5
 	modsPath := filepath.Join("mods", "v"+strings.ReplaceAll(version, ".", "_"))
-	
+
 	// Check if directory exists and convert to absolute path for Docker binding
 	if _, err := os.Stat(modsPath); err == nil {
 		if abs, err := filepath.Abs(modsPath); err == nil {
 			return abs
 		}
 	}
-	
+
 	return ""
 }
 
@@ -183,17 +183,17 @@ func getConfigDir(version string) string {
 	if version == "" {
 		return ""
 	}
-	
+
 	// Convert version format: 1.21.5 -> v1_21_5
-	configPath := filepath.Join( "configs", "v"+strings.ReplaceAll(version, ".", "_"))
-	
+	configPath := filepath.Join("configs", "v"+strings.ReplaceAll(version, ".", "_"))
+
 	// Check if directory exists and convert to absolute path for Docker binding
 	if _, err := os.Stat(configPath); err == nil {
 		if abs, err := filepath.Abs(configPath); err == nil {
 			return abs
 		}
 	}
-	
+
 	return ""
 }
 
@@ -205,17 +205,17 @@ func getOutputDir(version string) string {
 	if version == "" {
 		return ""
 	}
-	
+
 	// Convert version format: 1.21.5 -> v1_21_5
 	outputPath := filepath.Join("outputs", "v"+strings.ReplaceAll(version, ".", "_"))
-	
+
 	// Check if directory exists and convert to absolute path for Docker binding
 	if _, err := os.Stat(outputPath); err == nil {
 		if abs, err := filepath.Abs(outputPath); err == nil {
 			return abs
 		}
 	}
-	
+
 	return ""
 }
 
@@ -438,8 +438,8 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		PullImage:  cfg.PullImage,
 		OnlineMode: false, // offline mode for tests
 		NamePrefix: "mc-agent-test-",
-		DataDir:    cacheDir, // Use persistent cache for server JARs
-		ModsDir:    getModsDir(cfg.Version), // Load mods if they exist for this version
+		DataDir:    cacheDir,                  // Use persistent cache for server JARs
+		ModsDir:    getModsDir(cfg.Version),   // Load mods if they exist for this version
 		ConfigDir:  getConfigDir(cfg.Version), // Load configs if they exist for this version
 		OutputDir:  getOutputDir(cfg.Version), // Load output dir if it exists for this version
 		ExtraEnv:   extraEnv,
@@ -486,10 +486,10 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 	}
 
 	testInst := &TestInstance{
-		Server:        inst,
-		RCON:          helper,
-		Agents:        []*ManagedAgent{},
-		AgentLogFile:  f.GetAgentLogFilename(),
+		Server:       inst,
+		RCON:         helper,
+		Agents:       []*ManagedAgent{},
+		AgentLogFile: f.GetAgentLogFilename(),
 	}
 
 	return testInst, nil

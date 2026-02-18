@@ -8,6 +8,10 @@ type V3 struct {
 	X, Y, Z float64
 }
 
+func (a V3) Add(b V3) V3      { return V3{a.X + b.X, a.Y + b.Y, a.Z + b.Z} }
+func (a V3) Sub(b V3) V3      { return V3{a.X - b.X, a.Y - b.Y, a.Z - b.Z} }
+func (a V3) Mul(s float64) V3 { return V3{a.X * s, a.Y * s, a.Z * s} }
+
 // DistanceTo calculates 3D Euclidean distance to another position
 func (v V3) DistanceTo(other V3) float64 {
 	dx := other.X - v.X
@@ -33,24 +37,9 @@ func (v V3) ManhattanDistance(other V3) float64 {
 	return dx + dy + dz
 }
 
-// Add returns a new position offset by the given amounts
-func (v V3) Add(dx, dy, dz float64) V3 {
-	return V3{X: v.X + dx, Y: v.Y + dy, Z: v.Z + dz}
-}
-
-// Sub returns the difference between two vectors (v - other)
-func (v V3) Sub(other V3) V3 {
-	return V3{X: v.X - other.X, Y: v.Y - other.Y, Z: v.Z - other.Z}
-}
-
 // ToFloat64 converts to float64 coordinates (for backward compatibility)
 func (v V3) ToFloat64() (x, y, z float64) {
 	return v.X, v.Y, v.Z
-}
-
-// V3Sub subtracts v2 from v1. Helper function for compatibility.
-func V3Sub(v1, v2 V3) V3 {
-	return v1.Sub(v2)
 }
 
 // Inputs represents player control inputs for one physics tick.

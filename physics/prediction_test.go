@@ -3,6 +3,7 @@ package physics
 import (
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,8 +21,8 @@ func TestPredictMovement(t *testing.T) {
 
 	t.Run("Predict simple traverse", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
-		state.SetVelocity(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
+		state.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetOnGround(true)
 
 		// Create inputs for forward movement
@@ -49,8 +50,8 @@ func TestPredictMovement(t *testing.T) {
 
 	t.Run("Predict freefall", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
-		state.SetVelocity(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
+		state.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetOnGround(false)
 
 		// No inputs (just falling)
@@ -74,7 +75,7 @@ func TestPredictMovement(t *testing.T) {
 
 	t.Run("Predict with rotation", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetYaw(0)
 		state.SetPitch(0)
 
@@ -105,7 +106,7 @@ func TestPredictMovement(t *testing.T) {
 
 	t.Run("Limit to maxTicks", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Create 100 inputs
 		inputs := make([]Inputs, 100)
@@ -119,7 +120,7 @@ func TestPredictMovement(t *testing.T) {
 
 	t.Run("Limit to input length", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Create only 5 inputs
 		inputs := make([]Inputs, 5)
@@ -145,9 +146,9 @@ func TestPredictPosition(t *testing.T) {
 
 	t.Run("Predict horizontal movement", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
-		vel := V3{X: 1, Y: 0, Z: 0}
+		vel := models.V3{X: 1, Y: 0, Z: 0}
 
 		// Predict 10 ticks
 		finalPos := state.PredictPosition(vel, 10, mockWorld)
@@ -162,9 +163,9 @@ func TestPredictPosition(t *testing.T) {
 
 	t.Run("Predict freefall distance", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
-		vel := V3{X: 0, Y: 0, Z: 0} // Starting from rest
+		vel := models.V3{X: 0, Y: 0, Z: 0} // Starting from rest
 
 		// Predict fall - should fall down from Y=10
 		finalPos := state.PredictPosition(vel, 100, mockWorld)
@@ -176,9 +177,9 @@ func TestPredictPosition(t *testing.T) {
 
 	t.Run("Predict with initial velocity", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 5, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 5, Z: 0})
 
-		vel := V3{X: 0.5, Y: 0.42, Z: 0.5} // Jump + horizontal movement
+		vel := models.V3{X: 0.5, Y: 0.42, Z: 0.5} // Jump + horizontal movement
 
 		// Predict trajectory
 		finalPos := state.PredictPosition(vel, 50, mockWorld)
@@ -193,9 +194,9 @@ func TestPredictPosition(t *testing.T) {
 
 	t.Run("Fast prediction doesn't fall forever", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 2, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 2, Z: 0})
 
-		vel := V3{X: 0, Y: -0.5, Z: 0} // Falling
+		vel := models.V3{X: 0, Y: -0.5, Z: 0} // Falling
 
 		// Predict - this is approximate, may not stop exactly at ground
 		finalPos := state.PredictPosition(vel, 100, mockWorld)
@@ -227,10 +228,10 @@ func TestWillCollide(t *testing.T) {
 
 	t.Run("No collision in open space", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Move to nearby open position
-		targetPos := V3{X: 1, Y: 0, Z: 0}
+		targetPos := models.V3{X: 1, Y: 0, Z: 0}
 
 		collides := state.WillCollide(targetPos, mockWorld)
 		assert.False(t, collides, "Should not collide in open space")
@@ -238,10 +239,10 @@ func TestWillCollide(t *testing.T) {
 
 	t.Run("Collision with wall", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Move into wall at X=2
-		targetPos := V3{X: 2, Y: 0, Z: 0}
+		targetPos := models.V3{X: 2, Y: 0, Z: 0}
 
 		collides := state.WillCollide(targetPos, mockWorld)
 		assert.True(t, collides, "Should collide with wall")
@@ -249,14 +250,14 @@ func TestWillCollide(t *testing.T) {
 
 	t.Run("Collision above (ceiling)", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Place ceiling block
 		mockWorld.SetBlock(0, 1, 0, 1)       // Stone ceiling
 		defer mockWorld.SetBlock(0, 1, 0, 0) // Clean up
 
 		// Try to jump (Y=1 would be inside ceiling)
-		targetPos := V3{X: 0, Y: 1, Z: 0}
+		targetPos := models.V3{X: 0, Y: 1, Z: 0}
 
 		collides := state.WillCollide(targetPos, mockWorld)
 		assert.True(t, collides, "Should collide with ceiling")
@@ -264,7 +265,7 @@ func TestWillCollide(t *testing.T) {
 
 	t.Run("No collision when sneaking under low ceiling", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetSneaking(true) // Sneaking reduces height to 1.5 blocks
 
 		// Place block at Y=2 (1.5 blocks above ground allows sneaking)
@@ -272,7 +273,7 @@ func TestWillCollide(t *testing.T) {
 		defer mockWorld.SetBlock(0, 2, 0, 0) // Clean up
 
 		// Move to position under low ceiling
-		targetPos := V3{X: 0, Y: 0, Z: 0}
+		targetPos := models.V3{X: 0, Y: 0, Z: 0}
 
 		collides := state.WillCollide(targetPos, mockWorld)
 		assert.False(t, collides, "Should fit when sneaking (1.5 block height)")
@@ -280,7 +281,7 @@ func TestWillCollide(t *testing.T) {
 
 	t.Run("Collision when not sneaking under low ceiling", func(t *testing.T) {
 		state := NewState(mockShapes)
-		state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetSneaking(false) // Normal height 1.8 blocks
 
 		// Place block at Y=2 (too low for normal height)
@@ -288,7 +289,7 @@ func TestWillCollide(t *testing.T) {
 		defer mockWorld.SetBlock(0, 2, 0, 0) // Clean up
 
 		// Move to position under low ceiling
-		targetPos := V3{X: 0, Y: 0, Z: 0}
+		targetPos := models.V3{X: 0, Y: 0, Z: 0}
 
 		_ = state.WillCollide(targetPos, mockWorld)
 		// Note: This might not collide if Y=0 puts feet on ground and head at Y=1.8
@@ -309,7 +310,7 @@ func BenchmarkPredictMovement_10Ticks(b *testing.B) {
 	}
 
 	state := NewState(mockShapes)
-	state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 	inputs := make([]Inputs, 10)
 	for i := range inputs {
@@ -333,9 +334,9 @@ func BenchmarkPredictPosition_50Ticks(b *testing.B) {
 	}
 
 	state := NewState(mockShapes)
-	state.SetPositionSimple(V3{X: 0, Y: 10, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
-	vel := V3{X: 0, Y: 0, Z: 0}
+	vel := models.V3{X: 0, Y: 0, Z: 0}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -354,9 +355,9 @@ func BenchmarkWillCollide(b *testing.B) {
 	}
 
 	state := NewState(mockShapes)
-	state.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
+	state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
-	targetPos := V3{X: 1, Y: 0, Z: 0}
+	targetPos := models.V3{X: 1, Y: 0, Z: 0}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -379,13 +380,13 @@ func TestPredictionAccuracy(t *testing.T) {
 	t.Run("Prediction matches actual physics", func(t *testing.T) {
 		// Create two identical states
 		state1 := NewState(mockShapes)
-		state1.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
-		state1.SetVelocity(V3{X: 0, Y: 0, Z: 0})
+		state1.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
+		state1.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state1.SetOnGround(true)
 
 		state2 := NewState(mockShapes)
-		state2.SetPositionSimple(V3{X: 0, Y: 0, Z: 0})
-		state2.SetVelocity(V3{X: 0, Y: 0, Z: 0})
+		state2.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
+		state2.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state2.SetOnGround(true)
 
 		// Create inputs

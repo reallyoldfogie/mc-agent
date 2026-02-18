@@ -1,6 +1,10 @@
 package physics
 
-import "math"
+import (
+	"math"
+
+	"github.com/reallyoldfogie/mc-agent/models"
+)
 
 // Fall damage constants
 const (
@@ -89,7 +93,7 @@ func IsSafeLanding(fallDistance float64, landingBlockID uint32, shapeProvider Bl
 
 // PredictFallDistance calculates how far a player will fall from a position.
 // Returns the fall distance in blocks and the landing position.
-func PredictFallDistance(startPos V3, w World, shapeProvider BlockShapeProvider) (fallDistance float64, landingY float64) {
+func PredictFallDistance(startPos models.V3, w World, shapeProvider BlockShapeProvider) (fallDistance float64, landingY float64) {
 	currentY := startPos.Y
 
 	// Scan downward to find ground
@@ -115,7 +119,7 @@ func PredictFallDistance(startPos V3, w World, shapeProvider BlockShapeProvider)
 // GetLandingBlock returns the block ID that the player would land on/in from a position.
 // This checks for special blocks like water at the landing position first, then scans
 // downward for solid blocks.
-func GetLandingBlock(pos V3, w World, shapeProvider BlockShapeProvider) uint32 {
+func GetLandingBlock(pos models.V3, w World, shapeProvider BlockShapeProvider) uint32 {
 	// Check for water or other special blocks at the landing position first
 	// When falling into water, you land IN the water, not on the solid block below
 	for y := int(math.Floor(pos.Y)) - 1; y >= int(pos.Y)-256; y-- {
@@ -143,7 +147,7 @@ func GetLandingBlock(pos V3, w World, shapeProvider BlockShapeProvider) uint32 {
 
 // CalculateFallDamageForDrop calculates total damage for a drop from one position to another.
 // This is useful for pathfinding cost calculations.
-func CalculateFallDamageForDrop(from, to V3, w World, shapeProvider BlockShapeProvider) float64 {
+func CalculateFallDamageForDrop(from, to models.V3, w World, shapeProvider BlockShapeProvider) float64 {
 	fallDistance := from.Y - to.Y
 
 	// If not falling, no damage
@@ -159,7 +163,7 @@ func CalculateFallDamageForDrop(from, to V3, w World, shapeProvider BlockShapePr
 
 // IsWaterDrop checks if a drop would land in water.
 // Water drops are safe from any height.
-func IsWaterDrop(from, to V3, w World, shapeProvider BlockShapeProvider) bool {
+func IsWaterDrop(from, to models.V3, w World, shapeProvider BlockShapeProvider) bool {
 	landingBlock := GetLandingBlock(to, w, shapeProvider)
 	return IsWaterBlock(landingBlock, shapeProvider)
 }
@@ -177,7 +181,7 @@ const (
 
 // GetDropSafety evaluates how dangerous a drop is.
 // Useful for pathfinding to prefer safer routes.
-func GetDropSafety(from, to V3, currentHealth float64, w World, shapeProvider BlockShapeProvider) DropSafety {
+func GetDropSafety(from, to models.V3, currentHealth float64, w World, shapeProvider BlockShapeProvider) DropSafety {
 	fallDistance := from.Y - to.Y
 
 	// No fall
@@ -207,7 +211,7 @@ func GetDropSafety(from, to V3, currentHealth float64, w World, shapeProvider Bl
 
 // PathfindingDropCost calculates the cost penalty for a drop in pathfinding.
 // Water drops have low cost, dangerous drops have high cost.
-func PathfindingDropCost(from, to V3, baseMoveCost float64, w World, shapeProvider BlockShapeProvider) float64 {
+func PathfindingDropCost(from, to models.V3, baseMoveCost float64, w World, shapeProvider BlockShapeProvider) float64 {
 	fallDistance := from.Y - to.Y
 
 	// No fall, just base cost

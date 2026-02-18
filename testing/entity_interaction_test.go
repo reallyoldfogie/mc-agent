@@ -25,7 +25,6 @@ func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, bo
 	return entityID, dist, found
 }
 
-
 // TestEntityInteraction_Attack tests attacking an entity
 func TestEntityInteraction_Attack(t *testing.T) {
 	for _, tt := range standardVersionTests {

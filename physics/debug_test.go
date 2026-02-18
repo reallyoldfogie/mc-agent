@@ -3,6 +3,8 @@ package physics
 import (
 	"fmt"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Debug test to understand ground collision
@@ -15,8 +17,8 @@ func TestDebug_GroundCollision(t *testing.T) {
 	shapes.SetPassable(BlockStone, false)
 
 	state := NewState(shapes)
-	state.SetPositionSimple(V3{X: 0, Y: 2, Z: 0})
-	state.SetVelocity(V3{})
+	state.SetPositionSimple(models.V3{X: 0, Y: 2, Z: 0})
+	state.SetVelocity(models.V3{})
 
 	fmt.Printf("\n=== Ground Collision Debug ===\n")
 	ID, found := world.GetBlockStatus(0, 0, 0)
