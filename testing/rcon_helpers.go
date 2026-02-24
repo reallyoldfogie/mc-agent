@@ -121,6 +121,13 @@ func PlaceBlockAndWait(ctx context.Context, rcon testenv.RCONHelper, agent *Mana
 	}
 	cmdBlock := normalizeBlockSpecForCommand(blockSpec)
 	x, y, z := blockCoords(pos)
+
+	if resp, err := rcon.Exec(ctx, fmt.Sprintf("setblock %d %d %d minecraft:air", x, y, z)); err != nil {
+		return 0, err
+	} else {
+		fmt.Printf("cleared block at %d %d %d response: %s\n", x, y, z, resp)
+	}
+
 	if resp, err := rcon.Exec(ctx, fmt.Sprintf("setblock %d %d %d %s", x, y, z, cmdBlock)); err != nil {
 		return 0, err
 	} else {

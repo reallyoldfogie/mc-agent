@@ -159,7 +159,7 @@ type agent struct {
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed
 	chat       Chat             // override chatMgr if needed
-	moveExec   MovementExecutor
+	moveExec   models.MovementExecutor
 	pathfind   models.PathFinder
 	shapeMgr   models.BlockShapeManager
 	stateProps *pathfinding.StatePropertyLoader
@@ -491,7 +491,7 @@ func (a *agent) Init(ctx context.Context) error {
 		}
 
 		// Create movement executor (core component needed for container interactions, looking, movement, etc.)
-		// Default to physics executor (realistic movement), fallback to interpolation if prerequisites missing NOTE: 1-13-26 - fallback disabled
+		// Default to physics executor (realistic movement)
 		executorType := movement.PhysicsExecutor
 		execConfig := movement.ExecutorConfig{
 			Client:         botClient,
@@ -503,21 +503,22 @@ func (a *agent) Init(ctx context.Context) error {
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
 		if a.worldMgr == nil {
-			log.Printf("[Agent %s] Warning: world manager unavailable, falling back to interpolation executor", a.client.Name())
-			// executorType = movement.InterpolationExecutor
-			return fmt.Errorf("[Agent %s] Missing world manager", a.client.Name())
+			log.Printf("[Agent %s] Warning: world manager unavailable", a.client.Name())
+			executorType = movement.UnknownExecutor
 		} else if shapeMgr == nil {
-			log.Printf("[Agent %s] Warning: block shape data unavailable, falling back to interpolation executor", a.client.Name())
-			// executorType = movement.InterpolationExecutor
-			return fmt.Errorf("[Agent %s] Missing shape manager", a.client.Name())
+			log.Printf("[Agent %s] Warning: block shape data unavailable", a.client.Name())
+			executorType = movement.UnknownExecutor
 		} else if a.blockMgr == nil {
-			log.Printf("[Agent %s] Warning: block manager unavailable, falling back to interpolation executor", a.client.Name())
-			// executorType = movement.InterpolationExecutor
-			return fmt.Errorf("[Agent %s] Missing block manager", a.client.Name())
+			log.Printf("[Agent %s] Warning: block manager unavailable", a.client.Name())
+			executorType = movement.UnknownExecutor
 		} else {
 			// Physics executor can be used
 			execConfig.World = movement.NewPhysicsWorldAdapter(a.worldMgr)
 			execConfig.ShapeProvider = shapeMgr
+		}
+
+		if executorType == movement.UnknownExecutor {
+			panic(fmt.Sprintf("Agent %s missing required subsystems: worldMgr=%v, shapeMgr=%v, blockMgr=%v. Cannot initialize movement executor.", a.client.Name(), a.worldMgr != nil, shapeMgr != nil, a.blockMgr != nil))
 		}
 
 		// Allow explicit override to interpolation via config flag
@@ -757,6 +758,7 @@ func (a *agent) Init(ctx context.Context) error {
 		}
 	}
 
+
 	return nil
 }
 
@@ -798,6 +800,10 @@ func (a *agent) Start(ctx context.Context) error {
 		if err := a.client.JoinServerWithOptions(baseCtx, a.cfg.Address, opts); err != nil {
 			return err
 		}
+
+		// Initialize container helper now that client is connected
+		// (needs established connection to send packets)
+		a.initializeContainerHelper()
 
 		// After connection, initialize replay recording metadata
 		// The LOGIN packet was received during JoinServerWithOptions, but handlers
@@ -1113,7 +1119,7 @@ func (a *agent) SetItemManager(im ItemManager) { a.mu.Lock(); a.itemMgr = im; a.
 func (a *agent) SetSlotResolver(sr SlotResolver) { a.mu.Lock(); a.slots = sr; a.mu.Unlock() }
 
 // Movement/pathfinding injection
-func (a *agent) SetMovementExecutor(m MovementExecutor) {
+func (a *agent) SetMovementExecutor(m models.MovementExecutor) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.moveExec = m
@@ -1141,12 +1147,12 @@ func (a *agent) MovementExecutorType() movement.ExecutorType {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.moveExec == nil {
-		return movement.InterpolationExecutor
+		return movement.UnknownExecutor
 	}
 	if _, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
 		return movement.PhysicsExecutor
 	}
-	return movement.InterpolationExecutor
+	return movement.UnknownExecutor
 }
 func (a *agent) SetPathFinder(pf models.PathFinder) { a.mu.Lock(); a.pathfind = pf; a.mu.Unlock() }
 
@@ -1156,10 +1162,8 @@ func (a *agent) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Try to set telemetry on physics executor
-	if physicsExec, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
-		physicsExec.SetTelemetryRecorder(recorder)
-	}
+	// Set telemetry on physics executor
+	a.moveExec.SetTelemetryRecorder(recorder)
 }
 
 // Errors
@@ -1180,6 +1184,54 @@ var ErrAlreadyInitialized = errors.New("agent: already initialized")
 // 4. Derive managers (PacketMgr, VersionHandler, etc.) if not provided
 //
 // Returns true if version was auto-detected from server (caller should create client).
+// initializeContainerHelper creates and initializes the container helper
+// This is called from Start() AFTER the client connects (needs established connection)
+func (a *agent) initializeContainerHelper() {
+	if a.screenMgr == nil || a.client == nil {
+		if a.screenMgr == nil {
+			log.Printf("[Agent %s] Warning: Screen manager unavailable, skipping container helper initialization", a.client.Name())
+		}
+		if a.client == nil {
+			log.Printf("[Agent] Warning: Bot client unavailable, skipping container helper initialization")
+		}
+		return
+	}
+
+	// Now that connection is established, we can safely use a.client.Conn()
+	itemUsage := items.NewItemUsage(a.client.Conn(), a.packetMgr)
+
+	// Set version-specific handlers
+	if a.versionHandler != nil {
+		// Set container handler (for UseItemOn packets)
+		containerHandler := a.versionHandler.Play().Containers()
+		itemUsage.SetContainerHandler(containerHandler)
+		log.Printf("[Agent %s] Container handler initialized for version %s", a.client.Name(), a.cfg.Version)
+
+		// Set action handler (for swing/interact packets)
+		actionHandler := a.versionHandler.Play().Actions()
+		itemUsage.SetActionHandler(actionHandler)
+		log.Printf("[Agent %s] Action handler initialized for version %s", a.client.Name(), a.cfg.Version)
+	}
+
+	// Cast screen manager to concrete type
+	screenMgr, ok := a.screenMgr.(screen.Manager)
+	if !ok {
+		log.Printf("[Agent %s] Warning: Screen manager type assertion failed, skipping container helper initialization", a.client.Name())
+		return
+	}
+
+	// Create inventory manager with screen manager
+	invMgr := items.NewInventoryManager(screenMgr)
+	invMgr.SetWaitForUpdates(false)
+
+	// Create container helper with all required dependencies
+	containerHelper := items.NewContainerHelper(itemUsage, invMgr, screenMgr, a.client, a.packetMgr)
+
+	// Use setter to properly initialize (now we're not holding a.mu)
+	a.SetContainerHelper(containerHelper)
+	log.Printf("[Agent %s] Container helper automatically initialized after connection", a.client.Name())
+}
+
 func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error) {
 	name := a.cfg.Name
 	if name == "" {

@@ -240,7 +240,13 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 
 // CloseContainer closes the currently open container window.
 // Sends a close packet to the server and cleans up client-side state.
+// Safe to call multiple times - idempotent (second and subsequent calls do nothing).
 func (ch *ContainerHelper) CloseContainer() error {
+	// Defensive check: if ch is somehow nil (shouldn't happen), return gracefully
+	if ch == nil {
+		return nil
+	}
+
 	if ch.currentWindowID == 0 {
 		return nil // Already on player inventory
 	}

@@ -44,6 +44,9 @@ func (f *fakeMoveExec) IsSprinting() bool     { return false }
 func (f *fakeMoveExec) StartSneaking() error  { return nil }
 func (f *fakeMoveExec) StopSneaking() error   { return nil }
 func (f *fakeMoveExec) IsSneaking() bool      { return false }
+func (f *fakeMoveExec) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {
+	// no-op for fake
+}
 
 type fakePF struct {
 	start, pathGoal models.V3

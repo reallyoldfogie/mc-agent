@@ -721,7 +721,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	}
 
 	if mcVersion != cfg.Version {
-		log.Printf("[%s] Warning: server version %s differs from agent config version %s", cfg.Name, mcVersion, cfg.Version)
+		log.Printf("[WARN][%s] Server version %s differs from agent config version %s", cfg.Name, mcVersion, cfg.Version)
 	}
 
 	cfg.EnableReplay = true

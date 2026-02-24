@@ -17,10 +17,10 @@ type (
 	// EventBus            = models.EventBus
 	ItemManager = models.ItemManager
 	// JoinOptions         = models.JoinOptions
-	MovementExecutor = models.MovementExecutor
-	MovementMirror   = models.MovementMirror
-	MovementAgent    = models.MovementAgent
-	PacketBuilder    = models.PacketBuilder
+	// MovementExecutor = models.MovementExecutor
+	MovementMirror = models.MovementMirror
+	MovementAgent  = models.MovementAgent
+	PacketBuilder  = models.PacketBuilder
 	// PacketHandler       = models.PacketHandler
 	PacketManager  = models.PacketManager
 	PacketRecorder = models.PacketRecorder

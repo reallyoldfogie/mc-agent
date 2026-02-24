@@ -10,8 +10,10 @@ import (
 type ExecutorType int
 
 const (
-	// InterpolationExecutor uses simple position interpolation (default, legacy behavior)
-	InterpolationExecutor ExecutorType = iota
+	UnknownExecutor ExecutorType = iota
+	// LegacyInterpolationExecutor uses simple position interpolation (default, legacy behavior)
+	// DEPRECATED: Use PhysicExecutor instead. This will be removed in a future version.
+	LegacyInterpolationExecutor
 	// PhysicsExecutor uses realistic physics simulation with inputs
 	PhysicsExecutor
 )
@@ -19,10 +21,12 @@ const (
 // String returns the name of the executor type.
 func (et ExecutorType) String() string {
 	switch et {
-	case InterpolationExecutor:
+	case LegacyInterpolationExecutor:
 		return "Interpolation"
 	case PhysicsExecutor:
 		return "Physics"
+	case UnknownExecutor:
+		fallthrough
 	default:
 		return "Unknown"
 	}

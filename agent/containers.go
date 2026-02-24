@@ -21,6 +21,13 @@ func (a *agent) SetContainerHelper(ch ContainerHelper) {
 	}
 }
 
+// GetContainerHelper returns the container helper if it has been initialized.
+func (a *agent) GetContainerHelper() ContainerHelper {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.containerHelper
+}
+
 // startPositionHeartbeat starts a background goroutine that sends position packets at the specified TPS.
 // This ensures the server sees continuous movement packets, which is required for certain interactions
 // (e.g., opening loom/beacon containers in Minecraft 1.21.5+).

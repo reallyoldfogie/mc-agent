@@ -48,7 +48,7 @@ func TestMoveTowards_FlatGround(t *testing.T) {
 		yaw: 0, pitch: 0,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil, // client not needed for test
 		nil, // packetMgr not needed for test
 		tracker.GetPosition,
@@ -86,7 +86,7 @@ func TestMoveTowards_UpwardMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -119,7 +119,7 @@ func TestMoveTowards_DownwardMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -156,7 +156,7 @@ func TestMoveTowards_LevelMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -189,7 +189,7 @@ func TestMoveTowards_MultipleSteps(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -231,7 +231,7 @@ func TestMoveTowards_AlreadyAtTarget(t *testing.T) {
 		x: 10, y: 65, z: 10,
 	}
 
-	executor := movement.NewMovementExecutor(
+	executor := movement.NewLegacyMovementExecutor(
 		nil,
 		nil,
 		tracker.GetPosition,

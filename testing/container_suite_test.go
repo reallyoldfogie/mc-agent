@@ -338,21 +338,19 @@ func (s *ContainerTestSuite) SetupTest() {
 	s.Require().NoError(err, "spawn agent")
 
 	// Get shared resources for this agent.
+	// NOTE: Container helper is now automatically initialized in agent.Start()
+	// after the client connects (not in Init())
+	// We retrieve it here for test inspection/cleanup if needed
 	s.screenMgr = s.agent.ScreenManager()
 	s.Require().NotNil(s.screenMgr, "screen manager should be available")
 
-	botClient := s.agent.BotClient()
-	s.Require().NotNil(botClient, "bot client should be available")
-
-	s.itemUsage = items.NewItemUsage(botClient.Conn(), s.agent.Config.PacketMgr)
-	// Set version-specific container handler
-	if s.agent.Config.VersionHandler != nil {
-		s.itemUsage.SetContainerHandler(s.agent.Config.VersionHandler.Play().Containers())
-	}
-	s.invMgr = items.NewInventoryManager(s.screenMgr)
-	s.invMgr.SetWaitForUpdates(false) // Use workaround for ServerUpdateVersion issue
-	s.containerHelper = items.NewContainerHelper(s.itemUsage, s.invMgr, s.screenMgr, botClient, s.agent.Config.PacketMgr)
-	s.agent.Agent.SetContainerHelper(s.containerHelper)
+	// Container helper is now automatically set up during agent initialization
+	// Retrieve it from the agent for use in tests
+	ch := s.agent.Agent.GetContainerHelper()
+	s.Require().NotNil(ch, "container helper should be auto-initialized after agent.Start()")
+	containerHelper, ok := ch.(*items.ContainerHelper)
+	s.Require().True(ok, "container helper should be *items.ContainerHelper")
+	s.containerHelper = containerHelper
 
 	// Ensure agent is online before issuing RCON commands.
 	if !WaitForPlayerOnline(s.ctx, s.inst.RCON, "ContainerBot", 30*time.Second) {
@@ -388,10 +386,9 @@ func (s *ContainerTestSuite) TearDownTest() {
 		s.T().Logf("Screens before close: %d screens: %v", len(s.screenMgr.Screens()), getScreenIDs(s.screenMgr.Screens()))
 	}
 
-	// Close any open containers
-	if s.containerHelper != nil {
-		_ = s.containerHelper.CloseContainer()
-	}
+	// Don't close the container here - tests are responsible for closing their own containers
+	// If a test leaves a container open, TearDownTest will clean up properly when stopping the agent
+	// Calling CloseContainer twice (once in test, once here) can cause issues
 
 	// Wait to ensure window is fully closed on server and client before next test
 	// This prevents "accessing containers too quickly" and hitting window ID limits
@@ -410,9 +407,8 @@ func (s *ContainerTestSuite) TearDownTest() {
 	}
 	s.agent = nil
 	s.screenMgr = nil
-	s.itemUsage = nil
-	s.invMgr = nil
-	s.containerHelper = nil
+	// Note: itemUsage, invMgr, and containerHelper are now managed by agent.Init()
+	// They are automatically cleaned up when agent is stopped
 }
 
 func (s *ContainerTestSuite) stopAgent(agent *ManagedAgent) {

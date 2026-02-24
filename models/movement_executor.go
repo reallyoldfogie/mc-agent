@@ -13,4 +13,6 @@ type MovementExecutor interface {
 	StartSneaking() error
 	StopSneaking() error
 	IsSneaking() bool
+
+	SetTelemetryRecorder(recorder MovementTelemetryRecorder)
 }

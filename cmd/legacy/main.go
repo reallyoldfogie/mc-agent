@@ -1,3 +1,4 @@
+// # go:build legacy
 // Deprecated: use cmd/agent/main.go instead. This file will be removed in future versions.
 package main
 
@@ -423,7 +424,7 @@ func main() {
 	setupRegistryDataCapture(client)
 
 	// Initialize movement executor with bot position access helpers
-	movementExecutor = movement.NewMovementExecutor(
+	movementExecutor = movement.NewLegacyMovementExecutor(
 		client,
 		packetMgr,
 		getBotPosition,
