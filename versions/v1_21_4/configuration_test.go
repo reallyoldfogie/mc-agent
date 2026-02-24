@@ -122,7 +122,7 @@ func TestConfigurationHandler_ParseRegistryData(t *testing.T) {
 
 	// Initialize the array with an empty slice
 	emptySlice := make([]cb.RegistryDataEntriesArrayType, 0)
-	pkt.Entries.Set(&emptySlice)
+	pkt.Entries.Set(emptySlice)
 
 	// Marshal and then parse
 	handler := &configurationHandler{}

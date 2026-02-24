@@ -13,26 +13,26 @@ const (
 	EntityTypePlayer EntityType = "player"
 
 	// Living entities
-	EntityTypeZombie           EntityType = "zombie"
-	EntityTypeCreeper          EntityType = "creeper"
-	EntityTypeSkeletonArrow    EntityType = "skeleton"
-	EntityTypeSpider           EntityType = "spider"
-	EntityTypeGiant            EntityType = "giant"
-	EntityTypeEnderman         EntityType = "enderman"
-	EntityTypeEndermite        EntityType = "endermite"
-	EntityTypeWither           EntityType = "wither"
-	EntityTypeBat              EntityType = "bat"
-	EntityTypeWitch            EntityType = "witch"
-	EntityTypeZombieVillager   EntityType = "zombie_villager"
-	EntityTypeVillager         EntityType = "villager"
-	EntityTypeIronGolem        EntityType = "iron_golem"
-	EntityTypeSnowGolem        EntityType = "snow_golem"
-	EntityTypeArmorStand       EntityType = "armor_stand"
-	EntityTypeHorse            EntityType = "horse"
-	EntityTypeSkeleton         EntityType = "skeleton"
-	EntityTypeDonkey           EntityType = "donkey"
-	EntityTypeMule             EntityType = "mule"
-	EntityTypeCaravanLlama     EntityType = "camel"
+	EntityTypeZombie         EntityType = "zombie"
+	EntityTypeCreeper        EntityType = "creeper"
+	EntityTypeSkeletonArrow  EntityType = "skeleton"
+	EntityTypeSpider         EntityType = "spider"
+	EntityTypeGiant          EntityType = "giant"
+	EntityTypeEnderman       EntityType = "enderman"
+	EntityTypeEndermite      EntityType = "endermite"
+	EntityTypeWither         EntityType = "wither"
+	EntityTypeBat            EntityType = "bat"
+	EntityTypeWitch          EntityType = "witch"
+	EntityTypeZombieVillager EntityType = "zombie_villager"
+	EntityTypeVillager       EntityType = "villager"
+	EntityTypeIronGolem      EntityType = "iron_golem"
+	EntityTypeSnowGolem      EntityType = "snow_golem"
+	EntityTypeArmorStand     EntityType = "armor_stand"
+	EntityTypeHorse          EntityType = "horse"
+	EntityTypeSkeleton       EntityType = "skeleton"
+	EntityTypeDonkey         EntityType = "donkey"
+	EntityTypeMule           EntityType = "mule"
+	EntityTypeCaravanLlama   EntityType = "camel"
 
 	// Projectiles
 	EntityTypeArrow            EntityType = "arrow"
@@ -47,12 +47,12 @@ const (
 	EntityTypeThrowableItem    EntityType = "item"
 
 	// Display entities
-	EntityTypeBlockDisplay     EntityType = "block_display"
-	EntityTypeItemDisplay      EntityType = "item_display"
-	EntityTypeTextDisplay      EntityType = "text_display"
+	EntityTypeBlockDisplay EntityType = "block_display"
+	EntityTypeItemDisplay  EntityType = "item_display"
+	EntityTypeTextDisplay  EntityType = "text_display"
 
 	// Other
-	EntityTypeUnknown          EntityType = "unknown"
+	EntityTypeUnknown EntityType = "unknown"
 )
 
 // EntityMetadataContext provides context for interpreting metadata for a specific entity

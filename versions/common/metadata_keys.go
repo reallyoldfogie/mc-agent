@@ -18,26 +18,26 @@ const (
 
 	// Living Entity Metadata (indices 7-15)
 	// Applies to entities that extend Living
-	EntityMetadataKeyRotation               EntityMetadataKeyType = 7  // rotations: head/body rotation for some entities
-	EntityMetadataKeyAirSupply              EntityMetadataKeyType = 8  // VarInt: ticks of air remaining (living entities)
-	EntityMetadataKeyHealth                 EntityMetadataKeyType = 9  // float: current health in half-hearts (living entities)
-	EntityMetadataKeyPotionEffectColor      EntityMetadataKeyType = 10 // int: potion effect color (living entities)
-	EntityMetadataKeyPotionEffectAmbient    EntityMetadataKeyType = 11 // boolean: is potion effect from beacon (living entities)
-	EntityMetadataKeyArrowCount             EntityMetadataKeyType = 11 // VarInt: number of arrows in entity (living entities)
-	EntityMetadataKeyBeeStingerCount        EntityMetadataKeyType = 12 // VarInt: number of bee stingers in entity (living entities)
+	EntityMetadataKeyRotation            EntityMetadataKeyType = 7  // rotations: head/body rotation for some entities
+	EntityMetadataKeyAirSupply           EntityMetadataKeyType = 8  // VarInt: ticks of air remaining (living entities)
+	EntityMetadataKeyHealth              EntityMetadataKeyType = 9  // float: current health in half-hearts (living entities)
+	EntityMetadataKeyPotionEffectColor   EntityMetadataKeyType = 10 // int: potion effect color (living entities)
+	EntityMetadataKeyPotionEffectAmbient EntityMetadataKeyType = 11 // boolean: is potion effect from beacon (living entities)
+	EntityMetadataKeyArrowCount          EntityMetadataKeyType = 11 // VarInt: number of arrows in entity (living entities)
+	EntityMetadataKeyBeeStingerCount     EntityMetadataKeyType = 12 // VarInt: number of bee stingers in entity (living entities)
 
 	// Arrow/Projectile Metadata (indices for AbstractArrow type)
-	EntityMetadataKeyArrowIsInWall          EntityMetadataKeyType = 8  // boolean: is arrow in wall (arrows)
-	EntityMetadataKeyArrowIsInGround        EntityMetadataKeyType = 10 // boolean: is arrow stuck in ground (arrows only)
-	EntityMetadataKeyArrowPiercingLevel     EntityMetadataKeyType = 9  // byte: piercing level (arrows only)
+	EntityMetadataKeyArrowIsInWall      EntityMetadataKeyType = 8  // boolean: is arrow in wall (arrows)
+	EntityMetadataKeyArrowIsInGround    EntityMetadataKeyType = 10 // boolean: is arrow stuck in ground (arrows only)
+	EntityMetadataKeyArrowPiercingLevel EntityMetadataKeyType = 9  // byte: piercing level (arrows only)
 
 	// Player-specific Metadata (Human/Player entities)
-	EntityMetadataKeyAbsorptionHearts       EntityMetadataKeyType = 16 // float: absorption hearts from absorption effect
-	EntityMetadataKeyPlayerScore            EntityMetadataKeyType = 17 // VarInt: player score/xp level
+	EntityMetadataKeyAbsorptionHearts         EntityMetadataKeyType = 16 // float: absorption hearts from absorption effect
+	EntityMetadataKeyPlayerScore              EntityMetadataKeyType = 17 // VarInt: player score/xp level
 	EntityMetadataKeyPlayerDisplayedSkinParts EntityMetadataKeyType = 18 // byte: displayed skin parts bitfield
 
 	// Additional Living Entity fields (16+)
-	EntityMetadataKeyMainHand               EntityMetadataKeyType = 19 // byte: 0 = main hand, 1 = off hand
+	EntityMetadataKeyMainHand EntityMetadataKeyType = 19 // byte: 0 = main hand, 1 = off hand
 )
 
 // EntityMetadataKeyType is a type alias for metadata key indices

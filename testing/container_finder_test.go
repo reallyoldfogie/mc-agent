@@ -16,8 +16,8 @@ import (
 )
 
 func TestFindContainersNearby(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
@@ -29,13 +29,13 @@ func TestFindContainersNearby(t *testing.T) {
 
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "survival"
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
 			}
 			serverCfg.PullImage = false
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFindContainersNearby", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFindContainersNearby", tt.MCVersion)
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -145,8 +145,8 @@ func TestFindContainersNearby(t *testing.T) {
 	}
 }
 func TestFindAndOpenContainer(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
@@ -158,13 +158,13 @@ func TestFindAndOpenContainer(t *testing.T) {
 
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "survival"
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
 			}
 			serverCfg.PullImage = false
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFindAndOpenContainer", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFindAndOpenContainer", tt.MCVersion)
 
 			if os.Getenv("TEST_INTEGRATION_KEEP_SERVER_CACHE") == "" {
 				os.RemoveAll(serverCfg.CacheDir) // Ensure clean state
@@ -187,7 +187,7 @@ func TestFindAndOpenContainer(t *testing.T) {
 				ServerAddress: addr,
 				Version:       serverCfg.Version,
 				EnableReplay:  true,
-				ReplayOutput:  normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("find_open_test_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), botName),
+				ReplayOutput:  normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("find_open_test_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), botName),
 			}
 
 			// Version handler is auto-detected by the framework

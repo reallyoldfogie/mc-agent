@@ -73,7 +73,7 @@ func TestPhysicsOrderComparison(t *testing.T) {
 			// while evalAtPitch interpolates to exact crossing point
 			tolerance := 1.5
 			hitFound := false
-			var closestDist float64 = math.MaxFloat64
+			closestDist := math.MaxFloat64
 			var closestTick int
 			var closestPos models.V3
 

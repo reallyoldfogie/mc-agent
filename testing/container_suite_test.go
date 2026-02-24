@@ -605,10 +605,10 @@ func (s *ContainerTestSuite) openContainer(pos models.V3, face items.BlockFace) 
 
 // TestContainerSuite runs the entire suite
 func TestContainerSuite(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			testSuite := new(ContainerTestSuite)
-			testSuite.minecraftVersion = tt.mcVersion
+			testSuite.minecraftVersion = tt.MCVersion
 			suite.Run(t, testSuite)
 		})
 		// suite.Run(t, new(ContainerTestSuite))

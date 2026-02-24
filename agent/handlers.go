@@ -1,10 +1,9 @@
 package agent
 
 import (
-	"bytes"
 	"fmt"
 	"log"
-	"strings"
+	"math"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -14,7 +13,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 // handlers returns set of packet handlers needed.
@@ -170,7 +168,7 @@ func (a *agent) handlers() []bot.PacketHandler {
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDeclareRecipes"),
 			Name:     "ClientboundDeclareRecipes",
 			Priority: 0,
-			F:        a.ParseUpdateRecipesPacket,
+			F:        a.onUpdateRecipes,
 		},
 		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDisconnect"),
@@ -233,12 +231,12 @@ func (a *agent) onDisconnect2(p pk.Packet) error {
 // onAddEntity tracks new or respawned entities.
 func (a *agent) onAddEntity(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, entityType, _, uuid, x, y, z, yaw, pitch, velX, velY, velZ, err := a.versionHandler.Play().Entities().ParseAddEntity(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Debug logging: Log entity spawns with type name lookup
@@ -335,6 +333,8 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 							spawnPos:      spawnPos,
 							spawnTime:     now,
 							spawnVelocity: spawnVel,
+							// Callback timeout tracking
+							callbackRegisteredAt: now,
 						}
 						a.activeProjectilesMu.Unlock()
 
@@ -355,12 +355,12 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 // onMoveEntityPosRot updates incremental position and rotation.
 func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, dx, dy, dz, yaw, pitch, _, err := a.versionHandler.Play().Entities().ParseMoveEntityPosRot(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -429,12 +429,12 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 // onMoveEntityPos updates incremental position without rotation.
 func (a *agent) onMoveEntityPos(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, dx, dy, dz, _, err := a.versionHandler.Play().Entities().ParseMoveEntityPos(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -495,12 +495,12 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 // This packet provides absolute coordinates and is used for explicit position synchronization.
 func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround, err := a.versionHandler.Play().Entities().ParseSyncEntityPosition(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -537,10 +537,21 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 				serverPos := models.V3{X: x, Y: y, Z: z}
 				flightTime := now.Sub(projInfo.spawnTime).Seconds()
 
+				hitResult := models.ProjectileResultBlock
+				hitEntityID := int32(-1)
+				if projInfo.pendingHitType == models.ProjectileHitEntity {
+					hitResult = models.ProjectileResultEntity
+					hitEntityID = entityID
+				}
 				evt := models.ProjectileHitEvent{
-					HitType:        projInfo.pendingHitType,
-					ProjectileType: projInfo.projectileType,
-					Position:       serverPos,
+					ProjectileEntityID: entityID,
+					HitType:            projInfo.pendingHitType,
+					ProjectileType:     projInfo.projectileType,
+					Position:           serverPos,
+					FiredAt:            projInfo.firedAt,
+					HitAt:              now,
+					HitResult:          hitResult,
+					HitEntityID:        hitEntityID,
 				}
 
 				for _, cb := range projInfo.callbacks {
@@ -567,12 +578,12 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 // onTeleportEntity handles absolute teleports.
 func (a *agent) onTeleportEntity(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, x, y, z, yaw, pitch, _, err := a.versionHandler.Play().Entities().ParseTeleportEntity(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -614,12 +625,12 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 // For projectiles, velocity updates allow tracking movement when position packets have zero deltas.
 func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, velX, velY, velZ, err := a.versionHandler.Play().Entities().ParseEntityVelocityUpdate(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -648,12 +659,12 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 // Also fires projectile hit callbacks if a tracked projectile was removed.
 func (a *agent) onRemoveEntities(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityIDs, err := a.versionHandler.Play().Entities().ParseRemoveEntities(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	now := time.Now()
@@ -736,18 +747,60 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
 			}
 
+			// Determine hit result type
+			hitResult := models.ProjectileResultBlock
+			hitEntityID := int32(-1)
+			if hitType == models.ProjectileHitEntity {
+				hitResult = models.ProjectileResultEntity
+				// Try to infer which entity was hit by finding nearest entity to projectile's last position
+				// Only consider entities that are close enough to have been hit
+				const hitDetectionRadius = 2.0 // Entities within 2 blocks of projectile position
+				nearestEntityID := int32(-1)
+				nearestDistance := hitDetectionRadius
+
+				a.entitiesMu.RLock()
+				for eid, entity := range a.entities {
+					// Skip if it's the projectile itself or if removed
+					if eid == id || entity.Removed {
+						continue
+					}
+					// Calculate distance from projectile position to entity
+					dx := pos.X - entity.X
+					dy := pos.Y - entity.Y
+					dz := pos.Z - entity.Z
+					dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+					if dist < nearestDistance {
+						nearestDistance = dist
+						nearestEntityID = eid
+					}
+				}
+				a.entitiesMu.RUnlock()
+
+				if nearestEntityID >= 0 {
+					hitEntityID = nearestEntityID
+					log.Printf("[onRemoveEntities] Inferred hit entity: entityID=%d at distance %.2f blocks from projectile position", nearestEntityID, nearestDistance)
+				} else {
+					log.Printf("[onRemoveEntities] Entity hit but no nearby entities found to infer target (within %.1f blocks)", hitDetectionRadius)
+				}
+			}
+
 			// Fire all callbacks
 			evt := models.ProjectileHitEvent{
-				HitType:        hitType,
-				ProjectileType: projInfo.projectileType,
-				Position:       pos,
+				ProjectileEntityID: id,
+				HitType:            hitType,
+				ProjectileType:     projInfo.projectileType,
+				Position:           pos,
+				FiredAt:            projInfo.firedAt,
+				HitAt:              now,
+				HitResult:          hitResult,
+				HitEntityID:        hitEntityID,
 			}
 			for _, cb := range projInfo.callbacks {
 				go cb(evt) // Fire asynchronously to not block handler
 			}
 
-			log.Printf("[onRemoveEntities] Fired projectile hit callbacks: type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f). Entity tracked pos: X=%.2f, Y=%.2f, Z=%.2f",
-				projInfo.projectileType, hitType, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
+			log.Printf("[onRemoveEntities] Fired projectile hit callbacks: type=%s, hitType=%v, hitResult=%s, count=%d, pos=(%.2f, %.2f, %.2f). Entity tracked pos: X=%.2f, Y=%.2f, Z=%.2f",
+				projInfo.projectileType, hitType, hitResult, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
 
 			// Remove from active tracking
 			delete(a.activeProjectiles, id)
@@ -768,13 +821,13 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 // For arrows, detects block hits via isInGround flag and can fire callbacks early.
 func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, entries, err := a.versionHandler.Play().Entities().ParseSetEntityMetadata(p)
 	if err != nil {
 		log.Printf("[Agent %s][onSetEntityMetadata] entityID=%d", a.client.Name(), entityID)
-		return nil // ignore malformed packets
+		return err
 	}
 
 	if projInfo, exists := a.activeProjectiles[entityID]; exists {
@@ -797,14 +850,14 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	}
 
 	// Extract metadata we care about
-	var health float32 = -1.0    // -1 indicates not set
-	var maxHealth float32 = 20.0 // Default max health
-	var isInGround bool = false  // Arrow projectile state
-	var velocity *[3]float64     // Entity velocity from metadata
-	var shake int8 = 0           // Shake animation counter
-	var criticalHit bool = false // Critical hit flag
-	var pierceLevel int8 = 0     // Piercing level
-	var potionColor int32 = -1   // Potion color (-1 = no potion)
+	health := float32(-1.0)    // -1 indicates not set
+	maxHealth := float32(20.0) // Default max health
+	isInGround := false        // Arrow projectile state
+	var velocity *[3]float64   // Entity velocity from metadata
+	shake := int8(0)           // Shake animation counter
+	criticalHit := false       // Critical hit flag
+	pierceLevel := int8(0)     // Piercing level
+	potionColor := int32(-1)   // Potion color := no potion)
 
 	for _, result := range metadataResults {
 		// Apply health from metadata result
@@ -872,32 +925,62 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		projInfo.potionColor = potionColor
 		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d isInGround=%v (was %v), shake=%d, critical=%v, pierce=%d, color=%d", a.client.Name(), projInfo.projectileType.String(), entityID, isInGround, prevInGround, shake, criticalHit, pierceLevel, potionColor)
 
-		// If arrow just hit a block (isInGround transitioned from false to true), fire block hit callbacks early
+		// If arrow just hit a block (isInGround transitioned from false to true), queue callback for server-authoritative position
 		if isInGround && !prevInGround && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
-			// Get arrow position from render loop's continuous interpolation
-			pos := projInfo.interpolatedPos
-			flightTime := time.Since(projInfo.spawnTime).Seconds()
-			log.Printf("[onSetEntityMetadata] Block hit detected: entityID=%d, flightTime=%.3fs, spawn=(%.2f,%.2f,%.2f), interpolated=(%.2f,%.2f,%.2f), spawnVel=(%.4f,%.4f,%.4f)",
-				entityID, flightTime,
-				projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z,
-				pos.X, pos.Y, pos.Z,
-				projInfo.spawnVelocity.X, projInfo.spawnVelocity.Y, projInfo.spawnVelocity.Z)
+			// For persistent projectiles, queue callback instead of firing immediately with stale client prediction
+			if projInfo.projectileType.IsPersistent() {
+				// If server has already sent a position update, fire immediately with authoritative position
+				if !projInfo.currentServerTime.IsZero() {
+					pos := projInfo.currentServerPos
+					flightTime := time.Since(projInfo.spawnTime).Seconds()
+					log.Printf("[onSetEntityMetadata] Block hit: firing immediately with server position. entityID=%d, flightTime=%.3fs, serverPos=(%.2f,%.2f,%.2f)",
+						entityID, flightTime, pos.X, pos.Y, pos.Z)
 
-			// Fire all block hit callbacks immediately
-			evt := models.ProjectileHitEvent{
-				HitType:        models.ProjectileHitBlock,
-				ProjectileType: projInfo.projectileType,
-				Position:       pos,
+					evt := models.ProjectileHitEvent{
+						ProjectileEntityID: entityID,
+						HitType:            models.ProjectileHitBlock,
+						ProjectileType:     projInfo.projectileType,
+						Position:           pos,
+						FiredAt:            projInfo.firedAt,
+						HitAt:              time.Now(),
+						HitResult:          models.ProjectileResultBlock,
+						HitEntityID:        -1,
+					}
+					for _, cb := range projInfo.callbacks {
+						go cb(evt) // Fire asynchronously
+					}
+					projInfo.callbacksFired = true
+				} else {
+					// No server position yet — queue and wait for onSyncEntityPosition
+					projInfo.pendingCallbackFire = true
+					projInfo.pendingHitType = models.ProjectileHitBlock
+					projInfo.pendingHitPos = projInfo.interpolatedPos // fallback if server never responds
+					projInfo.collisionDetectTime = time.Now()
+					log.Printf("[onSetEntityMetadata] Block hit: QUEUED callback (waiting for server position). entityID=%d, clientPos=(%.2f,%.2f,%.2f)",
+						entityID, projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
+				}
+			} else {
+				// Non-persistent projectiles: fire immediately with client prediction (no server position available)
+				pos := projInfo.interpolatedPos
+				flightTime := time.Since(projInfo.spawnTime).Seconds()
+				log.Printf("[onSetEntityMetadata] Block hit (non-persistent): firing immediately. entityID=%d, flightTime=%.3fs, pos=(%.2f,%.2f,%.2f)",
+					entityID, flightTime, pos.X, pos.Y, pos.Z)
+
+				evt := models.ProjectileHitEvent{
+					ProjectileEntityID: entityID,
+					HitType:            models.ProjectileHitBlock,
+					ProjectileType:     projInfo.projectileType,
+					Position:           pos,
+					FiredAt:            projInfo.firedAt,
+					HitAt:              time.Now(),
+					HitResult:          models.ProjectileResultBlock,
+					HitEntityID:        -1,
+				}
+				for _, cb := range projInfo.callbacks {
+					go cb(evt) // Fire asynchronously
+				}
+				projInfo.callbacksFired = true
 			}
-			for _, cb := range projInfo.callbacks {
-				go cb(evt) // Fire asynchronously
-			}
-
-			log.Printf("[Agent %s][onSetEntityMetadata] Fired early ProjectileHitBlock callbacks: entityID=%d, count=%d, pos=(%.2f, %.2f, %.2f)",
-				a.client.Name(), entityID, len(projInfo.callbacks), pos.X, pos.Y, pos.Z)
-
-			// Mark callbacks as already fired so we don't fire them again in onRemoveEntities
-			projInfo.callbacksFired = true
 		}
 	}
 	a.activeProjectilesMu.Unlock()
@@ -909,12 +992,12 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 // For arrows, detects potion effect expiration.
 func (a *agent) onEntityStatus(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, eventID, err := a.versionHandler.Play().Entities().ParseEntityEvent(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Check for potion effect expiration (status byte = 0)
@@ -934,12 +1017,12 @@ func (a *agent) onEntityStatus(p pk.Packet) error {
 // onGameEvent handles game events like projectile impacts.
 func (a *agent) onGameEvent(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	eventType, x, y, z, value, err := a.versionHandler.Play().ParseGameEvent(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Log game event for debugging
@@ -957,7 +1040,7 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 // For now, we log these but don't need to take action.
 func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	// Note: This packet is complex and contains multiple attributes.
@@ -969,12 +1052,12 @@ func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 // onEntityEquipment handles entity equipment changes (held items, armor).
 func (a *agent) onEntityEquipment(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, equipment, err := a.versionHandler.Play().Entities().ParseEntityEquipment(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Log all equipment updates in this packet
@@ -987,12 +1070,12 @@ func (a *agent) onEntityEquipment(p pk.Packet) error {
 // onEntityHeadRotation handles entity head rotation updates.
 func (a *agent) onEntityHeadRotation(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, headYaw, err := a.versionHandler.Play().Entities().ParseEntityHeadRotation(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -1008,12 +1091,12 @@ func (a *agent) onEntityHeadRotation(p pk.Packet) error {
 // onEntityLook handles entity look packets (rotation-only updates).
 func (a *agent) onEntityLook(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, yaw, pitch, onGround, err := a.versionHandler.Play().Entities().ParseEntityLook(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.entitiesMu.Lock()
@@ -1048,12 +1131,12 @@ func (a *agent) onSetEquipment(p pk.Packet) error {
 // onLogin captures the bot's entity ID.
 func (a *agent) onLogin(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	entityID, err := a.versionHandler.Play().ParseLogin(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	a.setEntityID(entityID)
@@ -1076,12 +1159,12 @@ func (a *agent) onLogin(p pk.Packet) error {
 // onClientboundPosition updates absolute position and applies rotation flags.
 func (a *agent) onClientboundPosition(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	TeleportID, X, Y, Z, Yaw, Pitch, Flags, err := a.versionHandler.Play().Movement().ParsePlayerPosition(p)
 	if err != nil {
-		return nil // Silently ignore parse errors
+		return err
 	}
 
 	if a.moveMirror != nil {
@@ -1131,7 +1214,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	// movement packets before the teleport confirmation is sent, which causes
 	// "Invalid move player packet received" errors on the server.
 	// Prefer auto-created player, fall back to injected teleport
-	var t TeleportAccepter = a.player
+	t := a.player
 	if t == nil {
 		t = a.teleport
 	}
@@ -1146,12 +1229,12 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 // onUpdateViewDistance handles server-sent view distance updates.
 func (a *agent) onUpdateViewDistance(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	viewDistance, err := a.versionHandler.Play().ParseViewDistance(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Currently just logging for awareness
@@ -1163,12 +1246,12 @@ func (a *agent) onUpdateViewDistance(p pk.Packet) error {
 // onSimulationDistance handles server-sent simulation distance updates.
 func (a *agent) onSimulationDistance(p pk.Packet) error {
 	if a.versionHandler == nil {
-		return nil // silently ignore if no version handler
+		return fmt.Errorf("missing version handler")
 	}
 
 	simulationDistance, err := a.versionHandler.Play().ParseSimulationDistance(p)
 	if err != nil {
-		return nil // ignore malformed packets
+		return err
 	}
 
 	// Currently just logging for awareness
@@ -1177,209 +1260,26 @@ func (a *agent) onSimulationDistance(p pk.Packet) error {
 	return nil
 }
 
-// ParseUpdateRecipesPacket handles the ClientboundUpdateRecipes packet (also known as DeclaredRecipes).
-// Protocol 1.21.5 (770) format: Property Sets + Stonecutter SingleInputSet entries
-func (a *agent) ParseUpdateRecipesPacket(p pk.Packet) error {
-	log.Printf("[recipes %s] === Starting Update Recipes Packet Parse ===", a.client.Name())
-
-	log.Printf("[recipes %s] Packet Length: %d bytes", a.client.Name(), len(p.Data))
-	log.Printf("[recipes %s] Packet ID: %d", a.client.Name(), p.ID)
-	log.Printf("[recipes %s] Raw Packet Data: [%x]", a.client.Name(), p.Data)
-
-	// Create a streaming reader over packet data
-	r := bytes.NewReader(p.Data)
-	// Parse Property Sets
-	var payload UpdateRecipesPayload
-	var numPropertySets pk.VarInt
-	if _, err := numPropertySets.ReadFrom(r); err != nil {
-		log.Printf("[recipes %s] ERROR: failed to read property set count: %v", a.client.Name(), err)
+// onUpdateRecipes handles the ClientboundUpdateRecipes packet (also known as DeclareRecipes).
+func (a *agent) onUpdateRecipes(p pk.Packet) error {
+	if a.versionHandler == nil {
 		return nil
 	}
-	log.Printf("[recipes %s] Property Sets Count: %d", a.client.Name(), numPropertySets)
 
-	for i := 0; i < int(numPropertySets); i++ {
-		var propertySetID pk.Identifier
-		if _, err := propertySetID.ReadFrom(r); err != nil {
-			log.Printf("[recipes %s] ERROR: failed to read property set ID at index %d: %v", a.client.Name(), i, err)
-			return nil
-		}
-
-		var numItems pk.VarInt
-		if _, err := numItems.ReadFrom(r); err != nil {
-			log.Printf("[recipes %s] ERROR: failed to read item count for property set %s: %v", a.client.Name(), propertySetID, err)
-			return nil
-		}
-
-		log.Printf("[recipes %s] Property Set %d: ID=%s, Items Count=%d", a.client.Name(), i+1, propertySetID, numItems)
-
-		items := make([]int32, int(numItems))
-		for j := 0; j < int(numItems); j++ {
-			var itemID pk.VarInt
-			if _, err := itemID.ReadFrom(r); err != nil {
-				log.Printf("[recipes %s] ERROR: failed to read item ID at index %d for property set %s: %v", a.client.Name(), j, propertySetID, err)
-				return nil
-			}
-			items[j] = int32(itemID)
-		}
-		log.Printf("[recipes %s]   Items: %v", a.client.Name(), items)
-		payload.PropertySets = append(payload.PropertySets, PropertySet{ID: fmt.Sprintf("%s", propertySetID), Items: items})
+	payload, err := a.versionHandler.Play().ParseUpdateRecipes(p)
+	if err != nil {
+		log.Printf("[Agent %s] Failed to parse UpdateRecipes: %v", a.client.Name(), err)
+		return nil // Don't fail on parse errors
 	}
 
-	// Parse Stonecutter entries (format: IDSet + SlotDisplay)
-	var numStonecutterEntries pk.VarInt
-	if _, err := numStonecutterEntries.ReadFrom(r); err != nil {
-		log.Printf("[recipes %s] ERROR: failed to read stonecutter entry count: %v", a.client.Name(), err)
-		return nil
-	}
-	log.Printf("[recipes %s] Stonecutter Entries Count: %d", a.client.Name(), numStonecutterEntries)
-
-	for i := 0; i < int(numStonecutterEntries); i++ {
-		log.Printf("[recipes %s] Stonecutter Entry %d:", a.client.Name(), i+1)
-
-		// Parse IDSet (ingredients)
-		idSet, err := scanIDSet(r)
-		if err != nil {
-			log.Printf("[recipes %s] ERROR: parsing IDSet for stonecutter entry %d: %v", a.client.Name(), i+1, err)
-			return nil
-		}
-		log.Printf("[recipes %s]   Ingredients IDSet mode=%d, ids=%v", a.client.Name(), idSet.Mode, idSet.IDs)
-
-		// Parse SlotDisplay (result)
-		result, err := a.parseSlotDisplay(r, 1)
-		if err != nil {
-			log.Printf("[recipes %s] ERROR: parsing slot display for stonecutter entry %d: %v", a.client.Name(), i+1, err)
-			return nil
-		}
-
-		// For compatibility, convert OLD format to our internal structure
-		// Input: create a composite SlotDisplay from the IDSet
-		// Results: single result from the parsed SlotDisplay
-		var input SlotDisplay
-		switch idSet.Mode {
-		case IDSetEmpty:
-			input = SlotDisplay{Type: SlotDisplayTypeEmpty}
-		case IDSetSingle:
-			if len(idSet.IDs) > 0 {
-				input = SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: idSet.IDs[0]}}
-			}
-		case IDSetList:
-			// Create composite with multiple item options
-			options := make([]SlotDisplay, len(idSet.IDs))
-			for idx, itemID := range idSet.IDs {
-				options[idx] = SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: itemID}}
-			}
-			input = SlotDisplay{Type: SlotDisplayTypeComposite, Composite: options}
-		}
-
-		payload.StonecutterEntries = append(payload.StonecutterEntries, StonecutterEntry{
-			Input:   input,
-			Results: []SlotDisplay{result},
-		})
+	if payload == nil {
+		return nil // Not supported for this version
 	}
 
-	log.Printf("[recipes %s] === Finished Update Recipes Packet Parse ===", a.client.Name())
-	// Store payload
 	a.recipesMu.Lock()
-	a.lastUpdateRecipes = &payload
+	a.lastUpdateRecipes = payload
 	a.recipesMu.Unlock()
 	return nil
-}
-
-// parseSlotDisplay reads and logs a Slot Display structure recursively.
-// Depth controls indentation for nested structures.
-func (a *agent) parseSlotDisplay(r *bytes.Reader, depth int) (SlotDisplay, error) {
-	indent := strings.Repeat("  ", depth)
-	var slotDisplayType pk.VarInt
-	if _, err := slotDisplayType.ReadFrom(r); err != nil {
-		return SlotDisplay{}, err
-	}
-	log.Printf("[recipes %s]%sSlot Display Type: %d", a.client.Name(), indent, slotDisplayType)
-
-	switch int(slotDisplayType) {
-	case 0:
-		log.Printf("[recipes %s]%s(empty)", a.client.Name(), indent)
-		return SlotDisplay{Type: SlotDisplayTypeEmpty}, nil
-	case 1:
-		log.Printf("[recipes %s]%s(any_fuel)", a.client.Name(), indent)
-		return SlotDisplay{Type: SlotDisplayTypeAnyFuel}, nil
-	case 2:
-		// minecraft:item -> item registry VarInt
-		var itemID pk.VarInt
-		if _, err := itemID.ReadFrom(r); err != nil {
-			return SlotDisplay{}, err
-		}
-		log.Printf("[recipes %s]%sitem: id=%d", a.client.Name(), indent, itemID)
-		return SlotDisplay{Type: SlotDisplayTypeItem, Item: &SlotDisplayItem{ItemID: int32(itemID)}}, nil
-	case 3:
-		// minecraft:item_stack -> Slot
-		var s mcscreen.Slot
-		if _, err := s.ReadFrom(r); err != nil {
-			return SlotDisplay{}, err
-		}
-		if s.Count <= 0 {
-			log.Printf("[recipes %s]%sitem_stack: empty", a.client.Name(), indent)
-			return SlotDisplay{Type: SlotDisplayTypeItemStack, ItemStack: &SlotDisplayItemStack{ItemID: 0, Count: 0}}, nil
-		}
-		log.Printf("[recipes %s]%sitem_stack: id=%d count=%d", a.client.Name(), indent, s.ID, s.Count)
-		return SlotDisplay{Type: SlotDisplayTypeItemStack, ItemStack: &SlotDisplayItemStack{ItemID: int32(s.ID), Count: int32(s.Count)}}, nil
-	case 4:
-		// minecraft:tag -> Identifier
-		var tag pk.Identifier
-		if _, err := tag.ReadFrom(r); err != nil {
-			return SlotDisplay{}, err
-		}
-		str := fmt.Sprintf("%s", tag)
-		log.Printf("[recipes %s]%stag: %s", a.client.Name(), indent, str)
-		return SlotDisplay{Type: SlotDisplayTypeTag, Tag: &str}, nil
-	case 5:
-		// minecraft:smithing_trim -> Base SlotDisplay, Material SlotDisplay, Pattern VarInt
-		log.Printf("[recipes %s]%ssmithing_trim:", a.client.Name(), indent)
-		base, err := a.parseSlotDisplay(r, depth+1)
-		if err != nil {
-			return SlotDisplay{}, err
-		}
-		material, err := a.parseSlotDisplay(r, depth+1)
-		if err != nil {
-			return SlotDisplay{}, err
-		}
-		var pattern pk.VarInt
-		if _, err := pattern.ReadFrom(r); err != nil {
-			return SlotDisplay{}, err
-		}
-		log.Printf("[recipes %s]%s  pattern_id=%d", a.client.Name(), indent, pattern)
-		return SlotDisplay{Type: SlotDisplayTypeSmithingTrim, SmithingTrim: &SlotDisplaySmithingTrim{Base: base, Material: material, Pattern: int32(pattern)}}, nil
-	case 6:
-		// minecraft:with_remainder -> Ingredient SlotDisplay, Remainder SlotDisplay
-		log.Printf("[recipes %s]%swith_remainder:", a.client.Name(), indent)
-		ing, err := a.parseSlotDisplay(r, depth+1)
-		if err != nil {
-			return SlotDisplay{}, err
-		}
-		rem, err := a.parseSlotDisplay(r, depth+1)
-		if err != nil {
-			return SlotDisplay{}, err
-		}
-		return SlotDisplay{Type: SlotDisplayTypeWithRemainder, WithRemainder: &SlotDisplayWithRemainder{Ingredient: ing, Remainder: rem}}, nil
-	case 7:
-		// minecraft:composite -> VarInt count + that many SlotDisplays
-		var count pk.VarInt
-		if _, err := count.ReadFrom(r); err != nil {
-			return SlotDisplay{}, err
-		}
-		log.Printf("[recipes %s]%scomposite: options=%d", a.client.Name(), indent, count)
-		options := make([]SlotDisplay, int(count))
-		for i := 0; i < int(count); i++ {
-			opt, err := a.parseSlotDisplay(r, depth+1)
-			if err != nil {
-				return SlotDisplay{}, err
-			}
-			options[i] = opt
-		}
-		return SlotDisplay{Type: SlotDisplayTypeComposite, Composite: options}, nil
-	default:
-		log.Printf("[recipes %s]%sunknown slot display type: %d", a.client.Name(), indent, slotDisplayType)
-		return SlotDisplay{Type: SlotDisplayType(slotDisplayType)}, nil
-	}
 }
 
 // worldPacketHandlers returns packet handlers for world packets when using mc-agent world.

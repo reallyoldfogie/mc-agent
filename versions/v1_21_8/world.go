@@ -55,8 +55,8 @@ func (w *worldHandler) ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, 
 	//   - bits 4-7: Z within section (0-15)
 	//   - bits 8-11: Y within section (0-15)
 	records := pkt.Records.Get()
-	blocks = make([]common.BlockUpdate, len(*records))
-	for i, record := range *records {
+	blocks = make([]common.BlockUpdate, len(records))
+	for i, record := range records {
 		blockState := int32(record) >> 12
 		localX := int64((record >> 8) & 0xF)
 		localZ := int64((record >> 4) & 0xF)

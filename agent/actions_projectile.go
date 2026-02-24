@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -16,6 +15,8 @@ import (
 const (
 	// maxBowHoldDuration is the maximum time to hold a bow for full power
 	maxBowHoldDuration = 1000 * time.Millisecond
+	// projectileCallbackTimeout is the maximum time to wait for a projectile hit callback before firing with best-effort data
+	projectileCallbackTimeout = 10 * time.Second
 )
 
 // projectileTypeFromEntityName resolves entity type name to ProjectileType.
@@ -51,6 +52,18 @@ func (a *agent) setPendingProjectileCallback(pt models.ProjectileType, callbacks
 		callbacks:      callbacks,
 	})
 	a.pendingProjectilesMu.Unlock()
+}
+
+// setCallbackRegistrationTime records when callbacks are registered on an active projectile.
+// This is used to implement timeout-based callback firing if server packets don't arrive.
+func (a *agent) setCallbackRegistrationTime(entityID int32) {
+	a.activeProjectilesMu.Lock()
+	if projInfo, exists := a.activeProjectiles[entityID]; exists {
+		projInfo.callbackRegisteredAt = time.Now()
+		log.Printf("[setCallbackRegistrationTime] Registered callbacks for projectile entityID=%d, will timeout in %.1fs if no server response",
+			entityID, projectileCallbackTimeout.Seconds())
+	}
+	a.activeProjectilesMu.Unlock()
 }
 
 // getPacketWriter returns a PacketWriter for sending packets.
@@ -90,7 +103,7 @@ func (a *agent) FireBowWithPitch(pitch, yaw float64, callbacks ...models.Project
 
 	// Arrow spawns at eye position minus 0.1 blocks (Minecraft PersistentProjectileEntity.java:113)
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
-	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
+	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
 
 	// Calculate velocity from pitch and yaw
 	pitchRad := (pitch) * math.Pi / 180.0
@@ -203,13 +216,7 @@ func (a *agent) cmdFireBow() {
 }
 
 // FireBowAt fires a bow at a specific target position using version-specific handlers
-func (a *agent) FireBowAt(x, y, z float64, callbacks ...models.ProjectileHitCallback) error {
-	_, err := a.FireBowAtDebug(x, y, z, callbacks...)
-	return err
-}
-
-// FireBowAtFullPower fires at calculated pitch but with verified full power (for testing)
-func (a *agent) FireBowAtFullPower(x, y, z float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
+func (a *agent) FireBowAt(targetX, targetY, targetZ float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
 	if a.client == nil || a.versionHandler == nil {
 		return nil, fmt.Errorf("client or version handler not ready")
 	}
@@ -218,71 +225,21 @@ func (a *agent) FireBowAtFullPower(x, y, z float64, callbacks ...models.Projecti
 		return nil, fmt.Errorf("movement executor not available")
 	}
 
-	if err := a.TurnTowards(context.Background(), x, y, z); err != nil {
-		return nil, fmt.Errorf("turn towards target: %w", err)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	botX, botY, botZ, _, _, initialized := a.GetPosition()
-	if !initialized {
-		return nil, fmt.Errorf("bot position not initialized")
-	}
-
-	// Arrow spawns at eye position minus 0.1 blocks (PersistentProjectileEntity.java:113)
-	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
-	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
-	targetPos := models.V3{X: x, Y: y, Z: z}
-
-	// Use trajectory validation to find unobstructed path
-	validSolution, err := a.FindValidTrajectory(models.Arrow, botOrigin, targetPos)
-	if err != nil {
-		log.Printf("[Agent %s] FireBowAtFullPower: No valid trajectory: %v", a.client.Name(), err)
-		a.SendChat(fmt.Sprintf("Cannot fire at (%.1f, %.1f, %.1f): %v",
-			targetPos.X, targetPos.Y, targetPos.Z, err))
-
-		return nil, err
-	}
-
-	pitch := validSolution.Pitch
-
-	// Calculate yaw
-	dx := targetPos.X - botOrigin.X
-	dz := targetPos.Z - botOrigin.Z
-	var yaw float64
-	if os.Getenv("USE_OLD_AIMING") == "" {
-		yaw = physics.YawForStartTarget(botOrigin, targetPos)
-	} else {
-		yaw = math.Atan2(-dx, dz) * 180 / math.Pi
-	}
-	log.Printf("[Agent %s] FireBowAtFullPower: Trajectory validated for arrow: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), yaw=%.2f°, pitch=%.2f°, blocked=%v",
-		a.client.Name(), botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, yaw, pitch, validSolution.IsBlocked)
-
-	a.setPosition(botX, botY, botZ, float32(yaw), float32(pitch))
-
-	// Fire using FireBowWithPitch which guarantees full power
-	trajectory, err := a.FireBowWithPitch(pitch, yaw, callbacks...)
-	if err != nil {
-		return nil, err
-	}
-
-	return trajectory, nil
-}
-
-func (a *agent) FireBowAtDebug(x, y, z float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
-	if a.client == nil || a.versionHandler == nil {
-		return nil, fmt.Errorf("client or version handler not ready")
-	}
-
-	if a.moveExec == nil {
-		return nil, fmt.Errorf("movement executor not available")
-	}
-
-	if err := a.TurnTowards(context.Background(), x, y, z); err != nil {
+	if err := a.TurnTowards(context.Background(), targetX, targetY, targetZ); err != nil {
 		return nil, fmt.Errorf("turn towards target: %w", err)
 	}
 
 	time.Sleep(200 * time.Millisecond) // Small delay to ensure rotation is processed
+
+	ctx := context.Background()
+	visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, targetX, targetY, targetZ)
+	if err != nil {
+		return nil, err
+	}
+
+	if !visible {
+		return nil, fmt.Errorf("Bot doesn't have line of sight to the target")
+	}
 
 	botX, botY, botZ, _, _, initialized := a.GetPosition()
 	if !initialized {
@@ -293,11 +250,11 @@ func (a *agent) FireBowAtDebug(x, y, z float64, callbacks ...models.ProjectileHi
 	// Arrows spawn at eye position minus 0.1 blocks
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
 	// Source: PersistentProjectileEntity.java:113
-	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
-	targetPos := models.V3{X: x, Y: y, Z: z}
+	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
+	targetPos := models.V3{X: targetX, Y: targetY, Z: targetZ}
 
 	log.Printf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=(%.2f, %.2f, %.2f), target input=(%.2f, %.2f, %.2f)",
-		a.client.Name(), botX, botY, botZ, x, y, z)
+		a.client.Name(), botX, botY, botZ, targetX, targetY, targetZ)
 
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(models.Arrow, botOrigin, targetPos)
@@ -316,12 +273,8 @@ func (a *agent) FireBowAtDebug(x, y, z float64, callbacks ...models.ProjectileHi
 	// Calculate yaw
 	dx := targetPos.X - botOrigin.X
 	dz := targetPos.Z - botOrigin.Z
-	var yaw float64
-	if os.Getenv("USE_OLD_AIMING") == "" {
-		yaw = physics.YawForStartTarget(botOrigin, targetPos)
-	} else {
-		yaw = math.Atan2(-dx, dz) * 180 / math.Pi
-	}
+	yaw := physics.YawForStartTarget(botOrigin, targetPos)
+
 	log.Printf("[Agent %s] FireBowAtDebug: Yaw BEFORE cast to float32: %.10f°, AFTER cast: %.2f°",
 		a.client.Name(), yaw, float32(yaw))
 	log.Printf("[Agent %s] FireBowAtDebug: Yaw calculation debug: dx=%.2f, dz=%.2f, atan2(dz,dx)_rad=%.4f, atan2(dz,dx)_deg=%.2f, yaw_final=%.2f°",
@@ -394,7 +347,7 @@ func (a *agent) FireBowAtDebug(x, y, z float64, callbacks ...models.ProjectileHi
 
 // cmdFireBowAt via UseItem + PlayerAction (legacy chat command)
 func (a *agent) cmdFireBowAt(x, y, z float64) {
-	if err := a.FireBowAt(x, y, z); err != nil {
+	if _, err := a.FireBowAt(x, y, z); err != nil {
 		_ = a.SendChat("Fire bow at error: " + err.Error())
 	}
 }
@@ -406,7 +359,6 @@ func durationFromSeconds(seconds float64) time.Duration {
 // visualizeTrajectory displays the arrow's trajectory using persistent markers via RCON
 // Shows calculated trajectory in orange stained glass (1/8 scale) display entities.
 // yawDeg is the firing yaw in degrees, used to rotate the local-space trajectory into world coordinates.
-// Handles both local-space (USE_OLD_AIMING) and world-space (default) trajectories.
 func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []models.TrajectoryPoint, yawDeg float64, removePrevious bool) {
 	log.Printf("[visualizeTrajectory] Starting visualization (RCON available: %v, trajectory points: %d, yaw: %.1f)",
 		a.cfg.RCON != nil, len(trajectory), yawDeg)
@@ -436,11 +388,6 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 
 	ctx := context.Background()
 
-	// Detect trajectory coordinate system:
-	// - USE_OLD_AIMING not set: trajectory is in world space (from SolveAim implementation)
-	// - USE_OLD_AIMING set: trajectory is in local space (from FindOptimalAiming implementation)
-	isWorldSpace := os.Getenv("USE_OLD_AIMING") == ""
-
 	// Build display entity commands for calculated trajectory (1/8 scale = 0.125)
 	// Using orange_stained_glass for calculated path
 	// Only visualize while projectile is in flight (has meaningful velocity > 0.05 blocks/tick)
@@ -453,23 +400,10 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 				break // Projectile has landed
 			}
 
-			var worldX, worldY, worldZ float64
-			if isWorldSpace {
-				// Trajectory already in world coordinates, use directly
-				worldX = point.Pos.X
-				worldY = point.Pos.Y
-				worldZ = point.Pos.Z
-			} else {
-				// Trajectory in local space (Z=forward, X=0 for yaw=0).
-				// Rotate by yaw to convert to world coordinates.
-				yawRad := yawDeg * math.Pi / 180.0
-				pos := point.Pos
-				rotatedX := -pos.Z*math.Sin(yawRad) + pos.X*math.Cos(yawRad)
-				rotatedZ := pos.Z*math.Cos(yawRad) + pos.X*math.Sin(yawRad)
-				worldX = rotatedX + origin.X
-				worldY = pos.Y + origin.Y
-				worldZ = rotatedZ + origin.Z
-			}
+			// Trajectory already in world coordinates, use directly
+			worldX := point.Pos.X
+			worldY := point.Pos.Y
+			worldZ := point.Pos.Z
 
 			// Block display entity at 1/8 scale (0.125)
 			nbt := `{Tags:[projectile_trajectory],Glowing:1b,block_state:{Name:"minecraft:orange_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
@@ -505,21 +439,12 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 	// Mark landing point of calculated trajectory with white glass
 	if len(trajectory) > 0 {
 		lastPoint := trajectory[len(trajectory)-1]
-		var landingX, landingY, landingZ float64
-		if isWorldSpace {
-			// Trajectory already in world coordinates
-			landingX = lastPoint.Pos.X
-			landingY = lastPoint.Pos.Y
-			landingZ = lastPoint.Pos.Z
-		} else {
-			// Trajectory in local space, rotate by yaw
-			yawRad := yawDeg * math.Pi / 180.0
-			rotLandX := -lastPoint.Pos.Z*math.Sin(yawRad) + lastPoint.Pos.X*math.Cos(yawRad)
-			rotLandZ := lastPoint.Pos.Z*math.Cos(yawRad) + lastPoint.Pos.X*math.Sin(yawRad)
-			landingX = rotLandX + origin.X
-			landingY = lastPoint.Pos.Y + origin.Y
-			landingZ = rotLandZ + origin.Z
-		}
+
+		// Trajectory already in world coordinates
+		landingX := lastPoint.Pos.X
+		landingY := lastPoint.Pos.Y
+		landingZ := lastPoint.Pos.Z
+
 		landingNBT := `{Tags:[projectile_trajectory],Glowing:1b,block_state:{Name:"minecraft:white_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 		landingCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", landingX, landingY, landingZ, landingNBT)
 		log.Printf("[visualizeTrajectory] Landing marker: %s", landingCmd)
@@ -625,9 +550,9 @@ func (a *agent) SwapInventoryWithHotbar(ctx context.Context, inventorySlot, hotb
 // ThrowProjectileAt throws/fires a projectile at a target location.
 // Supports arrows (via bow), snowballs, eggs, ender pearls, and splash potions.
 // projectileType values: 0=Arrow, 1=Snowball, 2=Egg, 3=EnderPearl, 4=SplashPotion
-func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.ProjectileType, x, y, z float64, callbacks ...models.ProjectileHitCallback) error {
+func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.ProjectileType, x, y, z float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
 	if a.client == nil || a.versionHandler == nil {
-		return fmt.Errorf("client or version handler not ready")
+		return nil, fmt.Errorf("client or version handler not ready")
 	}
 
 	// For arrows, use the bow firing mechanism
@@ -644,7 +569,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Get item name for this projectile type
 	itemName := projectileType.GetID()
 	if itemName == "" {
-		return fmt.Errorf("unsupported projectile type: %#v", projectileType)
+		return nil, fmt.Errorf("unsupported projectile type: %#v", projectileType)
 	}
 
 	// Ensure the item is equipped in the hotbar
@@ -662,35 +587,35 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 			// Not in hotbar, try to find in inventory and move to hotbar
 			slot, found, err := a.FindSlotWith(ctx, itemName, 0)
 			if err != nil || !found {
-				return fmt.Errorf("%s not found in inventory: %w", itemName, err)
+				return nil, fmt.Errorf("%s not found in inventory: %w", itemName, err)
 			}
 
 			// Swap inventory slot with hotbar slot 0 (click and quick move)
 			// This moves the item from inventory to hotbar
 			if err := a.SwapInventoryWithHotbar(ctx, slot, 0); err != nil {
-				return fmt.Errorf("error moving %s to hotbar: %w", itemName, err)
+				return nil, fmt.Errorf("error moving %s to hotbar: %w", itemName, err)
 			}
 
 			// Now select hotbar slot 0
 			if err := a.SelectHotbarSlot(ctx, 0); err != nil {
-				return fmt.Errorf("error selecting hotbar slot 0: %w", err)
+				return nil, fmt.Errorf("error selecting hotbar slot 0: %w", err)
 			}
 
 			time.Sleep(50 * time.Millisecond)
 		}
 	} else {
-		return fmt.Errorf("EquipItemByName method not implemented for this version, cannot equip %s", fullItemName)
+		return nil, fmt.Errorf("EquipItemByName method not implemented for this version, cannot equip %s", fullItemName)
 	}
 
 	// Aim at the target using physics-based aiming
 	botX, botY, botZ, _, _, ok := a.GetPosition()
 	if !ok {
-		return fmt.Errorf("unable to get bot position")
+		return nil, fmt.Errorf("unable to get bot position")
 	}
 
 	// Projectile spawns at eye position minus 0.1 blocks
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
-	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
+	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
 	targetPos := models.V3{X: x, Y: y, Z: z}
 
 	// Use trajectory validation to find unobstructed path
@@ -699,7 +624,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 		log.Printf("[Agent %s] ThrowProjectileAt: No valid trajectory for %s: %v", a.client.Name(), itemName, err)
 		a.SendChat(fmt.Sprintf("Cannot throw %s at (%.1f, %.1f, %.1f): %v",
 			itemName, x, y, z, err))
-		return err
+		return nil, err
 	}
 
 	pitch := validSolution.Pitch
@@ -710,25 +635,18 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 
 	// Check if target is reachable
 	if len(trajectory) == 0 {
-		return fmt.Errorf("%s cannot reach target at (%.1f, %.1f, %.1f)", itemName, x, y, z)
+		return nil, fmt.Errorf("%s cannot reach target at (%.1f, %.1f, %.1f)", itemName, x, y, z)
 	}
 
 	// Calculate yaw
-	dx := targetPos.X - botOrigin.X
-	dz := targetPos.Z - botOrigin.Z
-	var yaw float64
-	if os.Getenv("USE_OLD_AIMING") == "" {
-		yaw = physics.YawForStartTarget(botOrigin, targetPos)
-	} else {
-		yaw = math.Atan2(-dx, dz) * 180 / math.Pi
-	}
+	yaw := physics.YawForStartTarget(botOrigin, targetPos)
 
 	a.visualizeTrajectory(botOrigin, targetPos, trajectory, yaw, true)
 
 	log.Printf("[ThrowProjectileAt] Final aiming angles for %s: yaw=%.2f°, pitch=%.2f°", itemName, yaw, pitch)
 	// Turn to face the target
 	if err := a.moveExec.SendRotation(float32(yaw), float32(pitch), true); err != nil {
-		return fmt.Errorf("error setting rotation: %w", err)
+		return nil, fmt.Errorf("error setting rotation: %w", err)
 	}
 
 	// Brief delay for aim to register
@@ -744,7 +662,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Get the action handler from the version handler
 	actionHandler := a.versionHandler.Play().Actions()
 	if actionHandler == nil {
-		return fmt.Errorf("action handler not available")
+		return nil, fmt.Errorf("action handler not available")
 	}
 
 	hand := models.MainHand
@@ -758,11 +676,11 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	log.Printf("[ThrowProjectileAt] Sending use item packet for %s with yaw=%.2f, pitch=%.2f (as float32: yaw=%f pitch=%f)", itemName, yaw, pitch, yaw32, pitch32)
 	conn, err := a.getPacketWriter()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := actionHandler.SendUseItem(conn, hand, 0, yaw32, pitch32); err != nil {
-		return fmt.Errorf("error throwing projectile: %w", err)
+		return nil, fmt.Errorf("error throwing projectile: %w", err)
 	}
 
-	return nil
+	return trajectory, nil
 }

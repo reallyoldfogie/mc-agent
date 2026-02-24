@@ -16,8 +16,8 @@ import (
 // Tests one orientation for each structure type (9 tests total).
 // Set VERTICAL_NAV_FULL=1 to run full coverage (all orientations).
 func TestVerticalNavigationSmoke(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			testCases := []struct {
 				name        string
 				segment     CourseSegment
@@ -79,7 +79,7 @@ func TestVerticalNavigationSmoke(t *testing.T) {
 				testIndex := i
 
 				t.Run(tc.name, func(t *testing.T) {
-					runVerticalNavigationTest(t, tt.mcVersion, tc.segment, tc.orientation, testIndex)
+					runVerticalNavigationTest(t, tt.MCVersion, tc.segment, tc.orientation, testIndex)
 				})
 			}
 		})

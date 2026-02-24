@@ -10,9 +10,9 @@ import (
 
 // TestArmSwing_MainHand tests arm swing animation in main hand
 func TestArmSwing_MainHand(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "action_arm_swing", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntity(t, "action_arm_swing", tt.MCVersion)
 			defer env.Cancel()
 
 			if env.Agent.Config.VersionHandler == nil {
@@ -37,9 +37,9 @@ func TestArmSwing_MainHand(t *testing.T) {
 
 // TestArmSwing_Offhand tests arm swing animation in offhand
 func TestArmSwing_Offhand(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "action_arm_swing_offhand", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntity(t, "action_arm_swing_offhand", tt.MCVersion)
 			defer env.Cancel()
 
 			if env.Agent.Config.VersionHandler == nil {
@@ -62,9 +62,9 @@ func TestArmSwing_Offhand(t *testing.T) {
 
 // TestArmSwing_Rapid tests rapid arm swinging
 func TestArmSwing_Rapid(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "action_arm_swing_rapid", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntity(t, "action_arm_swing_rapid", tt.MCVersion)
 			defer env.Cancel()
 
 			if env.Agent.Config.VersionHandler == nil {

@@ -455,7 +455,7 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 			playerInfo, found := agent.NearestPlayerInfo()
 			if found {
 				go func() {
-					if err := agent.FireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {
+					if _, err := agent.FireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {
 						_ = agent.SendChat("Fire bow at error: " + err.Error())
 					}
 				}()
@@ -465,7 +465,7 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 			x, y, z, found, err := agent.FindPlayerByName(args[0])
 			if err == nil && found {
 				go func() {
-					if err := agent.FireBowAt(x, y, z); err != nil {
+					if _, err := agent.FireBowAt(x, y, z); err != nil {
 						_ = agent.SendChat("Fire bow at error: " + err.Error())
 					}
 				}()
@@ -495,7 +495,7 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 		return nil
 	}
 	go func() {
-		if err := agent.FireBowAt(tx, ty, tz); err != nil {
+		if _, err := agent.FireBowAt(tx, ty, tz); err != nil {
 			_ = agent.SendChat("Fire bow at error: " + err.Error())
 		}
 	}()

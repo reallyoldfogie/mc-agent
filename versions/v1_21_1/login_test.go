@@ -75,7 +75,7 @@ func TestLoginHandler_ParseLoginSuccess(t *testing.T) {
 	pkt.Username = pk.String("TestPlayer")
 	// Initialize the Properties array with an empty slice
 	emptyProperties := make([]cb.SuccessPropertiesArrayType, 0)
-	pkt.Properties.Set(&emptyProperties)
+	pkt.Properties.Set(emptyProperties)
 
 	// Marshal and then parse
 	handler := &loginHandler{}

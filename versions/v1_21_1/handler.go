@@ -3,9 +3,13 @@ package v1_21_1
 
 import (
 	"bytes"
+	"fmt"
+
 	pk "github.com/Tnze/go-mc/net/packet"
+	agent_models "github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/basetypes"
+	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/play/serverbound"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -222,17 +226,103 @@ func (p *playHandler) ParseDisconnect(pkt pk.Packet) (reason string, err error) 
 	return string(r), nil
 }
 
-// ParseGameEvent parses a ClientboundGameEvent packet.
+// ParseGameEvent parses a ClientboundGameStateChange packet (Game Event in 1.20 and earlier).
 func (p *playHandler) ParseGameEvent(pkt pk.Packet) (eventType int, x, y, z, value float64, err error) {
-	var (
-		eventTypeVar pk.VarInt
-		xVar, yVar, zVar pk.Double
-		valueVar pk.Float
-	)
-	if err = pkt.Scan(&eventTypeVar, &xVar, &yVar, &zVar, &valueVar); err != nil {
-		return 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "GameEvent", Cause: err}
+	gameStateChange := cb.NewGameStateChange()
+	if err = gameStateChange.Scan(pkt); err != nil {
+		return 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "GameStateChange", Cause: err}
 	}
-	return int(eventTypeVar), float64(xVar), float64(yVar), float64(zVar), float64(valueVar), nil
+
+	return int(gameStateChange.Reason), 0, 0, 0, float64(gameStateChange.GameMode), nil
+}
+
+// ParseUpdateRecipes parses the ClientboundDeclareRecipes packet for 1.21.1.
+// 1.21.1 uses the legacy recipe format with many recipe types.
+// We extract stonecutter recipes and convert them to our SlotDisplay format.
+func (p *playHandler) ParseUpdateRecipes(pkt pk.Packet) (*agent_models.UpdateRecipesPayload, error) {
+	declareRecipes := cb.NewDeclareRecipes()
+	if err := declareRecipes.Scan(pkt); err != nil {
+		return nil, common.ErrPacketParse{PacketName: "DeclareRecipes", Cause: fmt.Errorf("failed to scan packet: %w", err)}
+	}
+
+	var payload agent_models.UpdateRecipesPayload
+
+	// Get the recipes array
+	recipes := declareRecipes.Recipes.Get()
+	if recipes == nil || len(recipes) == 0 {
+		return &payload, nil
+	}
+
+	// Process recipes from the recipes array
+	// In 1.21.1, stonecutter recipes are embedded with type="minecraft:stonecutting"
+	for _, recipe := range recipes {
+		// Check if this is a stonecutter recipe
+		if recipe.Type.Value == "minecraft:stonecutting" {
+			// Extract the stonecutter data
+			if stonecutterData, ok := recipe.Data.(*cb.DeclareRecipesRecipesArrayTypeDataMinecraftStonecutting); ok {
+				// Convert ingredient (Array[VarInt, Slot]) to SlotDisplay
+				inputDisplay := p.convertIngredientToSlotDisplay(&stonecutterData.Ingredient)
+
+				// Convert result Slot to SlotDisplay
+				resultDisplay := p.convertSlotToSlotDisplay(&stonecutterData.Result)
+
+				payload.StonecutterEntries = append(payload.StonecutterEntries, agent_models.StonecutterEntry{
+					Input:   inputDisplay,
+					Results: []agent_models.SlotDisplay{resultDisplay},
+				})
+			}
+		}
+	}
+
+	return &payload, nil
+}
+
+// convertIngredientToSlotDisplay converts basetypes.Ingredient (Array[VarInt, Slot]) to SlotDisplay.
+func (p *playHandler) convertIngredientToSlotDisplay(ingredient *basetypes.Ingredient) agent_models.SlotDisplay {
+	if ingredient == nil {
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
+
+	slots := ingredient.Get()
+
+	if slots == nil || len(slots) == 0 {
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
+
+	if len(slots) == 1 {
+		// Single item
+		return p.convertSlotToSlotDisplay(&(slots)[0])
+	}
+
+	// Multiple options - create composite
+	options := make([]agent_models.SlotDisplay, len(slots))
+	for i, slotItem := range slots {
+		options[i] = p.convertSlotToSlotDisplay(&slotItem)
+	}
+	return agent_models.SlotDisplay{
+		Type:      agent_models.SlotDisplayTypeComposite,
+		Composite: options,
+	}
+}
+
+// convertSlotToSlotDisplay converts basetypes.Slot to SlotDisplay.
+func (p *playHandler) convertSlotToSlotDisplay(slot *basetypes.Slot) agent_models.SlotDisplay {
+	if slot == nil || slot.ItemCount == 0 {
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
+
+	// Extract ItemId from the switch field
+	var itemID int32
+	if unnamedField, ok := slot.UnnamedType0002.(*basetypes.SlotUnnamedType0002Default); ok {
+		itemID = int32(unnamedField.ItemId)
+	}
+
+	return agent_models.SlotDisplay{
+		Type: agent_models.SlotDisplayTypeItem,
+		Item: &agent_models.SlotDisplayItem{
+			ItemID: itemID,
+		},
+	}
 }
 
 // entityHandler is implemented in entities.go

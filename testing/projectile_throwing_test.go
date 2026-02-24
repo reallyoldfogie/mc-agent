@@ -48,7 +48,7 @@ func TestProjectileReachability(t *testing.T) {
 					targetPos := models.V3{X: float64(distance), Y: 64.5, Z: 0} // Same height as target block center
 
 					// Calculate if target is reachable
-					pitch, power, errorY, trajectory := physics.FindOptimalAimingWithStrategy(
+					pitch, power, errorY, trajectory := physics.FindOptimalAiming(
 						tt.projType,
 						botOrigin,
 						targetPos,
@@ -100,7 +100,7 @@ func TestProjectilePhysics_Comparative(t *testing.T) {
 			botOrigin := models.V3{X: 0, Y: 64.52, Z: 0}
 			targetPos := models.V3{X: tt.distance, Y: 64.5, Z: 0}
 
-			pitch, power, errorY, trajectory := physics.FindOptimalAimingWithStrategy(
+			pitch, power, errorY, trajectory := physics.FindOptimalAiming(
 				tt.projType,
 				botOrigin,
 				targetPos,
@@ -143,7 +143,7 @@ func TestProjectileReachability_Detailed(t *testing.T) {
 			results := make(map[int]bool)
 			for distance := 1; distance <= 50; distance += 5 {
 				targetPos := models.V3{X: float64(distance), Y: 64.5, Z: 0}
-				_, _, _, trajectory := physics.FindOptimalAimingWithStrategy(
+				_, _, _, trajectory := physics.FindOptimalAiming(
 					proj.typ,
 					botOrigin,
 					targetPos,
@@ -240,7 +240,7 @@ func throwProjectile(t *testing.T, inst *TestInstance, agent *ManagedAgent, proj
 	fmt.Fprintf(packetWriter, ">>>>> %s Start ThrowProjectileAt %d blocks <<<<<\n", projectileName, distance)
 	// Throw the projectile with optional callback(s)
 	// (Diagnostic report will be logged during trajectory validation)
-	throwErr := agent.Agent.ThrowProjectileAt(ctx, projType, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...)
+	_, throwErr := agent.Agent.ThrowProjectileAt(ctx, projType, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...)
 
 	if throwErr != nil {
 		t.Logf("ThrowProjectileAt error: %v", throwErr)
@@ -300,7 +300,7 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 
 	fmt.Fprintf(packetWriter, ">>>>> Start EnderPearl ThrowProjectileAt %d blocks <<<<<\n", distance)
 
-	throwErr := agent.Agent.ThrowProjectileAt(ctx, models.EnderPearl, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...)
+	_, throwErr := agent.Agent.ThrowProjectileAt(ctx, models.EnderPearl, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...)
 
 	if throwErr != nil {
 		t.Logf("ThrowProjectileAt error: %v", throwErr)
@@ -338,8 +338,8 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 // Test_EnderPearlRange verifies that ender pearls can reach various distances (including 30+ blocks) on a live server
 // This directly answers the user's question: "I need to know if the agent can throw an enderpearl 30+ blocks"
 func Test_EnderPearlRange(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -347,7 +347,7 @@ func Test_EnderPearlRange(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -420,8 +420,8 @@ func Test_EnderPearlRange(t *testing.T) {
 
 // Test_SnowballRange verifies snowball throwing at various distances
 func Test_SnowballRange(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -429,7 +429,7 @@ func Test_SnowballRange(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -502,8 +502,8 @@ func Test_SnowballRange(t *testing.T) {
 
 // Test_ArrowRange verifies arrow firing with bow at various distances
 func Test_ArrowRange(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -511,7 +511,7 @@ func Test_ArrowRange(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -587,8 +587,8 @@ func Test_ArrowRange(t *testing.T) {
 // Test_ProjectileHitCallback verifies that projectile hit callbacks fire correctly
 // Tests the queue-based pending callback implementation to ensure multiple callbacks work
 func Test_ProjectileHitCallback(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -596,7 +596,7 @@ func Test_ProjectileHitCallback(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -645,7 +645,7 @@ func Test_ProjectileHitCallback(t *testing.T) {
 
 				// Throw snowball with callback
 				// Just throw in any direction - we're testing queue matching, not aiming accuracy
-				err := agnt.Agent.ThrowProjectileAt(ctx, models.Snowball, botX+5, botY, botZ+5, callback)
+				_, err := agnt.Agent.ThrowProjectileAt(ctx, models.Snowball, botX+5, botY, botZ+5, callback)
 				require.NoError(t, err, "ThrowProjectileAt should succeed")
 
 				// Wait for callback with timeout
@@ -690,7 +690,7 @@ func Test_ProjectileHitCallback(t *testing.T) {
 
 				// Fire bow with callback - fire DOWNWARD to guarantee hitting ground
 				// This ensures arrow will land quickly and trigger a callback
-				err = agnt.Agent.FireBowAt(botX, botY-5, botZ, callback)
+				_, err = agnt.Agent.FireBowAt(botX, botY-5, botZ, callback)
 				require.NoError(t, err, "FireBowAt should succeed")
 
 				// Wait for callback with timeout
@@ -714,8 +714,8 @@ func Test_ProjectileHitCallback(t *testing.T) {
 // Test_WindChargeRange verifies wind charges can be thrown at various distances
 // Wind charges are available in Minecraft 1.24+ and have unique physics (drag→position with custom acceleration)
 func Test_WindChargeRange(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -723,7 +723,7 @@ func Test_WindChargeRange(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)

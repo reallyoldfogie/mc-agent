@@ -25,8 +25,8 @@ func requirePhysicsExecutor(t *testing.T, agent *ManagedAgent) {
 
 // TestFollowSingleAgent tests that agent B can follow agent A to a destination.
 func TestFollowSingleAgent(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -37,7 +37,7 @@ func TestFollowSingleAgent(t *testing.T) {
 
 			// Start test server using flat world for reliable spawn locations
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -60,7 +60,7 @@ func TestFollowSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_leader_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "lime"
 
 			// Version handler is auto-detected by the framework
@@ -77,7 +77,7 @@ func TestFollowSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("follow_test_follower_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "blue"
 
 			// Version handler is auto-detected by the framework
@@ -202,8 +202,8 @@ func TestFollowSingleAgent(t *testing.T) {
 
 // TestFollowMultipleAgents tests multiple agents following a single leader.
 func TestFollowMultipleAgents(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 			defer cancel()
@@ -212,7 +212,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -231,7 +231,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_leader_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "red"
 
 			// Version handler is auto-detected by the framework
@@ -251,7 +251,7 @@ func TestFollowMultipleAgents(t *testing.T) {
 					serverCfg.Version,
 				)
 				cfg.EnableReplay = true
-				cfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_%s_%s_%s.mcpr", name, tt.name, time.Now().Format("20060102_150405")), cfg.Name)
+				cfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("multi_follow_%s_%s_%s.mcpr", name, tt.Name, time.Now().Format("20060102_150405")), cfg.Name)
 				switch name {
 				case "Follower1":
 					cfg.HPADebugPathColor = "orange"
@@ -361,8 +361,8 @@ func TestFollowMultipleAgents(t *testing.T) {
 
 // TestFollowDynamicTarget tests following an agent that changes direction.
 func TestFollowDynamicTarget(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 			defer cancel()
@@ -371,7 +371,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -390,7 +390,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_leader_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "cyan"
 
 			// Version handler is auto-detected by the framework
@@ -405,7 +405,7 @@ func TestFollowDynamicTarget(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("dynamic_follow_follower_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "magenta"
 
 			// Version handler is auto-detected by the framework
@@ -478,8 +478,8 @@ func TestFollowDynamicTarget(t *testing.T) {
 
 // TestFollowStopCommand tests that a follower can stop following.
 func TestFollowStopCommand(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -488,7 +488,7 @@ func TestFollowStopCommand(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -507,7 +507,7 @@ func TestFollowStopCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			leaderCfg.EnableReplay = true
-			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_leader_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), leaderCfg.Name)
+			leaderCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_leader_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), leaderCfg.Name)
 			leaderCfg.HPADebugPathColor = "purple"
 
 			// Version handler is auto-detected by the framework
@@ -522,7 +522,7 @@ func TestFollowStopCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			followerCfg.EnableReplay = true
-			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_follower_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), followerCfg.Name)
+			followerCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("stop_follow_follower_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), followerCfg.Name)
 			followerCfg.HPADebugPathColor = "brown"
 
 			// Version handler is auto-detected by the framework

@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/reallyoldfogie/mc-agent/models"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
+	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -160,11 +160,11 @@ func newFakeClientWriter() *fakeClientWriter {
 func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, bot.JoinOptions) error {
 	return nil
 }
-func (f *fakeClientWriter) Events() bot.Events                       { return nil }
-func (f *fakeClientWriter) Name() string                             { return "BOT" }
-func (f *fakeClientWriter) HandleGame(context.Context) error         { return nil }
-func (f *fakeClientWriter) WritePacket(p pk.Packet) error            { f.pkts = append(f.pkts, p); return nil }
-func (f *fakeClientWriter) Close() error                             { return nil }
+func (f *fakeClientWriter) Events() bot.Events               { return nil }
+func (f *fakeClientWriter) Name() string                     { return "BOT" }
+func (f *fakeClientWriter) HandleGame(context.Context) error { return nil }
+func (f *fakeClientWriter) WritePacket(p pk.Packet) error    { f.pkts = append(f.pkts, p); return nil }
+func (f *fakeClientWriter) Close() error                     { return nil }
 func (f *fakeClientWriter) Conn() *bot.Conn {
 	// Return nil - getPacketWriter() will detect fakeClientWriter implements PacketWriter
 	return nil

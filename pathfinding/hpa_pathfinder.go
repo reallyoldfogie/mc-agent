@@ -312,7 +312,7 @@ func (hpa *hpaPathFinder) insertNode(ctx context.Context, pos models.V3) ([]*Abs
 
 		// Try each position and keep the best path
 		var bestPath *Path
-		var bestCost float64 = math.MaxFloat64
+		bestCost := math.MaxFloat64
 		var bestPos models.V3
 
 		for _, entrancePos := range positionsToTry {

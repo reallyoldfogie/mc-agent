@@ -11,29 +11,29 @@ import (
 
 // trackedEntity mirrors the runtime fields we need to follow players/entities.
 type trackedEntity struct {
-	EntityID   int32
-	EntityType int32
-	UUID       [16]byte
-	X, Y, Z    float64
-	VelX, VelY, VelZ float64 // Entity velocity (from velocity update packets)
-	Yaw        int8
-	Pitch      int8
-	HeadYaw    int8           // Head rotation (separate from body)
-	Health     float32        // Current health (0 = dead)
-	MaxHealth  float32        // Maximum health (typically 20.0 for mobs)
-	OnGround   bool           // Whether entity is on ground
-	Removed    bool
-	RemovedAt  time.Time
+	EntityID           int32
+	EntityType         int32
+	UUID               [16]byte
+	X, Y, Z            float64
+	VelX, VelY, VelZ   float64 // Entity velocity (from velocity update packets)
+	Yaw                int8
+	Pitch              int8
+	HeadYaw            int8    // Head rotation (separate from body)
+	Health             float32 // Current health (0 = dead)
+	MaxHealth          float32 // Maximum health (typically 20.0 for mobs)
+	OnGround           bool    // Whether entity is on ground
+	Removed            bool
+	RemovedAt          time.Time
 	LastMetadataUpdate time.Time // When velocity was last updated (for interpolation reference)
 	LastPositionUpdate time.Time // When position was last updated (to check if position is current)
-	shake          int8          // Shake animation counter (0-7) for projectiles
-	criticalHit    bool          // Critical hit flag for projectiles
-	pierceLevel    int8          // Piercing level for projectiles
-	potionColor    int32         // Potion effect color for arrows (-1 = no potion)
+	shake              int8      // Shake animation counter (0-7) for projectiles
+	criticalHit        bool      // Critical hit flag for projectiles
+	pierceLevel        int8      // Piercing level for projectiles
+	potionColor        int32     // Potion effect color for arrows (-1 = no potion)
 	// Position interpolation for accurate projectile tracking
-	lastServerX, lastServerY, lastServerZ float64 // Previous server position
-	lastServerUpdateTime time.Time             // When lastServer position was received
-	currentServerUpdateTime time.Time          // When current (X, Y, Z) position was received
+	lastServerX, lastServerY, lastServerZ float64   // Previous server position
+	lastServerUpdateTime                  time.Time // When lastServer position was received
+	currentServerUpdateTime               time.Time // When current (X, Y, Z) position was received
 }
 
 // TrackedEntityInfo exposes entity tracking data for external use (tests, following, etc.)
@@ -118,38 +118,66 @@ func (a *agent) cleanupRemovedEntities() {
 	// Check for expired projectiles and fire timeout callbacks
 	a.activeProjectilesMu.Lock()
 	for id, projInfo := range a.activeProjectiles {
+		// Skip if callbacks already fired
+		if projInfo.callbacksFired || len(projInfo.callbacks) == 0 {
+			continue
+		}
+
 		// Handle pending callbacks that are waiting for server position
 		if projInfo.pendingCallbackFire && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
 			// If server position hasn't arrived within 2 seconds after collision detection, fire with client prediction
 			if now.Sub(projInfo.collisionDetectTime) > 2*time.Second {
 				evt := models.ProjectileHitEvent{
-					HitType:        projInfo.pendingHitType,
-					ProjectileType: projInfo.projectileType,
-					Position:       projInfo.pendingHitPos, // Use client prediction as fallback
+					ProjectileEntityID: id,
+					HitType:           projInfo.pendingHitType,
+					ProjectileType:    projInfo.projectileType,
+					Position:          projInfo.pendingHitPos, // Use client prediction as fallback
+					FiredAt:           projInfo.firedAt,
+					HitAt:             now,
+					HitResult:         models.ProjectileResultTimeout, // Fired due to server position timeout
 				}
 				for _, cb := range projInfo.callbacks {
 					go cb(evt) // Fire asynchronously
 				}
 				projInfo.callbacksFired = true
-				log.Printf("[cleanupRemovedEntities] Fired pending projectile callbacks with fallback position (server didn't respond): projectileID=%d, type=%s, count=%d, clientPos=(%.2f, %.2f, %.2f) after %.1fs",
+				log.Printf("[cleanupRemovedEntities] Fired pending projectile callbacks with fallback position (server didn't respond within 2s): projectileID=%d, type=%s, count=%d, clientPos=(%.2f, %.2f, %.2f) after %.1fs",
 					id, projInfo.projectileType, len(projInfo.callbacks), projInfo.pendingHitPos.X, projInfo.pendingHitPos.Y, projInfo.pendingHitPos.Z, now.Sub(projInfo.collisionDetectTime).Seconds())
 			}
 		}
 
-		// Handle projectiles that have expired completely (65 seconds)
-		if now.Sub(projInfo.firedAt) > 65*time.Second {
-			if len(projInfo.callbacks) > 0 && !projInfo.callbacksFired {
-				// Fire timeout callbacks
-				evt := models.ProjectileHitEvent{
-					HitType:        models.ProjectileHitTimeout,
-					ProjectileType: projInfo.projectileType,
-					Position:       models.V3{X: 0, Y: 0, Z: 0}, // Position unknown for timeout
-				}
-				for _, cb := range projInfo.callbacks {
-					go cb(evt) // Fire asynchronously
-				}
-				log.Printf("[cleanupRemovedEntities] Fired projectile timeout callbacks: type=%s, count=%d after 65s", projInfo.projectileType, len(projInfo.callbacks))
+		// Handle projectiles with registered callbacks that have exceeded the timeout
+		if !projInfo.callbackRegisteredAt.IsZero() && now.Sub(projInfo.callbackRegisteredAt) > projectileCallbackTimeout && !projInfo.callbacksFired {
+			// Determine best-effort position
+			var pos models.V3
+			if !projInfo.currentServerTime.IsZero() {
+				pos = projInfo.currentServerPos
+			} else if projInfo.interpolatedPos != (models.V3{}) {
+				pos = projInfo.interpolatedPos
+			} else if projInfo.spawnPos != (models.V3{}) {
+				pos = projInfo.spawnPos
 			}
+
+			// Determine hit type based on what we know
+			hitType := models.ProjectileHitUnknown
+			if projInfo.projectileType.IsPersistent() && projInfo.isInGround {
+				hitType = models.ProjectileHitBlock
+			}
+
+			evt := models.ProjectileHitEvent{
+				ProjectileEntityID: id,
+				HitType:           hitType,
+				ProjectileType:    projInfo.projectileType,
+				Position:          pos,
+				FiredAt:           projInfo.firedAt,
+				HitAt:             now,
+				HitResult:         models.ProjectileResultTimeout, // Fired due to callback timeout
+			}
+			for _, cb := range projInfo.callbacks {
+				go cb(evt) // Fire asynchronously
+			}
+			projInfo.callbacksFired = true
+			log.Printf("[cleanupRemovedEntities] Fired projectile callbacks due to callback timeout: projectileID=%d, type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f) after %.1fs",
+				id, projInfo.projectileType, hitType, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, now.Sub(projInfo.callbackRegisteredAt).Seconds())
 			// Remove from active tracking
 			delete(a.activeProjectiles, id)
 		}
@@ -301,8 +329,8 @@ func (a *agent) FaceEntity(entityID int32) error {
 		return fmt.Errorf("target entity %d not found", entityID)
 	}
 
-	// Calculate eye-level position (add player eye height)
-	botEyeY := botY + 1.62 // Minecraft player eye height
+	// Calculate eye-level position
+	botEyeY := botY + a.getEyeHeight()
 
 	// Calculate deltas
 	dx := targetEnt.X - botX
@@ -334,8 +362,8 @@ func (a *agent) FacePosition(targetX, targetY, targetZ float64) error {
 		return fmt.Errorf("bot position not initialized")
 	}
 
-	// Calculate eye-level position (add player eye height)
-	botEyeY := botY + 1.62 // Minecraft player eye height
+	// Calculate eye-level position
+	botEyeY := botY + a.getEyeHeight()
 
 	// Calculate deltas
 	dx := targetX - botX

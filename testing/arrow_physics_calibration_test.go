@@ -218,8 +218,8 @@ func analyzePhysicsFromTrajectory(positions []ArrowPosition, pitch float64) *Arr
 
 // TestArrowPhysicsCalibration runs calibration tests at multiple pitches
 func TestArrowPhysicsCalibration(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
@@ -227,7 +227,7 @@ func TestArrowPhysicsCalibration(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -266,7 +266,7 @@ func TestArrowPhysicsCalibration(t *testing.T) {
 			require.NoError(t, err)
 			time.Sleep(500 * time.Millisecond)
 
-			t.Logf("[%s] Starting arrow physics calibration", tt.mcVersion)
+			t.Logf("[%s] Starting arrow physics calibration", tt.MCVersion)
 
 			// Test multiple pitches to calibrate
 			// Each pitch will produce different trajectory data for physics analysis
@@ -302,7 +302,7 @@ func TestArrowPhysicsCalibration(t *testing.T) {
 
 			// Report summary
 			if len(calibrations) > 0 {
-				t.Logf("\n=== Arrow Physics Calibration Summary for %s ===", tt.mcVersion)
+				t.Logf("\n=== Arrow Physics Calibration Summary for %s ===", tt.MCVersion)
 				t.Logf("Test\t\t\tMeas.Grav\tPred.Grav\tGrav%%Err\tMeas.Drag\tPred.Drag\tDrag%%Err")
 
 				var totalGravError, totalDragError float64

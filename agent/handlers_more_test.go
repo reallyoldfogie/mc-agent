@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+
+	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,19 +24,22 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 	agent := agentInt.(*agent)
 
 	err = agent.Init(context.Background())
+	require.NoError(t, err, "agent.Init failed")
 
 	var (
-		TeleportID pk.VarInt = 5
-		X          pk.Double = 1
-		Y          pk.Double = 2
-		Z          pk.Double = 3
-		DX         pk.Double = 0
-		DY         pk.Double = 0
-		DZ         pk.Double = 0
-		Yaw        pk.Float  = 10
-		Pitch      pk.Float  = 20
-		Flags      pk.VarInt = 0
+		TeleportID pk.VarInt              = 5
+		X          pk.Double              = 1
+		Y          pk.Double              = 2
+		Z          pk.Double              = 3
+		DX         pk.Double              = 0
+		DY         pk.Double              = 0
+		DZ         pk.Double              = 0
+		Yaw        pk.Float               = 10
+		Pitch      pk.Float               = 20
+		Flags      protocol_models.UInt32 = 0
 	)
+
+	// Manually construct a Position packet by marshalling the fields
 	var buf bytes.Buffer
 	appendField(&buf, TeleportID)
 	appendField(&buf, X)
@@ -45,7 +51,7 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 	appendField(&buf, Yaw)
 	appendField(&buf, Pitch)
 	appendField(&buf, Flags)
-	p := pk.Packet{Data: buf.Bytes()}
+	p := pk.Packet{ID: int32(agent.packetMgr.GetClientboundPacketID("ClientboundPosition")), Data: buf.Bytes()}
 
 	if err := agent.onClientboundPosition(p); err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -78,6 +84,7 @@ func TestOnRegistryData(t *testing.T) {
 		has0  pk.Boolean = false
 		has1  pk.Boolean = false
 	)
+
 	var buf bytes.Buffer
 	appendField(&buf, id)
 	appendField(&buf, count)
@@ -85,7 +92,7 @@ func TestOnRegistryData(t *testing.T) {
 	appendField(&buf, has0)
 	appendField(&buf, e1)
 	appendField(&buf, has1)
-	p := pk.Packet{Data: buf.Bytes()}
+	p := pk.Packet{ID: int32(agent.packetMgr.GetClientboundPacketID("ClientboundConfigRegistryData")), Data: buf.Bytes()}
 
 	if err := agent.onRegistryData(p); err != nil {
 		t.Fatalf("handler error: %v", err)

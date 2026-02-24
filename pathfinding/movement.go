@@ -17,7 +17,7 @@ type MovePruneConfig struct {
 type MovementValidator struct {
 	world           models.World
 	shapeMgr        models.BlockShapeManager
-	playerEyeHeight float64 // Usually 1.62 blocks
+	playerEyeHeight float64 // Player eye height from models.PlayerEyeHeight
 	playerWidth     float64 // Player collision box width (usually 0.6)
 	debugCheckCount int     // Counter for debug logging
 	climbDebugCount int     // Counter for climb debug logging
@@ -28,7 +28,7 @@ func NewMovementValidator(w models.World, shapeMgr models.BlockShapeManager) *Mo
 	return &MovementValidator{
 		world:           w,
 		shapeMgr:        shapeMgr,
-		playerEyeHeight: 1.62,
+		playerEyeHeight: models.PlayerEyeHeight,
 		playerWidth:     0.6,
 	}
 }

@@ -32,8 +32,9 @@ type state struct {
 	}
 
 	// Internal state
-	tick     uint32 // Current tick number
-	lastJump uint32 // Tick when player last jumped (for cooldown)
+	tick         uint32  // Current tick number
+	lastJump     uint32  // Tick when player last jumped (for cooldown)
+	fallDistance float64 // Current fall distance accumulated this fall (resets on landing)
 
 	// Entity dimensions (constant for players)
 	width     float64 // Collision box width (X/Z)
@@ -72,6 +73,7 @@ func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 	s.pitch = pitch
 	s.Vel = models.V3{X: 0, Y: 0, Z: 0} // Reset velocity
 	s.onGround = onGround
+	s.fallDistance = 0.0 // Reset fall distance on server correction
 	s.collision.vertical = false
 	s.collision.horizontal = false
 }
@@ -116,6 +118,11 @@ func (s *state) IsSneaking() bool {
 	return s.isSneaking
 }
 
+// FallDistance reports the current accumulated fall distance in blocks.
+func (s *state) FallDistance() float64 {
+	return s.fallDistance
+}
+
 // GetDimensions returns the collision dimensions for the player.
 func (s *state) GetDimensions() (width, height, eyeHeight float64) {
 	return s.width, s.height, s.eyeHeight
@@ -124,6 +131,8 @@ func (s *state) GetDimensions() (width, height, eyeHeight float64) {
 // SetPositionSimple updates the position without changing rotation or ground status.
 func (s *state) SetPositionSimple(pos models.V3) {
 	s.Pos = pos
+	// Reset fall distance when position is manually set
+	s.fallDistance = 0.0
 }
 
 // SetYaw updates the yaw without changing position or pitch.
@@ -144,11 +153,20 @@ func (s *state) SetVelocity(vel models.V3) {
 // SetOnGround updates the grounded flag.
 func (s *state) SetOnGround(onGround bool) {
 	s.onGround = onGround
+	// Reset fall distance when landing
+	if onGround {
+		s.fallDistance = 0.0
+	}
 }
 
 // SetSneaking updates the sneaking flag.
 func (s *state) SetSneaking(sneaking bool) {
 	s.isSneaking = sneaking
+}
+
+// SetFallDistance updates the fall distance.
+func (s *state) SetFallDistance(distance float64) {
+	s.fallDistance = distance
 }
 
 // GetAABB returns the player's current axis-aligned bounding box.
@@ -170,6 +188,10 @@ func (s *state) GetAABB() AABB {
 // This applies inputs, updates velocity (gravity, drag, etc.), and moves the player
 // with collision detection and resolution.
 func (s *state) Tick(input Inputs, w World) error {
+
+	log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t fallDistance=%.2f\n",
+		s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.fallDistance)
+
 	s.tick++
 
 	// Update sneaking state from inputs
@@ -222,6 +244,10 @@ func (s *state) Tick(input Inputs, w World) error {
 	s.Vel.Y *= Drag
 	s.Vel.X *= inertiaFactor
 	s.Vel.Z *= inertiaFactor
+
+	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t collision=(h=%t v=%t)\n",
+		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.collision.horizontal, s.collision.vertical)
+	log.Printf("[PhysicsState][Tick] \t %#v", *s)
 
 	return nil
 }
@@ -310,8 +336,16 @@ func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 	// Throttle is in world-absolute coordinates (direction vector)
 	// NOT player-relative WASD controls
 	// Add directly to velocity (acceleration)
+	oldVelX := s.Vel.X
+	oldVelZ := s.Vel.Z
 	s.Vel.X += throttleX
 	s.Vel.Z += throttleZ
+
+	if os.Getenv("DEBUG_MANUAL_MOVEMENT") != "" {
+		log.Printf("[DEBUG_MANUAL] throttle=(%.4f,%.4f) after accel scaling, sneak=%v speed=%.4f -> adjusted throttle=(%.4f,%.4f) velBefore=(%.4f,%.4f) velAfter=(%.4f,%.4f)",
+			input.ThrottleX, input.ThrottleZ, input.Sneak, speed, throttleX, throttleZ,
+			oldVelX, oldVelZ, s.Vel.X, s.Vel.Z)
+	}
 }
 
 // tickPosition updates position with collision detection and step-up mechanics.
@@ -319,8 +353,17 @@ func (s *state) tickPosition(w World) {
 	// Get player bounding box
 	playerBB := s.GetAABB()
 
-	// Compute collision with YXZ order (Y first, then X, then Z)
-	newPlayerBB, newVel := s.computeCollisionYXZ(playerBB, s.Vel, w)
+	// Edge prevention when sneaking happens BEFORE collision detection
+	// Implements Minecraft's adjustMovementForSneaking() algorithm
+	// This reduces movement in 0.05 block increments when at edges
+	adjustedVel := s.Vel
+	if s.isSneaking && s.onGround && !(s.Vel.Y > 0) {
+		// Apply the three-phase algorithm using the current bounding box state
+		adjustedVel.X, adjustedVel.Z = s.adjustMovementForSneaking(playerBB, s.Vel.X, s.Vel.Z, w)
+	}
+
+	// Compute collision with YXZ order (Y first, then X, then Z) using adjusted velocity
+	newPlayerBB, newVel := s.computeCollisionYXZ(playerBB, adjustedVel, w)
 
 	// Check if step-up is possible
 	// Step-up is attempted if:
@@ -366,77 +409,159 @@ func (s *state) tickPosition(w World) {
 	s.collision.vertical = newVel.Y != s.Vel.Y
 	s.onGround = s.collision.vertical && s.Vel.Y < 0
 
-	// Edge prevention when sneaking (MUST happen BEFORE position update)
-	// When sneaking on ground, prevent movement that would cause walking off block edges
-	if s.isSneaking && s.onGround {
-		// Calculate new position from the bounding box (collision already applied)
-		newPosX := newPlayerBB.X.Min + s.width/2
-		newPosY := newPlayerBB.Y.Min
-		newPosZ := newPlayerBB.Z.Min + s.width/2
-
-		// DEBUG
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[EdgePrev] Sneak=%v OnGround=%v NewPos=(%.3f,%.3f,%.3f)\n",
-				s.isSneaking, s.onGround, newPosX, newPosY, newPosZ)
-		}
-
-		// Check all four corners of the player's hitbox at the new position
-		// This matches vanilla Minecraft behavior
-		halfWidth := s.width / 2
-		corners := []models.V3{
-			{X: newPosX + halfWidth, Y: newPosY, Z: newPosZ + halfWidth}, // +X +Z
-			{X: newPosX + halfWidth, Y: newPosY, Z: newPosZ - halfWidth}, // +X -Z
-			{X: newPosX - halfWidth, Y: newPosY, Z: newPosZ + halfWidth}, // -X +Z
-			{X: newPosX - halfWidth, Y: newPosY, Z: newPosZ - halfWidth}, // -X -Z
-		}
-
-		// // If any corner would be over an edge (no ground support), prevent that movement
-		// hasGroundSupport := true
-		// for i, corner := range corners {
-		// 	support := s.hasGroundSupportAt(corner, w)
-		// 	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		// 		log.Printf("[EdgePrev]   Corner %d (%.3f,%.3f,%.3f) support=%v\n",
-		// 			i, corner.X, corner.Y, corner.Z, support)
-		// 	}
-		// 	if !support {
-		// 		hasGroundSupport = false
-		// 		break
-		// 	}
-		// }
-
-		// At least one corner must not be over an edge (no ground support), otherwise prevent that movement
-		hasGroundSupport := false
-		for i, corner := range corners {
-			support := s.hasGroundSupportAt(corner, w)
-			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-				log.Printf("[EdgePrev]   Corner %d (%.3f,%.3f,%.3f) support=%v\n",
-					i, corner.X, corner.Y, corner.Z, support)
-			}
-			if support {
-				hasGroundSupport = true
-				break
-			}
-		}
-
-		// If no ground support at new position, revert to old position and stop movement
-		if !hasGroundSupport {
-			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-				log.Printf("[EdgePrev] PREVENTING MOVEMENT - no ground support\n")
-			}
-			newPlayerBB = playerBB // Revert to original position before movement
-			newVel.X = 0           // Zero horizontal velocity
-			newVel.Z = 0
-		}
+	// Update fall distance: accumulate distance fallen, reset on landing
+	if s.onGround {
+		s.fallDistance = 0.0
+	} else if s.Vel.Y < 0 {
+		// Accumulate downward velocity as fall distance
+		s.fallDistance -= newVel.Y
 	}
 
 	// Extract position from bounding box (center of X/Z, min of Y)
 	// This MUST happen AFTER edge prevention to respect position reverts
+	oldX := s.Pos.X
+	oldZ := s.Pos.Z
 	s.Pos.X = newPlayerBB.X.Min + s.width/2
 	s.Pos.Y = newPlayerBB.Y.Min
 	s.Pos.Z = newPlayerBB.Z.Min + s.width/2
 
+	if os.Getenv("DEBUG_MANUAL_MOVEMENT") != "" {
+		log.Printf("[DEBUG_MANUAL_POS] Vel before collision=(%.4f,%.4f) after=(%.4f,%.4f) Pos before=(%.4f,%.4f) after=(%.4f,%.4f)",
+			s.Vel.X, s.Vel.Z, newVel.X, newVel.Z, oldX, oldZ, s.Pos.X, s.Pos.Z)
+	}
+
 	// Update velocity
 	s.Vel = newVel
+}
+
+func (s *state) canSneak(playerBB AABB, stepIncrement float64, w World) bool {
+	return s.onGround || s.fallDistance < stepIncrement && !s.isSpaceAroundPlayerEmpty(playerBB, 0.0, 0.0, stepIncrement-s.fallDistance, w)
+}
+
+// adjustMovementForSneaking implements Minecraft's three-phase sneaking edge prevention algorithm.
+// Reduces movement in 0.05 block increments when approaching edges.
+// Based on PlayerEntity.adjustMovementForSneaking() from Minecraft 1.21.8.
+func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) (float64, float64) {
+	const stepIncrement = 0.05
+	dX := x
+	dZ := z
+
+	if s.canSneak(playerBB, stepIncrement, w) {
+		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+			log.Printf("[SneakEdge] Starting adjustment: dX=%.3f, dZ=%.3f\n", dX, dZ)
+		}
+
+		// Phase 1: Reduce X-axis movement until space is clear
+		// Loop continues WHILE space is empty (collision-free)
+		// Loop stops WHEN space is NOT empty (collision detected)
+		hX := math.Copysign(stepIncrement, dX)
+		for ; dX != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, 0, 0, w); dX -= hX {
+			// Space is empty for this dX value
+			if math.Abs(dX) <= stepIncrement {
+				// Movement is now small enough - clamp to 0 and stop
+				dX = 0
+				break
+			}
+		}
+
+		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+			log.Printf("[SneakEdge] After X phase: dX=%.3f\n", dX)
+		}
+
+		// Phase 2: Reduce Z-axis movement until space is clear
+		hZ := math.Copysign(stepIncrement, dZ)
+		for dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, 0, dZ, 0, w) {
+			if math.Abs(dZ) <= stepIncrement {
+				dZ = 0
+				break
+			}
+			dZ -= hZ
+		}
+
+		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+			log.Printf("[SneakEdge] After Z phase: dZ=%.3f\n", dZ)
+		}
+
+		// Phase 3: Reduce diagonal movement (both axes) until space is clear
+		for dX != 0 && dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, dZ, 0, w) {
+			if math.Abs(dX) <= stepIncrement {
+				dX = 0
+			} else {
+				dX -= hX
+			}
+
+			if math.Abs(dZ) <= stepIncrement {
+				dZ = 0
+			} else {
+				dZ -= hZ
+			}
+		}
+
+		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+			log.Printf("[SneakEdge] Final result: dX=%.3f, dZ=%.3f\n", dX, dZ)
+		}
+	}
+	return dX, dZ
+}
+
+// isSpaceAroundPlayerEmpty checks if there's space for the player to move.
+// Tests a box from minY - stepHeight to minY with the given XZ offset.
+// This implements the space check from PlayerEntity.isSpaceAroundPlayerEmpty().
+func (s *state) isSpaceAroundPlayerEmpty(playerBB AABB, offsetX, offsetZ, stepHeight float64, w World) bool {
+	if stepHeight == 0 {
+		stepHeight = StepHeight // Use default player step height (0.6 blocks)
+	}
+
+	// Get player's current center position (feet level)
+	playerCenterX := playerBB.X.Min + s.width/2
+	playerCenterZ := playerBB.Z.Min + s.width/2
+
+	// Create test box: same horizontal size as player, but check from (minY - stepHeight) to minY
+	// This checks for blocks that would block movement to the new position
+	testBB := AABB{
+		X: MinMax{
+			Min: playerBB.X.Min + 1e-7 + offsetX,
+			Max: playerBB.X.Max - 1e-7 + offsetX,
+		},
+		Y: MinMax{
+			Min: playerBB.Y.Min - stepHeight - 1e-7,
+			Max: playerBB.Y.Min,
+		},
+		Z: MinMax{
+			Min: playerBB.Z.Min + 1e-7 + offsetZ,
+			Max: playerBB.Z.Max - 1e-7 + offsetZ,
+		},
+	}
+
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SpaceCheck] Testing offset (%.3f, %.3f) from pos (%.2f, %.2f)\n",
+			offsetX, offsetZ, playerCenterX, playerCenterZ)
+		log.Printf("[SpaceCheck]   testBB: X[%.3f-%.3f] Y[%.3f-%.3f] Z[%.3f-%.3f]\n",
+			testBB.X.Min, testBB.X.Max,
+			testBB.Y.Min, testBB.Y.Max,
+			testBB.Z.Min, testBB.Z.Max)
+	}
+
+	// Get all collision boxes in the test area
+	collisionBoxes := s.getSurroundingBoxes(testBB, w)
+
+	// If ANY solid block intersects the test box, space is NOT empty (i.e., supported)
+	// Note: We intentionally do NOT skip the block directly under the current position.
+	// Vanilla adjustMovementForSneaking() treats that block as valid support while moving within it.
+	for _, box := range collisionBoxes {
+		if testBB.Intersects(box) {
+			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+				log.Printf("[SpaceCheck]   SUPPORT/COLLISION with block X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f]\n",
+					box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max)
+			}
+			return false // Space is NOT empty - there is support/collision
+		}
+	}
+
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SpaceCheck]   OK - space is empty\n")
+	}
+	return true // Space is empty
 }
 
 // tryStepUp attempts to step up a small obstacle (max StepHeight).

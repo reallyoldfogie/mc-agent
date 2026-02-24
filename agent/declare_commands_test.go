@@ -53,7 +53,7 @@ func TestDeclareCommandsPacketParsing(t *testing.T) {
 		t.Fatal("Nodes array is nil")
 	}
 
-	nodeCount := len(*nodes)
+	nodeCount := len(nodes)
 	t.Logf("Successfully parsed %d command nodes, root index: %d", nodeCount, rootIndex)
 
 	// Verify we have a reasonable number of nodes
@@ -68,8 +68,8 @@ func TestDeclareCommandsPacketParsing(t *testing.T) {
 
 	// Log details about the first few nodes for debugging
 	for i := 0; i < min(5, nodeCount); i++ {
-		node := (*nodes)[i]
-		childCount := len(*node.Children.Get())
+		node := (nodes)[i]
+		childCount := len(node.Children.Get())
 		t.Logf("  Node[%d]: Type=%d, HasCommand=%d, HasRedirect=%d, Children=%d",
 			i, node.Flags.CommandNodeType, node.Flags.HasCommand,
 			node.Flags.HasRedirectNode, childCount)
@@ -95,8 +95,8 @@ func TestDeclareCommandsEmptyPacket(t *testing.T) {
 	}
 
 	nodes := packet.GetNodes().Get()
-	if len(*nodes) != 0 {
-		t.Errorf("Expected 0 nodes, got %d", len(*nodes))
+	if len(nodes) != 0 {
+		t.Errorf("Expected 0 nodes, got %d", len(nodes))
 	}
 
 	if packet.GetRootIndex() != 0 {

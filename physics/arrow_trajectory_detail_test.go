@@ -29,7 +29,7 @@ func TestArrowTrajectoryDetail(t *testing.T) {
 
 	t.Logf("Pitch: %.3f°", pitch)
 	t.Logf("Initial velocity: X=0, Y=%.6f, Z=%.6f", velY, velXZ)
-	t.Logf("Speed: %.6f\n", math.Sqrt(velY*velY + velXZ*velXZ))
+	t.Logf("Speed: %.6f\n", math.Sqrt(velY*velY+velXZ*velXZ))
 
 	velocity := models.V3{X: 0, Y: velY, Z: velXZ}
 	traj := SimulateProjectileTrajectory(models.Arrow, origin, velocity, 400)
@@ -64,7 +64,7 @@ func TestArrowTrajectoryDetail(t *testing.T) {
 	t.Logf("Target block Z bounds: [%.2f, %.2f]\n", targetBoundsZ[0], targetBoundsZ[1])
 
 	// Find min and max Y when Z is in range
-	var minY, maxY float64 = math.MaxFloat64, -math.MaxFloat64
+	minY, maxY := math.MaxFloat64, -math.MaxFloat64
 	var tickAtMinY, tickAtMaxY int
 
 	for i, point := range traj {
@@ -149,7 +149,7 @@ func TestArrowTrajectoryComparison(t *testing.T) {
 
 	// Find closest point to target
 	targetZ := 46.0
-	var closestDist float64 = math.MaxFloat64
+	closestDist := math.MaxFloat64
 	var closestTick int
 	var closestPoint models.TrajectoryPoint
 

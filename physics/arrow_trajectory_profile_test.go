@@ -23,9 +23,9 @@ func TestArrowTrajectoryProfile(t *testing.T) {
 
 	// Test at multiple distances like the reference document
 	testCases := []struct {
-		name       string
-		distance   float64
-		vertDist   float64
+		name        string
+		distance    float64
+		vertDist    float64
 		description string
 	}{
 		{"5 blocks", 5.0, 0.0, "Short range, level shot"},
@@ -40,8 +40,8 @@ func TestArrowTrajectoryProfile(t *testing.T) {
 		t.Logf("%s: %s\n", tc.name, tc.description)
 
 		// Find optimal aiming for this distance
-		origin := models.V3{X: 0, Y: 1.52, Z: 0}
-		target := models.V3{X: tc.distance, Y: 1.52 + tc.vertDist, Z: 0}
+		origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
+		target := models.V3{X: tc.distance, Y: models.PlayerEyeHeight - .1 + tc.vertDist, Z: 0}
 
 		pitch, power, minError, trajectory := FindOptimalAiming(models.Arrow, origin, target)
 
@@ -175,7 +175,7 @@ func TestArrowRangeAnalysis(t *testing.T) {
 	t.Logf("|-------|-------------|-------|-------------|")
 
 	for power := 0.1; power <= 1.0; power += 0.1 {
-		origin := models.V3{X: 0, Y: 1.52, Z: 0}
+		origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
 
 		// Level shot at this power
 		pitchRad := 0.0
@@ -209,7 +209,7 @@ func TestArrowAngularAnalysis(t *testing.T) {
 	t.Logf("=== Arrow Angular Analysis (Full Power) ===\n")
 
 	arrowPhys := GetProjectilePhysics(models.Arrow)
-	origin := models.V3{X: 0, Y: 1.52, Z: 0}
+	origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
 
 	t.Logf("| Pitch (degrees) | Range | Peak Height | Flight Time | Notes |")
 	t.Logf("|-----------------|-------|-------------|-------------|-------|")
@@ -255,7 +255,7 @@ func TestArrowAngularAnalysis(t *testing.T) {
 func TestArrowAccuracyAtDistance(t *testing.T) {
 	t.Logf("=== Arrow Accuracy at Distance ===\n")
 
-	origin := models.V3{X: 0, Y: 1.52, Z: 0}
+	origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
 
 	distances := []float64{5, 10, 15, 20, 25, 30, 40, 50}
 
@@ -263,7 +263,7 @@ func TestArrowAccuracyAtDistance(t *testing.T) {
 	t.Logf("|----------|---------------|-------|-------|-------------|")
 
 	for _, dist := range distances {
-		target := models.V3{X: dist, Y: 1.52, Z: 0}
+		target := models.V3{X: dist, Y: models.PlayerEyeHeight - .1, Z: 0}
 		pitch, power, minError, trajectory := FindOptimalAiming(models.Arrow, origin, target)
 
 		if len(trajectory) == 0 {

@@ -19,8 +19,8 @@ func init() {
 
 // TestNavigationSingleAgent tests that a single agent can navigate to a specified destination.
 func TestNavigationSingleAgent(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -31,7 +31,7 @@ func TestNavigationSingleAgent(t *testing.T) {
 
 			// Start test server
 			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.PullImage = false // set to true to pull latest image
 			RequireIntegrationEnv(t, serverCfg)
 
@@ -56,7 +56,7 @@ func TestNavigationSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_single_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -137,8 +137,8 @@ func TestNavigationSingleAgent(t *testing.T) {
 
 // TestNavigationMultipleDestinations tests navigation to multiple waypoints.
 func TestNavigationMultipleDestinations(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -149,7 +149,7 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 
 			// Start test server
 			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -170,7 +170,7 @@ func TestNavigationMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_waypoints_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

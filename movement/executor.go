@@ -5,6 +5,7 @@ import (
 	"log"
 	"math"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -224,8 +225,14 @@ func (me *movementExecutor) LookAt(targetX, targetY, targetZ float64, onGround b
 	}
 
 	// Calculate look angles from bot's eyes to target
-	// Standard player eye height is 1.62 blocks above feet
-	yaw, pitch := calculateLookAngles(botX, botY+1.62, botZ, targetX, targetY+1.62, targetZ)
+	// Player eye height depends on sneak state
+	var eyeHeight float64
+	if me.isSneaking {
+		eyeHeight = models.PlayerEyeHeightSneaking // Sneaking eye height
+	} else {
+		eyeHeight = models.PlayerEyeHeight // Standing eye height
+	}
+	yaw, pitch := calculateLookAngles(botX, botY+eyeHeight, botZ, targetX, targetY+eyeHeight, targetZ)
 
 	// Send rotation update
 	return me.SendRotation(yaw, pitch, onGround)
@@ -259,9 +266,14 @@ func (me *movementExecutor) StartSprinting() error {
 		return nil // Already sprinting, no need to send packet
 	}
 
+	if me.client == nil {
+		me.isSprinting = true // Mark as sprinting even in test mode
+		return nil            // No-op in test mode
+	}
+
 	entityID := me.getBotEntityID()
 	var err error
-	if me.movementHandler != nil && me.client != nil {
+	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, common.ActionStartSprinting)
 	} else {
 		err = SendStartSprinting(me.client, me.packetMgr, entityID)
@@ -278,9 +290,14 @@ func (me *movementExecutor) StopSprinting() error {
 		return nil // Not sprinting, no need to send packet
 	}
 
+	if me.client == nil {
+		me.isSprinting = false // Mark as not sprinting even in test mode
+		return nil             // No-op in test mode
+	}
+
 	entityID := me.getBotEntityID()
 	var err error
-	if me.movementHandler != nil && me.client != nil {
+	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, common.ActionStopSprinting)
 	} else {
 		err = SendStopSprinting(me.client, me.packetMgr, entityID)
@@ -297,9 +314,14 @@ func (me *movementExecutor) StartSneaking() error {
 		return nil // Already sneaking, no need to send packet
 	}
 
+	if me.client == nil {
+		me.isSneaking = true // Mark as sneaking even in test mode
+		return nil           // No-op in test mode
+	}
+
 	entityID := me.getBotEntityID()
 	var err error
-	if me.movementHandler != nil && me.client != nil {
+	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, common.ActionStartSneaking)
 	} else {
 		err = SendStartSneaking(me.client, me.packetMgr, entityID)
@@ -316,9 +338,14 @@ func (me *movementExecutor) StopSneaking() error {
 		return nil // Not sneaking, no need to send packet
 	}
 
+	if me.client == nil {
+		me.isSneaking = false // Mark as not sneaking even in test mode
+		return nil            // No-op in test mode
+	}
+
 	entityID := me.getBotEntityID()
 	var err error
-	if me.movementHandler != nil && me.client != nil {
+	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, common.ActionStopSneaking)
 	} else {
 		err = SendStopSneaking(me.client, me.packetMgr, entityID)

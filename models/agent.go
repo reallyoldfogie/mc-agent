@@ -3,14 +3,14 @@ package models
 import (
 	"context"
 	"io"
-
-	pk "github.com/Tnze/go-mc/net/packet"
 )
 
 // Agent is the primary interface for bot control and lifecycle management.
 type Agent interface {
 	AgentHandlers
 	AgentActions
+	CommandAgent
+	PlanAgent
 	ContainerOperations
 	ChatOperations
 	ScreenOperations
@@ -24,8 +24,8 @@ type Agent interface {
 
 	// Recipes (Update Recipes packet)
 	LastUpdateRecipes() (UpdateRecipesPayload, bool)
+	SetLastUpdateRecipes(payload *UpdateRecipesPayload)
 	ExportLastUpdateRecipesAsJSON(indent bool) (string, bool, error)
-	ParseUpdateRecipesPacket(p pk.Packet) error
 
 	// Dependency injection
 	SetTeleportAccepter(t TeleportAccepter)
@@ -43,7 +43,6 @@ type Agent interface {
 	// Position update (for movement executor wiring)
 	UpdatePosition(x, y, z float64, yaw, pitch float32)
 	GetPosition() (x, y, z float64, yaw, pitch float32, initialized bool)
-	GetPositionSimple() (x, y, z float64, initialized bool)
 
 	GetEntityID() int32
 	GetTrackedEntitiesForFollowing() map[int32]*TrackedEntity
@@ -52,7 +51,6 @@ type Agent interface {
 
 	// Registry access (version-agnostic lookups)
 	GetRegistry(id string) CustomRegistry
-	GetEntityTypeID(entityName string) (int32, bool)
 	LoadEntityTypesFromRegistry(dataPath string) error
 
 	// Player UUID resolution
@@ -64,12 +62,8 @@ type Agent interface {
 	// SetTargetSelector injects a TargetSelector for use by other subsystems.
 	SetTargetSelector(ts TargetSelector)
 
-	SendChat(string) error
-
 	// Plan execution
 	StartPlan(plan Plan) error
-	StopPlan() error
-	PlanStatus() PlanStatus
 	PlanEvents() <-chan PlanEvent
 
 	RegistryItemManager() ItemManager

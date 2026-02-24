@@ -67,7 +67,7 @@ func (a *agent) onTeleported(x, y, z float64, yaw, pitch float32) {
 func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error {
 	a.setPosition(x, y, z, yaw, pitch)
 	// Prefer auto-created player, fall back to injected teleport
-	var t TeleportAccepter = a.player
+	t := a.player
 	if t == nil {
 		t = a.teleport
 	}
@@ -82,7 +82,7 @@ func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, te
 func (a *agent) SendChat(message string) error {
 	a.mu.Lock()
 	// Prefer auto-created chatMgr, fall back to injected chat
-	var cm Chat = a.chatMgr
+	cm := a.chatMgr
 	if cm == nil {
 		cm = a.chat
 	}

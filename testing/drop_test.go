@@ -5,14 +5,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
 // TestPlayerAction_DropItem tests item drop action
 func TestPlayerAction_DropItem(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "action_drop_item", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntity(t, "action_drop_item", tt.MCVersion)
 			defer env.Cancel()
 
 			// Give bot some dirt to drop
@@ -47,9 +48,9 @@ func TestPlayerAction_DropItem(t *testing.T) {
 
 // TestPlayerAction_DropStack tests dropping entire stack
 func TestPlayerAction_DropStack(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntity(t, "action_drop_stack", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntity(t, "action_drop_stack", tt.MCVersion)
 			defer env.Cancel()
 
 			// Give bot stack of dirt

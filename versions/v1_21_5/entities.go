@@ -109,8 +109,8 @@ func (e *entityHandler) ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err
 
 	// Convert from []pk.VarInt to []int32
 	ids := pkt.EntityIds.Get()
-	entityIDs = make([]int32, len(*ids))
-	for i, id := range *ids {
+	entityIDs = make([]int32, len(ids))
+	for i, id := range ids {
 		entityIDs[i] = int32(id)
 	}
 
@@ -233,7 +233,7 @@ func (e *entityHandler) ParseSyncEntityPosition(p pk.Packet) (entityID int32, x,
 		return 0, 0, 0, 0, 0, 0, 0, 0, 0, false, common.ErrPacketParse{PacketName: "SyncEntityPosition", Cause: err}
 	}
 
-		entityID = int32(pkt.EntityId)
+	entityID = int32(pkt.EntityId)
 	x = float64(pkt.X)
 	y = float64(pkt.Y)
 	z = float64(pkt.Z)

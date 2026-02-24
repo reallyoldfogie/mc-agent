@@ -4,7 +4,7 @@ package common
 
 import (
 	pk "github.com/Tnze/go-mc/net/packet"
-	"github.com/reallyoldfogie/mc-agent/models"
+	agent_models "github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -137,6 +137,11 @@ type PlayHandler interface {
 	// ParseGameEvent parses a ClientboundGameEvent packet.
 	// Returns eventType, position (x, y, z), and value.
 	ParseGameEvent(p pk.Packet) (eventType int, x, y, z, value float64, err error)
+
+	// ParseUpdateRecipes parses a ClientboundUpdateRecipes (DeclareRecipes) packet.
+	// Returns the parsed payload containing property sets and stonecutter entries.
+	// Returns nil, nil if the packet format is not supported for this version.
+	ParseUpdateRecipes(p pk.Packet) (*agent_models.UpdateRecipesPayload, error)
 }
 
 // MovementHandler handles player movement packets.
@@ -182,7 +187,7 @@ type ActionHandler interface {
 	// hand: 0=main hand, 1=offhand
 	// sequence: anti-cheat sequence number
 	// yaw, pitch: player rotation at time of use
-	SendUseItem(conn PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error
+	SendUseItem(conn PacketWriter, hand agent_models.Hand, sequence int32, yaw, pitch float32) error
 
 	// SendPlayerAction sends a player action packet (dig, release bow, swap hands, etc.).
 	// status: action ID (see PlayerAction constants)
@@ -193,7 +198,7 @@ type ActionHandler interface {
 
 	// SendSwing sends an arm swing animation packet.
 	// hand: 0=main hand, 1=offhand
-	SendSwing(conn PacketWriter, hand models.Hand) error
+	SendSwing(conn PacketWriter, hand agent_models.Hand) error
 }
 
 // EntityHandler handles entity-related packets.
@@ -246,14 +251,14 @@ type EntityHandler interface {
 	// entityID: target entity
 	// hand: 0=main hand, 1=offhand
 	// sneaking: whether player is sneaking
-	SendInteract(conn PacketWriter, entityID int32, hand models.Hand, sneaking bool) error
+	SendInteract(conn PacketWriter, entityID int32, hand agent_models.Hand, sneaking bool) error
 
 	// SendInteractAt sends an entity interaction packet at a specific position.
 	// entityID: target entity
 	// targetX, targetY, targetZ: position on entity to interact with
 	// hand: 0=main hand, 1=offhand
 	// sneaking: whether player is sneaking
-	SendInteractAt(conn PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error
+	SendInteractAt(conn PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand agent_models.Hand, sneaking bool) error
 
 	// SendAttack sends an attack packet to hit an entity (left-click).
 	// entityID: target entity
@@ -286,7 +291,7 @@ type ContainerHandler interface {
 	// cursorX, cursorY, cursorZ: click position on block face (0.0-1.0)
 	// insideBlock: whether the player's head is inside a block
 	// sequence: anti-cheat sequence number
-	SendUseItemOn(conn PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
+	SendUseItemOn(conn PacketWriter, hand agent_models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
 
 	// ParseOpenScreen parses a container open packet
 	ParseOpenScreen(p pk.Packet) (windowID int8, windowType int32, title string, err error)

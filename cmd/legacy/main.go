@@ -2479,8 +2479,8 @@ func DoLookAt(targetX, targetY, targetZ float64) error {
 	botPosition.mu.RUnlock()
 
 	// Calculate look angles from bot's eyes to target's eyes
-	// Standard player eye height is 1.62 blocks above feet
-	yaw, pitch := calculateLookAngles(botX, botY+1.62, botZ, targetX, targetY+1.62, targetZ)
+	// Use standing eye height from models
+	yaw, pitch := calculateLookAngles(botX, botY+models.PlayerEyeHeight, botZ, targetX, targetY+models.PlayerEyeHeight, targetZ)
 
 	// Update our tracked rotation
 	botPosition.mu.Lock()

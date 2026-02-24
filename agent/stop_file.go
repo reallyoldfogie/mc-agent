@@ -19,6 +19,11 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 		return // Stop file watching is disabled
 	}
 
+	clientName := "unknownClient"
+	if a.client != nil {
+		clientName = a.client.Name()
+	}
+
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
@@ -31,7 +36,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 				return
 			case <-ticker.C:
 				if _, err := os.Stat(stopPath); err == nil {
-					log.Printf("[Agent %s] Stop file %s detected; initiating shutdown", a.client.Name(), stopPath)
+					log.Printf("[Agent %s] Stop file %s detected; initiating shutdown", clientName, stopPath)
 					a.removeStopFileIfExists(stopPath)
 					// Trigger shutdown by canceling the context
 					a.mu.Lock()
@@ -41,7 +46,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 					a.mu.Unlock()
 					return
 				} else if !errors.Is(err, os.ErrNotExist) {
-					log.Printf("[Agent %s] Error checking stop file %s: %v", a.client.Name(), stopPath, err)
+					log.Printf("[Agent %s] Error checking stop file %s: %v", clientName, stopPath, err)
 				}
 			}
 		}
@@ -50,9 +55,14 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 
 // removeStopFileIfExists removes the stop file and logs any errors.
 func (a *agent) removeStopFileIfExists(stopPath string) {
+	clientName := "unknownClient"
+	if a.client != nil {
+		clientName = a.client.Name()
+	}
+
 	if err := os.Remove(stopPath); err == nil {
-		log.Printf("[Agent %s] Removed stop file %s", a.client.Name(), stopPath)
+		log.Printf("[Agent %s] Removed stop file %s", clientName, stopPath)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		log.Printf("[Agent %s] Error removing stop file %s: %v", a.client.Name(), stopPath, err)
+		log.Printf("[Agent %s] Error removing stop file %s: %v", clientName, stopPath, err)
 	}
 }

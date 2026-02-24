@@ -11,10 +11,10 @@ import "github.com/reallyoldfogie/mc-agent/models"
 // IMPORTANT: Wind charges do NOT use standard gravity.
 // Instead, they use a custom vertical adjustment of -0.02 per tick
 type WindChargeModel struct {
-	drag         float64  // Air drag coefficient
-	waterDrag    float64  // Water drag coefficient
-	initialSpeed float64  // Throw speed
-	customAccel  float64  // Custom vertical adjustment (-0.02)
+	drag         float64 // Air drag coefficient
+	waterDrag    float64 // Water drag coefficient
+	initialSpeed float64 // Throw speed
+	customAccel  float64 // Custom vertical adjustment (-0.02)
 }
 
 // Type returns the projectile type

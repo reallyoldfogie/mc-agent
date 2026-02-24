@@ -588,7 +588,7 @@ func (fm *followManager) followWithMoveTowards(botX, botY, botZ, targetX, target
 	}
 
 	// Look at the target player
-	if err := fm.movementExecutor.LookAt(targetX, targetY+1.62, targetZ, true); err != nil {
+	if err := fm.movementExecutor.LookAt(targetX, targetY, targetZ, true); err != nil {
 		log.Printf("[FollowManager %s] LookAt target player error: %v", fm.getFollowerName(), err)
 	}
 

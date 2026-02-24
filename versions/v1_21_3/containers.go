@@ -46,7 +46,7 @@ func (c *containerHandler) SendContainerClick(conn common.PacketWriter, windowID
 		}
 		changedSlotsArr = append(changedSlotsArr, entry)
 	}
-	pkt.ChangedSlots.Set(&changedSlotsArr)
+	pkt.ChangedSlots.Set(changedSlotsArr)
 
 	// Set cursor item - same Slot structure
 	if carriedItem.Present {
@@ -146,8 +146,8 @@ func (c *containerHandler) ParseContainerSetContent(p pk.Packet) (windowID int8,
 
 	// Convert items array
 	items := pkt.Items.Get()
-	slots = make([]common.Slot, len(*items))
-	for i, item := range *items {
+	slots = make([]common.Slot, len(items))
+	for i, item := range items {
 		slots[i] = convertSlotFromProtocol(item)
 	}
 

@@ -3,10 +3,13 @@ package v1_21_8
 
 import (
 	"bytes"
+	"fmt"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	agent_models "github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/basetypes"
+	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.8/play/serverbound"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -223,15 +226,120 @@ func (p *playHandler) ParseDisconnect(pkt pk.Packet) (reason string, err error) 
 	return string(r), nil
 }
 
-// ParseGameEvent parses a ClientboundGameEvent packet.
+// ParseGameEvent parses a ClientboundGameStateChange packet (Game Event in 1.20 and earlier).
 func (p *playHandler) ParseGameEvent(pkt pk.Packet) (eventType int, x, y, z, value float64, err error) {
-	var (
-		eventTypeVar     pk.VarInt
-		xVar, yVar, zVar pk.Double
-		valueVar         pk.Float
-	)
-	if err = pkt.Scan(&eventTypeVar, &xVar, &yVar, &zVar, &valueVar); err != nil {
-		return 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "GameEvent", Cause: err}
+	gameStateChange := cb.NewGameStateChange()
+	if err = gameStateChange.Scan(pkt); err != nil {
+		return 0, 0, 0, 0, 0, common.ErrPacketParse{PacketName: "GameStateChange", Cause: err}
 	}
-	return int(eventTypeVar), float64(xVar), float64(yVar), float64(zVar), float64(valueVar), nil
+
+	// Find event type ID from reason string using GameStateChangeReasonMappings
+	var eventID int
+	for id, reason := range cb.GameStateChangeReasonMappings {
+		if reason == gameStateChange.Reason.Value {
+			eventID = int(id)
+			break
+		}
+	}
+
+	return eventID, 0, 0, 0, float64(gameStateChange.GameMode), nil
+}
+
+// ParseUpdateRecipes parses a ClientboundDeclareRecipes packet for 1.21.8.
+// Uses protocol structs to parse property sets and stonecutter recipes.
+func (p *playHandler) ParseUpdateRecipes(pkt pk.Packet) (*agent_models.UpdateRecipesPayload, error) {
+	declareRecipes := cb.NewDeclareRecipes()
+	if err := declareRecipes.Scan(pkt); err != nil {
+		return nil, common.ErrPacketParse{PacketName: "DeclareRecipes", Cause: fmt.Errorf("failed to scan packet: %w", err)}
+	}
+	var payload agent_models.UpdateRecipesPayload
+
+	// Parse property sets (recipes)
+	recipes := declareRecipes.Recipes.Get()
+	for _, recipe := range recipes {
+		items := recipe.Items.Get()
+		var itemList []int32
+		for _, itemID := range items {
+			itemList = append(itemList, int32(itemID))
+		}
+		payload.PropertySets = append(payload.PropertySets, agent_models.PropertySet{
+			ID:    string(recipe.Name),
+			Items: itemList,
+		})
+	}
+
+	// Parse stonecutter entries
+	stonecutterRecipes := declareRecipes.StoneCutterRecipes.Get()
+	for _, recipe := range stonecutterRecipes {
+		// Convert IDSet to SlotDisplay
+		var input agent_models.SlotDisplay
+		if recipe.Input.IsTagList {
+			// Tag representation - not used in recipe inputs
+			input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+		} else {
+			// IDs list representation
+			idsAry := recipe.Input.IDs.Get()
+			if len(idsAry) == 0 {
+				input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+			} else if len(idsAry) == 1 {
+				input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeItem, Item: &agent_models.SlotDisplayItem{ItemID: int32(idsAry[0])}}
+			} else {
+				// Multiple items - create composite
+				options := make([]agent_models.SlotDisplay, len(idsAry))
+				for optIdx, itemID := range idsAry {
+					options[optIdx] = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeItem, Item: &agent_models.SlotDisplayItem{ItemID: int32(itemID)}}
+				}
+				input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeComposite, Composite: options}
+			}
+		}
+
+		// Convert protocol SlotDisplay to agent model
+		result := p.convertProtocolSlotDisplay(recipe.SlotDisplay)
+
+		payload.StonecutterEntries = append(payload.StonecutterEntries, agent_models.StonecutterEntry{
+			Input:   input,
+			Results: []agent_models.SlotDisplay{result},
+		})
+	}
+
+	return &payload, nil
+}
+
+// convertProtocolSlotDisplay converts protocol SlotDisplay to agent model SlotDisplay.
+func (p *playHandler) convertProtocolSlotDisplay(slot cb.SlotDisplay) agent_models.SlotDisplay {
+	switch slot.Type.Value {
+	case "empty", "any_fuel":
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	case "item":
+		if itemID, ok := slot.Data.(*pk.VarInt); ok && itemID != nil {
+			return agent_models.SlotDisplay{
+				Type: agent_models.SlotDisplayTypeItem,
+				Item: &agent_models.SlotDisplayItem{ItemID: int32(*itemID)},
+			}
+		}
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	case "item_stack":
+		if slotData, ok := slot.Data.(*basetypes.Slot); ok && slotData != nil && slotData.ItemCount > 0 {
+			return agent_models.SlotDisplay{
+				Type: agent_models.SlotDisplayTypeItem,
+				Item: &agent_models.SlotDisplayItem{ItemID: int32(slotData.ItemCount)},
+			}
+		}
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	case "with_remainder":
+		if wrData, ok := slot.Data.(*cb.SlotDisplayDataWithRemainder); ok && wrData != nil {
+			ingredient := p.convertProtocolSlotDisplay(wrData.Input)
+			remainder := p.convertProtocolSlotDisplay(wrData.Remainder)
+			return agent_models.SlotDisplay{
+				Type: agent_models.SlotDisplayTypeWithRemainder,
+				WithRemainder: &agent_models.SlotDisplayWithRemainder{
+					Ingredient: ingredient,
+					Remainder:  remainder,
+				},
+			}
+		}
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	default:
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
 }

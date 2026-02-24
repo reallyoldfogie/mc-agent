@@ -30,12 +30,10 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	//Deprecated: Use FireBowAt for targeted firing
 	FireBow() error
 
-	FireBowAt(x, y, z float64, callbacks ...ProjectileHitCallback) error
+	FireBowAt(x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
 	FireBowWithPitch(pitch, yaw float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error) // Returns []models.TrajectoryPoint
-	FireBowAtFullPower(x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)  // Testing variant with guaranteed full power - returns []models.TrajectoryPoint
-	FireBowAtDebug(x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)      // Returns []models.TrajectoryPoint
 
 	// Projectile actions
 	// projectileType: models.ProjectileType value
-	ThrowProjectileAt(ctx context.Context, projectileType ProjectileType, x, y, z float64, callbacks ...ProjectileHitCallback) error
+	ThrowProjectileAt(ctx context.Context, projectileType ProjectileType, x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
 }

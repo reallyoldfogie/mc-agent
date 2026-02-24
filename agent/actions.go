@@ -11,47 +11,139 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
-// MoveForward moves the bot forward based on current yaw.
+// MoveForward moves the bot forward based on current yaw using manual input control.
+// Uses frame-by-frame control with the physics executor to move the specified distance.
+// When sneaking, respects edge prevention naturally through physics constraints.
+// Returns success when the movement completes or limited progress indicates edge prevention.
 func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 	if a.moveExec == nil {
 		return errors.New("movement executor not available")
 	}
+
+	// MoveForward requires PhysicsMovementExecutor for proper manual control
+	pe, ok := a.moveExec.(*movement.PhysicsMovementExecutor)
+	if !ok {
+		return fmt.Errorf("MoveForward requires PhysicsMovementExecutor, got %T", a.moveExec)
+	}
+
 	x, y, z, yaw, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+
+	// Calculate throttle as world-space direction vector based on current yaw
+	// Throttle represents absolute world direction, not player-relative WASD
+	// Forward movement in world coordinates at current yaw angle
 	yawRad := float64(yaw) * math.Pi / 180
-	dx := -math.Sin(yawRad) * dist
-	dz := math.Cos(yawRad) * dist
-	tx, tz := x+dx, z+dz
-	const stepSize = 0.2
-	const stepDelay = 50 * time.Millisecond
-	total := math.Abs(dist)
-	steps := int(math.Ceil(total / stepSize))
-	for i := 0; i < steps; i++ {
-		if ctx.Err() != nil {
+	throttleX := -math.Sin(yawRad)
+	throttleZ := math.Cos(yawRad)
+
+	// Store starting position for progress detection
+	startPos := models.V3{X: x, Y: y, Z: z}
+
+	// Calculate movement time based on speed and distance
+	// Walk speed: ~0.215 blocks/tick at max
+	// Sneak speed: 30% of walk speed = ~0.065 blocks/tick
+	speedFactor := 1.0
+	if a.moveExec.IsSneaking() {
+		speedFactor = physics.SneakMultiplier // 0.3
+	}
+	baseSpeed := 0.215 // blocks per tick
+	actualSpeed := baseSpeed * speedFactor
+	tickCount := math.Abs(dist) / actualSpeed
+	// Add 50% buffer for acceleration ramp-up
+	tickCount *= 1.5
+
+	// Enter manual mode for direct control
+	if err := pe.EnterManualMode(); err != nil {
+		return fmt.Errorf("failed to enter manual mode: %w", err)
+	}
+	defer pe.ExitManualMode()
+	log.Printf("[MoveForward] Entered manual mode, currentYaw=%.2f, targetDist=%.2f", yaw, dist)
+
+	// Set up movement with calculated throttle direction
+	if err := pe.SetManualThrottle(throttleX, throttleZ); err != nil {
+		return fmt.Errorf("failed to set throttle: %w", err)
+	}
+	log.Printf("[MoveForward] Throttle set to X=%.4f, Z=%.4f (forward direction at yaw=%.2f)", throttleX, throttleZ, yaw)
+
+	// Keep current yaw (we're moving forward, not turning)
+	if err := pe.SetManualRotation(math.NaN(), math.NaN()); err != nil {
+		return fmt.Errorf("failed to set rotation: %w", err)
+	}
+	log.Printf("[MoveForward] Yaw maintained at current direction (%.2f)", yaw)
+
+	// Execute movement for the calculated duration with context awareness
+	tickInterval := 50 * time.Millisecond
+	targetDuration := time.Duration(int64(tickCount*50)) * time.Millisecond
+	startTime := time.Now()
+	lastProgressTime := startTime
+	lastProgressPos := startPos
+
+	for {
+		select {
+		case <-ctx.Done():
 			return ctx.Err()
+		default:
 		}
-		prog := float64(i+1) / float64(steps)
-		if prog > 1 {
-			prog = 1
+
+		elapsed := time.Since(startTime)
+
+		// Check if we've reached the target distance
+		currentX, _, currentZ, _, _, ok := a.GetPosition()
+		if ok {
+			currentPos := models.V3{X: currentX, Y: 0, Z: currentZ}
+			distMoved := math.Sqrt((currentX-startPos.X)*(currentX-startPos.X) +
+				(currentZ-startPos.Z)*(currentZ-startPos.Z))
+
+			// Check for progress
+			progress := currentPos.DistanceTo(lastProgressPos)
+
+			if progress > 0.05 {
+				lastProgressPos = currentPos
+				lastProgressTime = time.Now()
+			}
+
+			// Success: we've moved the requested distance (within tolerance)
+			if distMoved >= math.Abs(dist)*0.95 {
+				log.Printf("[MoveForward] Movement complete: %.2f/%.2f blocks", distMoved, dist)
+				return nil
+			}
+
+			// Edge prevention: very limited movement despite time elapsed
+			if elapsed > time.Duration(int64(tickCount*25))*time.Millisecond && distMoved < 0.2 {
+				log.Printf("[MoveForward] Movement blocked by edge prevention after %.2f blocks", distMoved)
+				return nil // Return success - edge prevention is working
+			}
+
+			// Stuck detection: no progress for extended time
+			if time.Since(lastProgressTime) > 5*time.Second {
+				log.Printf("[MoveForward] No progress for 5 seconds, stopping after %.2f/%.2f blocks", distMoved, dist)
+				return fmt.Errorf("movement stalled: only moved %.2f of %.2f blocks", distMoved, dist)
+			}
 		}
-		nx := x + dx*prog
-		nz := z + dz*prog
-		if err := a.moveExec.SendPosition(nx, y, nz, true); err != nil {
-			return err
+
+		// Timeout: exceeded reasonable movement time
+		if elapsed > targetDuration+10*time.Second {
+			if ok {
+				currentX, _, currentZ, _, _, _ := a.GetPosition()
+				distMoved := math.Sqrt((currentX-startPos.X)*(currentX-startPos.X) +
+					(currentZ-startPos.Z)*(currentZ-startPos.Z))
+				log.Printf("[MoveForward] Movement timeout after %.2f/%.2f blocks", distMoved, dist)
+			}
+			return errors.New("movement timed out")
 		}
-		if err := sleepWithContext(ctx, stepDelay); err != nil {
+
+		// Sleep before next tick check
+		if err := sleepWithContext(ctx, tickInterval); err != nil {
 			return err
 		}
 	}
-	_ = tx
-	_ = tz
-	return nil
 }
 
 // MoveUp moves the bot vertically by distance.
@@ -85,7 +177,7 @@ func (a *agent) MoveUp(ctx context.Context, dist float64) error {
 	return nil
 }
 
-// stabilizeSneaking starts sneaking and sends position packets to hold position.
+// stabilizeSneaking
 // This prevents the server from applying gravity before the sneak takes effect.
 func (a *agent) stabilizeSneaking(ctx context.Context) error {
 	if a.moveExec == nil {
@@ -158,7 +250,7 @@ func (a *agent) MoveUpAndSneak(ctx context.Context, dist float64) error {
 	targetY := y + dist
 
 	// Move up to the destination
-	for i := 0; i < steps; i++ {
+	for i := range steps {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -276,7 +368,7 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 	// Use physics package to calculate yaw consistently with arrow firing
 	// CRITICAL: Use arrow spawn height (1.52), not eye height (1.62)
 	// This ensures pitch calculation matches physics system expectations
-	botOrigin := models.V3{X: botX, Y: botY + 1.52, Z: botZ}
+	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
 	targetPos := models.V3{X: x, Y: y, Z: z}
 
 	// Calculate yaw using physics formula: atan2(dZ, dX) - 90
@@ -285,7 +377,7 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 
 	// Calculate pitch based on arrow spawn height (1.52, not 1.62)
 	// Arrow spawns at: eye - 0.1 = (standing height 1.62) - 0.1 = 1.52
-	dy := y - (botY + 1.52)
+	dy := y - (botY + a.getEyeHeight() - .1)
 	dx := x - botX
 	dz := z - botZ
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
@@ -443,49 +535,58 @@ func (a *agent) LineTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 	return nil
 }
 
+// blockInteractionSetup performs the common setup for block interactions.
+// Returns the hit point, block coordinates, and cursor coordinates relative to the block.
+// Returns an error if the context is cancelled or line of sight cannot be established.
+func (a *agent) blockInteractionSetup(ctx context.Context, x, y, z float64) (hitX, hitY, hitZ, blockX, blockY, blockZ, cursorX, cursorY, cursorZ float32, err error) {
+	if ctx.Err() != nil {
+		err = ctx.Err()
+		return
+	}
+
+	canAccess, hitPtX, hitPtY, hitPtZ, err := a.hasLineOfSightForAccess(ctx, x, y, z)
+	if err != nil {
+		return
+	}
+	if !canAccess {
+		err = errors.New("no line of sight to block")
+		return
+	}
+
+	// Calculate block coordinates (floored from world position)
+	blkX := math.Floor(x)
+	blkY := math.Floor(y)
+	blkZ := math.Floor(z)
+
+	// Calculate cursor coordinates relative to block (0-1 within the block)
+	crsX := float32(clampFloat64(hitPtX-blkX, 0, 1))
+	crsY := float32(clampFloat64(hitPtY-blkY, 0, 1))
+	crsZ := float32(clampFloat64(hitPtZ-blkZ, 0, 1))
+
+	return float32(hitPtX), float32(hitPtY), float32(hitPtZ),
+		float32(blkX), float32(blkY), float32(blkZ),
+		crsX, crsY, crsZ, nil
+}
+
 // OpenContainerAt opens a container at the specified position.
 func (a *agent) OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error) {
-	if ctx.Err() != nil {
-		return 0, ctx.Err()
-	}
-	blockX := math.Floor(x)
-	blockY := math.Floor(y)
-	blockZ := math.Floor(z)
-	canAccess, hitX, hitY, hitZ, err := a.hasLineOfSightForAccess(ctx, blockX, blockY, blockZ)
+	_, _, _, _, _, _, cursorX, cursorY, cursorZ, err := a.blockInteractionSetup(ctx, x, y, z)
 	if err != nil {
 		return 0, err
 	}
-	if !canAccess {
-		return 0, errors.New("no line of sight to container")
-	}
-	cursorX := float32(clampFloat64(hitX-blockX, 0, 1))
-	cursorY := float32(clampFloat64(hitY-blockY, 0, 1))
-	cursorZ := float32(clampFloat64(hitZ-blockZ, 0, 1))
 	return a.OpenContainer(models.V3{X: x, Y: y, Z: z}, models.BlockFace(face), timeout, cursorX, cursorY, cursorZ)
 }
 
 // UseItemOnBlock uses the held item on a block.
 func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error {
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	blockX := math.Floor(x)
-	blockY := math.Floor(y)
-	blockZ := math.Floor(z)
-	canAccess, hitX, hitY, hitZ, err := a.hasLineOfSightForAccess(ctx, blockX, blockY, blockZ)
+	_, _, _, _, _, _, cursorX, cursorY, cursorZ, err := a.blockInteractionSetup(ctx, x, y, z)
 	if err != nil {
 		return err
-	}
-	if !canAccess {
-		return errors.New("no line of sight to block")
 	}
 	usage, err := a.itemUsageOrCreate()
 	if err != nil {
 		return err
 	}
-	cursorX := float32(clampFloat64(hitX-blockX, 0, 1))
-	cursorY := float32(clampFloat64(hitY-blockY, 0, 1))
-	cursorZ := float32(clampFloat64(hitZ-blockZ, 0, 1))
 	return usage.UseItemOnBlockWithCursor(models.V3{X: x, Y: y, Z: z}, items.BlockFace(face), models.Hand(hand), cursorX, cursorY, cursorZ)
 }
 
@@ -515,7 +616,7 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 		return false, errors.New("position not initialized")
 	}
 	ox := x
-	oy := y + 1.62
+	oy := y + a.getEyeHeight()
 	oz := z
 	dx := tx - ox
 	dy := ty - oy
@@ -785,19 +886,26 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 		return false, 0, 0, 0, errors.New("position not initialized")
 	}
 	ox := x
-	oy := y + 1.62
+	oy := y + a.getEyeHeight()
 	oz := z
-	stateID, loaded := world.GetBlockAt(targetX+0.5, targetY+0.5, targetZ+0.5)
+	// Convert target position to block coordinates using floor division to handle
+	// both integer and float inputs correctly. This ensures that:
+	// - Integer block coordinates (5, 3, 7) work correctly
+	// - Float center coordinates (5.5, 3.5, 7.5) map to the correct block
+	blockX := int(math.Floor(targetX))
+	blockY := int(math.Floor(targetY))
+	blockZ := int(math.Floor(targetZ))
+	stateID, loaded := world.GetBlockAt(float64(blockX)+0.5, float64(blockY)+0.5, float64(blockZ)+0.5)
 	if !loaded {
 		return false, 0, 0, 0, fmt.Errorf("chunk not loaded at target position")
 	}
 	if stateID == 0 {
-		a.logLineOfSightFailure(ctx, ox, oy, oz, int(targetX), int(targetY), int(targetZ))
+		a.logLineOfSightFailure(ctx, ox, oy, oz, blockX, blockY, blockZ)
 		return false, 0, 0, 0, nil
 	}
-	points := a.blockSurfaceSamplePoints(stateID, int(targetX), int(targetY), int(targetZ))
+	points := a.blockSurfaceSamplePoints(stateID, blockX, blockY, blockZ)
 	if len(points) == 0 {
-		a.logLineOfSightFailure(ctx, ox, oy, oz, int(targetX), int(targetY), int(targetZ))
+		a.logLineOfSightFailure(ctx, ox, oy, oz, blockX, blockY, blockZ)
 		return false, 0, 0, 0, nil
 	}
 	for _, pt := range points {
@@ -809,7 +917,7 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 			return true, pt.X, pt.Y, pt.Z, nil
 		}
 	}
-	a.logLineOfSightFailure(ctx, ox, oy, oz, int(targetX), int(targetY), int(targetZ))
+	a.logLineOfSightFailure(ctx, ox, oy, oz, blockX, blockY, blockZ)
 	return false, 0, 0, 0, nil
 }
 

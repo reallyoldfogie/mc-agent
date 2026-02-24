@@ -137,8 +137,8 @@ func (msp *MockShapeProvider) FullBlockName(blockStateID uint32) string {
 // Test helper: Create physics executor for testing
 func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 	// Mock position tracking
-	var currentX, currentY, currentZ float64 = 0, 64, 0
-	var currentYaw, currentPitch float32 = 0, 0
+	currentX, currentY, currentZ := 0.0, 64.0, 0.0
+	var currentYaw, currentPitch float32 = 0.0, 0.0
 	var entityID int32 = 1
 
 	getBotPos := func() (float64, float64, float64, float32, float32, bool) {

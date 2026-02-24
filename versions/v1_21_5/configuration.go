@@ -100,7 +100,7 @@ func (c *configurationHandler) ParseRegistryData(p pk.Packet) (registryID string
 	// Extract entries from the array
 	entriesData := pkt.Entries.Get()
 	if entriesData != nil {
-		for i, entry := range *entriesData {
+		for i, entry := range entriesData {
 			key := string(entry.Key)
 			// For now, just use the index as the value since the actual value is NBT data
 			// In a full implementation, you'd parse the NBT to extract meaningful data

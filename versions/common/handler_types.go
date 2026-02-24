@@ -7,55 +7,55 @@ type MetadataHandlerType int
 
 const (
 	// Core types (0-8)
-	HandlerByte                 MetadataHandlerType = 0  // uint8
-	HandlerInteger              MetadataHandlerType = 1  // int32 (VarInt)
-	HandlerLong                 MetadataHandlerType = 2  // int64 (VarLong)
-	HandlerFloat                MetadataHandlerType = 3  // float32 (IEEE 754)
-	HandlerString               MetadataHandlerType = 4  // UTF-8 string
-	HandlerTextComponent        MetadataHandlerType = 5  // Chat component
+	HandlerByte                  MetadataHandlerType = 0 // uint8
+	HandlerInteger               MetadataHandlerType = 1 // int32 (VarInt)
+	HandlerLong                  MetadataHandlerType = 2 // int64 (VarLong)
+	HandlerFloat                 MetadataHandlerType = 3 // float32 (IEEE 754)
+	HandlerString                MetadataHandlerType = 4 // UTF-8 string
+	HandlerTextComponent         MetadataHandlerType = 5 // Chat component
 	HandlerOptionalTextComponent MetadataHandlerType = 6 // Optional chat component
-	HandlerItemStack            MetadataHandlerType = 7  // Inventory item
-	HandlerBoolean              MetadataHandlerType = 8  // bool
+	HandlerItemStack             MetadataHandlerType = 7 // Inventory item
+	HandlerBoolean               MetadataHandlerType = 8 // bool
 
 	// Position and rotation types (9-12)
-	HandlerRotation             MetadataHandlerType = 9  // 3× float32 (pitch, yaw, roll)
-	HandlerBlockPos             MetadataHandlerType = 10 // BlockPos (3× int32)
-	HandlerOptionalBlockPos     MetadataHandlerType = 11 // Optional BlockPos
-	HandlerFacing               MetadataHandlerType = 12 // Direction enum (0-5)
+	HandlerRotation         MetadataHandlerType = 9  // 3× float32 (pitch, yaw, roll)
+	HandlerBlockPos         MetadataHandlerType = 10 // BlockPos (3× int32)
+	HandlerOptionalBlockPos MetadataHandlerType = 11 // Optional BlockPos
+	HandlerFacing           MetadataHandlerType = 12 // Direction enum (0-5)
 
 	// Reference types (13-15)
-	HandlerLazyEntityReference  MetadataHandlerType = 13 // Optional entity ID (int32)
-	HandlerBlockState           MetadataHandlerType = 14 // Block state ID (VarInt)
-	HandlerOptionalBlockState   MetadataHandlerType = 15 // Optional block state
+	HandlerLazyEntityReference MetadataHandlerType = 13 // Optional entity ID (int32)
+	HandlerBlockState          MetadataHandlerType = 14 // Block state ID (VarInt)
+	HandlerOptionalBlockState  MetadataHandlerType = 15 // Optional block state
 
 	// Complex types (16-20)
-	HandlerNBTCompound          MetadataHandlerType = 16 // Full NBT structure
-	HandlerParticle             MetadataHandlerType = 17 // Particle effect
-	HandlerParticleList         MetadataHandlerType = 18 // List of particle effects
-	HandlerVillagerData         MetadataHandlerType = 19 // Villager profession/level/biome (packed int)
-	HandlerOptionalInt          MetadataHandlerType = 20 // Optional int (0=absent, >0=value-1)
+	HandlerNBTCompound  MetadataHandlerType = 16 // Full NBT structure
+	HandlerParticle     MetadataHandlerType = 17 // Particle effect
+	HandlerParticleList MetadataHandlerType = 18 // List of particle effects
+	HandlerVillagerData MetadataHandlerType = 19 // Villager profession/level/biome (packed int)
+	HandlerOptionalInt  MetadataHandlerType = 20 // Optional int (0=absent, >0=value-1)
 
 	// Enum types (21-28)
-	HandlerEntityPose           MetadataHandlerType = 21 // Pose enum (standing, sneaking, etc.)
-	HandlerCatVariant           MetadataHandlerType = 22 // Cat color variant registry entry
-	HandlerCowVariant           MetadataHandlerType = 23 // Cow variant registry entry
-	HandlerWolfVariant          MetadataHandlerType = 24 // Wolf color variant registry entry
-	HandlerWolfSoundVariant     MetadataHandlerType = 25 // Wolf bark type registry entry
-	HandlerFrogVariant          MetadataHandlerType = 26 // Frog species variant registry entry
-	HandlerPigVariant           MetadataHandlerType = 27 // Pig variant registry entry
-	HandlerChickenVariant       MetadataHandlerType = 28 // Chicken variant registry entry
+	HandlerEntityPose       MetadataHandlerType = 21 // Pose enum (standing, sneaking, etc.)
+	HandlerCatVariant       MetadataHandlerType = 22 // Cat color variant registry entry
+	HandlerCowVariant       MetadataHandlerType = 23 // Cow variant registry entry
+	HandlerWolfVariant      MetadataHandlerType = 24 // Wolf color variant registry entry
+	HandlerWolfSoundVariant MetadataHandlerType = 25 // Wolf bark type registry entry
+	HandlerFrogVariant      MetadataHandlerType = 26 // Frog species variant registry entry
+	HandlerPigVariant       MetadataHandlerType = 27 // Pig variant registry entry
+	HandlerChickenVariant   MetadataHandlerType = 28 // Chicken variant registry entry
 
 	// Specialized types (29-34)
-	HandlerOptionalGlobalPos    MetadataHandlerType = 29 // Optional cross-dimension position
-	HandlerPaintingVariant      MetadataHandlerType = 30 // Painting type registry entry
-	HandlerSnifferState         MetadataHandlerType = 31 // Sniffer state enum
-	HandlerArmadilloState       MetadataHandlerType = 32 // Armadillo state enum
-	HandlerVector3F             MetadataHandlerType = 33 // 3× float32 (X, Y, Z)
-	HandlerQuaternionF          MetadataHandlerType = 34 // 4× float32 quaternion (X, Y, Z, W)
+	HandlerOptionalGlobalPos MetadataHandlerType = 29 // Optional cross-dimension position
+	HandlerPaintingVariant   MetadataHandlerType = 30 // Painting type registry entry
+	HandlerSnifferState      MetadataHandlerType = 31 // Sniffer state enum
+	HandlerArmadilloState    MetadataHandlerType = 32 // Armadillo state enum
+	HandlerVector3F          MetadataHandlerType = 33 // 3× float32 (X, Y, Z)
+	HandlerQuaternionF       MetadataHandlerType = 34 // 4× float32 quaternion (X, Y, Z, W)
 
 	// 1.21.9+ types
-	HandlerCopperGolemState     MetadataHandlerType = 35 // Copper Golem state enum
-	HandlerOxidationLevel       MetadataHandlerType = 36 // Oxidation level enum
+	HandlerCopperGolemState MetadataHandlerType = 35 // Copper Golem state enum
+	HandlerOxidationLevel   MetadataHandlerType = 36 // Oxidation level enum
 )
 
 // String returns the name of the handler type
@@ -221,7 +221,7 @@ func HandlerTypeFromString(typeStr string) MetadataHandlerType {
 
 // MetadataEntry represents a single entity metadata entry as received from the client
 type MetadataEntry struct {
-	Key       int32                  // Metadata key/index (0-254)
-	HandlerID MetadataHandlerType    // Type of the value
-	Value     any                    // Actual value (type depends on HandlerID)
+	Key       int32               // Metadata key/index (0-254)
+	HandlerID MetadataHandlerType // Type of the value
+	Value     any                 // Actual value (type depends on HandlerID)
 }

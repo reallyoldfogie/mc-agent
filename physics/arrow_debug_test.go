@@ -188,7 +188,7 @@ func TestArrowDebugFindOptimalAiming(t *testing.T) {
 	arrowPhys := GetProjectilePhysics(models.Arrow)
 
 	// Reference scenario: 46 blocks, 1.02 blocks down
-	origin := models.V3{X: 0, Y: 1.52, Z: 0}
+	origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
 	target := models.V3{X: 46, Y: 0.5, Z: 0}
 
 	t.Logf("Origin: (%.2f, %.2f, %.2f)", origin.X, origin.Y, origin.Z)

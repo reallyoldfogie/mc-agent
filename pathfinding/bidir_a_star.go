@@ -185,7 +185,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 		}
 
 		// Termination check: if the minimum f-cost in both open sets exceeds best path cost, we're done
-		var forwardMinF, backwardMinF float64 = 1e18, 1e18
+		forwardMinF, backwardMinF := 1e18, 1e18
 		if forwardOpen.Len() > 0 {
 			forwardMinF = (*forwardOpen)[0].fCost
 		}

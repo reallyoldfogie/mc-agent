@@ -221,12 +221,12 @@ func TestRealCapturedPackets(t *testing.T) {
 	for _, example := range examples {
 		t.Run(example.Name, func(t *testing.T) {
 			// Decode the base64 packet data
-		data, err := base64.StdEncoding.DecodeString(example.Base64Data)
-		require.NoError(t, err, "Failed to decode base64 packet data")
+			data, err := base64.StdEncoding.DecodeString(example.Base64Data)
+			require.NoError(t, err, "Failed to decode base64 packet data")
 
-		// Verify we can at least extract basic information
-		// The packet structure starts with entity ID (VarInt) and then metadata entries
-		reader := bytes.NewReader(data)
+			// Verify we can at least extract basic information
+			// The packet structure starts with entity ID (VarInt) and then metadata entries
+			reader := bytes.NewReader(data)
 
 			// Read entity ID
 			var entityID pk.VarInt

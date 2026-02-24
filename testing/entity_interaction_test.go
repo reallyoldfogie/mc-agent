@@ -27,9 +27,9 @@ func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, bo
 
 // TestEntityInteraction_Attack tests attacking an entity
 func TestEntityInteraction_Attack(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack", "survival", false, tt.mcVersion, DifficultyNormal, true)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack", "survival", false, tt.MCVersion, DifficultyNormal, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -171,9 +171,9 @@ func TestEntityInteraction_Attack(t *testing.T) {
 
 // TestEntityInteraction_SimpleInteract tests right-clicking an entity
 func TestEntityInteraction_SimpleInteract(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn a villager for testing (can be right-clicked for trade UI)
@@ -218,9 +218,9 @@ func TestEntityInteraction_SimpleInteract(t *testing.T) {
 
 // TestEntityInteraction_InteractAt tests right-clicking at a specific position on entity
 func TestEntityInteraction_InteractAt(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact_at", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact_at", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn a horse (good for testing interact-at on specific positions)
@@ -270,9 +270,9 @@ func TestEntityInteraction_InteractAt(t *testing.T) {
 
 // TestEntityInteraction_Sneaking tests entity interaction while sneaking
 func TestEntityInteraction_Sneaking(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact_sneak", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_interact_sneak", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn an armorstand (useful for precision interactions)
@@ -317,9 +317,9 @@ func TestEntityInteraction_Sneaking(t *testing.T) {
 
 // TestEntityInteraction_OffhandAttack tests attacking with offhand item
 func TestEntityInteraction_OffhandAttack(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack_offhand", "survival", false, tt.mcVersion, DifficultyNormal, true)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack_offhand", "survival", false, tt.MCVersion, DifficultyNormal, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -401,9 +401,9 @@ func TestEntityInteraction_OffhandAttack(t *testing.T) {
 
 // TestEntityInteraction_RapidAttacks tests rapid successive attacks
 func TestEntityInteraction_RapidAttacks(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack_rapid", "survival", false, tt.mcVersion, DifficultyNormal, true)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "entity_attack_rapid", "survival", false, tt.MCVersion, DifficultyNormal, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -489,9 +489,9 @@ func TestEntityInteraction_RapidAttacks(t *testing.T) {
 
 // TestEntityInteraction_VillagerTrade tests purchasing items from a villager
 func TestEntityInteraction_VillagerTrade(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_villager_trade", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_villager_trade", tt.MCVersion)
 			defer env.Cancel()
 
 			// Get bot position
@@ -571,9 +571,9 @@ func TestEntityInteraction_VillagerTrade(t *testing.T) {
 
 // TestEntityInteraction_MultipleEntities tests interacting with different entity types sequentially
 func TestEntityInteraction_MultipleEntities(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_multiple_interact", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_multiple_interact", tt.MCVersion)
 			defer env.Cancel()
 
 			// Get bot position

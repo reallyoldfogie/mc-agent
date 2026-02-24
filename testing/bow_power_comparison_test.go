@@ -7,14 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
 // TestBowPowerComparison compares actual arrow behavior between FireBowAt and FireBowAtFullPower
 // to determine if the discrepancy in long-range shots is due to bow power not reaching max
 func TestBowPowerComparison(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
@@ -22,7 +23,7 @@ func TestBowPowerComparison(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -60,7 +61,7 @@ func TestBowPowerComparison(t *testing.T) {
 			require.NoError(t, err)
 			time.Sleep(500 * time.Millisecond)
 
-			t.Logf("[%s] Starting bow power comparison tests", tt.mcVersion)
+			t.Logf("[%s] Starting bow power comparison tests", tt.MCVersion)
 
 			// Test at various distances
 			testCases := []struct {
@@ -88,7 +89,7 @@ func TestBowPowerComparison(t *testing.T) {
 
 					// Fire using standard FireBowAt
 					t.Logf("  Firing with FireBowAt...")
-					err = ag.Agent.FireBowAt(targetX, targetY, targetZ)
+					_, err = ag.Agent.FireBowAt(targetX, targetY, targetZ)
 					require.NoError(t, err)
 
 					time.Sleep(3 * time.Second)
@@ -112,31 +113,8 @@ func TestBowPowerComparison(t *testing.T) {
 
 					time.Sleep(2 * time.Second)
 
-					// Fire using FireBowAtFullPower
-					t.Logf("  Firing with FireBowAtFullPower...")
-					_, err = ag.Agent.FireBowAtFullPower(targetX, targetY, targetZ)
-					require.NoError(t, err)
-
-					time.Sleep(3 * time.Second)
-
-					// Analyze trajectory
-					actualFullPower, err := AnalyzeArrowTrajectory(inst.AgentLogFile)
-					if err != nil {
-						t.Logf("    Warning: Could not analyze full power trajectory: %v", err)
-					} else {
-						t.Logf("    FullPower: actual=%d points",
-							len(actualFullPower))
-						if len(actualFullPower) > 0 {
-							lastPos := actualFullPower[len(actualFullPower)-1]
-							distTraveled := math.Sqrt(
-								(lastPos.X-botX)*(lastPos.X-botX) +
-									(lastPos.Z-botZ)*(lastPos.Z-botZ))
-							t.Logf("    FullPower: arrow traveled %.1f blocks (predicted %.1f)",
-								distTraveled, tc.distance)
-						}
-					}
-
-					time.Sleep(2 * time.Second)
+					// Fire using FireBowAtFullPower (deprecated - use FireBowAt instead)
+					t.Logf("  Skipping FireBowAtFullPower (deprecated)...")
 				})
 			}
 		})

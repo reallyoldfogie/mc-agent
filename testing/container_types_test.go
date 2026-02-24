@@ -17,8 +17,8 @@ import (
 
 // TestFurnaceInteraction tests opening a furnace container
 func TestFurnaceInteraction(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
@@ -31,13 +31,13 @@ func TestFurnaceInteraction(t *testing.T) {
 
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "survival"
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
 			}
 			serverCfg.PullImage = false
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFurnaceInteraction", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestFurnaceInteraction", tt.MCVersion)
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -153,8 +153,8 @@ func TestFurnaceInteraction(t *testing.T) {
 
 // TestHopperInteraction tests opening a hopper container
 func TestHopperInteraction(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
@@ -167,13 +167,13 @@ func TestHopperInteraction(t *testing.T) {
 
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "survival"
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
 			}
 			serverCfg.PullImage = false
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestHopperInteraction", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestHopperInteraction", tt.MCVersion)
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)

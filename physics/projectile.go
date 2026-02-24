@@ -3,7 +3,6 @@ package physics
 import (
 	"log"
 	"math"
-	"os"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -282,7 +281,8 @@ func segmentAxisIntersect(p1, p2, boxMin, boxMax float64) bool {
 // Also returns the 3D trajectory points of the selected solution (trimmed to hit point).
 // Prefers low-angle shots (below 45 degrees) for reliability and realism.
 // Returns optimal pitch (degrees), power (always 1.0), minimum error, and trajectory points (trimmed to target or empty if impossible).
-func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (pitch, power, minError float64, trajectory []models.TrajectoryPoint) {
+// DEPRECATED: Use FindOptimalAiming (this one doesn't work anymore) Keeping it around for reference and testing against the new implementation.
+func FindOptimalAiming_OLD(pType models.ProjectileType, origin, target models.V3) (pitch, power, minError float64, trajectory []models.TrajectoryPoint) {
 	// Calculate deltas from source to target
 	dx := target.X - origin.X
 	dy := target.Y - origin.Y
@@ -434,7 +434,7 @@ func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (p
 }
 
 // GetProjectileProps converts a ProjectileType to ProjectileProps for use with the aiming implementation.
-// Note: The Type field is set for model lookup; Order is deprecated (models handle correct order internally).
+// Note: The Type field is set for model lookup;
 func GetProjectileProps(pType models.ProjectileType) ProjectileProps {
 	phys := GetProjectilePhysics(pType)
 	// Splash potions use different ticking order per Minecraft wiki:
@@ -464,40 +464,35 @@ func YawForStartTarget(start, target models.V3) float64 {
 	return yawMC
 }
 
-// FindOptimalAimingWithStrategy is a unified interface that selects between the old brute-force
-// implementation and the new binary-search implementation based on the USE_OLD_AIMING environment variable.
-// By default, uses the new binary-search implementation. Set USE_OLD_AIMING to use the old brute-force method.
-// Returns optimal pitch (degrees), power (always 1.0), minimum error, and trajectory points.
-func FindOptimalAimingWithStrategy(pType models.ProjectileType, origin, target models.V3) (pitch, power, minError float64, trajectory []models.TrajectoryPoint) {
-	if os.Getenv("USE_OLD_AIMING") == "" {
-		// Use new binary-search-based implementation (default)
-		props := GetProjectileProps(pType)
-		dx := target.X - origin.X
-		dz := target.Z - origin.Z
-		horizontalDist := math.Sqrt(dx*dx + dz*dz)
-		verticalDist := target.Y - origin.Y
-		log.Printf("[FindOptimalAimingWithStrategy] SolveAim input: origin=(%.2f,%.2f,%.2f), target=(%.2f,%.2f,%.2f), horizontalDist=%.2f, verticalDist=%.2f",
-			origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist)
+// FindOptimalAiming calculates and returns optimal pitch (degrees), power, minimum error, and trajectory points.
+func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (pitch, power, minError float64, trajectory []models.TrajectoryPoint) {
+	props := GetProjectileProps(pType)
+	dx := target.X - origin.X
+	dz := target.Z - origin.Z
+	horizontalDist := math.Sqrt(dx*dx + dz*dz)
+	verticalDist := target.Y - origin.Y
+	log.Printf("[FindOptimalAiming] SolveAim input: origin=(%.2f,%.2f,%.2f), target=(%.2f,%.2f,%.2f), horizontalDist=%.2f, verticalDist=%.2f",
+		origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist)
 
-		lowSolution, err := SolveAim(origin, target, props, false) // preferHighArc = false for low-angle preference
-		if err != nil {
-			// Target unreachable
-			log.Printf("[FindOptimalAimingWithStrategy] (low) New implementation: target unreachable")
-			return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
-		}
+	lowSolution, err := SolveAim(origin, target, props, false) // preferHighArc = false for low-angle preference
+	if err != nil {
+		// Target unreachable
+		log.Printf("[FindOptimalAiming] (low) New implementation: target unreachable")
+		return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
+	}
 
-		highSolution, err := SolveAim(origin, target, props, true)
-		if err != nil {
-			// Target unreachable
-			log.Printf("[FindOptimalAimingWithStrategy] (high) New implementation: target unreachable")
-			return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
-		}
+	highSolution, err := SolveAim(origin, target, props, true)
+	if err != nil {
+		// Target unreachable
+		log.Printf("[FindOptimalAiming] (high) New implementation: target unreachable")
+		return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
+	}
 
 	// Evaluate both arc solutions - both are physically valid
 	// Prefer low arc for reliability (more predictable, less likely to be blocked)
 	var highTraj, lowTraj []models.TrajectoryPoint
 	var highPitch, highErr, lowPitch, lowErr float64
-	
+
 	// Evaluate high arc
 	highPitch = rad2deg(highSolution.PitchRad)
 	highErr = highSolution.ErrorY
@@ -509,8 +504,8 @@ func FindOptimalAimingWithStrategy(pType models.ProjectileType, origin, target m
 		copy(trimmed, highTraj[:endIndex])
 		highTraj = trimmed
 	}
-	log.Printf("[FindOptimalAimingWithStrategy] High arc: pitch=%.2f°, errorY=%.4f, points=%d", highPitch, highErr, len(highTraj))
-	
+	log.Printf("[FindOptimalAiming] High arc: pitch=%.2f°, errorY=%.4f, points=%d", highPitch, highErr, len(highTraj))
+
 	// Evaluate low arc
 	lowPitch = rad2deg(lowSolution.PitchRad)
 	lowErr = lowSolution.ErrorY
@@ -522,24 +517,21 @@ func FindOptimalAimingWithStrategy(pType models.ProjectileType, origin, target m
 		copy(trimmed, lowTraj[:endIndex])
 		lowTraj = trimmed
 	}
-	log.Printf("[FindOptimalAimingWithStrategy] Low arc: pitch=%.2f°, errorY=%.4f, points=%d", lowPitch, lowErr, len(lowTraj))
-	
+	log.Printf("[FindOptimalAiming] Low arc: pitch=%.2f°, errorY=%.4f, points=%d", lowPitch, lowErr, len(lowTraj))
+
 	// Prefer low arc solution (more reliable)
 	pitch = lowPitch
 	power = 1.0
 	minError = lowErr
 	trajectory = lowTraj
-	log.Printf("[FindOptimalAimingWithStrategy] Selected LOW arc: pitch=%.2f°, errorY=%.4f", pitch, minError)
+	log.Printf("[FindOptimalAiming] Selected LOW arc: pitch=%.2f°, errorY=%.4f", pitch, minError)
 	return pitch, power, minError, trajectory
-	}
-
-	// Use original brute-force implementation
-	return FindOptimalAiming(pType, origin, target)
 }
 
 // CalculateAiming calculates yaw, pitch, and power needed to hit a target.
 // Returns yaw (degrees), pitch (degrees), and power factor (0.0-1.0).
-func CalculateAiming(pType models.ProjectileType, origin, target models.V3) (yaw, pitch, power float64) {
+// DEPRECATED: Use SolvAim. Keeping around for reference.
+func CalculateAiming_OLD(pType models.ProjectileType, origin, target models.V3) (yaw, pitch, power float64) {
 	// Calculate deltas
 	dx := target.X - origin.X
 	dz := target.Z - origin.Z

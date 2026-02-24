@@ -34,6 +34,12 @@ func setupTargetMechanismWithHeight(ctx context.Context, t *testing.T, rcon test
 	platformX := targetX - 5
 	platformZ := targetZ - 5
 
+	if platformY > botY+1 {
+		// if the target is above the bot build the plaform so that the target is at the front edge,
+		// so the bot has line of sight to it
+		platformX = targetX - 1
+	}
+
 	if err := BuildPlatform(ctx, rcon, platformX, platformY, platformZ, 10, 10, "minecraft:grass_block"); err != nil {
 		return 0, 0, 0, 0, 0, 0, fmt.Errorf("build platform: %w", err)
 	}
@@ -91,7 +97,8 @@ func fireAtElevation(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 		heightDelta, distance)
 	require.NoError(t, err, "setup target mechanism")
 
-	time.Sleep(400 * time.Millisecond)
+	// Wait for chunks to load - targets at distance 10 need time for chunk packets to arrive
+	time.Sleep(1500 * time.Millisecond)
 
 	// Turn to face target
 	require.NoError(t, agent.TurnTowards(ctx,
@@ -107,7 +114,7 @@ func fireAtElevation(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 	})
 
 	targetCenter := models.V3{X: float64(targetX) + 0.5, Y: float64(targetY) + 0.5, Z: float64(targetZ) + 0.5}
-	fireErr = agent.Agent.FireBowAt(
+	trajectory, fireErr = agent.Agent.FireBowAt(
 		targetCenter.X, targetCenter.Y, targetCenter.Z, callbacks...)
 
 	if fireErr != nil {
@@ -151,8 +158,8 @@ func fireAtElevation(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 // TestBowFiring_LevelTarget fires at a target at the same height as the bot
 // This tests the standard horizontal firing case
 func TestBowFiring_LevelTarget(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -160,7 +167,7 @@ func TestBowFiring_LevelTarget(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -205,8 +212,8 @@ func TestBowFiring_LevelTarget(t *testing.T) {
 // TestBowFiring_BelowTarget fires at a target below the bot
 // This tests downward firing with positive vertical distance
 func TestBowFiring_BelowTarget(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -214,7 +221,7 @@ func TestBowFiring_BelowTarget(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -259,8 +266,8 @@ func TestBowFiring_BelowTarget(t *testing.T) {
 // TestBowFiring_AboveTarget fires at a target above the bot
 // This tests upward firing - requires high-angle shot
 func TestBowFiring_AboveTarget(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -268,7 +275,7 @@ func TestBowFiring_AboveTarget(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -316,8 +323,8 @@ func TestBowFiring_AboveTarget(t *testing.T) {
 // Arrow rises initially, passes through target height, continues rising, then falls back down
 // We only want the descending pass to count as a hit
 func TestBowFiring_ShelfTarget(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -325,7 +332,7 @@ func TestBowFiring_ShelfTarget(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -375,8 +382,8 @@ func TestBowFiring_ShelfTarget(t *testing.T) {
 
 // TestBowFiring_VariousElevations tests hitting targets at multiple elevations in one test
 func TestBowFiring_VariousElevations(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 7*time.Minute)
 			defer cancel()
 
@@ -384,7 +391,7 @@ func TestBowFiring_VariousElevations(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)

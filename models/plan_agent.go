@@ -10,7 +10,7 @@ type PlanAgent interface {
 	ContainerOperations
 	MovementAgent
 
-	MoveTo(ctx context.Context, x, y, z float64) error
+	MoveTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 	LineTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 	ChatEvents() <-chan string
 	HasLineOfSight(ctx context.Context, x, y, z float64) (bool, error)

@@ -19,8 +19,8 @@ func init() {
 // TestFlatMovementSingleAgent tests that a single agent can navigate using basic movement commands on flat terrain.
 // Uses flat-world generation to ensure predictable, non-pathfinding movement.
 func TestFlatMovementSingleAgent(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -31,7 +31,7 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 
 			// Use flat-world configuration for predictable terrain
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 			serverCfg.PullImage = false
 
@@ -55,7 +55,7 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_movement_single_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_movement_single_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -132,8 +132,8 @@ func TestFlatMovementSingleAgent(t *testing.T) {
 
 // TestFlatMovementMultipleDestinations tests navigation to multiple waypoints on flat terrain.
 func TestFlatMovementMultipleDestinations(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -142,7 +142,7 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -160,7 +160,7 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_waypoints_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -217,8 +217,8 @@ func TestFlatMovementMultipleDestinations(t *testing.T) {
 
 // TestFlatMovementVertical tests vertical movement on flat terrain.
 func TestFlatMovementVertical(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -227,7 +227,7 @@ func TestFlatMovementVertical(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -245,7 +245,7 @@ func TestFlatMovementVertical(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_vertical_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_vertical_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -339,8 +339,8 @@ func TestFlatMovementVertical(t *testing.T) {
 // 2. The sneak-to-hold-position logic works correctly for extended periods
 // 3. The agent doesn't fall after reaching the goal on the ladder
 func TestLongLadderClimbAndHold(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -349,7 +349,7 @@ func TestLongLadderClimbAndHold(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -367,7 +367,7 @@ func TestLongLadderClimbAndHold(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("long_ladder_climb_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("long_ladder_climb_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -481,8 +481,8 @@ func TestLongLadderClimbAndHold(t *testing.T) {
 
 // TestFlatMovementForwardCommand tests the moveForward command on flat terrain.
 func TestFlatMovementForwardCommand(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -491,7 +491,7 @@ func TestFlatMovementForwardCommand(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -509,7 +509,7 @@ func TestFlatMovementForwardCommand(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_forward_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("flat_forward_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

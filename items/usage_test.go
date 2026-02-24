@@ -143,11 +143,18 @@ func newMockPacketManager() *MockPacketManager {
 	}
 }
 
+func newTestItemUsage(client *MockPacketSender) *ItemUsage {
+	usage := NewItemUsage(client, newMockPacketManager())
+	usage.SetContainerHandler(&MockContainerHandler{})
+	usage.SetActionHandler(&MockActionHandler{})
+	usage.SetEntityHandler(&MockEntityHandler{})
+	return usage
+}
+
 func TestNewItemUsage(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
 
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	require.NotNil(t, usage)
 	assert.Equal(t, int32(0), usage.sequence, "Initial sequence should be 0")
@@ -197,8 +204,7 @@ func TestPlaceBlock(t *testing.T) {
 	}
 
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -217,8 +223,7 @@ func TestPlaceBlock(t *testing.T) {
 
 func TestPlaceBlock_SequenceIncrement(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	pos := models.V3{X: 0, Y: 64, Z: 0}
 
@@ -254,8 +259,7 @@ func TestUseItemOnBlock(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &MockPacketSender{}
-			packetMgr := newMockPacketManager()
-			usage := NewItemUsage(client, packetMgr)
+			usage := newTestItemUsage(client)
 
 			err := usage.UseItemOnBlock(tt.pos, tt.face, tt.hand)
 
@@ -299,8 +303,7 @@ func TestUseItemOnEntity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &MockPacketSender{}
-			packetMgr := newMockPacketManager()
-			usage := NewItemUsage(client, packetMgr)
+			usage := newTestItemUsage(client)
 
 			err := usage.UseItemOnEntity(tt.entityID, tt.hand, tt.sneaking)
 
@@ -313,8 +316,7 @@ func TestUseItemOnEntity(t *testing.T) {
 
 func TestUseItemOnEntityAt(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	err := usage.UseItemOnEntityAt(123, 1.5, 2.5, 3.5, models.MainHand, false)
 
@@ -343,8 +345,7 @@ func TestAttackEntity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &MockPacketSender{}
-			packetMgr := newMockPacketManager()
-			usage := NewItemUsage(client, packetMgr)
+			usage := newTestItemUsage(client)
 
 			err := usage.AttackEntity(tt.entityID, tt.sneaking)
 
@@ -402,8 +403,7 @@ func TestSwitchToSlot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := &MockPacketSender{}
-			packetMgr := newMockPacketManager()
-			usage := NewItemUsage(client, packetMgr)
+			usage := newTestItemUsage(client)
 
 			err := usage.SwitchToSlot(tt.slotIndex)
 
@@ -420,8 +420,7 @@ func TestSwitchToSlot(t *testing.T) {
 
 func TestGetSequence(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	assert.Equal(t, int32(0), usage.GetSequence(), "Initial sequence should be 0")
 
@@ -436,8 +435,7 @@ func TestGetSequence(t *testing.T) {
 
 func TestPlaceWaterBucket(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	pos := models.V3{X: 10, Y: 64, Z: 20}
 	err := usage.PlaceWaterBucket(pos, FaceUp)
@@ -450,8 +448,7 @@ func TestPlaceWaterBucket(t *testing.T) {
 
 func TestCollectPowderSnow(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	pos := models.V3{X: 5, Y: 70, Z: 15}
 	err := usage.CollectPowderSnow(pos, FaceUp)
@@ -464,8 +461,7 @@ func TestCollectPowderSnow(t *testing.T) {
 
 func TestCatchFish(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	err := usage.CatchFish(123)
 
@@ -476,8 +472,7 @@ func TestCatchFish(t *testing.T) {
 
 func TestCatchAxolotl(t *testing.T) {
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	err := usage.CatchAxolotl(456)
 
@@ -509,8 +504,7 @@ func TestInteractionTypeEnumValues(t *testing.T) {
 func TestPacketSenderError(t *testing.T) {
 	// Test that errors from PacketSender are propagated
 	client := &MockPacketSender{err: assert.AnError}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	err := usage.PlaceBlock(models.V3{X: 0, Y: 64, Z: 0}, FaceUp, models.MainHand, 0.5, 0.5, 0.5)
 
@@ -521,8 +515,7 @@ func TestPacketSenderError(t *testing.T) {
 func TestMultipleOperations(t *testing.T) {
 	// Test that multiple operations work correctly and sequence tracks properly
 	client := &MockPacketSender{}
-	packetMgr := newMockPacketManager()
-	usage := NewItemUsage(client, packetMgr)
+	usage := newTestItemUsage(client)
 
 	pos := models.V3{X: 0, Y: 64, Z: 0}
 

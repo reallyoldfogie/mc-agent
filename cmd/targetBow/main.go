@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // The InitialSpeed in the simulation corresponds to a fully charged bow (approx. 1 second hold duration).
@@ -26,8 +28,9 @@ type Point struct {
 
 // calculateAiming calculates the required pitch (in degrees) to hit a target.
 func CalculateAiming(botPos, targetPos Point) (yaw, pitch, power float64) {
+	const playerEyeHeight = models.PlayerEyeHeight
 	dx := targetPos.X - botPos.X
-	dy := targetPos.Y - botPos.Y + 1.62 // Use bot eye height for origin
+	dy := targetPos.Y - botPos.Y + playerEyeHeight // Use bot eye height for origin
 	dz := targetPos.Z - botPos.Z
 
 	horizontalDistance := math.Sqrt(dx*dx + dz*dz)

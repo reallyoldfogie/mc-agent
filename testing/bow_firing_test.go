@@ -145,38 +145,42 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int,
 
 	packetWriter := agent.Agent.GetPacketLogWriter()
 
-	var projectileHitEvent models.ProjectileHitEvent
-	callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
-		projectileHitEvent = evt
-		fmt.Fprintf(packetWriter, ">>>>> End FireBowAtDebug %d blocks <<<<<\n", distance)
-	})
+		var projectileHitEvent models.ProjectileHitEvent
+		callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
+			projectileHitEvent = evt
+			fmt.Fprintf(packetWriter, ">>>>> End FireBowAtDebug %d blocks <<<<<\n", distance)
+		})
 
-	// Fire bow with optional callback(s)
-	fmt.Fprintf(packetWriter, ">>>>> Start FireBowAtDebug %d blocks <<<<<\n", distance)
-	if traj, err := agent.Agent.FireBowAtDebug(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...); err == nil {
-		trajectory = traj
-		fireErr = err
-	} else {
-		fireErr = err
-	}
+		// Fire bow with optional callback(s)
+		fmt.Fprintf(packetWriter, ">>>>> Start FireBowAt %d blocks <<<<<\n", distance)
+		if traj, err := agent.Agent.FireBowAt(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...); err == nil {
+			trajectory = traj
+			fireErr = err
+		} else {
+			fireErr = err
+		}
 
-	// Fire using the new API at the center of the target block
-	if fireErr != nil {
-		t.Logf("FireBowAt error: %v", fireErr)
-	}
-	require.NoError(t, fireErr)
+		// Fire using the new API at the center of the target block
+		if fireErr != nil {
+			t.Logf("FireBowAt error: %v", fireErr)
+		}
+		require.NoError(t, fireErr)
 
-	// Allow time for arrow flight and piston action
-	time.Sleep(5 * time.Second)
+		// Allow time for arrow flight and piston action
+		time.Sleep(5 * time.Second)
 
-	glowstoneStillThere, err := verifyBlockAtPosition(agent, gx, gy, gz, "minecraft:glowstone")
-	require.NoError(t, err, "verify original glowstone position")
-	glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
-	require.NoError(t, err, "verify glowstone moved")
+		glowstoneStillThere, err := verifyBlockAtPosition(agent, gx, gy, gz, "minecraft:glowstone")
+		require.NoError(t, err, "verify original glowstone position")
+		glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
+		require.NoError(t, err, "verify glowstone moved")
 
-	distFromTarget := projectileHitEvent.Position.DistanceTo(target)
-	t.Logf("ProjectileHitEvent: HitType=%v, ProjectileType=%v, landed=(%.2f %.2f %.2f - %.02f blocks)", projectileHitEvent.HitType, projectileHitEvent.ProjectileType,
-		projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget)
+		distFromTarget := projectileHitEvent.Position.DistanceTo(target)
+		hitEntityIDStr := "none"
+		if projectileHitEvent.HitEntityID >= 0 {
+			hitEntityIDStr = fmt.Sprintf("%d", projectileHitEvent.HitEntityID)
+		}
+		t.Logf("ProjectileHitEvent: HitType=%v, ProjectileType=%v, HitResult=%s, HitEntityID=%s, landed=(%.2f %.2f %.2f - %.02f blocks)", projectileHitEvent.HitType, projectileHitEvent.ProjectileType, projectileHitEvent.HitResult, hitEntityIDStr,
+			projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget)
 
 	if glowstoneMoved {
 		agent.Agent.SendChat("Success: Target hit and glowstone moved!")
@@ -195,8 +199,8 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int,
 
 // TestBowFiring_FireBowAt verifies FireBowAt hits a target block that triggers a piston
 func TestBowFiring_FireBowAt(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			defer cancel()
 
@@ -204,7 +208,7 @@ func TestBowFiring_FireBowAt(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)
@@ -263,8 +267,8 @@ func TestBowFiring_FireBowAt(t *testing.T) {
 
 // TestBowFiring_MultipleDistances hits targets at multiple ranges
 func TestBowFiring_MultipleDistances(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
 
@@ -272,7 +276,7 @@ func TestBowFiring_MultipleDistances(t *testing.T) {
 			require.NoError(t, err)
 
 			srv := DefaultServerConfig()
-			srv.Version = tt.mcVersion
+			srv.Version = tt.MCVersion
 			RequireIntegrationEnv(t, srv)
 
 			inst, err := fw.StartServer(ctx, srv)

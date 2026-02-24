@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	_ "github.com/reallyoldfogie/mc-agent/versions"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.5/play/clientbound"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/assert"
@@ -25,9 +27,10 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 	// Set NBT version for anonymous NBT parsing
 	models.SetCurrentNBTVersion("1.21.5")
 
-	t.Run("AgentHandler", func(t *testing.T) {
-		// Create agent with minimal config
-		a := &agent{}
+	t.Run("VersionHandler", func(t *testing.T) {
+		// Parse using version handler
+		versionHandler, err := common.GetVersionHandler("1.21.5")
+		require.NoError(t, err, "Should get version handler")
 
 		// Create packet with ID 126 (ClientboundDeclareRecipes for 1.21.5)
 		packet := pk.Packet{
@@ -35,16 +38,10 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 			Data: packetData,
 		}
 
-		// Parse using agent handler
-		err := a.ParseUpdateRecipesPacket(packet)
-		assert.NoError(t, err, "Agent handler should parse packet without error")
-
-		// Verify we got data
-		a.recipesMu.Lock()
-		payload := a.lastUpdateRecipes
-		a.recipesMu.Unlock()
-
-		require.NotNil(t, payload, "Agent should have stored recipe payload")
+		// Parse using version handler
+		payload, err := versionHandler.Play().ParseUpdateRecipes(packet)
+		assert.NoError(t, err, "Version handler should parse packet without error")
+		require.NotNil(t, payload, "Should have parsed recipe payload")
 
 		// Verify property sets
 		assert.Equal(t, 7, len(payload.PropertySets), "Should have 7 property sets")
@@ -55,7 +52,7 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 
 		// Verify stonecutter entries
 		assert.Greater(t, len(payload.StonecutterEntries), 0, "Should have stonecutter entries")
-		t.Logf("Agent parsed %d stonecutter entries", len(payload.StonecutterEntries))
+		t.Logf("Version handler parsed %d stonecutter entries", len(payload.StonecutterEntries))
 	})
 
 	t.Run("McProtocolGoParser", func(t *testing.T) {
@@ -73,33 +70,34 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 		// Verify property sets (called "Recipes" in mc-protocol-go)
 		recipes := declareRecipes.Recipes.Get()
 		require.NotNil(t, recipes, "Recipes array should not be nil")
-		assert.Equal(t, 7, len(*recipes), "Should have 7 property sets")
-		if len(*recipes) > 0 {
-			assert.Equal(t, "minecraft:smithing_base", string((*recipes)[0].Name))
-			items := (*recipes)[0].Items.Get()
+		assert.Equal(t, 7, len(recipes), "Should have 7 property sets")
+		if len(recipes) > 0 {
+			assert.Equal(t, "minecraft:smithing_base", string((recipes)[0].Name))
+			items := (recipes)[0].Items.Get()
 			require.NotNil(t, items)
-			assert.Equal(t, 30, len(*items))
+			assert.Equal(t, 30, len(items))
 		}
 
 		// Verify stonecutter entries
 		stonecutterRecipes := declareRecipes.StoneCutterRecipes.Get()
 		require.NotNil(t, stonecutterRecipes, "Stonecutter recipes array should not be nil")
-		assert.Greater(t, len(*stonecutterRecipes), 0, "Should have stonecutter entries")
-		t.Logf("mc-protocol-go parsed %d stonecutter entries", len(*stonecutterRecipes))
+		assert.Greater(t, len(stonecutterRecipes), 0, "Should have stonecutter entries")
+		t.Logf("mc-protocol-go parsed %d stonecutter entries", len(stonecutterRecipes))
 
 		// Validate stonecutter entry structure (OLD format: IDSet + SlotDisplay)
-		if len(*stonecutterRecipes) > 0 {
-			firstEntry := (*stonecutterRecipes)[0]
+		if len(stonecutterRecipes) > 0 {
+			firstEntry := (stonecutterRecipes)[0]
 			t.Logf("First stonecutter entry - Input IDSet: %+v, Result SlotDisplay: %+v",
 				firstEntry.Input, firstEntry.SlotDisplay)
 		}
 	})
 
 	t.Run("CompareResults", func(t *testing.T) {
-		// Parse with both parsers
-		a := &agent{}
+		// Parse with version handler
+		versionHandler, err := common.GetVersionHandler("1.21.5")
+		require.NoError(t, err)
 		packet := pk.Packet{ID: 126, Data: packetData}
-		err := a.ParseUpdateRecipesPacket(packet)
+		agentPayload, err := versionHandler.Play().ParseUpdateRecipes(packet)
 		require.NoError(t, err)
 
 		declareRecipes := clientbound.NewDeclareRecipes()
@@ -107,21 +105,17 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 		_, err = declareRecipes.ReadFrom(r)
 		require.NoError(t, err)
 
-		// Compare counts
-		a.recipesMu.Lock()
-		agentPayload := a.lastUpdateRecipes
-		a.recipesMu.Unlock()
-
+		// Verify version handler payload
 		require.NotNil(t, agentPayload)
 
 		recipes := declareRecipes.Recipes.Get()
 		require.NotNil(t, recipes)
-		assert.Equal(t, len(*recipes), len(agentPayload.PropertySets),
+		assert.Equal(t, len(recipes), len(agentPayload.PropertySets),
 			"Both parsers should read same number of property sets")
 
 		stonecutterRecipes := declareRecipes.StoneCutterRecipes.Get()
 		require.NotNil(t, stonecutterRecipes)
-		assert.Equal(t, len(*stonecutterRecipes), len(agentPayload.StonecutterEntries),
+		assert.Equal(t, len(stonecutterRecipes), len(agentPayload.StonecutterEntries),
 			"Both parsers should read same number of stonecutter entries")
 
 		t.Logf("Both parsers successfully parsed: %d property sets, %d stonecutter entries",

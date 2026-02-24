@@ -18,8 +18,8 @@ import (
 )
 
 func TestInventoryClickIntegration(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
 
@@ -52,7 +52,7 @@ func TestInventoryClickIntegration(t *testing.T) {
 
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "survival"
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
@@ -60,7 +60,7 @@ func TestInventoryClickIntegration(t *testing.T) {
 
 			serverCfg.PullImage = false
 
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestInventoryClickIntegration", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestInventoryClickIntegration", tt.MCVersion)
 			RequireIntegrationEnv(t, serverCfg)
 
 			// Optionally copy protocol dumper mod for packet debugging

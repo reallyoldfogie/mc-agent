@@ -8,6 +8,7 @@ type PhysicsState interface {
 	Pitch() float64
 	OnGround() bool
 	IsSneaking() bool
+	FallDistance() float64
 	GetDimensions() (width, height, eyeHeight float64)
 	GetAABB() AABB
 	SetPosition(pos V3, yaw, pitch float64, onGround bool)
@@ -17,6 +18,7 @@ type PhysicsState interface {
 	SetVelocity(vel V3)
 	SetOnGround(onGround bool)
 	SetSneaking(sneaking bool)
+	SetFallDistance(distance float64)
 	GetPosition() (pos V3, yaw, pitch float64, onGround bool)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error

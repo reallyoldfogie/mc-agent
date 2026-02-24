@@ -21,8 +21,8 @@ import (
 // - Moving between positions
 // - Server-side window ID exhaustion
 func TestRepeatedContainerOpen(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 			defer cancel()
 
@@ -39,10 +39,10 @@ func TestRepeatedContainerOpen(t *testing.T) {
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "1024M"
 			serverCfg.MinFreeMemoryMB = 512
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			serverCfg.GameMode = "creative"
 			serverCfg.PullImage = false
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestRepeatedContainerOpen", tt.mcVersion)
+			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestRepeatedContainerOpen", tt.MCVersion)
 			RequireIntegrationEnv(t, serverCfg)
 
 			// Start server

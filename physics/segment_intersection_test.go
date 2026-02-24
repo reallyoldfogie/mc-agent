@@ -46,9 +46,9 @@ func TestSegmentIntersection(t *testing.T) {
 
 	// Test case 3: Arrow trajectory overshooting (the actual bug case)
 	t.Logf("Test 3: Arrow overshooting target (the real case)")
-	p1 = models.V3{X: 0, Y: -0.49, Z: 44.25}  // Tick 15
-	p2 = models.V3{X: 0, Y: -0.93, Z: 46.79}  // Tick 16
-	boxMin = models.V3{X: -0.5, Y: -1.52, Z: 45.5}
+	p1 = models.V3{X: 0, Y: -0.49, Z: 44.25} // Tick 15
+	p2 = models.V3{X: 0, Y: -0.93, Z: 46.79} // Tick 16
+	boxMin = models.V3{X: -0.5, Y: -(models.PlayerEyeHeight - .1), Z: 45.5}
 	boxMax = models.V3{X: 0.5, Y: -0.52, Z: 46.5}
 
 	result = trajectorySegmentIntersectsBox(p1, p2, boxMin, boxMax)

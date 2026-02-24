@@ -24,8 +24,8 @@ func TestFindOptimalAimingSimple(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			origin := models.V3{X: 0, Y: 1.52, Z: 0}
-			target := models.V3{X: tc.distance, Y: 1.52 + tc.vertDist, Z: 0}
+			origin := models.V3{X: 0, Y: models.PlayerEyeHeight - .1, Z: 0}
+			target := models.V3{X: tc.distance, Y: models.PlayerEyeHeight - .1 + tc.vertDist, Z: 0}
 
 			pitch, power, minError, traj := FindOptimalAiming(models.Arrow, origin, target)
 

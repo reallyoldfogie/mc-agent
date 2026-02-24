@@ -96,10 +96,13 @@ type activeProjectileInfo struct {
 	spawnVelocity models.V3 // Velocity from spawn packet
 
 	// Server-authoritative position confirmation for persistent projectiles
-	pendingCallbackFire bool                  // Whether callback should fire when server position arrives
+	pendingCallbackFire bool                     // Whether callback should fire when server position arrives
 	pendingHitType      models.ProjectileHitType // Hit type for pending callback
-	pendingHitPos       models.V3             // Fallback position if server doesn't send one (client prediction)
-	collisionDetectTime time.Time             // When collision was first detected (for timeout tracking)
+	pendingHitPos       models.V3                // Fallback position if server doesn't send one (client prediction)
+	collisionDetectTime time.Time                // When collision was first detected (for timeout tracking)
+
+	// Callback timeout tracking
+	callbackRegisteredAt time.Time // When callbacks were registered (for timeout detection)
 }
 
 type agent struct {
@@ -1042,6 +1045,13 @@ func (a *agent) LastUpdateRecipes() (UpdateRecipesPayload, bool) {
 	return *a.lastUpdateRecipes, true
 }
 
+// SetLastUpdateRecipes sets the update recipes payload (for testing).
+func (a *agent) SetLastUpdateRecipes(payload *UpdateRecipesPayload) {
+	a.recipesMu.Lock()
+	a.lastUpdateRecipes = payload
+	a.recipesMu.Unlock()
+}
+
 // SetTeleportAccepter injects a TeleportAccepter implementation (e.g., player subsystem).
 func (a *agent) SetTeleportAccepter(t TeleportAccepter) { a.mu.Lock(); a.teleport = t; a.mu.Unlock() }
 
@@ -1295,6 +1305,16 @@ func (a *agent) getRotation() (float32, float32) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
 	return a.posYaw, a.posPitch
+}
+
+func (a *agent) getEyeHeight() float64 {
+	a.posMu.RLock()
+	defer a.posMu.RUnlock()
+	if a.moveExec.IsSneaking() {
+		return models.PlayerEyeHeightSneaking
+	} else {
+		return models.PlayerEyeHeight
+	}
 }
 
 var (

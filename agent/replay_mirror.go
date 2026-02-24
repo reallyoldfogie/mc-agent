@@ -26,9 +26,9 @@ import (
 // replayMovementMirror converts select serverbound packets (movement) into
 // synthetic clientbound packets for replay visibility of the local player.
 type replayMovementMirror struct {
-	rec             *recorder.Recorder
-	pm              protocol_models.PacketMgr
-	versionHandler  common.VersionHandler
+	rec            *recorder.Recorder
+	pm             protocol_models.PacketMgr
+	versionHandler common.VersionHandler
 
 	mu                   sync.Mutex
 	entityID             int32
@@ -72,20 +72,20 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		return nil
 	}
 	return &replayMovementMirror{
-		rec:             rec,
-		pm:              pm,
-		versionHandler:  versionHandler,
-		sbidPos:         int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
-		sbidPosRot:      int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
-		sbidRot:         int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
-		sbidStatus:      int32(pm.GetServerboundPacketID("ServerboundMovePlayerStatusOnly")),
-		cbidTeleport:    int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
-		cbidAddEnt:      int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
-		cbidPlayerInfo:  int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
-		cbidMovePos:     int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
-		cbidMovePosRot:  int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
-		cbidRotateHead:  int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
-		skinProvider:    sp,
+		rec:            rec,
+		pm:             pm,
+		versionHandler: versionHandler,
+		sbidPos:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
+		sbidPosRot:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
+		sbidRot:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
+		sbidStatus:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerStatusOnly")),
+		cbidTeleport:   int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
+		cbidAddEnt:     int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
+		cbidPlayerInfo: int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
+		cbidMovePos:    int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
+		cbidMovePosRot: int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
+		cbidRotateHead: int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
+		skinProvider:   sp,
 	}
 }
 
@@ -181,7 +181,14 @@ func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 
 	// Iterate through player entries
 	var sawRemove bool
-	for _, entry := range *data.Get() {
+	dataEntries := data.Get()
+	if dataEntries == nil || len(dataEntries) == 0 {
+		log.Printf("[ReplayMirror] HandlePlayerInfo: empty data array (action=%d), ensuring PlayerInfo emission", rawAction)
+		// Even with empty data, we need to ensure our own PlayerInfo is emitted
+		m.ensurePlayerInfo()
+		return
+	}
+	for _, entry := range dataEntries {
 		var targetUUID [16]byte
 		copy(targetUUID[:], entry.Uuid[:])
 
@@ -781,7 +788,7 @@ func collectProperties(gp *v1215_basetypes.GameProfile) []profileProperty {
 	if gp == nil || gp.Properties.Ary.Ary == nil {
 		return nil
 	}
-	values := *gp.Properties.Get()
+	values := gp.Properties.Get()
 	props := make([]profileProperty, 0, len(values))
 	for _, p := range values {
 		name := string(p.Name)

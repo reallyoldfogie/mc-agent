@@ -110,8 +110,8 @@ func (e *entityHandler) ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err
 
 	// Convert from []pk.VarInt to []int32
 	ids := pkt.EntityIds.Get()
-	entityIDs = make([]int32, len(*ids))
-	for i, id := range *ids {
+	entityIDs = make([]int32, len(ids))
+	for i, id := range ids {
 		entityIDs[i] = int32(id)
 	}
 

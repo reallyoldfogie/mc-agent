@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/items"
+	"github.com/reallyoldfogie/mc-agent/models"
 	botpkg "github.com/reallyoldfogie/mc-bot-go/bot"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/stretchr/testify/require"
@@ -17,9 +18,9 @@ import (
 
 // TestStonecutter_Standalone tests stonecutter button interaction
 func TestStonecutter_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "stonecutter", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "stonecutter", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near stonecutter
@@ -152,9 +153,9 @@ func TestLoom_Survival(t *testing.T) {
 
 // TestLoom_Standalone tests loom pattern selection (creative mode)
 func TestLoom_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "loom", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "loom", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near loom
@@ -234,9 +235,9 @@ func TestLoom_Standalone(t *testing.T) {
 
 // TestEnchantingTable_Standalone tests enchanting table enchantment selection
 func TestEnchantingTable_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "enchanting_table", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "enchanting_table", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near enchanting table
@@ -298,9 +299,9 @@ func TestEnchantingTable_Standalone(t *testing.T) {
 
 // TestBeacon_Standalone tests beacon effect selection
 func TestBeacon_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "beacon", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "beacon", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near beacon

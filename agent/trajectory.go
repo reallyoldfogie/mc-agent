@@ -12,48 +12,7 @@ import (
 )
 
 // Verify that agent implements physics.TrajectoryValidator
-var _ physics.TrajectoryValidator = (*agent)(nil)
-
-// GetBlockAt returns the block state ID at the given coordinates.
-// Implements TrajectoryValidator interface.
-func (a *agent) GetBlockAt(x, y, z float64) (blockStateID uint32, loaded bool) {
-	if a.worldMgr == nil {
-		return 0, false
-	}
-	return a.worldMgr.GetBlockAt(x, y, z)
-}
-
-// GetCollisionBoxes returns the collision shapes for a block at the given position.
-// Implements TrajectoryValidator interface.
-func (a *agent) GetCollisionBoxes(blockStateID uint32, x, y, z int) []models.AABB {
-	if a.shapeMgr == nil {
-		return nil
-	}
-	return a.shapeMgr.GetCollisionBoxes(blockStateID, x, y, z)
-}
-
-// IsSolid returns true if the given block state is solid (has collision).
-// Implements TrajectoryValidator interface.
-func (a *agent) IsSolid(stateID uint32) bool {
-	if a.shapeMgr == nil {
-		return false
-	}
-	return a.shapeMgr.IsSolid(stateID)
-}
-
-func (a *agent) BlockName(stateID uint32) string {
-	if a.shapeMgr == nil {
-		return ""
-	}
-	return a.shapeMgr.BlockName(stateID)
-}
-
-func (a *agent) FullBlockName(stateID uint32) string {
-	if a.shapeMgr == nil {
-		return ""
-	}
-	return a.shapeMgr.FullBlockName(stateID)
-}
+var _ = (*agent)(nil)
 
 // RankedAimSolution represents an aiming solution with ranking information.
 type RankedAimSolution struct {
@@ -85,7 +44,7 @@ func (a *agent) FindValidTrajectory(
 		// Can't validate trajectories without world state
 		// Fall back to simple unvalidated trajectory
 		log.Printf("[Agent %s][FindValidTrajectory] No world manager, using unvalidated trajectory", agentName)
-		pitch, power, errorY, trajectory := physics.FindOptimalAimingWithStrategy(projectileType, origin, target)
+		pitch, power, errorY, trajectory := physics.FindOptimalAiming(projectileType, origin, target)
 		if len(trajectory) == 0 {
 			return nil, fmt.Errorf("target unreachable")
 		}
@@ -114,6 +73,8 @@ func (a *agent) FindValidTrajectory(
 
 	// Try each trajectory in order until finding one that's clear
 	for i, solution := range rankedSolutions {
+		log.Printf("[Agent %s][FindValidTrajectory] Testing solution %d: pitch=%.2f°, power=%.3f, trajectory points=%d",
+			agentName, i, solution.Pitch, solution.Power, len(solution.Trajectory))
 		clear, hitPos, hitBlockName := physics.ValidateTrajectory(solution.Trajectory, a, target)
 
 		if clear {
@@ -191,14 +152,14 @@ type DiagnosticTrajectoryReport struct {
 }
 
 type DiagnosticSolution struct {
-	Rank              int
-	Pitch             float64 // degrees
-	Power             float64
-	Error             float64
-	IsBlocked         bool
-	BlockedAt         *models.V3
-	BlockName         string
-	TrajectoryPoints  []DiagnosticTrajectoryPoint
+	Rank             int
+	Pitch            float64 // degrees
+	Power            float64
+	Error            float64
+	IsBlocked        bool
+	BlockedAt        *models.V3
+	BlockName        string
+	TrajectoryPoints []DiagnosticTrajectoryPoint
 }
 
 type DiagnosticTrajectoryPoint struct {
@@ -214,68 +175,82 @@ type DiagnosticTrajectoryPoint struct {
 }
 
 // findAllTrajectories finds multiple trajectory solutions ranked by preference.
-// Returns solutions sorted: low-angle first (more reliable), then high-angle.
+// Tries multiple power levels to find unobstructed paths. Returns solutions sorted by:
+// 1. Higher power first (prefer full power)
+// 2. Low-angle arc first (more reliable than high-angle)
 func (a *agent) findAllTrajectories(
 	projectileType models.ProjectileType,
 	origin, target models.V3) []*RankedAimSolution {
 
 	solutions := make([]*RankedAimSolution, 0)
 
-	// Get physics properties and calculate aiming solutions
-	props := physics.GetProjectileProps(projectileType)
+	// Get base physics properties
+	baseProps := physics.GetProjectileProps(projectileType)
 
-	// Try to find both low-arc and high-arc solutions
-	// Using SolveAim directly to get both solutions similar to FindOptimalAimingWithStrategy
+	// Try multiple power levels in order of preference (higher power first)
+	// This allows fallback to lower power if higher power trajectories are blocked
+	powerLevels := []float64{1.0, 0.75, 0.5, 0.25}
 
-	// Low arc solution (preferHighArc = false)
-	lowSolution, errLow := physics.SolveAim(origin, target, props, false)
-	if errLow == nil {
-		adjustedV0 := lowSolution.V0
-		trajectory := physics.SimulateProjectileTrajectory(projectileType, origin, adjustedV0, props.MaxTicks)
-		if len(trajectory) > 0 {
-			// Trim trajectory
-			if lowSolution.Tick >= 0 && lowSolution.Tick < len(trajectory) {
-				endIndex := min(lowSolution.Tick+5, len(trajectory))
-				trimmed := make([]models.TrajectoryPoint, endIndex)
-				copy(trimmed, trajectory[:endIndex])
-				trajectory = trimmed
+	// var powerIdx int
+
+	for powerIdx, power := range powerLevels {
+		// for power100 := .25; power100 <= 1.0; power100 += .01 {
+		// power := power100 / 100
+		// powerIdx++
+		// Create props with adjusted speed for this power level
+		props := baseProps
+		props.Speed = baseProps.Speed * power
+
+		// Low arc solution (preferHighArc = false)
+		lowSolution, errLow := physics.SolveAim(origin, target, props, false)
+		if errLow == nil {
+			adjustedV0 := lowSolution.V0
+			trajectory := physics.SimulateProjectileTrajectory(projectileType, origin, adjustedV0, props.MaxTicks)
+			if len(trajectory) > 0 {
+				// Trim trajectory
+				if lowSolution.Tick >= 0 && lowSolution.Tick < len(trajectory) {
+					endIndex := min(lowSolution.Tick+5, len(trajectory))
+					trimmed := make([]models.TrajectoryPoint, endIndex)
+					copy(trimmed, trajectory[:endIndex])
+					trajectory = trimmed
+				}
+				pitch := lowSolution.PitchRad * 180.0 / math.Pi // Convert radians to degrees
+				solutions = append(solutions, &RankedAimSolution{
+					Pitch:      pitch,
+					Power:      power,
+					Error:      lowSolution.ErrorY,
+					Trajectory: trajectory,
+					IsBlocked:  false, // Will be set by caller
+					BlockedAt:  nil,
+					Rank:       powerIdx * 2, // Rank by power level first, then arc
+				})
 			}
-			pitch := lowSolution.PitchRad * 180.0 / math.Pi // Convert radians to degrees
-			solutions = append(solutions, &RankedAimSolution{
-				Pitch:      pitch,
-				Power:      1.0,
-				Error:      lowSolution.ErrorY,
-				Trajectory: trajectory,
-				IsBlocked:  false, // Will be set by caller
-				BlockedAt:  nil,
-				Rank:       0, // Preferred solution (low arc)
-			})
 		}
-	}
 
-	// High arc solution (preferHighArc = true)
-	highSolution, errHigh := physics.SolveAim(origin, target, props, true)
-	if errHigh == nil {
-		adjustedV0 := highSolution.V0
-		trajectory := physics.SimulateProjectileTrajectory(projectileType, origin, adjustedV0, props.MaxTicks)
-		if len(trajectory) > 0 {
-			// Trim trajectory
-			if highSolution.Tick >= 0 && highSolution.Tick < len(trajectory) {
-				endIndex := min(highSolution.Tick+5, len(trajectory))
-				trimmed := make([]models.TrajectoryPoint, endIndex)
-				copy(trimmed, trajectory[:endIndex])
-				trajectory = trimmed
+		// High arc solution (preferHighArc = true)
+		highSolution, errHigh := physics.SolveAim(origin, target, props, true)
+		if errHigh == nil {
+			adjustedV0 := highSolution.V0
+			trajectory := physics.SimulateProjectileTrajectory(projectileType, origin, adjustedV0, props.MaxTicks)
+			if len(trajectory) > 0 {
+				// Trim trajectory
+				if highSolution.Tick >= 0 && highSolution.Tick < len(trajectory) {
+					endIndex := min(highSolution.Tick+5, len(trajectory))
+					trimmed := make([]models.TrajectoryPoint, endIndex)
+					copy(trimmed, trajectory[:endIndex])
+					trajectory = trimmed
+				}
+				pitch := highSolution.PitchRad * 180.0 / math.Pi // Convert radians to degrees
+				solutions = append(solutions, &RankedAimSolution{
+					Pitch:      pitch,
+					Power:      power,
+					Error:      highSolution.ErrorY,
+					Trajectory: trajectory,
+					IsBlocked:  false, // Will be set by caller
+					BlockedAt:  nil,
+					Rank:       powerIdx*2 + 1, // High arc is secondary preference
+				})
 			}
-			pitch := highSolution.PitchRad * 180.0 / math.Pi // Convert radians to degrees
-			solutions = append(solutions, &RankedAimSolution{
-				Pitch:      pitch,
-				Power:      1.0,
-				Error:      highSolution.ErrorY,
-				Trajectory: trajectory,
-				IsBlocked:  false, // Will be set by caller
-				BlockedAt:  nil,
-				Rank:       1, // Fallback solution (high arc)
-			})
 		}
 	}
 
@@ -303,10 +278,10 @@ func (a *agent) GenerateDiagnosticReport(
 	// Process each solution
 	for _, solution := range rankedSolutions {
 		diagSol := DiagnosticSolution{
-			Rank:            solution.Rank,
-			Pitch:           solution.Pitch,
-			Power:           solution.Power,
-			Error:           solution.Error,
+			Rank:             solution.Rank,
+			Pitch:            solution.Pitch,
+			Power:            solution.Power,
+			Error:            solution.Error,
 			TrajectoryPoints: make([]DiagnosticTrajectoryPoint, 0),
 		}
 
@@ -408,4 +383,3 @@ func (a *agent) FormatDiagnosticReport(report *DiagnosticTrajectoryReport) strin
 
 	return buf.String()
 }
-

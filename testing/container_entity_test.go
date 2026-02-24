@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,9 +46,9 @@ func getHorseNBT(version string) string {
 
 // TestHorse_Standalone tests horse inventory opening
 func TestHorse_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_horse", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_horse", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn a horse near the bot
@@ -125,9 +126,9 @@ func TestHorse_Standalone(t *testing.T) {
 
 // TestChestBoat_Standalone tests chest boat inventory opening
 func TestChestBoat_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_boat", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_boat", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn a chest boat near the bot
@@ -200,9 +201,9 @@ func TestChestBoat_Standalone(t *testing.T) {
 
 // TestChestMinecart_Standalone tests chest minecart inventory opening
 func TestChestMinecart_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_minecart", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_minecart", tt.MCVersion)
 			defer env.Cancel()
 
 			// Spawn a chest minecart near the bot

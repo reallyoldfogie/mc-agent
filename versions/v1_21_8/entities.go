@@ -145,8 +145,8 @@ func (e *entityHandler) ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err
 
 	// Convert from []pk.VarInt to []int32
 	ids := pkt.EntityIds.Get()
-	entityIDs = make([]int32, len(*ids))
-	for i, id := range *ids {
+	entityIDs = make([]int32, len(ids))
+	for i, id := range ids {
 		entityIDs[i] = int32(id)
 	}
 
@@ -202,7 +202,6 @@ func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, ent
 	log.Printf("[1.21.8][ParseSetEntityMetadata] returning entityID=%d with %d metadata entries <nil>", entityID, len(entries))
 	return entityID, entries, nil
 }
-
 
 // ParseEntityVelocityUpdate parses an entity velocity update packet (EntityVelocity).
 // Returns entity ID and velocity components in blocks per tick.

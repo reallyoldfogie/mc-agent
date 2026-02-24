@@ -224,7 +224,7 @@ func TestEntityHandler_ParseRemoveEntities(t *testing.T) {
 	pkt := cb.NewEntityDestroy()
 	ids := []pk.VarInt{pk.VarInt(100), pk.VarInt(200), pk.VarInt(300)}
 	pkt.EntityIds = models.Array[pk.VarInt, pk.VarInt]{}
-	pkt.EntityIds.Set(&ids)
+	pkt.EntityIds.Set(ids)
 
 	// Verify packet ID using PacketMgr
 	packetMgr := v1_21_4.NewPackets()

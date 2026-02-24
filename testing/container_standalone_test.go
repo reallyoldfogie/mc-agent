@@ -330,9 +330,9 @@ func getContainerBlockType(testName string) string {
 
 // TestChest_Standalone runs the chest test with its own server
 func TestChest_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "chest", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "chest", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near chest
@@ -365,9 +365,9 @@ func TestChest_Standalone(t *testing.T) {
 
 // TestBarrel_Standalone runs the barrel test with its own server
 func TestBarrel_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "barrel", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "barrel", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near barrel
@@ -400,9 +400,9 @@ func TestBarrel_Standalone(t *testing.T) {
 
 // TestFurnace_Standalone runs the furnace test with its own server
 func TestFurnace_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "furnace", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "furnace", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near furnace
@@ -436,9 +436,9 @@ func TestFurnace_Standalone(t *testing.T) {
 
 // TestShulkerBox_Standalone runs the shulker box test with its own server
 func TestShulkerBox_Standalone(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "shulker_box", tt.mcVersion)
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTest(t, "shulker_box", tt.MCVersion)
 			defer env.Cancel()
 
 			// Teleport near shulker box

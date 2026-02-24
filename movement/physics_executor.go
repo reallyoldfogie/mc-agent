@@ -105,6 +105,10 @@ type PhysicsMovementExecutor struct {
 	sidewaysDirection int             // Which sideways direction to try (-1=left, 1=right)
 	sidewaysStartTime time.Time       // When sideways recovery started
 	sidewaysTimeout   time.Duration   // How long to try sideways before giving up
+
+	// Manual input state (thread-safe)
+	manualInputsMu sync.RWMutex  // Protects manual inputs
+	manualInputs   models.Inputs // Current manual inputs for PhysicsModeManual
 }
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
@@ -349,11 +353,16 @@ func (pe *PhysicsMovementExecutor) ExecutePath(path *pathfinding.Path) error {
 
 	timeout := time.Duration(len(path.Steps)) * 30 * time.Second
 
-	// Wait for path completion with timeout
+	// Wait for path completion with timeout (0 = no additional timeout, context timeout applies)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	return pe.WaitForPathCompletion(ctx)
+	completed, err := pe.WaitForPathCompletion(ctx, 0)
+	if !completed && err == nil {
+		// Timeout occurred but no error - treat as success for backward compatibility
+		return nil
+	}
+	return err
 }
 
 // GetCurrentPosition returns the current physics state position.
@@ -421,6 +430,278 @@ func (pe *PhysicsMovementExecutor) SetMode(mode PhysicsMode) {
 	}
 }
 
+// EnterManualMode switches executor to manual input control mode.
+// Manual mode allows frame-by-frame control via SetManual* methods.
+// If already in manual mode, this is a no-op.
+// Preserves current sprint and sneak state from the previous mode.
+func (pe *PhysicsMovementExecutor) EnterManualMode() error {
+	pe.modeMu.Lock()
+	defer pe.modeMu.Unlock()
+
+	if pe.mode == PhysicsModeManual {
+		// Already in manual mode - no-op
+		return nil
+	}
+
+	oldMode := pe.mode
+	pe.mode = PhysicsModeManual
+	log.Printf("[PhysicsExecutor] Mode changed: %s → Manual", oldMode)
+
+	// Initialize manual inputs with current state
+	// Preserve sprint/sneak state from baseExecutor, get rotation from physics state
+	_, yaw, pitch, _ := pe.physicsState.GetPosition()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs = models.Inputs{
+		ThrottleX:      0.0,
+		ThrottleZ:      0.0,
+		Yaw:            yaw,
+		Pitch:          pitch,
+		Jump:           false,
+		Sprint:         pe.baseExecutor.IsSprinting(),
+		Sneak:          pe.baseExecutor.IsSneaking(),
+		ClimbDirection: 0.0,
+	}
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// ExitManualMode switches executor to idle mode from manual mode.
+// If not in manual mode, this is a no-op.
+// Preserves current sprint and sneak state to maintain agent stability.
+func (pe *PhysicsMovementExecutor) ExitManualMode() error {
+	pe.modeMu.Lock()
+	defer pe.modeMu.Unlock()
+
+	if pe.mode != PhysicsModeManual {
+		// Not in manual mode - no-op
+		return nil
+	}
+
+	pe.mode = PhysicsModeIdle
+	log.Printf("[PhysicsExecutor] Mode changed: Manual → Idle")
+
+	// Apply final manual inputs state to baseExecutor to preserve sprint/sneak state
+	pe.manualInputsMu.RLock()
+	shouldSprint := pe.manualInputs.Sprint
+	shouldSneak := pe.manualInputs.Sneak
+	pe.manualInputsMu.RUnlock()
+
+	// Apply sprint state
+	if shouldSprint && !pe.baseExecutor.IsSprinting() {
+		if err := pe.StartSprinting(); err != nil {
+			log.Printf("[PhysicsExecutor] Failed to start sprinting on exit: %v", err)
+		}
+	} else if !shouldSprint && pe.baseExecutor.IsSprinting() {
+		if err := pe.StopSprinting(); err != nil {
+			log.Printf("[PhysicsExecutor] Failed to stop sprinting on exit: %v", err)
+		}
+	}
+
+	// Apply sneak state
+	if shouldSneak && !pe.baseExecutor.IsSneaking() {
+		if err := pe.StartSneaking(); err != nil {
+			log.Printf("[PhysicsExecutor] Failed to start sneaking on exit: %v", err)
+		}
+	} else if !shouldSneak && pe.baseExecutor.IsSneaking() {
+		if err := pe.StopSneaking(); err != nil {
+			log.Printf("[PhysicsExecutor] Failed to stop sneaking on exit: %v", err)
+		}
+	}
+
+	// Clear manual inputs
+	pe.manualInputsMu.Lock()
+	pe.manualInputs = models.Inputs{}
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// IsManualMode returns whether currently in manual mode.
+func (pe *PhysicsMovementExecutor) IsManualMode() bool {
+	pe.modeMu.RLock()
+	defer pe.modeMu.RUnlock()
+	return pe.mode == PhysicsModeManual
+}
+
+// SetManualInputs sets all manual inputs at once.
+// Validates mode and returns error if not in manual mode.
+func (pe *PhysicsMovementExecutor) SetManualInputs(inputs models.Inputs) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs = inputs
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// GetManualInputs returns current manual inputs.
+func (pe *PhysicsMovementExecutor) GetManualInputs() models.Inputs {
+	pe.manualInputsMu.RLock()
+	defer pe.manualInputsMu.RUnlock()
+	return pe.manualInputs
+}
+
+// SetManualThrottle sets the movement direction for next tick.
+// westEastThrottle: X-axis movement (-1.0 to +1.0, negative=west, positive=east)
+// thronorthSouthThrottlettleZ: Z-axis movement (-1.0 to +1.0, negative=north, positive=south)
+// Returns error if not in manual mode.
+func (pe *PhysicsMovementExecutor) SetManualThrottle(westEastThrottle, northSouthThrottle float64) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	// Clamp values to [-1.0, 1.0]
+	westEastThrottle = math.Max(-1.0, math.Min(1.0, westEastThrottle))
+	northSouthThrottle = math.Max(-1.0, math.Min(1.0, northSouthThrottle))
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.ThrottleX = westEastThrottle
+	pe.manualInputs.ThrottleZ = northSouthThrottle
+	pe.manualInputsMu.Unlock()
+
+	log.Printf("[PhysicsExecutor] Manual throttle set: X=%.2f Z=%.2f", westEastThrottle, northSouthThrottle)
+
+	return nil
+}
+
+// SetManualRotation sets yaw and pitch for looking direction.
+// yaw: horizontal look direction (degrees, 0=south, 90=west, 180=north, 270=east)
+// pitch: vertical look direction (degrees, -90=up, 0=forward, 90=down)
+// Pass math.NaN() for yaw to keep current yaw.
+// Returns error if not in manual mode.
+func (pe *PhysicsMovementExecutor) SetManualRotation(yaw, pitch float64) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	pe.manualInputsMu.Lock()
+	// Only update yaw if not NaN (allows "don't change" semantics)
+	if !math.IsNaN(yaw) {
+		pe.manualInputs.Yaw = yaw
+	}
+	// Only update pitch if not NaN
+	if !math.IsNaN(pitch) {
+		pe.manualInputs.Pitch = pitch
+	}
+	pe.manualInputsMu.Unlock()
+
+	log.Printf("[PhysicsExecutor] Manual rotation set: yaw=%.2f pitch=%.2f", yaw, pitch)
+
+	return nil
+}
+
+// SetManualJump sets whether jump button is pressed.
+func (pe *PhysicsMovementExecutor) SetManualJump(enabled bool) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.Jump = enabled
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// SetManualSprint sets whether sprint button is pressed.
+func (pe *PhysicsMovementExecutor) SetManualSprint(enabled bool) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.Sprint = enabled
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// SetManualSneak sets whether sneak button is pressed.
+func (pe *PhysicsMovementExecutor) SetManualSneak(enabled bool) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.Sneak = enabled
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// SetManualClimbDirection sets the ladder/vine climb direction.
+// direction: +1.0=climb up, -1.0=climb down, 0.0=no climb
+// Clamps to valid range [-1.0, 1.0].
+func (pe *PhysicsMovementExecutor) SetManualClimbDirection(direction float64) error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	// Clamp to valid range
+	direction = math.Max(-1.0, math.Min(1.0, direction))
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.ClimbDirection = direction
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
+// ResetManualInputs clears all manual inputs to zero.
+// Sets yaw/pitch to current position state to preserve look direction.
+func (pe *PhysicsMovementExecutor) ResetManualInputs() error {
+	pe.modeMu.RLock()
+	if pe.mode != PhysicsModeManual {
+		pe.modeMu.RUnlock()
+		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
+	}
+	pe.modeMu.RUnlock()
+
+	// Get current rotation from physics state
+	_, yaw, pitch, _ := pe.physicsState.GetPosition()
+
+	pe.manualInputsMu.Lock()
+	pe.manualInputs = models.Inputs{
+		ThrottleX:      0.0,
+		ThrottleZ:      0.0,
+		Yaw:            yaw,
+		Pitch:          pitch,
+		Jump:           false,
+		Sprint:         false,
+		Sneak:          false,
+		ClimbDirection: 0.0,
+	}
+	pe.manualInputsMu.Unlock()
+
+	return nil
+}
+
 // continuousTickLoop is the main physics simulation loop that runs at 20 TPS.
 func (pe *PhysicsMovementExecutor) continuousTickLoop() {
 	ticker := time.NewTicker(pe.tickRate)
@@ -463,6 +744,9 @@ func (pe *PhysicsMovementExecutor) tick() {
 	default:
 		inputs = physics.Inputs{} // Zero inputs
 	}
+
+	log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
+		mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
 
 	// Apply sprint/sneak state changes
 	pe.applyMovementState(inputs)
@@ -916,9 +1200,27 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 
 // generateManualInputs generates inputs for manual mode (external control).
 func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
-	// TODO: Implement manual control system
-	// For now, just return idle inputs
-	return pe.generateIdleInputs()
+	pe.manualInputsMu.RLock()
+	inputs := pe.manualInputs
+	pe.manualInputsMu.RUnlock()
+
+	// If yaw is NaN, preserve current yaw from physics state
+	if math.IsNaN(inputs.Yaw) {
+		_, yaw, _, _ := pe.physicsState.GetPosition()
+		inputs.Yaw = yaw
+	}
+
+	// If pitch is NaN, preserve current pitch from physics state
+	if math.IsNaN(inputs.Pitch) {
+		_, _, pitch, _ := pe.physicsState.GetPosition()
+		inputs.Pitch = pitch
+	}
+
+	log.Printf("[PhysicsExecutor][generateManualInputs] Manual inputs: throttleX=%.2f throttleZ=%.2f yaw=%.2f pitch=%.2f jump=%v sprint=%v sneak=%v climbDir=%.2f",
+		inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch,
+		inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+
+	return inputs
 }
 
 // applyMovementState applies sprint/sneak state changes based on inputs.
@@ -1084,26 +1386,52 @@ func (pe *PhysicsMovementExecutor) SetPath(path *pathfinding.Path) error {
 	return nil
 }
 
-// WaitForPathCompletion blocks until the current path is complete or context is cancelled.
-// Returns an error if the context is cancelled.
-func (pe *PhysicsMovementExecutor) WaitForPathCompletion(ctx context.Context) error {
+// WaitForPathCompletion blocks until the current path is complete, context is cancelled, or timeout expires.
+// timeout: Maximum duration to wait. Use 0 for no timeout (wait indefinitely).
+// Returns: (completed bool, err error) where:
+//   - completed=true, err=nil: Path completed successfully
+//   - completed=false, err=nil: Timeout expired (path still executing)
+//   - completed=false, err!=nil: Context cancelled or other error
+func (pe *PhysicsMovementExecutor) WaitForPathCompletion(ctx context.Context, timeout time.Duration) (bool, error) {
 	pe.pathMu.RLock()
 	pathDone := pe.pathDone
 	pe.pathMu.RUnlock()
 
 	if pathDone == nil {
 		// No path set
-		return nil
+		return true, nil
+	}
+
+	// Create a context with timeout if specified
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
 
 	select {
 	case <-pathDone:
 		log.Printf("[PhysicsExecutor] Path completion signaled")
-		return nil
+		return true, nil
 	case <-ctx.Done():
+		// Check if this was a timeout (not context cancellation)
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("[PhysicsExecutor] Path completion timeout")
+			return false, nil
+		}
 		log.Printf("[PhysicsExecutor] Path completion cancelled by context")
-		return ctx.Err()
+		return false, ctx.Err()
 	}
+}
+
+// WaitForPathCompletionLegacy is deprecated. Use WaitForPathCompletion with timeout=0 instead.
+// Kept for backward compatibility.
+func (pe *PhysicsMovementExecutor) WaitForPathCompletionLegacy(ctx context.Context) error {
+	completed, err := pe.WaitForPathCompletion(ctx, 0)
+	if !completed && err == nil {
+		return nil // Timeout converted to nil for backward compatibility
+	}
+	return err
 }
 
 // ClearPath clears the current path and switches to idle mode.

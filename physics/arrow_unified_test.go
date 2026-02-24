@@ -52,9 +52,9 @@ func TestArrowUnifiedConvention(t *testing.T) {
 		traj := SimulateProjectileTrajectory(models.Arrow, origin, velocity, 400)
 
 		// Find range and peak height
-		var maxRange, maxY float64 = 0, 0
-		var yAtTargetZ float64 = 0
-		var hitTarget bool = false
+		maxRange, maxY := 0.0, 0.0
+		yAtTargetZ := 0.0
+		hitTarget := false
 
 		for i, point := range traj {
 			if point.Pos.Z > maxRange {
@@ -142,7 +142,7 @@ func TestArrowNegativePitchSolution(t *testing.T) {
 
 	// Check final result at Z≈46
 	var closestTick int
-	var closestDist float64 = math.MaxFloat64
+	closestDist := math.MaxFloat64
 	var closestPoint models.TrajectoryPoint
 
 	for i, point := range traj {

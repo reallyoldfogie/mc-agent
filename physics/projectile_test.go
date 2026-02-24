@@ -209,7 +209,7 @@ func TestFindOptimalAiming_DownwardShot(t *testing.T) {
 	}
 }
 
-func TestCalculateAiming(t *testing.T) {
+func TestSolveAim(t *testing.T) {
 	tests := []struct {
 		name   string
 		origin models.V3
@@ -237,21 +237,32 @@ func TestCalculateAiming(t *testing.T) {
 		},
 	}
 
+	props := GetProjectileProps(models.Arrow)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			yaw, pitch, power := CalculateAiming(models.Arrow, tt.origin, tt.target)
+			solution, err := SolveAim(tt.origin, tt.target, props, false)
+			require.NoError(t, err, "Should solve aiming without error")
+
+			yaw, pitch := rad2deg(solution.YawRad), rad2deg(solution.PitchRad)
+
+			caYaw, caPitch, _ := CalculateAiming_OLD(models.Arrow, tt.origin, tt.target) // For comparison; not used in new implementation
+
+			t.Logf("%s: SolveAim yaw=%.2f°, pitch=%.2f° | CalculateAiming yaw=%.2f°, pitch=%.2f°",
+				tt.name, yaw, pitch, caYaw, caPitch)
 
 			// Validate ranges
 			assert.LessOrEqual(t, math.Abs(yaw), 180.0, "Yaw should be within [-180, 180]")
 			assert.LessOrEqual(t, math.Abs(pitch), 90.0, "Pitch should be within [-90, 90]")
-			assert.Greater(t, power, 0.0, "Power should be positive")
-			assert.LessOrEqual(t, power, 1.0, "Power should not exceed 1.0")
 
-			// Verify yaw points toward target
-			dx := tt.target.X - tt.origin.X
-			dz := tt.target.Z - tt.origin.Z
-			expectedYaw := math.Atan2(-dx, -dz) * 180 / math.Pi
-			assert.InDelta(t, expectedYaw, yaw, 0.1, "Yaw should point toward target")
+		// Verify yaw points toward target
+		dx := tt.target.X - tt.origin.X
+		dz := tt.target.Z - tt.origin.Z
+		// SolveAim uses convention: yaw = atan2(dZ, dX)
+		expectedYawSolveAim := rad2deg(math.Atan2(dz, dx))
+		// CalculateAiming_OLD uses convention: yaw = atan2(-dX, -dZ)
+		expectedYawOld := rad2deg(math.Atan2(-dx, -dz))
+		assert.InDelta(t, expectedYawSolveAim, yaw, 0.1, "SolveAim Yaw should point toward target")
+		assert.InDelta(t, expectedYawOld, caYaw, 0.1, "CalculateAiming Yaw should point toward target")
 		})
 	}
 }
@@ -356,12 +367,13 @@ func BenchmarkFindOptimalTrajectory(b *testing.B) {
 	}
 }
 
-func BenchmarkCalculateAiming(b *testing.B) {
+func BenchmarkSolveAim(b *testing.B) {
 	origin := models.V3{X: 0, Y: 64, Z: 0}
 	target := models.V3{X: 10, Y: 64, Z: 10}
+	props := GetProjectileProps(models.Arrow)
 
 	for b.Loop() {
-		CalculateAiming(models.Arrow, origin, target)
+		SolveAim(origin, target, props, false)
 	}
 }
 

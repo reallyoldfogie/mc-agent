@@ -22,8 +22,8 @@ func init() {
 // TestPathfindingSingleAgent tests that a single agent can navigate to a destination using pathfinding.
 // Uses random world generation for realistic terrain testing.
 func TestPathfindingSingleAgent(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 			defer cancel()
@@ -34,7 +34,7 @@ func TestPathfindingSingleAgent(t *testing.T) {
 
 			// Use default (random) server config for realistic pathfinding testing
 			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 			serverCfg.PullImage = false
 			// Reduce memory requirements to avoid OOM
@@ -83,7 +83,7 @@ func TestPathfindingSingleAgent(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_single_%s_%s_%s.mcpr", tt.name, agentCfg.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_single_%s_%s_%s.mcpr", tt.Name, agentCfg.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -183,8 +183,8 @@ func TestPathfindingSingleAgent(t *testing.T) {
 
 // TestPathfindingMultipleDestinations tests navigation to multiple waypoints using pathfinding.
 func TestPathfindingMultipleDestinations(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -193,7 +193,7 @@ func TestPathfindingMultipleDestinations(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			RequireIntegrationEnv(t, serverCfg)
 
 			inst, err := framework.StartServer(ctx, serverCfg)
@@ -211,7 +211,7 @@ func TestPathfindingMultipleDestinations(t *testing.T) {
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_waypoints_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_waypoints_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 
@@ -296,8 +296,8 @@ func Block2Chunk(blockX, blockZ int64) (chunkX, chunkZ int64) {
 
 // TestPathfindingVerticalMovement tests navigation with elevation changes using pathfinding.
 func TestPathfindingVerticalMovement(t *testing.T) {
-	for _, tt := range standardVersionTests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
 
 			logger := NewTestLogger(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -314,7 +314,7 @@ func TestPathfindingVerticalMovement(t *testing.T) {
 			require.NoError(t, err, "create framework")
 
 			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.mcVersion
+			serverCfg.Version = tt.MCVersion
 			if serverCfg.ExtraEnv == nil {
 				serverCfg.ExtraEnv = make(map[string]string)
 			}
@@ -332,12 +332,12 @@ func TestPathfindingVerticalMovement(t *testing.T) {
 			}()
 
 			agentCfg := DefaultAgentConfig(
-				"PathVert"+tt.name,
+				"PathVert"+tt.Name,
 				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
 				serverCfg.Version,
 			)
 			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_vertical_movement_%s_%s.mcpr", tt.name, time.Now().Format("20060102_150405")), agentCfg.Name)
+			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("pathfinding_vertical_movement_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
 
 			// Version handler is auto-detected by the framework
 

@@ -65,7 +65,7 @@ func TestDeclaredRecipesWithPositionTracking(t *testing.T) {
 	if err == nil {
 		stonecutterRecipes := declareRecipes.StoneCutterRecipes.Get()
 		if stonecutterRecipes != nil {
-			fmt.Printf("Successfully parsed %d stonecutter entries\n", len(*stonecutterRecipes))
+			fmt.Printf("Successfully parsed %d stonecutter entries\n", len(stonecutterRecipes))
 		}
 	}
 }

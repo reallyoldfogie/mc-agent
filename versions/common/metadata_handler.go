@@ -9,22 +9,22 @@ import (
 
 // MetadataProcessResult contains structured results from metadata processing
 type MetadataProcessResult struct {
-	Health        float32 // Health value if present in metadata
-	MaxHealth     float32 // Max health if present
-	IsInGround    bool    // For projectiles: is stuck in ground
-	Velocity      *[3]float64 // X, Y, Z velocity if extracted from metadata
-	Position      *[3]float64 // X, Y, Z position if extracted from metadata
-	Shake         int8    // Shake animation counter for projectiles (0-7)
-	CriticalHit   bool    // Critical hit flag for projectiles
-	PierceLevel   int8    // Piercing level for projectiles
-	PotionColor   int32   // Potion color for arrows (-1 = no potion)
-	HasHealth     bool    // Whether health was present in metadata
-	HasVelocity   bool    // Whether velocity was extracted
-	HasPosition   bool    // Whether position was extracted
-	HasShake      bool    // Whether shake was extracted
-	HasCritical   bool    // Whether critical hit flag was extracted
-	HasPierce     bool    // Whether pierce level was extracted
-	HasColor      bool    // Whether potion color was extracted
+	Health      float32     // Health value if present in metadata
+	MaxHealth   float32     // Max health if present
+	IsInGround  bool        // For projectiles: is stuck in ground
+	Velocity    *[3]float64 // X, Y, Z velocity if extracted from metadata
+	Position    *[3]float64 // X, Y, Z position if extracted from metadata
+	Shake       int8        // Shake animation counter for projectiles (0-7)
+	CriticalHit bool        // Critical hit flag for projectiles
+	PierceLevel int8        // Piercing level for projectiles
+	PotionColor int32       // Potion color for arrows (-1 = no potion)
+	HasHealth   bool        // Whether health was present in metadata
+	HasVelocity bool        // Whether velocity was extracted
+	HasPosition bool        // Whether position was extracted
+	HasShake    bool        // Whether shake was extracted
+	HasCritical bool        // Whether critical hit flag was extracted
+	HasPierce   bool        // Whether pierce level was extracted
+	HasColor    bool        // Whether potion color was extracted
 }
 
 // MetadataHandler processes entity metadata updates
