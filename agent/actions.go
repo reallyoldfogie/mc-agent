@@ -899,10 +899,21 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 	if !loaded {
 		return false, 0, 0, 0, fmt.Errorf("chunk not loaded at target position")
 	}
+
+	// If target is air (stateID == 0), check LOS directly to the target point
+	// This allows firing projectiles at empty space as long as there's line of sight
 	if stateID == 0 {
+		visible, err := a.hasLineOfSightForAccessToPoint(ctx, targetX, targetY, targetZ, ox, oy, oz, targetX, targetY, targetZ)
+		if err != nil {
+			return false, 0, 0, 0, err
+		}
+		if visible {
+			return true, targetX, targetY, targetZ, nil
+		}
 		a.logLineOfSightFailure(ctx, ox, oy, oz, blockX, blockY, blockZ)
 		return false, 0, 0, 0, nil
 	}
+
 	points := a.blockSurfaceSamplePoints(stateID, blockX, blockY, blockZ)
 	if len(points) == 0 {
 		a.logLineOfSightFailure(ctx, ox, oy, oz, blockX, blockY, blockZ)
@@ -1267,7 +1278,11 @@ func rayIntersectsAABB(ox, oy, oz, dx, dy, dz, maxDist float64, box models.AABB)
 	if !raySlab(oz, dz, box.Z.Min, box.Z.Max, &tmin, &tmax) {
 		return false
 	}
-	return tmax >= tmin && tmax >= 0
+	// Check if the intersection is ahead of the ray
+	// If tmin <= 0, the ray starts inside or at the block boundary, so it's not blocking
+	// If tmin > 0, the block is ahead of the ray starting point and blocks the line of sight
+	const epsilon = 0.001
+	return tmax >= tmin && tmin > epsilon
 }
 
 func raySlab(origin, dir, min, max float64, tmin, tmax *float64) bool {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,10 +57,19 @@ func TestBowPowerComparison(t *testing.T) {
 			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:arrow 64`, ag.Name))
 			require.NoError(t, err)
 
-			// Teleport to test location
-			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`teleport %s 0 100 0`, ag.Name))
-			require.NoError(t, err)
-			time.Sleep(500 * time.Millisecond)
+
+		// Teleport to test location
+		_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`teleport %s 0 100 0`, ag.Name))
+		require.NoError(t, err)
+
+		// Create a floor for the bot to stand on
+		_, err = inst.RCON.Exec(ctx, `fill -50 99 -50 50 99 50 minecraft:bedrock`)
+		require.NoError(t, err)
+
+		time.Sleep(2 * time.Second)
+
+		// Wait extra time for chunks to load and agent to settle
+		time.Sleep(3 * time.Second)
 
 			t.Logf("[%s] Starting bow power comparison tests", tt.MCVersion)
 
@@ -75,7 +85,6 @@ func TestBowPowerComparison(t *testing.T) {
 			}
 
 			for _, tc := range testCases {
-				tc := tc
 				t.Run(tc.label, func(t *testing.T) {
 					botX, botY, botZ, ok := ag.Agent.GetPositionSimple()
 					require.True(t, ok, "bot position initialized")
@@ -87,10 +96,23 @@ func TestBowPowerComparison(t *testing.T) {
 					t.Logf("[%s] Testing at distance %.1f: target=(%.1f, %.1f, %.1f)",
 						tc.label, tc.distance, targetX, targetY, targetZ)
 
+					// Place target block (glowstone) for arrow validation
+					blockX := int(math.Floor(targetX))
+					blockY := int(math.Floor(targetY))
+					blockZ := int(math.Floor(targetZ))
+
+					cmd := fmt.Sprintf(`setblock %d %d %d minecraft:glowstone`, blockX, blockY, blockZ)
+					response, err := inst.RCON.Exec(ctx, cmd)
+					require.NoError(t, err, "place target glowstone block")
+					t.Logf("%s => %s", cmd, response)
+
+					time.Sleep(3 * time.Second) // Wait for world state sync
+
 					// Fire using standard FireBowAt
 					t.Logf("  Firing with FireBowAt...")
-					_, err = ag.Agent.FireBowAt(targetX, targetY, targetZ)
-					require.NoError(t, err)
+					traj, err := ag.Agent.FireBowAt(float64(blockX)+0.5, float64(blockY)+0.5, float64(blockZ)+0.5)
+					assert.NoError(t, err)
+					t.Logf("    Trajectory: %d points", len(traj))
 
 					time.Sleep(3 * time.Second)
 
@@ -110,11 +132,12 @@ func TestBowPowerComparison(t *testing.T) {
 								distTraveled, tc.distance)
 						}
 					}
+					cmd = fmt.Sprintf(`setblock %d %d %d minecraft:air`, blockX, blockY, blockZ)
+					response, err = inst.RCON.Exec(ctx, cmd)
+					require.NoError(t, err, "place target air block")
+					t.Logf("%s => %s", cmd, response)
 
 					time.Sleep(2 * time.Second)
-
-					// Fire using FireBowAtFullPower (deprecated - use FireBowAt instead)
-					t.Logf("  Skipping FireBowAtFullPower (deprecated)...")
 				})
 			}
 		})
