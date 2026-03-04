@@ -34,17 +34,17 @@ func (a *agent) StopTracking() {
 
 // HasFollowManager reports whether follow behavior is available.
 func (a *agent) HasFollowManager() bool {
-	a.mu.Lock()
+	a.followingMu.RLock()
 	fm := a.followMgr
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	return fm != nil
 }
 
 // IsFollowing reports whether the follow manager is actively following.
 func (a *agent) IsFollowing() bool {
-	a.mu.Lock()
+	a.followingMu.RLock()
 	fm := a.followMgr
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	if fm == nil {
 		return false
 	}
@@ -52,7 +52,12 @@ func (a *agent) IsFollowing() bool {
 }
 
 // NearestPlayerInfo returns the nearest tracked player for commands.
-func (a *agent) NearestPlayerInfo() (actions.NearestPlayerInfo, bool) {
+func (a *agent) NearestPlayerInfo(ctx context.Context) (actions.NearestPlayerInfo, bool) {
+	select {
+	case <-ctx.Done():
+		return actions.NearestPlayerInfo{}, false
+	default:
+	}
 	info, ok := a.findNearestPlayer()
 	if !ok {
 		return actions.NearestPlayerInfo{}, false
@@ -68,10 +73,15 @@ func (a *agent) NearestPlayerInfo() (actions.NearestPlayerInfo, bool) {
 }
 
 // FindPlayerByName resolves a tracked player by name for commands.
-func (a *agent) FindPlayerByName(name string) (x, y, z float64, found bool, err error) {
-	a.mu.Lock()
+func (a *agent) FindPlayerByName(ctx context.Context, name string) (x, y, z float64, found bool, err error) {
+	select {
+	case <-ctx.Done():
+		return 0, 0, 0, false, ctx.Err()
+	default:
+	}
+	a.followingMu.RLock()
 	ts := a.targetSelector
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	if ts == nil {
 		return 0, 0, 0, false, fmt.Errorf("target selector not available")
 	}

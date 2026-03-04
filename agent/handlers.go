@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 )
@@ -333,6 +334,9 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 							spawnPos:      spawnPos,
 							spawnTime:     now,
 							spawnVelocity: spawnVel,
+							// Target information for hit validation
+							targetPos: pending.targetPos,
+							hasTarget: pending.hasTarget,
 							// Callback timeout tracking
 							callbackRegisteredAt: now,
 						}
@@ -391,6 +395,8 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 				projInfo.lastServerTime = projInfo.currentServerTime
 				projInfo.currentServerPos = models.V3{X: e.X, Y: e.Y, Z: e.Z}
 				projInfo.currentServerTime = now
+				// Record position in history for trajectory visualization
+				projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
 				log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
 					entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z, yaw, pitch)
 			} else {
@@ -464,6 +470,8 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 				projInfo.lastServerTime = projInfo.currentServerTime
 				projInfo.currentServerPos = models.V3{X: e.X, Y: e.Y, Z: e.Z}
 				projInfo.currentServerTime = now
+				// Record position in history for trajectory visualization
+				projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
 				log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
 					entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z)
 			} else {
@@ -528,6 +536,8 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 			projInfo.lastServerTime = e.lastServerUpdateTime
 			projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
 			projInfo.currentServerTime = now
+			// Record position in history for trajectory visualization
+			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
 			log.Printf("[onSyncEntityPosition] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), newPos=(%.2f,%.2f,%.2f)",
 				entityID, e.lastServerX, e.lastServerY, e.lastServerZ, x, y, z)
 
@@ -718,6 +728,22 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				// We have received position updates from the server
 				pos = projInfo.currentServerPos
 				positionSource = "latest server position"
+
+				// For non-persistent projectiles (wind charges, snowballs, etc.), the server doesn't send
+				// a position update at the exact impact point - it just removes the entity.
+				// We need to estimate how far the projectile traveled from the last server position to impact.
+				if !projInfo.projectileType.IsPersistent() {
+					timeSinceLastPos := now.Sub(projInfo.currentServerTime).Seconds()
+					if timeSinceLastPos > 0 {
+						// Use physics simulation to estimate position at impact time
+						estimatedPos := a.InterpolateProjectilePosition(projInfo, now.Sub(projInfo.spawnTime).Seconds())
+						positionSource = fmt.Sprintf("server position + velocity estimate (%.3fs after last update)", timeSinceLastPos)
+						log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s non-persistent: server pos=(%.2f,%.2f,%.2f) @ %.3fs ago, estimated impact pos=(%.2f,%.2f,%.2f)",
+							id, projInfo.projectileType, projInfo.currentServerPos.X, projInfo.currentServerPos.Y, projInfo.currentServerPos.Z,
+							timeSinceLastPos, estimatedPos.X, estimatedPos.Y, estimatedPos.Z)
+						pos = estimatedPos
+					}
+				}
 				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
 			} else if projInfo.interpolatedPos != (models.V3{}) {
 				// Use render loop's interpolated position if available
@@ -784,6 +810,41 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				}
 			}
 
+			// Compute hit validation fields
+			var hitDistance float64
+			var trajectoryHit, isValidHit bool
+
+			if projInfo.hasTarget {
+				hitDistance = pos.DistanceTo(projInfo.targetPos)
+				radius := projInfo.projectileType.HitAcceptanceRadius()
+				isDirectHit := hitDistance <= radius
+
+				if !isDirectHit {
+					var checkTraj []models.TrajectoryPoint
+					if len(projInfo.positionHistory) >= 2 {
+						// Use server-confirmed positions for persistent projectiles
+						for _, p := range projInfo.positionHistory {
+							checkTraj = append(checkTraj, models.TrajectoryPoint{Pos: p})
+						}
+					} else if !projInfo.spawnTime.IsZero() {
+						// Simulate from spawn data for non-persistent projectiles
+						flightTicks := int(now.Sub(projInfo.spawnTime).Seconds() * 20)
+						if flightTicks > 0 {
+							checkTraj = physics.SimulateProjectileTrajectory(
+								projInfo.projectileType, projInfo.spawnPos, projInfo.spawnVelocity, flightTicks)
+						}
+					}
+					if len(checkTraj) > 0 {
+						trajectoryHit = physics.TrajectoryPassesThroughRadius(checkTraj, projInfo.targetPos, radius)
+					}
+				}
+
+				isValidHit = isDirectHit || trajectoryHit
+				log.Printf("[onRemoveEntities] Hit validation: type=%s, hitDist=%.2f, radius=%.2f, "+
+					"directHit=%v, trajHit=%v, isValidHit=%v",
+					projInfo.projectileType, hitDistance, radius, isDirectHit, trajectoryHit, isValidHit)
+			}
+
 			// Fire all callbacks
 			evt := models.ProjectileHitEvent{
 				ProjectileEntityID: id,
@@ -794,6 +855,11 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				HitAt:              now,
 				HitResult:          hitResult,
 				HitEntityID:        hitEntityID,
+				TargetPos:          projInfo.targetPos,
+				TargetSet:          projInfo.hasTarget,
+				HitDistance:        hitDistance,
+				TrajectoryHit:      trajectoryHit,
+				IsValidHit:         isValidHit,
 			}
 			for _, cb := range projInfo.callbacks {
 				go cb(evt) // Fire asynchronously to not block handler
@@ -801,6 +867,27 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 
 			log.Printf("[onRemoveEntities] Fired projectile hit callbacks: type=%s, hitType=%v, hitResult=%s, count=%d, pos=(%.2f, %.2f, %.2f). Entity tracked pos: X=%.2f, Y=%.2f, Z=%.2f",
 				projInfo.projectileType, hitType, hitResult, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
+
+			// Visualize actual entity trajectory
+			// For persistent projectiles (arrows, tridents), use recorded server positions
+			if len(projInfo.positionHistory) > 0 {
+				history := make([]models.V3, len(projInfo.positionHistory))
+				copy(history, projInfo.positionHistory)
+				go a.visualizeActualEntityTrajectory(projInfo.projectileType, history)
+			} else if !projInfo.projectileType.IsPersistent() && !projInfo.spawnTime.IsZero() {
+				// For non-persistent projectiles (wind charges, snowballs, eggs, etc.),
+				// simulate trajectory from actual spawn velocity
+				flightTicks := int(now.Sub(projInfo.spawnTime).Seconds() * 20)
+				if flightTicks > 0 {
+					simPositions := physics.SimulateProjectileTrajectory(
+						projInfo.projectileType, projInfo.spawnPos, projInfo.spawnVelocity, flightTicks)
+					positions := make([]models.V3, len(simPositions))
+					for i, pt := range simPositions {
+						positions[i] = pt.Pos
+					}
+					go a.visualizeActualEntityTrajectory(projInfo.projectileType, positions)
+				}
+			}
 
 			// Remove from active tracking
 			delete(a.activeProjectiles, id)
@@ -1116,9 +1203,25 @@ func (a *agent) onSetSlot(p pk.Packet) error {
 	return nil
 }
 
-// onWindowItems handles container/window inventory updates.
+// onWindowItems handles container/window inventory updates (ClientboundContainerSetContent).
+// This packet is parsed by the version handler and the screen manager is responsible
+// for updating inventory state. The mc-bot-go library should handle this internally.
 func (a *agent) onWindowItems(p pk.Packet) error {
-	// Packets are automatically recorded by the bot client's replay recorder
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	// Parse to validate packet integrity (version handler will cache if needed)
+	_, _, _, _, err := a.versionHandler.Play().Containers().ParseContainerSetContent(p)
+	if err != nil {
+		return err
+	}
+
+	// The actual inventory update is handled by the screen manager's internal handlers
+	// in the mc-bot-go library. This packet handler exists to:
+	// 1. Validate packet format
+	// 2. Ensure version handler has the packet available
+	// 3. Act as a logging/debugging point if needed
 	return nil
 }
 
@@ -1172,6 +1275,15 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		a.moveMirror.NotifyLoginSeen()
 	}
 
+	// Snapshot moveExec and teleport before acquiring posMu to avoid nested lock dependencies
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+
+	a.fallbackHandlersMu.RLock()
+	teleport := a.teleport
+	a.fallbackHandlersMu.RUnlock()
+
 	// Absolute base position
 	a.posMu.Lock()
 	a.posX, a.posY, a.posZ = X, Y, Z
@@ -1203,7 +1315,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		)
 		a.moveMirror.HandleServerbound(syntheticPacket)
 	}
-	if syncer, ok := a.moveExec.(interface {
+	if syncer, ok := moveExec.(interface {
 		SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool)
 	}); ok {
 		syncer.SyncWithServer(a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, true)
@@ -1216,7 +1328,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	// Prefer auto-created player, fall back to injected teleport
 	t := a.player
 	if t == nil {
-		t = a.teleport
+		t = teleport
 	}
 	if t != nil {
 		_ = t.AcceptTeleportation(pk.VarInt(TeleportID))

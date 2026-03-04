@@ -18,7 +18,7 @@ type Help struct{}
 
 func (Help) Name() string  { return "help" }
 func (Help) Usage() string { return "help" }
-func (Help) Execute(agent CommandAgent, _ []string) error {
+func (Help) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	_ = agent.SendChat(helpText)
 	return nil
 }
@@ -27,7 +27,7 @@ type Pos struct{}
 
 func (Pos) Name() string  { return "pos" }
 func (Pos) Usage() string { return "pos" }
-func (Pos) Execute(agent CommandAgent, _ []string) error {
+func (Pos) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	x, y, z, _, _, ok := agent.GetPosition()
 	if !ok {
 		_ = agent.SendChat("Bot position not initialized")
@@ -41,7 +41,7 @@ type Say struct{}
 
 func (Say) Name() string  { return "say" }
 func (Say) Usage() string { return "say <text>" }
-func (Say) Execute(agent CommandAgent, args []string) error {
+func (Say) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	_ = agent.SendChat(strings.Join(args, " "))
 	return nil
 }
@@ -50,7 +50,7 @@ type TestMove struct{}
 
 func (TestMove) Name() string  { return "testmove" }
 func (TestMove) Usage() string { return "testMove" }
-func (TestMove) Execute(agent CommandAgent, _ []string) error {
+func (TestMove) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	go agent.TestMove()
 	return nil
 }
@@ -59,7 +59,7 @@ type MoveTo struct{}
 
 func (MoveTo) Name() string  { return "moveto" }
 func (MoveTo) Usage() string { return "moveTo <x> <y> <z>" }
-func (MoveTo) Execute(agent CommandAgent, args []string) error {
+func (MoveTo) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 3 {
 		_ = agent.SendChat("Usage: moveTo <x> <y> <z>")
 		return nil
@@ -91,7 +91,7 @@ type LineTo struct{}
 
 func (LineTo) Name() string  { return "lineto" }
 func (LineTo) Usage() string { return "lineTo <x> <y> <z> (straight-line, flat world only)" }
-func (LineTo) Execute(agent CommandAgent, args []string) error {
+func (LineTo) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 3 {
 		_ = agent.SendChat("Usage: lineTo <x> <y> <z> (straight-line, flat world only)")
 		return nil
@@ -131,7 +131,7 @@ type MoveForward struct{}
 
 func (MoveForward) Name() string  { return "moveforward" }
 func (MoveForward) Usage() string { return "moveForward <distance>" }
-func (MoveForward) Execute(agent CommandAgent, args []string) error {
+func (MoveForward) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 1 {
 		_ = agent.SendChat("Usage: moveForward <distance>")
 		return nil
@@ -156,7 +156,7 @@ type MoveUp struct{}
 
 func (MoveUp) Name() string  { return "moveup" }
 func (MoveUp) Usage() string { return "moveUp <distance>" }
-func (MoveUp) Execute(agent CommandAgent, args []string) error {
+func (MoveUp) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 1 {
 		_ = agent.SendChat("Usage: moveUp <distance>")
 		return nil
@@ -180,7 +180,7 @@ type MoveUpAndSneak struct{}
 
 func (MoveUpAndSneak) Name() string  { return "moveupandsneak" }
 func (MoveUpAndSneak) Usage() string { return "moveUpAndSneak <distance>" }
-func (MoveUpAndSneak) Execute(agent CommandAgent, args []string) error {
+func (MoveUpAndSneak) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 1 {
 		_ = agent.SendChat("Usage: moveUpAndSneak <distance>")
 		return nil
@@ -204,7 +204,7 @@ type MoveToAndSneak struct{}
 
 func (MoveToAndSneak) Name() string  { return "movetoandsneak" }
 func (MoveToAndSneak) Usage() string { return "moveToAndSneak <x> <y> <z>" }
-func (MoveToAndSneak) Execute(agent CommandAgent, args []string) error {
+func (MoveToAndSneak) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 3 {
 		_ = agent.SendChat("Usage: moveToAndSneak <x> <y> <z>")
 		return nil
@@ -238,7 +238,7 @@ type LineToAndSneak struct{}
 
 func (LineToAndSneak) Name() string  { return "linetoandsneak" }
 func (LineToAndSneak) Usage() string { return "lineToAndSneak <x> <y> <z>" }
-func (LineToAndSneak) Execute(agent CommandAgent, args []string) error {
+func (LineToAndSneak) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 3 {
 		_ = agent.SendChat("Usage: lineToAndSneak <x> <y> <z>")
 		return nil
@@ -272,7 +272,7 @@ type StopSneak struct{}
 
 func (StopSneak) Name() string  { return "stopsneak" }
 func (StopSneak) Usage() string { return "stopSneak" }
-func (StopSneak) Execute(agent CommandAgent, _ []string) error {
+func (StopSneak) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	if err := agent.StopSneaking(); err != nil {
 		_ = agent.SendChat("Failed to stop sneaking: " + err.Error())
 		return nil
@@ -285,7 +285,7 @@ type FindPath struct{}
 
 func (FindPath) Name() string  { return "findpath" }
 func (FindPath) Usage() string { return "findPath <x> <y> <z>" }
-func (FindPath) Execute(agent CommandAgent, args []string) error {
+func (FindPath) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 3 {
 		_ = agent.SendChat("Usage: findPath <x> <y> <z>")
 		return nil
@@ -319,7 +319,7 @@ type TestPath struct{}
 
 func (TestPath) Name() string  { return "testpath" }
 func (TestPath) Usage() string { return "testPath" }
-func (TestPath) Execute(agent CommandAgent, _ []string) error {
+func (TestPath) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	go agent.TestPath()
 	return nil
 }
@@ -328,9 +328,9 @@ type Follow struct{}
 
 func (Follow) Name() string  { return "follow" }
 func (Follow) Usage() string { return "follow [<player>]" }
-func (Follow) Execute(agent CommandAgent, args []string) error {
+func (Follow) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) < 1 {
-		nearest, ok := agent.NearestPlayerInfo()
+		nearest, ok := agent.NearestPlayerInfo(ctx)
 		if !ok {
 			_ = agent.SendChat("Failed to find nearest player")
 			return nil
@@ -355,7 +355,7 @@ type StopFollow struct{}
 
 func (StopFollow) Name() string  { return "stopfollow" }
 func (StopFollow) Usage() string { return "stopFollow" }
-func (StopFollow) Execute(agent CommandAgent, _ []string) error {
+func (StopFollow) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	if !agent.HasFollowManager() {
 		_ = agent.SendChat("Follow system not available")
 		return nil
@@ -376,8 +376,8 @@ type FollowStatus struct{}
 
 func (FollowStatus) Name() string  { return "followstatus" }
 func (FollowStatus) Usage() string { return "followStatus" }
-func (FollowStatus) Execute(agent CommandAgent, _ []string) error {
-	_ = agent.SendChat(agent.FollowStatus())
+func (FollowStatus) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
+	_ = agent.SendChat(agent.FollowStatus(ctx))
 	return nil
 }
 
@@ -385,7 +385,7 @@ type StartTracking struct{}
 
 func (StartTracking) Name() string  { return "starttracking" }
 func (StartTracking) Usage() string { return "startTracking" }
-func (StartTracking) Execute(agent CommandAgent, _ []string) error {
+func (StartTracking) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	agent.StartTracking()
 	return nil
 }
@@ -394,7 +394,7 @@ type StopTracking struct{}
 
 func (StopTracking) Name() string  { return "stoptracking" }
 func (StopTracking) Usage() string { return "stopTracking" }
-func (StopTracking) Execute(agent CommandAgent, _ []string) error {
+func (StopTracking) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	agent.StopTracking()
 	return nil
 }
@@ -403,8 +403,8 @@ type PlanStatus struct{}
 
 func (PlanStatus) Name() string  { return "planstatus" }
 func (PlanStatus) Usage() string { return "planStatus" }
-func (PlanStatus) Execute(agent CommandAgent, _ []string) error {
-	status := agent.PlanStatus()
+func (PlanStatus) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
+	status := agent.PlanStatus(ctx)
 	_ = agent.SendChat(status.String())
 	return nil
 }
@@ -413,8 +413,8 @@ type PlanStop struct{}
 
 func (PlanStop) Name() string  { return "planstop" }
 func (PlanStop) Usage() string { return "planStop" }
-func (PlanStop) Execute(agent CommandAgent, _ []string) error {
-	if err := agent.StopPlan(); err != nil {
+func (PlanStop) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
+	if err := agent.StopPlan(ctx); err != nil {
 		_ = agent.SendChat("Plan stop error: " + err.Error())
 		return nil
 	}
@@ -426,9 +426,9 @@ type FireBow struct{}
 
 func (FireBow) Name() string  { return "firebow" }
 func (FireBow) Usage() string { return "fireBow" }
-func (FireBow) Execute(agent CommandAgent, _ []string) error {
+func (FireBow) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
 	go func() {
-		if err := agent.FireBow(); err != nil {
+		if err := agent.FireBow(ctx); err != nil {
 			_ = agent.SendChat("Fire bow error: " + err.Error())
 		}
 	}()
@@ -441,10 +441,10 @@ func (FireBowAt) Name() string { return "firebowat" }
 func (FireBowAt) Usage() string {
 	return "fireBowAt <x> <y> <z> | fireBowAt nearest | fireBowAt <player>"
 }
-func (FireBowAt) Execute(agent CommandAgent, args []string) error {
+func (FireBowAt) Execute(ctx context.Context, agent CommandAgent, args []string) error {
 	if len(args) == 0 {
 		go func() {
-			if err := agent.FireBow(); err != nil {
+			if err := agent.FireBow(ctx); err != nil {
 				_ = agent.SendChat("Fire bow error: " + err.Error())
 			}
 		}()
@@ -452,20 +452,20 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 	}
 	if len(args) == 1 {
 		if args[0] == "nearest" {
-			playerInfo, found := agent.NearestPlayerInfo()
+			playerInfo, found := agent.NearestPlayerInfo(ctx)
 			if found {
 				go func() {
-					if _, err := agent.FireBowAt(playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {
+					if _, err := agent.FireBowAt(ctx, playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {
 						_ = agent.SendChat("Fire bow at error: " + err.Error())
 					}
 				}()
 				return nil
 			}
 		} else {
-			x, y, z, found, err := agent.FindPlayerByName(args[0])
+			x, y, z, found, err := agent.FindPlayerByName(ctx, args[0])
 			if err == nil && found {
 				go func() {
-					if _, err := agent.FireBowAt(x, y, z); err != nil {
+					if _, err := agent.FireBowAt(ctx, x, y, z); err != nil {
 						_ = agent.SendChat("Fire bow at error: " + err.Error())
 					}
 				}()
@@ -495,7 +495,7 @@ func (FireBowAt) Execute(agent CommandAgent, args []string) error {
 		return nil
 	}
 	go func() {
-		if _, err := agent.FireBowAt(tx, ty, tz); err != nil {
+		if _, err := agent.FireBowAt(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat("Fire bow at error: " + err.Error())
 		}
 	}()

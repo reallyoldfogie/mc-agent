@@ -47,6 +47,18 @@ var fullStandardVersionTests = []VersionTest{
 		Name:      "1.21.8",
 		MCVersion: "1.21.8",
 	},
+	{
+		Name:      "1.21.9",
+		MCVersion: "1.21.9",
+	},
+	{
+		Name:      "1.21.10",
+		MCVersion: "1.21.10",
+	},
+	{
+		Name:      "1.21.11",
+		MCVersion: "1.21.11",
+	},
 }
 
 // use minimal set of versions for faster testing. If you add a new version, change the latest version to it.
@@ -63,6 +75,18 @@ var minimalStandardVersionTests = []VersionTest{
 	{
 		Name:      "1.21.8",
 		MCVersion: "1.21.8",
+	},
+	{
+		Name:      "1.21.9",
+		MCVersion: "1.21.9",
+	},
+	{
+		Name:      "1.21.10",
+		MCVersion: "1.21.10",
+	},
+	{
+		Name:      "1.21.11",
+		MCVersion: "1.21.11",
 	},
 }
 

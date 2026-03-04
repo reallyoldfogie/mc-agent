@@ -114,7 +114,7 @@ func TestSetManualRotation(t *testing.T) {
 	require.NoError(t, err)
 
 	inputs = exec.GetManualInputs()
-	assert.Equal(t, 45.0, inputs.Yaw)  // Should not have changed
+	assert.Equal(t, 45.0, inputs.Yaw) // Should not have changed
 	assert.Equal(t, 10.0, inputs.Pitch)
 
 	// Test NaN handling for pitch (keep current)

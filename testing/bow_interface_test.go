@@ -1,6 +1,7 @@
 package testing
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -33,12 +34,12 @@ func TestBowInterface_FireBowAtAccessible(t *testing.T) {
 	}
 
 	// Verify FireBowAt() method exists and returns error
-	err := mockAgent.FireBowAt(10, 20, 30)
+	err := mockAgent.FireBowAt(context.Background(), 10, 20, 30)
 	require.NoError(t, err, "FireBowAt should not error when properly configured")
 
 	// Verify method is callable on the interface
 	var agentInterface interface {
-		FireBowAt(x, y, z float64) error
+		FireBowAt(ctx context.Context, x, y, z float64) error
 	}
 	agentInterface = mockAgent
 	require.NotNil(t, agentInterface, "Agent should satisfy the FireBowAt interface")
@@ -65,7 +66,7 @@ func TestBowInterface_FireBowAtErrorHandling(t *testing.T) {
 	}
 
 	// Verify FireBowAt() returns error when configured to do so
-	err := mockAgent.FireBowAt(10, 20, 30)
+	err := mockAgent.FireBowAt(context.Background(), 10, 20, 30)
 	require.Error(t, err, "FireBowAt should error when configured to do so")
 	require.Equal(t, "test error", err.Error())
 }
@@ -82,7 +83,7 @@ func (m *mockAgent) FireBow() error {
 	return nil
 }
 
-func (m *mockAgent) FireBowAt(x, y, z float64) error {
+func (m *mockAgent) FireBowAt(ctx context.Context, x, y, z float64) error {
 	if m.shouldError {
 		return ErrTest
 	}

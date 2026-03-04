@@ -12,7 +12,7 @@ type PlanAgent interface {
 
 	MoveTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 	LineTo(ctx context.Context, x, y, z float64, notifyChat bool) error
-	ChatEvents() <-chan string
+	ChatEvents(ctx context.Context) <-chan string
 	HasLineOfSight(ctx context.Context, x, y, z float64) (bool, error)
 	FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)

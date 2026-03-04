@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -37,8 +36,8 @@ func TestFollowQuick_StartAndStopMessages(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	fm := &quickFollowMgr{}
 	agent.SetFollowManager(fm)
 
@@ -46,8 +45,8 @@ func TestFollowQuick_StartAndStopMessages(t *testing.T) {
 	if fm.started != "Alex" {
 		t.Fatalf("expected Start called with Alex")
 	}
-	if len(fc.msgs) == 0 || !strings.Contains(fc.msgs[len(fc.msgs)-1], "Following Alex") {
-		t.Fatalf("expected 'Following Alex' message, got %#v", fc.msgs)
+	if !capture.ContainsMessage("Following Alex") {
+		t.Fatalf("expected 'Following Alex' message, got %#v", capture.GetMessages())
 	}
 
 	// stop when active
@@ -55,14 +54,14 @@ func TestFollowQuick_StartAndStopMessages(t *testing.T) {
 	if !fm.stopped {
 		t.Fatalf("expected Stop called")
 	}
-	if len(fc.msgs) == 0 || fc.msgs[len(fc.msgs)-1] != "Stopped following" {
-		t.Fatalf("expected 'Stopped following', got %#v", fc.msgs)
+	if capture.GetLastMessage() != "Stopped following" {
+		t.Fatalf("expected 'Stopped following', got %#v", capture.GetMessages())
 	}
 
 	// stop when inactive
-	before := len(fc.msgs)
+	before := len(capture.GetMessages())
 	agent.handleChatCommand("stopFollow")
-	if len(fc.msgs) == before || fc.msgs[len(fc.msgs)-1] != "Not currently following anyone" {
-		t.Fatalf("expected 'Not currently following anyone', got %#v", fc.msgs)
+	if len(capture.GetMessages()) == before || capture.GetLastMessage() != "Not currently following anyone" {
+		t.Fatalf("expected 'Not currently following anyone', got %#v", capture.GetMessages())
 	}
 }

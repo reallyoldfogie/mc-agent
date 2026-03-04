@@ -67,7 +67,7 @@ tmp/
 *creds*
 *Creds*
 *.credCache*
-.credCacheFile
+.*credCacheFile
 .credCacheFile.old
 *_creds.json
 rof_botCreds.json
@@ -76,6 +76,7 @@ rof_botCreds.json
 .env
 .env.local
 *.local
+configs/config.yaml
 
 # OS-specific files
 Thumbs.db

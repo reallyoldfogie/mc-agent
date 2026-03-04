@@ -35,7 +35,7 @@ func calibrateArrowPhysics(t *testing.T, inst *TestInstance, agent *ManagedAgent
 		label, pitch, yaw)
 
 	// Fire with specific pitch/yaw and get predicted trajectory
-	predictedTraj, fireErr := agent.Agent.FireBowWithPitch(float64(pitch), float64(yaw))
+	predictedTraj, fireErr := agent.Agent.FireBowWithPitch(context.Background(), float64(pitch), float64(yaw))
 	if fireErr != nil {
 		t.Logf("[Calibration] Warning: FireBowWithPitch error: %v", fireErr)
 		return nil, fireErr

@@ -39,11 +39,11 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 					log.Printf("[Agent %s] Stop file %s detected; initiating shutdown", clientName, stopPath)
 					a.removeStopFileIfExists(stopPath)
 					// Trigger shutdown by canceling the context
-					a.mu.Lock()
+					a.lifecycleMu.Lock()
 					if a.cancel != nil {
 						a.cancel()
 					}
-					a.mu.Unlock()
+					a.lifecycleMu.Unlock()
 					return
 				} else if !errors.Is(err, os.ErrNotExist) {
 					log.Printf("[Agent %s] Error checking stop file %s: %v", clientName, stopPath, err)

@@ -17,6 +17,11 @@ import (
 // handleChatCommand parses and executes simple chat commands.
 // This initial set is minimal and safe; expand as more subsystems migrate.
 func (a *agent) handleChatCommand(cmd string) {
+	a.handleChatCommandWithContext(context.Background(), cmd)
+}
+
+// handleChatCommandWithContext parses and executes simple chat commands with context support.
+func (a *agent) handleChatCommandWithContext(ctx context.Context, cmd string) {
 	cmd = strings.TrimSpace(cmd)
 	if cmd == "" {
 		return
@@ -28,7 +33,7 @@ func (a *agent) handleChatCommand(cmd string) {
 		_ = a.SendChat("Command registry not initialized")
 		return
 	}
-	if err := a.commandRegistry.Execute(name, a, args); err != nil {
+	if err := a.commandRegistry.Execute(ctx, name, a, args); err != nil {
 		if errors.Is(err, models.ErrActionNotFound) {
 			_ = a.SendChat("Unknown command. Try: help, pos, say")
 			return
@@ -342,11 +347,13 @@ func (a *agent) cmdStartTracking() {
 					continue
 				}
 				pname := "Unknown"
+				a.playerResolversMu.RLock()
 				if a.playerNameByUUID != nil {
 					if n, okn := a.playerNameByUUID(nearest.UUID); okn {
 						pname = n
 					}
 				}
+				a.playerResolversMu.RUnlock()
 				msg := fmt.Sprintf("My Pos: (%.1f, %.1f, %.1f) | Nearest: %s | Distance: %.2f blocks | Pos: (%.1f, %.1f, %.1f)", bx, by, bz, pname, nearest.Distance, nearest.X, nearest.Y, nearest.Z)
 				_ = a.SendChat(msg)
 				log.Println(msg)
@@ -382,13 +389,19 @@ func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 		return nearestInfo{}, false
 	}
 	ents := a.snapshotEntities()
+
+	// Snapshot the resolver to avoid repeated lock acquisitions
+	a.playerResolversMu.RLock()
+	resolver := a.playerNameByUUID
+	a.playerResolversMu.RUnlock()
+
 	var res nearestInfo
 	min := 0.0
 	first := true
 	for _, e := range ents {
 		// Only consider if in player list when resolver present; else consider all
-		if a.playerNameByUUID != nil {
-			if _, okn := a.playerNameByUUID(e.UUID); !okn {
+		if resolver != nil {
+			if _, okn := resolver(e.UUID); !okn {
 				continue
 			}
 		}

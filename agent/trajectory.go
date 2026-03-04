@@ -114,8 +114,8 @@ func (a *agent) FindValidTrajectory(
 			// Show trajectory points with block info
 			if len(solution.Trajectory) > 0 {
 				fmt.Fprintf(&diagBuf, "Trajectory table (showing all points):\n")
-				fmt.Fprintf(&diagBuf, "| Tick | X (blocks) | Y (blocks) | Z (blocks) | VelX | VelY | VelZ | Block Type |\n")
-				fmt.Fprintf(&diagBuf, "|------|------------|------------|------------|------|------|------|------------|\n")
+				fmt.Fprintf(&diagBuf, "| Tick | X (blocks) | Y (blocks) | Z (blocks) | VelX | VelY | VelZ | Block Type | Dist2Target |\n")
+				fmt.Fprintf(&diagBuf, "|------|------------|------------|------------|------|------|------|------------|-------------|\n")
 
 				for _, pt := range solution.Trajectory {
 					blockType := "air"
@@ -123,8 +123,8 @@ func (a *agent) FindValidTrajectory(
 					if loaded && stateID != 0 {
 						blockType = a.FullBlockName(stateID)
 					}
-					fmt.Fprintf(&diagBuf, "| %4d | %10.2f | %10.2f | %10.2f | %5.2f | %5.2f | %5.2f | %10s |\n",
-						pt.Tick, pt.Pos.X, pt.Pos.Y, pt.Pos.Z, pt.Vel.X, pt.Vel.Y, pt.Vel.Z, blockType)
+					fmt.Fprintf(&diagBuf, "| %4d | %10.2f | %10.2f | %10.2f | %5.2f | %5.2f | %5.2f | %10s | %.2f\n",
+						pt.Tick, pt.Pos.X, pt.Pos.Y, pt.Pos.Z, pt.Vel.X, pt.Vel.Y, pt.Vel.Z, blockType, pt.Pos.DistanceTo(target))
 				}
 			}
 			fmt.Fprintf(&diagBuf, "\n")

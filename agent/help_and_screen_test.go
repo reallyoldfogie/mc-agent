@@ -17,13 +17,14 @@ func TestHelpListsLegacyCommands(t *testing.T) {
 	agent := agentInt.(*agent)
 
 	err = agent.Init(context.Background())
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	agent.handleChatCommand("help")
-	if len(fc.msgs) == 0 {
+	msgs := capture.GetMessages()
+	if len(msgs) == 0 {
 		t.Fatalf("no help message")
 	}
-	help := fc.msgs[len(fc.msgs)-1]
+	help := msgs[len(msgs)-1]
 	required := []string{"testMove", "moveTo", "moveForward", "moveUp", "findPath", "testPath", "follow", "stopFollow", "followStatus", "startTracking", "stopTracking", "fireBow"}
 	for _, r := range required {
 		if !strings.Contains(strings.ToLower(help), strings.ToLower(r)) {

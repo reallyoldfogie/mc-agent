@@ -64,11 +64,11 @@ func TestStopFileWatcher(t *testing.T) {
 			t.Fatal("Timeout waiting for stop file to be processed")
 		case <-ticker.C:
 			// Check if context was cancelled
-			agent.mu.Lock()
+			agent.lifecycleMu.RLock()
 			if agent.ctx.Err() != nil {
 				contextCancelled = true
 			}
-			agent.mu.Unlock()
+			agent.lifecycleMu.RUnlock()
 		}
 	}
 
@@ -78,11 +78,11 @@ func TestStopFileWatcher(t *testing.T) {
 	}
 
 	// Verify context was cancelled
-	agent.mu.Lock()
+	agent.lifecycleMu.RLock()
 	if agent.ctx.Err() == nil {
 		t.Error("Agent context should have been cancelled")
 	}
-	agent.mu.Unlock()
+	agent.lifecycleMu.RUnlock()
 
 	// Wait for goroutines to finish
 	agent.wg.Wait()
@@ -115,11 +115,11 @@ func TestStopFileWatcherDisabled(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Context should still be valid (not cancelled)
-	agent.mu.Lock()
+	agent.lifecycleMu.RLock()
 	if agent.ctx.Err() != nil {
 		t.Error("Context should not be cancelled when stop file is disabled")
 	}
-	agent.mu.Unlock()
+	agent.lifecycleMu.RUnlock()
 }
 
 func TestRemoveStopFileIfExists(t *testing.T) {

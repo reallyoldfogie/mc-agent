@@ -70,3 +70,20 @@ func (pt ProjectileType) GetID() string {
 func (pt ProjectileType) IsPersistent() bool {
 	return pt == Arrow || pt == Trident
 }
+
+// HitAcceptanceRadius returns the distance (in blocks) within which a projectile's
+// landing position is considered a valid hit on a target. For explosive or splash
+// projectiles the value reflects their effective area-of-effect radius.
+func (pt ProjectileType) HitAcceptanceRadius() float64 {
+	switch pt {
+	case WindCharge:
+		return 1.5 // Wind charge explosion radius
+	case SplashPotion, ExperienceBottle:
+		return 2.5 // Splash/lingering potion effect radius
+	case EnderPearl:
+		return 1.0 // Teleport lands near (not exactly at) target
+	default:
+		// Arrow, Trident, Snowball, Egg, FishingBobber — must hit the block/entity
+		return 0.5
+	}
+}

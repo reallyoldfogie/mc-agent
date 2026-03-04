@@ -57,19 +57,18 @@ func TestBowPowerComparison(t *testing.T) {
 			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`give %s minecraft:arrow 64`, ag.Name))
 			require.NoError(t, err)
 
+			// Teleport to test location
+			_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`teleport %s 0 100 0`, ag.Name))
+			require.NoError(t, err)
 
-		// Teleport to test location
-		_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`teleport %s 0 100 0`, ag.Name))
-		require.NoError(t, err)
+			// Create a floor for the bot to stand on
+			_, err = inst.RCON.Exec(ctx, `fill -50 99 -50 50 99 50 minecraft:bedrock`)
+			require.NoError(t, err)
 
-		// Create a floor for the bot to stand on
-		_, err = inst.RCON.Exec(ctx, `fill -50 99 -50 50 99 50 minecraft:bedrock`)
-		require.NoError(t, err)
+			time.Sleep(2 * time.Second)
 
-		time.Sleep(2 * time.Second)
-
-		// Wait extra time for chunks to load and agent to settle
-		time.Sleep(3 * time.Second)
+			// Wait extra time for chunks to load and agent to settle
+			time.Sleep(3 * time.Second)
 
 			t.Logf("[%s] Starting bow power comparison tests", tt.MCVersion)
 
@@ -110,7 +109,7 @@ func TestBowPowerComparison(t *testing.T) {
 
 					// Fire using standard FireBowAt
 					t.Logf("  Firing with FireBowAt...")
-					traj, err := ag.Agent.FireBowAt(float64(blockX)+0.5, float64(blockY)+0.5, float64(blockZ)+0.5)
+					traj, err := ag.Agent.FireBowAt(context.Background(), float64(blockX)+0.5, float64(blockY)+0.5, float64(blockZ)+0.5)
 					assert.NoError(t, err)
 					t.Logf("    Trajectory: %d points", len(traj))
 

@@ -61,8 +61,17 @@ func NewBlockShapeManager(
 }
 
 func loadBlocksDirInPlace(root string) (map[mdl.StateKey]mdl.ShapeInfo, error) {
+	// Check if directory exists before walking
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("blocks directory does not exist or is inaccessible: %s (error: %w)", root, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("blocks path is not a directory: %s", root)
+	}
+
 	out := make(map[mdl.StateKey]mdl.ShapeInfo)
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -82,8 +91,15 @@ func loadBlocksDirInPlace(root string) (map[mdl.StateKey]mdl.ShapeInfo, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to walk blocks directory: %w", err)
 	}
+
+	if len(out) == 0 {
+		log.Printf("[BlockShapeManager] Warning: no block shape data loaded from %s", root)
+	} else {
+		log.Printf("[BlockShapeManager] Loaded %d block shapes from %s", len(out), root)
+	}
+
 	return out, nil
 }
 

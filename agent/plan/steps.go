@@ -409,7 +409,7 @@ func (s WaitForChat) Describe() string {
 func (s WaitForChat) Run(ctx context.Context, agent models.Agent) (StepResult, error) {
 	ctx, cancel := withTimeout(ctx, s.Timeout)
 	defer cancel()
-	events := agent.ChatEvents()
+	events := agent.ChatEvents(ctx)
 	if events == nil {
 		return StepResult{Status: StepFailed, Details: "chat events not available"}, errors.New("chat events not available")
 	}

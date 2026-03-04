@@ -15,6 +15,9 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
+	_ "github.com/reallyoldfogie/mc-agent/versions"
+       // _ "github.com/reallyoldfogie/mc-agent/versions/common"
+
 )
 
 var (
@@ -36,10 +39,17 @@ var (
 
 	skinCacheDir   = flag.String("skin-cache", "skins", "Directory to cache player/default skins")
 	skinNetEnabled = flag.Bool("skin-net", false, "Allow network skin fetches from Mojang (default off)")
+
+	help           = flag.Bool("help", false, "Display help")
 )
 
 func main() {
 	flag.Parse()
+
+	if *help {
+		flag.PrintDefaults()
+		return
+	}
 
 	// Build Auth from flags (offline support - online auth is handled later, when bot client is created)
 	auth := agent.Auth{}
@@ -58,8 +68,11 @@ func main() {
 	// Handle Microsoft authentication if not in offline mode
 	// This must happen before agent creation to get player name/UUID
 	if !*offline {
-		cid := "88650e7e-efee-4857-b9a9-cf580a00ef43"
-		mauth, err := msauth.GetMCcredentials(".credCacheFile", cid)
+		cid, err := config.Load("configs/config.yaml")
+		if err != nil {
+			log.Fatalf("config load failed: %v", err)
+		}
+		mauth, err := msauth.GetMCcredentials(".mc-agent_credCacheFile", cid)
 		if err != nil {
 			log.Fatalf("auth failed: %v", err)
 		}

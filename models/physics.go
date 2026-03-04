@@ -12,6 +12,10 @@ func (a V3) Add(b V3) V3      { return V3{a.X + b.X, a.Y + b.Y, a.Z + b.Z} }
 func (a V3) Sub(b V3) V3      { return V3{a.X - b.X, a.Y - b.Y, a.Z - b.Z} }
 func (a V3) Mul(s float64) V3 { return V3{a.X * s, a.Y * s, a.Z * s} }
 
+func (v V3) Floor() (int, int, int) {
+	return int(math.Floor(v.X)), int(math.Floor(v.Y)), int(math.Floor(v.Z))
+}
+
 // DistanceTo calculates 3D Euclidean distance to another position
 func (v V3) DistanceTo(other V3) float64 {
 	dx := other.X - v.X

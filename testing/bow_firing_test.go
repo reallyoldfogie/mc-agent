@@ -50,7 +50,7 @@ func analyzeArrowTrajectory(t *testing.T, inst *TestInstance, agent *ManagedAgen
 // - a piston adjacent to the target, facing away from it
 // - a glowstone block in front of the piston to be pushed
 // Returns the original glowstone coordinates.
-func setupTargetMechanism(ctx context.Context, t *testing.T, rcon testenv.RCONHelper, targetX, targetY, targetZ int) (glowstoneX, glowstoneY, glowstoneZ int, err error) {
+func setupTargetMechanism(ctx context.Context, t *testing.T, rcon testenv.RCONHelper, targetX, targetY, targetZ int) (glowstonePos, platformPos models.V3, err error) {
 	platformY := targetY - 1 // Platform is below target
 	platformX := targetX - 10
 	platformZ := targetZ - 10
@@ -67,26 +67,26 @@ func setupTargetMechanism(ctx context.Context, t *testing.T, rcon testenv.RCONHe
 
 	// Target block at (targetX, targetY, targetZ)
 	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:target`, targetX, targetY, targetZ)); err != nil {
-		return 0, 0, 0, fmt.Errorf("set target: %w", err)
+		return models.V3{}, models.V3{}, fmt.Errorf("set target: %w", err)
 	}
 
 	// Normal piston directly east of target, facing west (toward the target)
 	pistonX, pistonY, pistonZ := targetX+1, targetY, targetZ
 	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:piston[facing=east]`, pistonX, pistonY, pistonZ)); err != nil {
-		return 0, 0, 0, fmt.Errorf("set piston: %w", err)
+		return models.V3{}, models.V3{}, fmt.Errorf("set piston: %w", err)
 	}
 
 	// Glowstone two blocks east of target (one in front of the piston head)
-	glowstoneX, glowstoneY, glowstoneZ = pistonX+1, pistonY, pistonZ
+	glowstoneX, glowstoneY, glowstoneZ := pistonX+1, pistonY, pistonZ
 	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:glowstone`, glowstoneX, glowstoneY, glowstoneZ)); err != nil {
-		return 0, 0, 0, fmt.Errorf("set glowstone: %w", err)
+		return models.V3{}, models.V3{}, fmt.Errorf("set glowstone: %w", err)
 	}
 
 	// Ensure space for piston to push (clear the block one more east)
 	if _, err = rcon.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:air`, glowstoneX+1, glowstoneY, glowstoneZ)); err != nil {
-		return 0, 0, 0, fmt.Errorf("clear space: %w", err)
+		return models.V3{}, models.V3{}, fmt.Errorf("clear space: %w", err)
 	}
-	return glowstoneX, glowstoneY, glowstoneZ, nil
+	return models.V3{X: float64(glowstoneX), Y: float64(glowstoneY), Z: float64(glowstoneZ)}, models.V3{X: float64(platformX), Y: float64(platformY), Z: float64(platformZ)}, nil
 }
 
 // verifyBlockAtPosition returns true if block is at (gx,gy,gz) using agent's world data.
@@ -110,8 +110,9 @@ func verifyBlockAtPosition(agent *ManagedAgent, gx, gy, gz int, expectedBlockNam
 // fireAt builds a target mechanism in front of the bot and fires the bow at it.
 // fireAt fires an arrow at a target distance and optionally validates via callback
 // Accepts optional callbacks that will be registered with the arrow projectile
-func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int, callbacks ...models.ProjectileHitCallback) (target models.V3) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func fireAt(ctx context.Context, t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int, callbacks ...models.ProjectileHitCallback) (target models.V3) {
+	// Create child context with additional timeout as backup, but inherit from parent
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
 	agent.Agent.SendChat(fmt.Sprintf("FireBow at target. Distance %d blocks", distance))
@@ -130,10 +131,24 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int,
 
 	target = models.V3{X: float64(targetX), Y: float64(targetY), Z: float64(targetZ)}
 
-	gx, gy, gz, err := setupTargetMechanism(ctx, t, inst.RCON, targetX, targetY, targetZ)
+	glowstonePos, platformPos, err := setupTargetMechanism(ctx, t, inst.RCON, targetX, targetY, targetZ)
+	defer func() {
+		platformX, platformY, platformZ := platformPos.Floor()
+		// Clear area above the platform before the next test to prevent interference (non-blocking cleanup)
+		if err := ClearArea(ctx, inst.RCON,
+			platformX, platformY+1, platformZ,
+			platformX+20, platformY+5, platformZ+20); err != nil {
+			t.Logf("warning: failed to clear area (Post Test): %v", err)
+		}
+	}()
 	require.NoError(t, err, "build target mechanism")
 
 	time.Sleep(400 * time.Millisecond)
+
+	cmd := fmt.Sprintf(`/setblock %d %d %d repeating_command_block[facing=up]{Command:"execute at @e[type=arrow] run particle minecraft:flame ~ ~ ~ 0 0 0 0.01 1"} replace`, int(math.Floor(botX)), int(math.Floor(botY-1)), int(math.Floor(botZ)))
+	cmdBlockResponse, err := inst.RCON.Exec(ctx, cmd)
+	t.Logf("%s => %s", cmd, cmdBlockResponse)
+	require.NoError(t, err, "give command failed")
 
 	// Turn bot's body to face the target before firing
 	require.NoError(t, agent.TurnTowards(ctx, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5))
@@ -145,42 +160,43 @@ func fireAt(t *testing.T, inst *TestInstance, agent *ManagedAgent, distance int,
 
 	packetWriter := agent.Agent.GetPacketLogWriter()
 
-		var projectileHitEvent models.ProjectileHitEvent
-		callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
-			projectileHitEvent = evt
-			fmt.Fprintf(packetWriter, ">>>>> End FireBowAtDebug %d blocks <<<<<\n", distance)
-		})
+	var projectileHitEvent models.ProjectileHitEvent
+	callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
+		projectileHitEvent = evt
+		fmt.Fprintf(packetWriter, ">>>>> End FireBowAtDebug %d blocks <<<<<\n", distance)
+	})
 
-		// Fire bow with optional callback(s)
-		fmt.Fprintf(packetWriter, ">>>>> Start FireBowAt %d blocks <<<<<\n", distance)
-		if traj, err := agent.Agent.FireBowAt(float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...); err == nil {
-			trajectory = traj
-			fireErr = err
-		} else {
-			fireErr = err
-		}
+	// Fire bow with optional callback(s)
+	fmt.Fprintf(packetWriter, ">>>>> Start FireBowAt %d blocks <<<<<\n", distance)
+	if traj, err := agent.Agent.FireBowAt(context.Background(), float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5, callbacks...); err == nil {
+		trajectory = traj
+		fireErr = err
+	} else {
+		fireErr = err
+	}
 
-		// Fire using the new API at the center of the target block
-		if fireErr != nil {
-			t.Logf("FireBowAt error: %v", fireErr)
-		}
-		require.NoError(t, fireErr)
+	// Fire using the new API at the center of the target block
+	if fireErr != nil {
+		t.Logf("FireBowAt error: %v", fireErr)
+	}
+	require.NoError(t, fireErr)
 
-		// Allow time for arrow flight and piston action
-		time.Sleep(5 * time.Second)
+	// Allow time for arrow flight and piston action
+	time.Sleep(5 * time.Second)
 
-		glowstoneStillThere, err := verifyBlockAtPosition(agent, gx, gy, gz, "minecraft:glowstone")
-		require.NoError(t, err, "verify original glowstone position")
-		glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
-		require.NoError(t, err, "verify glowstone moved")
+	gx, gy, gz := glowstonePos.Floor()
+	glowstoneStillThere, err := verifyBlockAtPosition(agent, gx, gy, gz, "minecraft:glowstone")
+	require.NoError(t, err, "verify original glowstone position")
+	glowstoneMoved, err := verifyBlockAtPosition(agent, gx+1, gy, gz, "minecraft:glowstone")
+	require.NoError(t, err, "verify glowstone moved")
 
-		distFromTarget := projectileHitEvent.Position.DistanceTo(target)
-		hitEntityIDStr := "none"
-		if projectileHitEvent.HitEntityID >= 0 {
-			hitEntityIDStr = fmt.Sprintf("%d", projectileHitEvent.HitEntityID)
-		}
-		t.Logf("ProjectileHitEvent: HitType=%v, ProjectileType=%v, HitResult=%s, HitEntityID=%s, landed=(%.2f %.2f %.2f - %.02f blocks)", projectileHitEvent.HitType, projectileHitEvent.ProjectileType, projectileHitEvent.HitResult, hitEntityIDStr,
-			projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget)
+	distFromTarget := projectileHitEvent.Position.DistanceTo(target)
+	hitEntityIDStr := "none"
+	if projectileHitEvent.HitEntityID >= 0 {
+		hitEntityIDStr = fmt.Sprintf("%d", projectileHitEvent.HitEntityID)
+	}
+	t.Logf("ProjectileHitEvent: HitType=%v, ProjectileType=%v, HitResult=%s, HitEntityID=%s, landed=(%.2f %.2f %.2f - %.02f blocks)", projectileHitEvent.HitType, projectileHitEvent.ProjectileType, projectileHitEvent.HitResult, hitEntityIDStr,
+		projectileHitEvent.Position.X, projectileHitEvent.Position.Y, projectileHitEvent.Position.Z, distFromTarget)
 
 	if glowstoneMoved {
 		agent.Agent.SendChat("Success: Target hit and glowstone moved!")
@@ -245,7 +261,7 @@ func TestBowFiring_FireBowAt(t *testing.T) {
 			hitCh := make(chan models.ProjectileHitEvent, 1)
 			callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
 
-			target := fireAt(t, inst, ag, 10, callback)
+			target := fireAt(ctx, t, inst, ag, 10, callback)
 
 			// Wait for callback (non-blocking)
 			select {
@@ -315,7 +331,7 @@ func TestBowFiring_MultipleDistances(t *testing.T) {
 					hitCh := make(chan models.ProjectileHitEvent, 1)
 					callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
 
-					fireAt(t, inst, agnt, distance, callback)
+					fireAt(ctx, t, inst, agnt, distance, callback)
 
 					// Wait for callback (non-blocking)
 					select {

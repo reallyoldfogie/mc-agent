@@ -7,8 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"strings"
-
 	"github.com/Tnze/go-mc/chat"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
@@ -44,8 +42,8 @@ func TestFollowCommands(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	ff := &fakeFollowMgr{status: "OK"}
 	agent.SetFollowManager(ff)
 
@@ -54,17 +52,17 @@ func TestFollowCommands(t *testing.T) {
 		t.Fatalf("expected Start called with Steve")
 	}
 	agent.handleChatCommand("followStatus")
-	if len(fc.msgs) == 0 || fc.msgs[len(fc.msgs)-1] != "OK" {
-		t.Fatalf("expected status OK, got %#v", fc.msgs)
+	if capture.GetLastMessage() != "OK" {
+		t.Fatalf("expected status OK, got %#v", capture.GetMessages())
 	}
 	agent.handleChatCommand("stopFollow")
 	if !ff.stopCalled {
 		t.Fatalf("expected Stop called")
 	}
 	// inactive stop
-	before := len(fc.msgs)
+	before := len(capture.GetMessages())
 	agent.handleChatCommand("stopFollow")
-	if len(fc.msgs) == before || fc.msgs[len(fc.msgs)-1] == "Stopped following" {
+	if len(capture.GetMessages()) == before || capture.GetLastMessage() == "Stopped following" {
 		t.Fatalf("expected not currently following message")
 	}
 }
@@ -79,8 +77,8 @@ func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
@@ -89,7 +87,7 @@ func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
 	agent.handleChatCommand("moveTo agent 0 0")
 
 	time.Sleep(10 * time.Millisecond)
-	if !containsMsg(fc.msgs, "Invalid X coordinate") {
+	if !containsMsg(capture.GetMessages(), "Invalid X coordinate") {
 		t.Fatalf("expected invalid X message")
 	}
 
@@ -97,7 +95,7 @@ func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
 	agent.handleChatCommand("moveTo 0 0 0")
 	time.Sleep(10 * time.Millisecond)
 
-	if !containsMsg(fc.msgs, "Already at target position") {
+	if !containsMsg(capture.GetMessages(), "Already at target position") {
 		t.Fatalf("expected already at target message")
 	}
 }
@@ -112,7 +110,7 @@ func TestMoveForward_NegativeYaw0(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fm := &fakeMoveExec{}
+	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
 	agent.UpdatePosition(0, 0, 0, 0, 0)
 	agent.handleChatCommand("moveForward -0.2")
@@ -121,8 +119,10 @@ func TestMoveForward_NegativeYaw0(t *testing.T) {
 		t.Fatalf("no pos calls")
 	}
 	got := fm.posCalls[len(fm.posCalls)-1]
-	if math.Abs(got[2]-(-0.2)) > 1e-6 {
-		t.Fatalf("expected z -0.2, got %#v", got)
+	// With physics-based movement, expect backward movement (negative z) in the -0.3 to 0 range
+	// (one tick of ~0.215 blocks/tick movement in negative direction)
+	if got[2] >= 0 || got[2] < -0.3 {
+		t.Fatalf("expected backward movement z in (-0.3, 0), got %#v", got)
 	}
 }
 
@@ -136,7 +136,7 @@ func TestMoveForward_Yaw90(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fm := &fakeMoveExec{}
+	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
 	agent.UpdatePosition(0, 0, 0, 90, 0)
 	agent.handleChatCommand("moveForward 0.2")
@@ -145,8 +145,10 @@ func TestMoveForward_Yaw90(t *testing.T) {
 		t.Fatalf("no pos calls")
 	}
 	got := fm.posCalls[len(fm.posCalls)-1]
-	if math.Abs(got[0]-(-0.2)) > 1e-6 {
-		t.Fatalf("expected x -0.2, got %#v", got)
+	// With physics-based movement, expect leftward movement (negative x) in the -0.3 to 0 range
+	// (one tick of ~0.215 blocks/tick movement at yaw=90)
+	if got[0] >= 0 || got[0] < -0.3 {
+		t.Fatalf("expected leftward movement x in (-0.3, 0), got %#v", got)
 	}
 }
 
@@ -193,18 +195,18 @@ func TestFindPath_InvalidAndError(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	agent.UpdatePosition(0, 0, 0, 0, 0)
 	agent.handleChatCommand("findPath agent 0 0")
 	time.Sleep(10 * time.Millisecond)
-	if !containsMsg(fc.msgs, "Invalid X coordinate") {
+	if !containsMsg(capture.GetMessages(), "Invalid X coordinate") {
 		t.Fatalf("expected invalid")
 	}
 	agent.SetPathFinder(fakePFFail{})
 	agent.handleChatCommand("findPath 1 0 0")
 	time.Sleep(10 * time.Millisecond)
-	if !containsMsg(fc.msgs, "Path find failed") {
+	if !containsMsg(capture.GetMessages(), "Path find failed") {
 		t.Fatalf("expected pf error")
 	}
 }
@@ -219,8 +221,8 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
 	// Seed one player entity and name resolver
@@ -238,13 +240,13 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 	agent.handleChatCommand("startTracking")
 	time.Sleep(50 * time.Millisecond)
 	agent.handleChatCommand("startTracking")
-	if !containsMsg(fc.msgs, "Tracking is already active!") {
+	if !containsMsg(capture.GetMessages(), "Tracking is already active!") {
 		t.Fatalf("expected already active")
 	}
 	agent.handleChatCommand("stopTracking") // now not active
-	before := len(fc.msgs)
+	before := len(capture.GetMessages())
 	agent.handleChatCommand("stopTracking")
-	if len(fc.msgs) == before || fc.msgs[len(fc.msgs)-1] == "Tracking stopped" {
+	if len(capture.GetMessages()) == before || capture.GetLastMessage() == "Tracking stopped" {
 		t.Fatalf("expected Not tracking message")
 	}
 }
@@ -259,24 +261,14 @@ func TestOnPlayerChat_Routing(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+	capture := newCaptureChat()
+	agent.SetChat(capture)
 	agent.client = &fakeClientWriter{}
 	// command: pos should reply with not initialized
 	msg := chat.Message{With: []chat.Message{{Text: ">>>BOT<<< pos"}}}
 	var pi playerlist.PlayerInfo
 	_ = agent.OnPlayerChat(pi, msg, true)
-	if !containsMsg(fc.msgs, "not initialized") {
-		t.Fatalf("expected pos error via chat routing; got %#v", fc.msgs)
+	if !containsMsg(capture.GetMessages(), "not initialized") {
+		t.Fatalf("expected pos error via chat routing; got %#v", capture.GetMessages())
 	}
-}
-
-func containsMsg(msgs []string, sub string) bool {
-	sub = strings.ToLower(sub)
-	for _, m := range msgs {
-		if strings.Contains(strings.ToLower(m), sub) {
-			return true
-		}
-	}
-	return false
 }

@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -45,10 +46,10 @@ func (r *actionRegistry[T]) Get(name string) (models.Action[T], bool) {
 }
 
 // Execute looks up and runs the action by name.
-func (r *actionRegistry[T]) Execute(name string, agent T, args []string) error {
+func (r *actionRegistry[T]) Execute(ctx context.Context, name string, agent T, args []string) error {
 	action, ok := r.Get(name)
 	if !ok {
 		return fmt.Errorf("%w: %s", models.ErrActionNotFound, strings.TrimSpace(name))
 	}
-	return action.Execute(agent, args)
+	return action.Execute(ctx, agent, args)
 }

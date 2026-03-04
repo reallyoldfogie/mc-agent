@@ -7,8 +7,8 @@ import "github.com/reallyoldfogie/mc-agent/models"
 // GetScreenManager returns the concrete screen manager for tests that need direct access.
 // This is primarily for testing. Production code should use the ScreenOperations interface methods.
 func (a *agent) GetScreenManager() models.ScreenSubsystem {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.containerSubsystemMu.RLock()
+	defer a.containerSubsystemMu.RUnlock()
 	return a.screenMgr
 }
 
@@ -16,9 +16,9 @@ func (a *agent) GetScreenManager() models.ScreenSubsystem {
 // Returns nil if the window doesn't exist.
 // Implements ScreenOperations interface.
 func (a *agent) GetScreen(windowID int) Screen {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	sm := a.screenMgr
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if sm == nil {
 		return nil
@@ -31,9 +31,9 @@ func (a *agent) GetScreen(windowID int) Screen {
 // GetInventory returns the player's main inventory.
 // Implements ScreenOperations interface.
 func (a *agent) GetInventory() Screen {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	sm := a.screenMgr
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if sm == nil {
 		return nil
@@ -46,9 +46,9 @@ func (a *agent) GetInventory() Screen {
 // GetCursor returns the cursor slot.
 // Implements ScreenOperations interface.
 func (a *agent) GetCursor() Slot {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	sm := a.screenMgr
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if sm == nil {
 		return Slot{ID: -1, Count: 0}
@@ -70,9 +70,9 @@ func (a *agent) GetCursor() Slot {
 // Returns nil if the world is not initialized.
 // Implements WorldOperations interface.
 func (a *agent) GetWorld() models.World {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	wm := a.worldMgr
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if wm == nil {
 		return nil

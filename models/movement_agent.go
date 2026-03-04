@@ -17,5 +17,5 @@ type MovementAgent interface {
 	LookAt(ctx context.Context, x, y, z float64) error
 	Follow(ctx context.Context, target string) error
 	StopFollow(ctx context.Context) error
-	FollowStatus() string
+	FollowStatus(ctx context.Context) string
 }

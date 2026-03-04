@@ -701,3 +701,51 @@ func ValidateTrajectory(trajectory []models.TrajectoryPoint, validator Trajector
 	// No obstacles found - trajectory is clear
 	return true, nil, ""
 }
+
+// TrajectoryPassesThroughRadius returns true if any segment of trajectory comes within
+// radius blocks of target. Uses closest-point-on-segment for accuracy.
+func TrajectoryPassesThroughRadius(trajectory []models.TrajectoryPoint, target models.V3, radius float64) bool {
+	radiusSq := radius * radius
+	for i := 1; i < len(trajectory); i++ {
+		if closestDistSqToSegment(trajectory[i-1].Pos, trajectory[i].Pos, target) <= radiusSq {
+			return true
+		}
+	}
+	return false
+}
+
+// closestDistSqToSegment returns the squared distance from point q to the closest point on
+// the line segment from segStart to segEnd.
+func closestDistSqToSegment(segStart, segEnd, point models.V3) float64 {
+	// Vector from segment start to end
+	segDeltaX := segEnd.X - segStart.X
+	segDeltaY := segEnd.Y - segStart.Y
+	segDeltaZ := segEnd.Z - segStart.Z
+	segLengthSq := segDeltaX*segDeltaX + segDeltaY*segDeltaY + segDeltaZ*segDeltaZ
+
+	if segLengthSq == 0 {
+		// Segment start and end are the same point
+		diff := point.Sub(segStart)
+		return diff.X*diff.X + diff.Y*diff.Y + diff.Z*diff.Z
+	}
+
+	// Project point onto the line containing the segment
+	projectionParam := ((point.X-segStart.X)*segDeltaX + (point.Y-segStart.Y)*segDeltaY + (point.Z-segStart.Z)*segDeltaZ) / segLengthSq
+	// Clamp parameter to [0, 1] to stay on the segment
+	if projectionParam < 0 {
+		projectionParam = 0
+	} else if projectionParam > 1 {
+		projectionParam = 1
+	}
+
+	// Compute closest point on segment
+	closestX := segStart.X + projectionParam*segDeltaX
+	closestY := segStart.Y + projectionParam*segDeltaY
+	closestZ := segStart.Z + projectionParam*segDeltaZ
+
+	// Return squared distance from point to closest point
+	distX := point.X - closestX
+	distY := point.Y - closestY
+	distZ := point.Z - closestZ
+	return distX*distX + distY*distY + distZ*distZ
+}

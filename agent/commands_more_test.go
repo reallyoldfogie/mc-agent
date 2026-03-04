@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"math"
 	"net"
 	"testing"
 	"time"
@@ -19,12 +18,26 @@ import (
 
 // fakes for movement and pathfinding
 type fakeMoveExec struct {
-	posCalls  [][3]float64
-	lookCalls [][3]float64
+	posCalls       [][3]float64
+	lookCalls      [][3]float64
+	manualMode     bool
+	manualThrottle [2]float64
+	manualRotation [2]float64
+	// For manual mode simulation
+	currentPos [3]float64
+	tickTimer  *time.Ticker
+	stopChan   chan struct{}
+	// Reference to agent for position updates in tests
+	agent *agent
 }
 
 func (f *fakeMoveExec) SendPosition(x, y, z float64, onGround bool) error {
 	f.posCalls = append(f.posCalls, [3]float64{x, y, z})
+	f.currentPos = [3]float64{x, y, z}
+	// Update agent position for manual mode testing
+	if f.manualMode && f.agent != nil {
+		f.agent.UpdatePosition(x, y, z, 0, 0)
+	}
 	return nil
 }
 func (f *fakeMoveExec) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
@@ -46,6 +59,66 @@ func (f *fakeMoveExec) StopSneaking() error   { return nil }
 func (f *fakeMoveExec) IsSneaking() bool      { return false }
 func (f *fakeMoveExec) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {
 	// no-op for fake
+}
+
+// ManualMovementExecutor implementation for testing
+func (f *fakeMoveExec) EnterManualMode() error {
+	if f.manualMode {
+		return nil // already in manual mode
+	}
+	f.manualMode = true
+	f.stopChan = make(chan struct{})
+
+	// Start a goroutine to simulate physics ticks
+	go func() {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// Simulate movement based on current throttle
+				// Walk speed: ~0.215 blocks/tick
+				const speed = 0.215
+				throttleX := f.manualThrottle[0] * speed
+				throttleZ := f.manualThrottle[1] * speed
+
+				// Update position (no gravity in fake mode, just horizontal movement)
+				f.currentPos[0] += throttleX
+				f.currentPos[2] += throttleZ
+
+				// Report position to maintain ground contact
+				_ = f.SendPosition(f.currentPos[0], f.currentPos[1], f.currentPos[2], true)
+
+			case <-f.stopChan:
+				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (f *fakeMoveExec) ExitManualMode() error {
+	if !f.manualMode {
+		return nil
+	}
+	f.manualMode = false
+	if f.stopChan != nil {
+		close(f.stopChan)
+		f.stopChan = nil
+	}
+	return nil
+}
+
+func (f *fakeMoveExec) SetManualThrottle(westEastThrottle, northSouthThrottle float64) error {
+	f.manualThrottle = [2]float64{westEastThrottle, northSouthThrottle}
+	return nil
+}
+
+func (f *fakeMoveExec) SetManualRotation(yaw, pitch float64) error {
+	f.manualRotation = [2]float64{yaw, pitch}
+	return nil
 }
 
 type fakePF struct {
@@ -207,7 +280,7 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 	require.NoError(t, err)
 
 	agent.UpdatePosition(0, 0, 0, 0, 0)
-	fm := &fakeMoveExec{}
+	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
 	agent.handleChatCommand("moveForward 0.1")
 	time.Sleep(70 * time.Millisecond) // allow one step
@@ -215,24 +288,19 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 		t.Fatalf("expected a SendPosition call")
 	}
 	got := fm.posCalls[len(fm.posCalls)-1]
-	if math.Abs(got[2]-0.1) > 1e-6 {
-		t.Fatalf("expected z≈0.1, got %#v", got)
+	// With physics-based movement, expect forward movement (positive z) in the 0.1-0.3 range
+	// (one tick of ~0.215 blocks/tick movement towards the target)
+	if got[2] <= 0 || got[2] > 0.3 {
+		t.Fatalf("expected forward movement z in (0, 0.3], got %#v", got)
 	}
 }
 
 // Movement: moveTo with target in same block (floor(0.1)=0) should say "Already at target"
 func TestCommand_MoveTo_SmallDelta(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "*********:25565"})
-	require.NoError(t, err)
-
-	agent := agentInt.(*agent)
-
-	err = agent.Init(context.Background())
-	require.NoError(t, err)
+	agent, capture := setupChatCapture(t, "1.21.5")
 
 	agent.UpdatePosition(0, 0, 0, 0, 0)
-	fc := &fakeChat{}
-	agent.SetChat(fc)
+
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
 	// Need a fake pathfinder even though we won't use it
@@ -240,8 +308,8 @@ func TestCommand_MoveTo_SmallDelta(t *testing.T) {
 	// moveTo 0.1 0 0 from 0 0 0: floors to same block (0, 0, 0) -> (0, 0, 0)
 	agent.handleChatCommand("moveTo 0.1 0 0")
 	time.Sleep(20 * time.Millisecond)
-	if !containsMsg(fc.msgs, "Already at target position") {
-		t.Fatalf("expected already-at-target message, got %v", fc.msgs)
+	if !containsMsg(capture.GetMessages(), "Already at target position") {
+		t.Fatalf("expected already-at-target message, got %v", capture.GetMessages())
 	}
 }
 

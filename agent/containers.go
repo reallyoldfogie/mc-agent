@@ -11,8 +11,8 @@ import (
 
 // SetContainerHelper injects a ContainerHelper implementation.
 func (a *agent) SetContainerHelper(ch ContainerHelper) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.containerSubsystemMu.Lock()
+	defer a.containerSubsystemMu.Unlock()
 	a.containerHelper = ch
 
 	// Wire up entity ID provider so container helper can access entity ID
@@ -23,8 +23,8 @@ func (a *agent) SetContainerHelper(ch ContainerHelper) {
 
 // GetContainerHelper returns the container helper if it has been initialized.
 func (a *agent) GetContainerHelper() ContainerHelper {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.containerSubsystemMu.RLock()
+	defer a.containerSubsystemMu.RUnlock()
 	return a.containerHelper
 }
 
@@ -106,10 +106,14 @@ func (a *agent) stopPositionHeartbeat() {
 // Returns the window ID assigned by the server, or error if timeout/failure.
 func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time.Duration, cursorX, cursorY, cursorZ float32) (byte, error) {
 
-	a.mu.Lock()
+	// Sequential snapshots: read containerHelper and moveExec from their respective locks
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
+	a.containerSubsystemMu.RUnlock()
+
+	a.movementMu.RLock()
 	moveExec := a.moveExec
-	a.mu.Unlock()
+	a.movementMu.RUnlock()
 
 	if ch == nil {
 		return 0, fmt.Errorf("container helper not set - call SetContainerHelper first")
@@ -185,9 +189,9 @@ func (a *agent) chooseOpenFace(pos models.V3, fallback models.BlockFace) models.
 //
 // Returns the window ID assigned by the server, or error if timeout/failure.
 func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte, error) {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return 0, fmt.Errorf("container helper not set - call SetContainerHelper first")
@@ -206,9 +210,9 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 
 // CloseContainer closes the currently open container window.
 func (a *agent) CloseContainer() error {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return fmt.Errorf("container helper not set - call SetContainerHelper first")
@@ -225,9 +229,9 @@ func (a *agent) CloseContainer() error {
 
 // TakeItemFromChest takes an item from a chest slot and places it in the player's inventory.
 func (a *agent) TakeItemFromChest(windowID byte, chestSlot int16) error {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return fmt.Errorf("container helper not set - call SetContainerHelper first")
@@ -238,9 +242,9 @@ func (a *agent) TakeItemFromChest(windowID byte, chestSlot int16) error {
 
 // PutItemInChest puts an item from the player's inventory into a chest slot.
 func (a *agent) PutItemInChest(windowID byte, playerInventorySlot int16, chestSlot int16) error {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return fmt.Errorf("container helper not set - call SetContainerHelper first")
@@ -251,9 +255,9 @@ func (a *agent) PutItemInChest(windowID byte, playerInventorySlot int16, chestSl
 
 // FindItemInPlayerInventory finds an item in the player's inventory when a chest is open.
 func (a *agent) FindItemInPlayerInventory(windowID byte, itemID int32) int16 {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return -1
@@ -264,9 +268,9 @@ func (a *agent) FindItemInPlayerInventory(windowID byte, itemID int32) int16 {
 
 // FindEmptyChestSlot finds an empty slot in a chest.
 func (a *agent) FindEmptyChestSlot(windowID byte) int16 {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return -1
@@ -277,9 +281,9 @@ func (a *agent) FindEmptyChestSlot(windowID byte) int16 {
 
 // GetChestRows returns the number of rows in a chest window.
 func (a *agent) GetChestRows(windowID byte) int {
-	a.mu.Lock()
+	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.mu.Unlock()
+	a.containerSubsystemMu.RUnlock()
 
 	if ch == nil {
 		return -1

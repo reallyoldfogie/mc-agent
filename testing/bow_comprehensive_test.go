@@ -114,7 +114,7 @@ func fireAtElevation(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 	})
 
 	targetCenter := models.V3{X: float64(targetX) + 0.5, Y: float64(targetY) + 0.5, Z: float64(targetZ) + 0.5}
-	trajectory, fireErr = agent.Agent.FireBowAt(
+	trajectory, fireErr = agent.Agent.FireBowAt(context.Background(),
 		targetCenter.X, targetCenter.Y, targetCenter.Z, callbacks...)
 
 	if fireErr != nil {

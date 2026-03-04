@@ -1,6 +1,8 @@
 package movement
 
 import (
+	"context"
+
 	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -40,6 +42,7 @@ type ExecutorConfig struct {
 	GetBotPos      func() (float64, float64, float64, float32, float32, bool)
 	SetBotPos      func(float64, float64, float64, float32, float32)
 	GetBotEntityID func() int32
+	Ctx            context.Context
 
 	// Required only for PhysicsExecutor
 	World         physics.World
@@ -61,6 +64,7 @@ func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecu
 
 	// case PhysicsExecutor:
 	return NewPhysicsMovementExecutor(
+		config.Ctx,
 		config.Client,
 		config.PacketMgr,
 		config.GetBotPos,

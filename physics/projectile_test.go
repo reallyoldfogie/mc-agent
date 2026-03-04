@@ -254,15 +254,15 @@ func TestSolveAim(t *testing.T) {
 			assert.LessOrEqual(t, math.Abs(yaw), 180.0, "Yaw should be within [-180, 180]")
 			assert.LessOrEqual(t, math.Abs(pitch), 90.0, "Pitch should be within [-90, 90]")
 
-		// Verify yaw points toward target
-		dx := tt.target.X - tt.origin.X
-		dz := tt.target.Z - tt.origin.Z
-		// SolveAim uses convention: yaw = atan2(dZ, dX)
-		expectedYawSolveAim := rad2deg(math.Atan2(dz, dx))
-		// CalculateAiming_OLD uses convention: yaw = atan2(-dX, -dZ)
-		expectedYawOld := rad2deg(math.Atan2(-dx, -dz))
-		assert.InDelta(t, expectedYawSolveAim, yaw, 0.1, "SolveAim Yaw should point toward target")
-		assert.InDelta(t, expectedYawOld, caYaw, 0.1, "CalculateAiming Yaw should point toward target")
+			// Verify yaw points toward target
+			dx := tt.target.X - tt.origin.X
+			dz := tt.target.Z - tt.origin.Z
+			// SolveAim uses convention: yaw = atan2(dZ, dX)
+			expectedYawSolveAim := rad2deg(math.Atan2(dz, dx))
+			// CalculateAiming_OLD uses convention: yaw = atan2(-dX, -dZ)
+			expectedYawOld := rad2deg(math.Atan2(-dx, -dz))
+			assert.InDelta(t, expectedYawSolveAim, yaw, 0.1, "SolveAim Yaw should point toward target")
+			assert.InDelta(t, expectedYawOld, caYaw, 0.1, "CalculateAiming Yaw should point toward target")
 		})
 	}
 }

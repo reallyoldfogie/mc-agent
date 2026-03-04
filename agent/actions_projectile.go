@@ -45,12 +45,18 @@ func projectileTypeFromEntityName(name string) (models.ProjectileType, bool) {
 // setPendingProjectileCallback queues callbacks to be fired when a matching projectile spawns.
 // Multiple callbacks can be registered for the same projectile to allow multiple sub-systems to be notified.
 // Multiple projectiles of different types can also be queued simultaneously.
-func (a *agent) setPendingProjectileCallback(pt models.ProjectileType, callbacks ...models.ProjectileHitCallback) {
+// target may be nil if no specific target was specified for this shot.
+func (a *agent) setPendingProjectileCallback(pt models.ProjectileType, target *models.V3, callbacks ...models.ProjectileHitCallback) {
 	a.pendingProjectilesMu.Lock()
-	a.pendingProjectiles = append(a.pendingProjectiles, pendingProjectileInfo{
+	info := pendingProjectileInfo{
 		projectileType: pt,
 		callbacks:      callbacks,
-	})
+		hasTarget:      target != nil,
+	}
+	if target != nil {
+		info.targetPos = *target
+	}
+	a.pendingProjectiles = append(a.pendingProjectiles, info)
 	a.pendingProjectilesMu.Unlock()
 }
 
@@ -84,7 +90,12 @@ func (a *agent) getPacketWriter() (common.PacketWriter, error) {
 // FireBowWithPitch fires an arrow with a specific pitch and yaw, using predicted trajectory calculation
 // without automatic pitch adjustment. This allows testing of specific trajectories for physics calibration.
 // Returns the predicted trajectory as []models.TrajectoryPoint (cast from any) for comparison with actual observed trajectory.
-func (a *agent) FireBowWithPitch(pitch, yaw float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
+func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if a.client == nil || a.versionHandler == nil {
 		return nil, fmt.Errorf("client or version handler not ready")
 	}
@@ -147,7 +158,7 @@ func (a *agent) FireBowWithPitch(pitch, yaw float64, callbacks ...models.Project
 	}
 
 	// Register all callbacks for this arrow
-	a.setPendingProjectileCallback(models.Arrow, callbacks...)
+	a.setPendingProjectileCallback(models.Arrow, nil, callbacks...)
 
 	// Fire with full power (max hold duration)
 	conn, err := a.getPacketWriter()
@@ -173,7 +184,12 @@ func (a *agent) FireBowWithPitch(pitch, yaw float64, callbacks ...models.Project
 
 // FireBow fires a bow with default hold time using version-specific handlers
 // Deprecated: Use FireBowAt for targeted firing
-func (a *agent) FireBow() error {
+func (a *agent) FireBow(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
 	if a.client == nil || a.versionHandler == nil {
 		return fmt.Errorf("client or version handler not ready")
 	}
@@ -212,11 +228,16 @@ func (a *agent) FireBow() error {
 
 // cmdFireBow via UseItem + PlayerAction (legacy chat command)
 func (a *agent) cmdFireBow() {
-	_ = a.FireBow() // Delegate to the main implementation
+	_ = a.FireBow(context.Background()) // Delegate to the main implementation
 }
 
 // FireBowAt fires a bow at a specific target position using version-specific handlers
-func (a *agent) FireBowAt(targetX, targetY, targetZ float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
+func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64, callbacks ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
 	if a.client == nil || a.versionHandler == nil {
 		return nil, fmt.Errorf("client or version handler not ready")
 	}
@@ -225,13 +246,12 @@ func (a *agent) FireBowAt(targetX, targetY, targetZ float64, callbacks ...models
 		return nil, fmt.Errorf("movement executor not available")
 	}
 
-	if err := a.TurnTowards(context.Background(), targetX, targetY, targetZ); err != nil {
+	if err := a.TurnTowards(ctx, targetX, targetY, targetZ); err != nil {
 		return nil, fmt.Errorf("turn towards target: %w", err)
 	}
 
 	time.Sleep(200 * time.Millisecond) // Small delay to ensure rotation is processed
 
-	ctx := context.Background()
 	visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, targetX, targetY, targetZ)
 	if err != nil {
 		return nil, err
@@ -318,7 +338,7 @@ func (a *agent) FireBowAt(targetX, targetY, targetZ float64, callbacks ...models
 	}
 
 	// Register all callbacks for this arrow
-	a.setPendingProjectileCallback(models.Arrow, callbacks...)
+	a.setPendingProjectileCallback(models.Arrow, &targetPos, callbacks...)
 
 	// Get sequence and use action handler
 	conn, err := a.getPacketWriter()
@@ -347,7 +367,7 @@ func (a *agent) FireBowAt(targetX, targetY, targetZ float64, callbacks ...models
 
 // cmdFireBowAt via UseItem + PlayerAction (legacy chat command)
 func (a *agent) cmdFireBowAt(x, y, z float64) {
-	if _, err := a.FireBowAt(x, y, z); err != nil {
+	if _, err := a.FireBowAt(context.Background(), x, y, z); err != nil {
 		_ = a.SendChat("Fire bow at error: " + err.Error())
 	}
 }
@@ -456,30 +476,38 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 	log.Printf("[visualizeTrajectory] Trajectory visualization complete (%d calculated points + 3 markers)", len(trajectoryCommands))
 }
 
-// visualizeActualArrowTrajectory displays the actual arrow path from server packets
-// Uses cyan particles to show actual positions vs calculated trajectory (redstone)
-func (a *agent) visualizeActualArrowTrajectory(positions []struct{ X, Y, Z float64 }) {
+// visualizeActualEntityTrajectory displays the actual projectile path from server packets
+// For persistent projectiles (arrows, tridents), uses server position updates
+// For non-persistent projectiles (wind charges, snowballs, etc.), uses simulated trajectory
+// Uses magma_block for path (glowing orange/red) and crying_obsidian for landing marker
+func (a *agent) visualizeActualEntityTrajectory(projType models.ProjectileType, positions []models.V3) {
 	if a.cfg.RCON == nil {
-		log.Printf("[visualizeActualArrowTrajectory] RCON not available, skipping visualization")
+		log.Printf("[visualizeActualEntityTrajectory] RCON not available, skipping visualization")
 		return
 	}
 
 	if len(positions) == 0 {
-		log.Printf("[visualizeActualArrowTrajectory] No positions to visualize")
+		log.Printf("[visualizeActualEntityTrajectory] No positions to visualize for %s", projType)
 		return
 	}
 
-	log.Printf("[visualizeActualArrowTrajectory] Visualizing %d actual arrow positions (cyan)", len(positions))
+	log.Printf("[visualizeActualEntityTrajectory] Visualizing %d actual %s positions (magma_block)", len(positions), projType)
 
 	ctx := context.Background()
 
+	// Kill previous entity track first
+	killCmd := "/kill @e[tag=projectile_entity_track]"
+	if _, err := a.cfg.RCON.Exec(ctx, killCmd); err != nil {
+		log.Printf("[visualizeActualEntityTrajectory] Error killing previous entity track: %v", err)
+	}
+
 	// Build display entity commands for actual trajectory (1/8 scale = 0.125)
-	// Using cyan_stained_glass for actual path
+	// Using magma_block for actual path - distinctive glowing orange/red texture
 	var trajectoryCommands []string
 	for i, pos := range positions {
 		if i%2 == 0 { // Sample every other position for consistency with calculated trajectory
 			// Block display entity at 1/8 scale
-			nbt := `{Tags:["projectile_trajectory_actual"],Glowing:1b,block_state:{Name:"minecraft:cyan_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
+			nbt := `{Tags:["projectile_entity_track"],Glowing:1b,block_state:{Name:"minecraft:magma_block"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 			cmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", pos.X, pos.Y, pos.Z, nbt)
 			trajectoryCommands = append(trajectoryCommands, cmd)
 		}
@@ -487,24 +515,24 @@ func (a *agent) visualizeActualArrowTrajectory(positions []struct{ X, Y, Z float
 
 	// Send actual trajectory display entities
 	for i, cmd := range trajectoryCommands {
-		log.Printf("[visualizeActualArrowTrajectory] Sending actual position %d: %s", i, cmd)
+		log.Printf("[visualizeActualEntityTrajectory] Sending actual position %d: %s", i, cmd)
 		if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
-			log.Printf("[visualizeActualArrowTrajectory] Error sending position %d: %v", i, err)
+			log.Printf("[visualizeActualEntityTrajectory] Error sending position %d: %v", i, err)
 		}
 	}
 
-	// Mark the actual landing position with blue glass
+	// Mark the actual landing position with crying_obsidian (dark purple with glowing drips)
 	if len(positions) > 0 {
 		last := positions[len(positions)-1]
-		landingNBT := `{Tags:["projectile_trajectory_actual"],Glowing:1b,block_state:{Name:"minecraft:blue_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
+		landingNBT := `{Tags:["projectile_entity_track"],Glowing:1b,block_state:{Name:"minecraft:crying_obsidian"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 		landingCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", last.X, last.Y, last.Z, landingNBT)
-		log.Printf("[visualizeActualArrowTrajectory] Actual landing marker: %s", landingCmd)
+		log.Printf("[visualizeActualEntityTrajectory] Actual landing marker (%s): %s", projType, landingCmd)
 		if _, err := a.cfg.RCON.Exec(ctx, landingCmd); err != nil {
-			log.Printf("[visualizeActualArrowTrajectory] Error sending landing marker: %v", err)
+			log.Printf("[visualizeActualEntityTrajectory] Error sending landing marker: %v", err)
 		}
 	}
 
-	log.Printf("[visualizeActualArrowTrajectory] Trajectory visualization complete (%d actual points + 1 marker)", len(trajectoryCommands))
+	log.Printf("[visualizeActualEntityTrajectory] %s trajectory visualization complete (%d actual points + 1 marker)", projType, len(trajectoryCommands))
 }
 
 // SwapInventoryWithHotbar swaps an inventory slot with a hotbar slot by clicking with hotbar mode
@@ -557,7 +585,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 
 	// For arrows, use the bow firing mechanism
 	if projectileType == models.Arrow {
-		return a.FireBowAt(x, y, z, callbacks...)
+		return a.FireBowAt(ctx, x, y, z, callbacks...)
 	}
 
 	// For other projectiles, we need to:
@@ -584,10 +612,12 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 			// Successfully equipped from hotbar
 			time.Sleep(50 * time.Millisecond)
 		} else {
+			log.Printf("[Agent %s] EquipItemByName failed for %s: %v. Attempting fallback to inventory search...", a.client.Name(), fullItemName, err)
 			// Not in hotbar, try to find in inventory and move to hotbar
 			slot, found, err := a.FindSlotWith(ctx, itemName, 0)
 			if err != nil || !found {
-				return nil, fmt.Errorf("%s not found in inventory: %w", itemName, err)
+				log.Printf("[Agent %s] FindSlotWith also failed for %s in inventory. EquipError: %v, FindError: %v, Found: %v", a.client.Name(), itemName, err, err, found)
+				return nil, fmt.Errorf("%s not found in inventory: %v", itemName, err)
 			}
 
 			// Swap inventory slot with hotbar slot 0 (click and quick move)
@@ -668,7 +698,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	hand := models.MainHand
 
 	// Register all callbacks before sending use item packet
-	a.setPendingProjectileCallback(projectileType, callbacks...)
+	a.setPendingProjectileCallback(projectileType, &targetPos, callbacks...)
 
 	// Debug: Log the actual float32 values before sending
 	yaw32 := float32(yaw)

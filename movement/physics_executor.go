@@ -113,6 +113,7 @@ type PhysicsMovementExecutor struct {
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
 func NewPhysicsMovementExecutor(
+	ctx context.Context,
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
@@ -147,7 +148,7 @@ func NewPhysicsMovementExecutor(
 		)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	childCtx, cancel := context.WithCancel(ctx)
 
 	return &PhysicsMovementExecutor{
 		baseExecutor:      baseExecutor,
@@ -158,7 +159,7 @@ func NewPhysicsMovementExecutor(
 		mode:              PhysicsModeIdle,
 		running:           false,
 		stopChan:          make(chan struct{}),
-		ctx:               ctx,
+		ctx:               childCtx,
 		cancel:            cancel,
 		currentPath:       nil,
 		currentStep:       0,

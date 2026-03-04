@@ -1,6 +1,7 @@
 package movement
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -168,6 +169,7 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 	}
 
 	return NewPhysicsMovementExecutor(
+		context.Background(),
 		nil, // client (nil for test mode)
 		nil, // packetMgr (nil for test mode)
 		getBotPos,

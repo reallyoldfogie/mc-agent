@@ -4,7 +4,6 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	"github.com/reallyoldfogie/mc-bot-go/bot/msg"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -69,13 +68,6 @@ func (e *botEventBusAdapter) AddListener(listeners ...bot.PacketHandler) {
 
 // NewClientFromBot wraps a concrete bot.Client as an Agent Client.
 // func NewClientFromBot(c *bot.Client) Client { return &botClientAdapter{c: c} }
-
-// chatAdapter wraps msg.Manager to satisfy Chat.
-type chatAdapter struct{ m *msg.Manager }
-
-func (c *chatAdapter) SendMessage(s string) error { return c.m.SendMessage(s) }
-
-func NewChatFromMsg(m *msg.Manager) Chat { return &chatAdapter{m: m} }
 
 // packetRecorderAdapter bridges agent.PacketRecorder to bot.PacketRecorder without
 // requiring the concrete recorder type here.

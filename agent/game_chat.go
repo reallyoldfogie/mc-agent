@@ -47,12 +47,12 @@ func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
 func (a *agent) onDeath() {
 	log.Printf("Died and respawn scheduled")
 	// Auto-respawn after 5 seconds when respawner is set
-	a.mu.Lock()
+	a.fallbackHandlersMu.RLock()
 	var r Respawner = nil
 	if rr, ok := any(a.teleport).(Respawner); ok {
 		r = rr
 	}
-	a.mu.Unlock()
+	a.fallbackHandlersMu.RUnlock()
 	if r != nil {
 		go func() { time.Sleep(5 * time.Second); _ = r.Respawn() }()
 	}
@@ -77,21 +77,32 @@ func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, te
 	return nil
 }
 
-// SendChat sends a chat message via the chat subsystem when available.
+// SendChat sends a chat message via the version handler or fallback chat manager.
 // Implements ChatOperations interface.
 func (a *agent) SendChat(message string) error {
-	a.mu.Lock()
-	// Prefer auto-created chatMgr, fall back to injected chat
-	cm := a.chatMgr
-	if cm == nil {
-		cm = a.chat
-	}
-	a.mu.Unlock()
+	// versionHandler and client are no-lock fields (set-once in Init, read-only after)
+	vh := a.versionHandler
+	c := a.client
 
-	if cm == nil {
-		return fmt.Errorf("chat manager not initialized")
+	// Prefer version handler if both it and a valid connection are available
+	if vh != nil && c != nil {
+		conn := c.Conn()
+		if conn != nil {
+			return vh.Play().Chat().SendChat(conn, message)
+		}
 	}
-	return cm.SendMessage(message)
+
+	// Fall back to injected chat manager
+	a.fallbackHandlersMu.RLock()
+	fallback := a.chat
+	a.fallbackHandlersMu.RUnlock()
+
+	if fallback != nil {
+		return fallback.SendMessage(message)
+	}
+	// If no fallback is set, log and return (allows tests to work without explicit chat setup)
+	log.Printf("SendChat (no network): %s", message)
+	return nil
 }
 
 // OnSystemChat handles system chat messages from the server.
@@ -178,4 +189,68 @@ func (a *agent) emitChatEvent(msg chat.Message) {
 	case a.chatEvents <- text:
 	default:
 	}
+}
+
+// onSystemChatPacket handles raw ClientboundSystemChat packets using version-specific parsing.
+func (a *agent) onSystemChatPacket(p pk.Packet) error {
+	// versionHandler is a no-lock field (set-once in Init, read-only after)
+	vh := a.versionHandler
+
+	if vh == nil {
+		return nil
+	}
+
+	message, overlay, err := vh.Play().Chat().ParseSystemChat(p)
+	if err != nil {
+		return err
+	}
+	return a.OnSystemChat(chat.Message{Text: message}, overlay)
+}
+
+// onPlayerChatPacket handles raw ClientboundPlayerChat packets using version-specific parsing.
+func (a *agent) onPlayerChatPacket(p pk.Packet) error {
+	// versionHandler and playerList are no-lock fields (set-once in Init, read-only after)
+	vh := a.versionHandler
+	pl := a.playerList
+
+	if vh == nil {
+		return nil
+	}
+
+	senderUUID, message, err := vh.Play().Chat().ParsePlayerChat(p)
+	if err != nil {
+		return err
+	}
+
+	// Resolve sender info from playerlist (best-effort; fall back to minimal struct)
+	info := playerlist.PlayerInfo{}
+	if pl != nil {
+		for id, pi := range pl.Get() {
+			var cu [16]byte
+			copy(cu[:], id[:])
+			if cu == senderUUID {
+				if pi != nil {
+					info = *pi
+				}
+				break
+			}
+		}
+	}
+	return a.OnPlayerChat(info, chat.Message{Text: message}, false)
+}
+
+// onDisguisedChatPacket handles raw ClientboundProfilelessChat packets using version-specific parsing.
+func (a *agent) onDisguisedChatPacket(p pk.Packet) error {
+	// versionHandler is a no-lock field (set-once in Init, read-only after)
+	vh := a.versionHandler
+
+	if vh == nil {
+		return nil
+	}
+
+	message, err := vh.Play().Chat().ParseDisguisedChat(p)
+	if err != nil {
+		return err
+	}
+	return a.OnDisguisedChat(chat.Message{Text: message})
 }

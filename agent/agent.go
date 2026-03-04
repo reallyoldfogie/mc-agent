@@ -30,7 +30,6 @@ import (
 
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
-	"github.com/reallyoldfogie/mc-bot-go/bot/msg"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/reallyoldfogie/mc-bot-go/bot/world"
@@ -70,6 +69,8 @@ func (r *rconAdapter) SummonEntity(ctx context.Context, x, y, z float64, entityT
 type pendingProjectileInfo struct {
 	projectileType models.ProjectileType
 	callbacks      []models.ProjectileHitCallback // Multiple callbacks supported
+	targetPos      models.V3                      // Intended target (copied to active info on spawn)
+	hasTarget      bool                           // Whether a target was provided
 }
 
 // activeProjectileInfo tracks information about a fired projectile
@@ -94,6 +95,12 @@ type activeProjectileInfo struct {
 	spawnPos      models.V3 // Position when projectile spawned
 	spawnTime     time.Time // Time when projectile spawned
 	spawnVelocity models.V3 // Velocity from spawn packet
+	// Target information for hit validation
+	targetPos models.V3 // Intended target for hit validation
+	hasTarget bool      // Whether a target was provided
+
+	// Position history for trajectory visualization
+	positionHistory []models.V3 // Server-confirmed positions during flight (persistent projectiles)
 
 	// Server-authoritative position confirmation for persistent projectiles
 	pendingCallbackFire bool                     // Whether callback should fire when server position arrives
@@ -109,10 +116,25 @@ type agent struct {
 	cfg Config
 
 	// lifecycle
-	mu     sync.Mutex
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// fine-grained locks (replacing single a.mu for subsystems)
+	// lifecycle management: ctx, cancel
+	lifecycleMu sync.RWMutex
+	// optional fallback handlers: teleport, chat
+	fallbackHandlersMu sync.RWMutex
+	// player name/UUID resolvers: playerUUIDByName, playerNameByUUID
+	playerResolversMu sync.RWMutex
+	// following subsystem: followMgr, targetSelector
+	followingMu sync.RWMutex
+	// movement subsystem: moveExec, pathfind, shapeMgr
+	movementMu sync.RWMutex
+	// inventory subsystem: itemMgr, slots
+	inventoryMu sync.RWMutex
+	// container subsystem: containerHelper, screenMgr, worldMgr
+	containerSubsystemMu sync.RWMutex
 
 	// logging
 	packetLogWriter io.Writer
@@ -149,7 +171,6 @@ type agent struct {
 	player       TeleportAccepter       // Player subsystem (teleportation)
 	worldMgr     models.World           // World manager (block queries, pathfinding)
 	mcAgentWorld *mcworld.Manager       // mc-agent world manager (when version handler is available)
-	chatMgr      Chat                   // Chat manager (message sending)
 	screenMgr    models.ScreenSubsystem // Screen manager (inventory/containers)
 	playerList   playerlist.PlayerList  // Player list (online player tracking)
 
@@ -158,7 +179,7 @@ type agent struct {
 
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed
-	chat       Chat             // override chatMgr if needed
+	chat       Chat             // fallback chat for when version handler unavailable
 	moveExec   models.MovementExecutor
 	pathfind   models.PathFinder
 	shapeMgr   models.BlockShapeManager
@@ -279,12 +300,15 @@ func New(cfg Config) (models.Agent, error) {
 
 // Init prepares dependencies, managers and event wiring but does not connect.
 func (a *agent) Init(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	// Brief lock for double-init check only. Remaining Init body is single-threaded
+	// (goroutines start in Start(), not here), so no locks needed for field writes.
+	a.lifecycleMu.Lock()
 	if a.cancel != nil {
+		a.lifecycleMu.Unlock()
 		return ErrAlreadyInitialized
 	}
 	a.ctx, a.cancel = context.WithCancel(ctx)
+	a.lifecycleMu.Unlock()
 
 	// Resolve version and protocol (auto-detect from server if not specified)
 	versionAutoDetected, err := a.resolveVersionAndManagers()
@@ -384,7 +408,7 @@ func (a *agent) Init(ctx context.Context) error {
 		a.player = playerConcrete // Assign concrete type to interface field
 		log.Printf("[Agent %s] Player subsystem initialized", a.client.Name())
 
-		// Create PlayerList (for player tracking, needed by msg.New constructor)
+		// Create PlayerList (for player tracking and UUID resolution)
 		playerList := playerlist.New(botClient, a.packetMgr)
 		a.playerList = playerList // Store as interface{}
 		log.Printf("[Agent %s] PlayerList initialized", a.client.Name())
@@ -418,15 +442,6 @@ func (a *agent) Init(ctx context.Context) error {
 			}
 		}
 
-		// Create Chat Manager (constructor requires concrete types)
-		chatMgrConcrete := msg.New(botClient, playerConcrete, playerList, msg.EventsHandler{
-			SystemChat:        a.OnSystemChat,
-			PlayerChatMessage: a.OnPlayerChat,
-			DisguisedChat:     a.OnDisguisedChat,
-		}, a.packetMgr)
-		a.chatMgr = chatMgrConcrete // Assign concrete type to interface field
-		log.Printf("[Agent %s] Chat manager initialized", a.client.Name())
-
 		// Create World Manager (for chunk management)
 		if a.versionHandler != nil {
 			// Use mc-agent world with version handler for packet parsing
@@ -458,6 +473,10 @@ func (a *agent) Init(ctx context.Context) error {
 		a.screenMgr = screen.NewManager(botClient, containerEvents{agent: a}, a.packetMgr)
 		log.Printf("[Agent %s] Screen manager initialized", a.client.Name())
 
+		// Initialize slot resolver so inventory can be queried
+		a.slots = newScreenManagerSlotResolver(a)
+		log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.client.Name())
+
 		a.initHeldSlotTracking()
 		a.initClientInformationHandler(customSettings)
 
@@ -465,6 +484,15 @@ func (a *agent) Init(ctx context.Context) error {
 		var stateProps *pathfinding.StatePropertyLoader
 		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, filepath.Join("data", "mc-data-gen-cache"), "")
 		if err == nil {
+			log.Printf("[Agent %s] Resolved data path: %s", a.client.Name(), dataBasePath)
+			// Verify path exists and has version directory
+			versionPath := filepath.Join(dataBasePath, a.cfg.Version)
+			if info, err := os.Stat(versionPath); err == nil && info.IsDir() {
+				log.Printf("[Agent %s] Version directory exists: %s", a.client.Name(), versionPath)
+			} else {
+				log.Printf("[Agent %s] Warning: version directory missing: %s (error: %v)", a.client.Name(), versionPath, err)
+			}
+
 			// Use new unified Minecraft data cache for block properties
 			dataCache := agentutils.NewMinecraftDataCache(a.cfg.Version)
 			if err := dataCache.EnsureDataGenerated(); err == nil {
@@ -485,6 +513,8 @@ func (a *agent) Init(ctx context.Context) error {
 			shapeMgr, err = pathfinding.NewBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps)
 			if err != nil {
 				log.Printf("[Agent %s] Warning: failed to create block shape manager: %v", a.client.Name(), err)
+			} else {
+				log.Printf("[Agent %s] Successfully created block shape manager", a.client.Name())
 			}
 		} else {
 			log.Printf("[Agent %s] Warning: failed to resolve data path: %v", a.client.Name(), err)
@@ -499,6 +529,7 @@ func (a *agent) Init(ctx context.Context) error {
 			GetBotPos:      a.GetPosition,
 			SetBotPos:      a.UpdatePosition,
 			GetBotEntityID: a.GetEntityID,
+			Ctx:            a.ctx,
 		}
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
@@ -758,15 +789,14 @@ func (a *agent) Init(ctx context.Context) error {
 		}
 	}
 
-
 	return nil
 }
 
 // Start connects to the server and begins background tasks.
 func (a *agent) Start(ctx context.Context) error {
-	a.mu.Lock()
+	a.lifecycleMu.RLock()
 	baseCtx := a.ctx
-	a.mu.Unlock()
+	a.lifecycleMu.RUnlock()
 
 	// download jars and generate reports if needed
 	if err := a.downloadJarsAndGenerateReports(); err != nil {
@@ -778,9 +808,9 @@ func (a *agent) Start(ctx context.Context) error {
 		if err := a.Init(ctx); err != nil {
 			return err
 		}
-		a.mu.Lock()
+		a.lifecycleMu.RLock()
 		baseCtx = a.ctx
-		a.mu.Unlock()
+		a.lifecycleMu.RUnlock()
 	}
 
 	// Connect to the server using the underlying client if present.
@@ -865,11 +895,11 @@ func (a *agent) Start(ctx context.Context) error {
 				if err := a.client.HandleGame(ctx); err != nil {
 					log.Printf("[Agent %s] Game handling loop exiting: HandleGame returned error: %v", a.client.Name(), err)
 					// Cancel the agent's context to signal shutdown
-					a.mu.Lock()
+					a.lifecycleMu.Lock()
 					if a.cancel != nil {
 						a.cancel()
 					}
-					a.mu.Unlock()
+					a.lifecycleMu.Unlock()
 					return
 				}
 			}
@@ -1001,8 +1031,8 @@ func (a *agent) downloadJarsAndGenerateReports() error {
 // Done returns a channel that's closed when the agent's internal context is cancelled.
 // It returns nil if Init hasn't been called yet.
 func (a *agent) Done() <-chan struct{} {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.lifecycleMu.RLock()
+	defer a.lifecycleMu.RUnlock()
 	if a.ctx == nil {
 		return nil
 	}
@@ -1019,14 +1049,14 @@ func (a *agent) Close(context.Context) error {
 		a.stopPositionHeartbeat()
 	}
 
-	a.mu.Lock()
+	a.lifecycleMu.Lock()
 	if a.cancel == nil {
-		a.mu.Unlock()
+		a.lifecycleMu.Unlock()
 		return nil
 	}
 	a.cancel()
 	a.cancel = nil
-	a.mu.Unlock()
+	a.lifecycleMu.Unlock()
 	a.wg.Wait()
 	if a.rec != nil {
 		log.Printf("[Agent %s] [Replay] closing recorder", a.client.Name())
@@ -1059,16 +1089,24 @@ func (a *agent) SetLastUpdateRecipes(payload *UpdateRecipesPayload) {
 }
 
 // SetTeleportAccepter injects a TeleportAccepter implementation (e.g., player subsystem).
-func (a *agent) SetTeleportAccepter(t TeleportAccepter) { a.mu.Lock(); a.teleport = t; a.mu.Unlock() }
+func (a *agent) SetTeleportAccepter(t TeleportAccepter) {
+	a.fallbackHandlersMu.Lock()
+	a.teleport = t
+	a.fallbackHandlersMu.Unlock()
+}
 
 // SetChat injects a Chat implementation.
-func (a *agent) SetChat(c Chat) { a.mu.Lock(); a.chat = c; a.mu.Unlock() }
+func (a *agent) SetChat(c Chat) {
+	a.fallbackHandlersMu.Lock()
+	a.chat = c
+	a.fallbackHandlersMu.Unlock()
+}
 
 // SetPlayerUUIDResolver injects a function to resolve player names to UUIDs.
 func (a *agent) SetPlayerUUIDResolver(f func(string) ([16]byte, error)) {
-	a.mu.Lock()
+	a.playerResolversMu.Lock()
 	a.playerUUIDByName = f
-	a.mu.Unlock()
+	a.playerResolversMu.Unlock()
 }
 
 // UpdatePosition sets internal position; intended for movement executor wiring.
@@ -1078,15 +1116,15 @@ func (a *agent) UpdatePosition(x, y, z float64, yaw, pitch float32) {
 
 // SetFollowManager injects a follow manager implementation.
 func (a *agent) SetFollowManager(f models.FollowManager) {
-	a.mu.Lock()
+	a.followingMu.Lock()
 	a.followMgr = f
-	a.mu.Unlock()
+	a.followingMu.Unlock()
 }
 
 // SetTargetSelector injects a TargetSelector for use by other subsystems.
 func (a *agent) SetTargetSelector(ts models.TargetSelector) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.followingMu.Lock()
+	defer a.followingMu.Unlock()
 	// No-op if the same selector is already set
 	if a.targetSelector == ts {
 		return
@@ -1096,9 +1134,9 @@ func (a *agent) SetTargetSelector(ts models.TargetSelector) {
 
 // ResolvePlayerUUIDByName resolves a player UUID using the injected resolver.
 func (a *agent) ResolvePlayerUUIDByName(name string) ([16]byte, error) {
-	a.mu.Lock()
+	a.playerResolversMu.RLock()
 	f := a.playerUUIDByName
-	a.mu.Unlock()
+	a.playerResolversMu.RUnlock()
 	if f == nil {
 		return [16]byte{}, ErrInvalidConfig("player UUID resolver not set")
 	}
@@ -1107,21 +1145,29 @@ func (a *agent) ResolvePlayerUUIDByName(name string) ([16]byte, error) {
 
 // SetPlayerNameResolver injects resolver to map UUID->player name.
 func (a *agent) SetPlayerNameResolver(f func([16]byte) (string, bool)) {
-	a.mu.Lock()
+	a.playerResolversMu.Lock()
 	a.playerNameByUUID = f
-	a.mu.Unlock()
+	a.playerResolversMu.Unlock()
 }
 
 // SetItemManager injects an ItemManager for item name lookup.
-func (a *agent) SetItemManager(im ItemManager) { a.mu.Lock(); a.itemMgr = im; a.mu.Unlock() }
+func (a *agent) SetItemManager(im ItemManager) {
+	a.inventoryMu.Lock()
+	a.itemMgr = im
+	a.inventoryMu.Unlock()
+}
 
 // SetSlotResolver injects a SlotResolver to inspect current slot contents.
-func (a *agent) SetSlotResolver(sr SlotResolver) { a.mu.Lock(); a.slots = sr; a.mu.Unlock() }
+func (a *agent) SetSlotResolver(sr SlotResolver) {
+	a.inventoryMu.Lock()
+	a.slots = sr
+	a.inventoryMu.Unlock()
+}
 
 // Movement/pathfinding injection
 func (a *agent) SetMovementExecutor(m models.MovementExecutor) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.movementMu.Lock()
+	defer a.movementMu.Unlock()
 	a.moveExec = m
 
 	// If we have a movement mirror and the executor supports packet callbacks,
@@ -1144,8 +1190,8 @@ func (a *agent) SetMovementExecutor(m models.MovementExecutor) {
 
 // MovementExecutorType reports the current movement executor flavor for diagnostics.
 func (a *agent) MovementExecutorType() movement.ExecutorType {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
 	if a.moveExec == nil {
 		return movement.UnknownExecutor
 	}
@@ -1154,13 +1200,17 @@ func (a *agent) MovementExecutorType() movement.ExecutorType {
 	}
 	return movement.UnknownExecutor
 }
-func (a *agent) SetPathFinder(pf models.PathFinder) { a.mu.Lock(); a.pathfind = pf; a.mu.Unlock() }
+func (a *agent) SetPathFinder(pf models.PathFinder) {
+	a.movementMu.Lock()
+	a.pathfind = pf
+	a.movementMu.Unlock()
+}
 
 // SetTelemetryRecorder injects a telemetry recorder for movement testing.
 // Only works with PhysicsMovementExecutor.
 func (a *agent) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.movementMu.Lock()
+	defer a.movementMu.Unlock()
 
 	// Set telemetry on physics executor
 	a.moveExec.SetTelemetryRecorder(recorder)
@@ -1317,6 +1367,19 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 		}
 	}
 	a.versionHandler = a.cfg.VersionHandler
+
+	// Validate protocol version matches between handler and PacketMgr
+	if a.versionHandler != nil && a.cfg.PacketMgr != nil {
+		handlerVersion := a.versionHandler.ProtocolVersion()
+		packetMgrVersion := a.cfg.PacketMgr.VersionProtocol()
+		if uint64(handlerVersion) != packetMgrVersion {
+			panic(fmt.Sprintf(
+				"[%s] FATAL: Protocol version mismatch for %s: handler has %d but PacketMgr has %d. "+
+					"This indicates a misconfigured version handler. Handler ProtocolVersion constant must match the protocol version used by mc-protocol-go.",
+				name, a.versionHandler.Version(), handlerVersion, packetMgrVersion))
+		}
+		log.Printf("[%s] Verified protocol version %d for %s", name, handlerVersion, a.versionHandler.Version())
+	}
 
 	// Step 6: Derive optional managers (SoundMgr, BlockMgr) - best effort
 	if a.cfg.SoundMgr == nil {

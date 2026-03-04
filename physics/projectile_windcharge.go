@@ -5,16 +5,27 @@ import "github.com/reallyoldfogie/mc-agent/models"
 // WindChargeModel implements ProjectilePhysicsModel for wind charges
 // Wind charges are player-thrown explosive projectiles introduced in Minecraft 1.21
 //
-// Physics order: drag → position (with custom vertical adjustment, no standard gravity)
-// This matches ExplosiveProjectileEntity.java:66-94 from Minecraft 1.21.8
+// Physics based on AbstractWindChargeEntity from Minecraft 1.21.8:
+// - Drag coefficient: 1.0F (no reduction, constant velocity)
+// - Acceleration power: 0.0 (no acceleration, purely ballistic flight)
+// - Update order: drag → position (no gravity or custom acceleration)
 //
-// IMPORTANT: Wind charges do NOT use standard gravity.
-// Instead, they use a custom vertical adjustment of -0.02 per tick
+// Wind charges travel in STRAIGHT LINES with NO VERTICAL DROP,
+// maintaining constant velocity until collision/despawn.
+//
+// IMPORTANT: Randomness in Player-Fired Projectiles
+// In Minecraft, player-fired projectiles include randomness to simulate inaccuracy:
+// - Formula: deviation = random.nextGaussian() * 0.0075 * inaccuracy
+// - Expected spread: ~0.3 blocks (pre-1.21.6) or delayed spread (1.21.6+)
+// - 1.21.6+ provides zero spread for first 2 ticks, then gradual increase (0.05/tick)
+// - This RANDOMNESS is NOT part of the physics model itself, but applied at firing time
+// - Testing should account for this inherent inaccuracy (±0.3-0.5 block tolerance)
+// See: docs/PROJECTILE_RANDOMNESS.md for details
 type WindChargeModel struct {
-	drag         float64 // Air drag coefficient
-	waterDrag    float64 // Water drag coefficient
+	drag         float64 // Air drag coefficient (1.0 = constant velocity)
+	waterDrag    float64 // Water drag coefficient (1.0 = no attenuation in liquids per Java)
 	initialSpeed float64 // Throw speed
-	customAccel  float64 // Custom vertical adjustment (-0.02)
+	customAccel  float64 // Custom vertical adjustment (0.0 = no acceleration)
 }
 
 // Type returns the projectile type
@@ -43,32 +54,34 @@ func (m *WindChargeModel) InitialSpeed() float64 {
 }
 
 // UpdateOrder returns the physics update order for wind charges
+// Note: While OrderDragPositionCustomAccel is used, customAccel=0.0 makes vertical force a no-op
 func (m *WindChargeModel) UpdateOrder() models.UpdateOrder {
-	return models.OrderDragPositionCustomAccel // drag → position (custom acceleration)
+	return models.OrderDragPositionCustomAccel // drag → position → (no acceleration)
 }
 
-// ApplyPhysics applies one tick of physics with custom acceleration
+// ApplyPhysics applies one tick of physics to a wind charge
+// Wind charges maintain constant velocity with optional liquid attenuation
 func (m *WindChargeModel) ApplyPhysics(pos, vel models.V3, inWater bool) (models.V3, models.V3) {
-	// Step 1: Apply drag
+	// Step 1: Apply drag (1.0 in air and water = constant velocity everywhere)
 	drag := m.Drag()
 	if inWater {
 		drag = m.WaterDrag()
 	}
 	vel = vel.Mul(drag)
 
-	// Step 2: Apply custom vertical adjustment (not standard gravity)
-	vel = m.ApplyVerticalForce(vel)
-
-	// Step 3: Update position
+	// Step 2: Update position (straight-line flight)
 	pos = pos.Add(vel)
+
+	// Step 3: Apply vertical force (0.0 = no acceleration, purely ballistic)
+	vel = m.ApplyVerticalForce(vel)
 
 	return pos, vel
 }
 
-// ApplyVerticalForce applies custom vertical adjustment instead of gravity
-// Wind charges use -0.02 per tick instead of standard gravity
+// ApplyVerticalForce applies vertical acceleration (0.0 for wind charges)
+// Wind charges have NO vertical acceleration, maintaining level flight
 func (m *WindChargeModel) ApplyVerticalForce(vel models.V3) models.V3 {
-	vel.Y -= m.customAccel // -0.02 per tick
+	vel.Y -= m.customAccel // 0.0 = no vertical acceleration
 	return vel
 }
 
@@ -83,6 +96,9 @@ func NewWindChargeModel(drag, waterDrag, initialSpeed, customAccel float64) mode
 }
 
 // WindChargeModelInstance is the predefined wind charge model
-// drag: 0.95 (slightly less drag than most projectiles)
-// customAccel: 0.02 (custom vertical adjustment, not standard gravity)
-var WindChargeModelInstance = NewWindChargeModel(0.95, 0.8, 1.5, 0.02)
+// Based on AbstractWindChargeEntity from Minecraft 1.21.8:
+// drag: 1.0 (no reduction in air per Java source: "Drag coefficient: 1.0F")
+// waterDrag: 1.0 (no reduction in water per Java source: "no reduction in water")
+// initialSpeed: 1.5 (high velocity for projectile)
+// customAccel: 0.0 (no acceleration - purely ballistic per Java source)
+var WindChargeModelInstance = NewWindChargeModel(1.0, 1.0, 1.5, 0.0)

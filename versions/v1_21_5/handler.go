@@ -335,6 +335,185 @@ func (p *playHandler) convertProtocolSlotDisplay(slot cb.SlotDisplay) agent_mode
 	}
 }
 
+// BuildPlayerInfoPacket builds a PlayerInfo packet for replay recording (v1.21.5).
+func (p *playHandler) BuildPlayerInfoPacket(uuid [16]byte, name string, properties []common.ProfileProperty) (int32, []byte, error) {
+	action := cb.PlayerInfoActionBitflags{}
+	action.SetAddPlayer(true)
+	action.SetUpdateGameMode(true)
+	action.SetUpdateListed(true)
+	action.SetUpdateLatency(true)
+
+	props := make([]basetypes.GameProfilePropertiesArrayType, 0, len(properties))
+	for _, prop := range properties {
+		if prop.Name == "" || prop.Value == "" {
+			continue
+		}
+		var sig protocol_models.Option[pk.String]
+		if prop.Signature != "" {
+			sigVal := pk.String(prop.Signature)
+			sig = protocol_models.Option[pk.String]{Has: true, Val: &sigVal}
+		}
+		props = append(props, basetypes.GameProfilePropertiesArrayType{
+			Name:      pk.String(prop.Name),
+			Value:     pk.String(prop.Value),
+			Signature: sig,
+		})
+	}
+	profile := basetypes.GameProfile{
+		Name: pk.String(name),
+	}
+	profile.Properties.Ary.Ary = props
+
+	entry := cb.PlayerInfoDataArrayType{
+		Uuid:         pk.UUID(uuid),
+		Player:       &profile,
+		Gamemode:     ptrVarInt(0),
+		Listed:       ptrVarInt(1),
+		Latency:      ptrVarInt(0),
+		ChatSession:  &protocol_models.Void{},
+		ListPriority: &protocol_models.Void{},
+		ShowHat:      &protocol_models.Void{},
+		DisplayName:  &protocol_models.Void{},
+	}
+
+	data := protocol_models.Array[pk.VarInt, cb.PlayerInfoDataArrayType]{
+		Ary: protocol_models.Ary[pk.VarInt]{Ary: []cb.PlayerInfoDataArrayType{entry}},
+	}
+	ctx := protocol_models.NewParentContext()
+	ctx.SetField("action/add_player", action.AddPlayer)
+	ctx.SetField("action/initialize_chat", action.InitializeChat)
+	ctx.SetField("action/update_game_mode", action.UpdateGameMode)
+	ctx.SetField("action/update_listed", action.UpdateListed)
+	ctx.SetField("action/update_latency", action.UpdateLatency)
+	ctx.SetField("action/update_display_name", action.UpdateDisplayName)
+	ctx.SetField("action/update_list_order", action.UpdateListOrder)
+	ctx.SetField("action/update_hat", action.UpdateHat)
+	data.SetParentContext(ctx)
+
+	pkt := cb.NewPlayerInfo()
+	pkt.Action = action
+	pkt.Data = data
+	packetID := int32(pkt.PacketID())
+	packetData := pkt.Marshal().Data
+
+	return packetID, packetData, nil
+}
+
+func ptrVarInt(v int32) *pk.VarInt {
+	val := pk.VarInt(v)
+	return &val
+}
+
+// ExtractPlayerInfoProperties extracts game profile properties from a PlayerInfo packet (v1.21.5).
+func (p *playHandler) ExtractPlayerInfoProperties(packet pk.Packet) []common.ProfileProperty {
+	// Create a new PlayerInfo packet and scan the raw packet data
+	playerInfoPkt := cb.NewPlayerInfo()
+	if err := playerInfoPkt.Scan(packet); err != nil {
+		return nil
+	}
+
+	data := playerInfoPkt.GetData()
+	dataEntries := data.Get()
+	if len(dataEntries) == 0 {
+		return nil
+	}
+
+	// Get first entry's GameProfile
+	firstEntry := dataEntries[0]
+	if firstEntry.Player == nil {
+		return nil
+	}
+
+	gp, ok := firstEntry.Player.(*basetypes.GameProfile)
+	if !ok || gp == nil {
+		return nil
+	}
+
+	// Extract properties
+	gpProps := gp.Properties.Get()
+	props := make([]common.ProfileProperty, 0, len(gpProps))
+	for _, prop := range gpProps {
+		name := string(prop.Name)
+		value := string(prop.Value)
+		if name == "" || value == "" {
+			continue
+		}
+		profileProp := common.ProfileProperty{Name: name, Value: value}
+		if prop.Signature.Has && prop.Signature.Val != nil {
+			profileProp.Signature = string(*prop.Signature.Val)
+		}
+		props = append(props, profileProp)
+	}
+	return props
+}
+
+// ParsePlayerInfo parses a complete PlayerInfo packet and extracts all entries and action data (v1.21.5).
+func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*common.PlayerInfoUpdate, error) {
+	playerInfoPkt := cb.NewPlayerInfo()
+	if err := playerInfoPkt.Scan(packet); err != nil {
+		return nil, fmt.Errorf("failed to scan PlayerInfo packet: %w", err)
+	}
+
+	action := playerInfoPkt.GetAction()
+	dataEntries := playerInfoPkt.GetData().Get()
+	update := &common.PlayerInfoUpdate{
+		Action:  uint8(action.UnsignedByte),
+		Entries: make([]common.PlayerInfoEntry, 0, len(dataEntries)),
+	}
+
+	for _, entry := range dataEntries {
+		infoEntry := common.PlayerInfoEntry{
+			UUID: [16]byte(entry.Uuid),
+		}
+
+		if action.AddPlayer() && entry.Player != nil {
+			infoEntry.AddPlayer = true
+			if gameProfile, ok := entry.Player.(*basetypes.GameProfile); ok && gameProfile != nil {
+				infoEntry.Name = string(gameProfile.Name)
+				gameProfileProperties := gameProfile.Properties.Get()
+				infoEntry.Properties = make([]common.ProfileProperty, 0, len(gameProfileProperties))
+				for _, property := range gameProfileProperties {
+					propertyName := string(property.Name)
+					propertyValue := string(property.Value)
+					if propertyName == "" || propertyValue == "" {
+						continue
+					}
+					profileProperty := common.ProfileProperty{Name: propertyName, Value: propertyValue}
+					if property.Signature.Has && property.Signature.Val != nil {
+						profileProperty.Signature = string(*property.Signature.Val)
+					}
+					infoEntry.Properties = append(infoEntry.Properties, profileProperty)
+				}
+			}
+		}
+
+		if action.UpdateGameMode() && entry.Gamemode != nil {
+			if gameModeValue, ok := entry.Gamemode.(*pk.VarInt); ok && gameModeValue != nil {
+				gameMode := int32(*gameModeValue)
+				infoEntry.GameMode = &gameMode
+			}
+		}
+
+		if action.UpdateListed() && entry.Listed != nil {
+			if listedValue, ok := entry.Listed.(*pk.VarInt); ok && listedValue != nil {
+				listed := *listedValue != 0
+				infoEntry.Listed = &listed
+			}
+		}
+
+		if action.UpdateLatency() && entry.Latency != nil {
+			if latencyValue, ok := entry.Latency.(*pk.VarInt); ok && latencyValue != nil {
+				latency := int32(*latencyValue)
+				infoEntry.Latency = &latency
+			}
+		}
+
+		update.Entries = append(update.Entries, infoEntry)
+	}
+
+	return update, nil
+}
+
 // entityHandler is implemented in entities.go
 
 // containerHandler is implemented in containers.go

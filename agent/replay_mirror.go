@@ -18,9 +18,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
-
-	v1215_basetypes "github.com/reallyoldfogie/mc-protocol-go/data/1.21.5/basetypes"
-	v1215_clientbound "github.com/reallyoldfogie/mc-protocol-go/data/1.21.5/play/clientbound"
 )
 
 // replayMovementMirror converts select serverbound packets (movement) into
@@ -150,115 +147,98 @@ func (m *replayMovementMirror) HandleServerbound(p pk.Packet) {
 	}
 }
 
-// HandlePlayerInfo captures the server-provided UUID/name to keep mirror in sync.
-// We parse only enough of the packet to read the add_player entries.
+// HandlePlayerInfo captures the server-provided PlayerInfo packet and extracts UUID/name/properties.
+// It processes all entries, handles removal actions, and stores raw packet data for replay re-emission.
 func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
-	// Get the generic packet interface
-	hpPacket, err := m.pm.GetClientboundPacketByID(protocol_models.ClientboundPacketID(p.ID))
+	if m.versionHandler == nil {
+		log.Printf("HandlePlayerInfo: version handler not available, skipping PlayerInfo processing")
+		return
+	}
+
+	update, err := m.versionHandler.Play().ParsePlayerInfo(p)
 	if err != nil {
+		log.Printf("HandlePlayerInfo: failed to parse PlayerInfo packet: %v", err)
+		return
+	}
+	if update == nil {
 		return
 	}
 
-	if err := hpPacket.Scan(p); err != nil {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Handle removal action by resetting emission state.
+	if update.HasRemovePlayer() {
+		m.playerInfoSent = false
+		if len(m.serverPI) > 0 {
+			payload := make([]byte, len(m.serverPI))
+			copy(payload, m.serverPI)
+			_ = m.rec.RecordNow(int32(m.cbidPlayerInfo), payload)
+		}
+	}
+
+	// Only process add_player updates for profile/name extraction.
+	if !update.HasAddPlayer() {
 		return
 	}
 
-	// Use version-specific type assertion to access PlayerInfo fields
-	// Pattern 3: Version-specific access with full type safety
-	playerInfoPkt, ok := hpPacket.(*v1215_clientbound.PlayerInfo)
-	if !ok {
-		// If type assertion fails, fallback to generic field access
-		// This handles version compatibility if needed
-		return
-	}
-
-	// Use direct getter methods for full type safety
-	action := playerInfoPkt.GetAction()
-	rawAction := byte(action.UnsignedByte)
-
-	// Get the player data array with full type safety
-	data := playerInfoPkt.GetData()
-
-	// Iterate through player entries
-	var sawRemove bool
-	dataEntries := data.Get()
-	if dataEntries == nil || len(dataEntries) == 0 {
-		log.Printf("[ReplayMirror] HandlePlayerInfo: empty data array (action=%d), ensuring PlayerInfo emission", rawAction)
-		// Even with empty data, we need to ensure our own PlayerInfo is emitted
-		m.ensurePlayerInfo()
-		return
-	}
-	for _, entry := range dataEntries {
-		var targetUUID [16]byte
-		copy(targetUUID[:], entry.Uuid[:])
-
-		// React to removals of our bot: immediately clear sent flag so we can re-emit our add.
-		if rawAction == 0x80 && targetUUID == m.uuid {
-			m.mu.Lock()
-			m.playerInfoSent = false
-			m.mu.Unlock()
-			sawRemove = true
+	for _, playerInfoEntry := range update.Entries {
+		if !playerInfoEntry.AddPlayer {
 			continue
 		}
 
-		if !action.AddPlayer() {
-			continue
+		// Check if this is our player by matching UUID or name.
+		// If we have a UUID, match by UUID. Otherwise match by name.
+		isOurPlayer := false
+		if m.hasUUID && m.uuid != ([16]byte{}) {
+			// Match by UUID if we have one
+			isOurPlayer = (m.uuid == playerInfoEntry.UUID)
+		} else if m.name != "" && playerInfoEntry.Name != "" {
+			// Match by name if we don't have a UUID yet
+			isOurPlayer = (m.name == playerInfoEntry.Name)
 		}
 
-		// Add this player UUID to the recording metadata
-		if m.rec != nil {
-			m.rec.AddPlayer(uuidHex(targetUUID))
+		// Store this entry's data for potential replay re-emission
+		m.serverPI = make([]byte, len(p.Data))
+		copy(m.serverPI, p.Data)
+
+		if playerInfoEntry.UUID != ([16]byte{}) {
+			m.rec.AddPlayer(uuidHex(playerInfoEntry.UUID))
 		}
 
-		// Extract player name from GameProfile
-		// Player field is a switch field that contains GameProfile when add_player is true
-		if entry.Player != nil {
-			if gameProfile, ok := entry.Player.(*v1215_basetypes.GameProfile); ok {
-				props := collectProperties(gameProfile)
-				m.mu.Lock()
-				m.serverName = string(gameProfile.Name)
-				if targetUUID == m.uuid || (m.name != "" && m.serverName == m.name) {
-					m.serverPlayerInfoSeen = true
-				}
-				// If the server's UUID differs from our canonical UUID, keep only properties.
-				if targetUUID == m.uuid {
-					if len(props) > 0 {
-						m.properties = props
-						m.serverPIHasProps = true
-						m.playerInfoSent = false
-					} else {
-						m.serverPIHasProps = false
-					}
-
-					// Update entity metadata with the new info
-					m.SetEntityMeta(m.entityID, m.serverName, targetUUID)
-
-					// Keep a copy of the raw add_player packet to re-emit safely
-					m.serverPI = make([]byte, len(p.Data))
-					copy(m.serverPI, p.Data)
-				} else {
-					// Mismatch UUID: still adopt properties but do not reuse raw packet.
-					if len(props) > 0 {
-						m.properties = props
-						m.playerInfoSent = false
-					}
-					if m.serverName == m.name && m.uuid == ([16]byte{}) {
-						m.uuid = targetUUID
-					}
-				}
-				m.mu.Unlock()
-
-				// After learning UUID, emit our own PlayerInfo if not sent yet
-				m.ensurePlayerInfo()
-
-				// We found our player info, no need to continue
-				return
+		// If this is our player, update our metadata with server-provided info
+		if isOurPlayer {
+			// Update UUID if we learned it from the server
+			if playerInfoEntry.UUID != ([16]byte{}) {
+				m.uuid = playerInfoEntry.UUID
+				m.hasUUID = true
 			}
+			// Update name if server provided one
+			if playerInfoEntry.Name != "" {
+				m.serverName = playerInfoEntry.Name
+			}
+			// Store properties from server
+			if len(playerInfoEntry.Properties) > 0 {
+				m.properties = make([]profileProperty, 0, len(playerInfoEntry.Properties))
+				for _, property := range playerInfoEntry.Properties {
+					m.properties = append(m.properties, profileProperty{
+						Name:      property.Name,
+						Value:     property.Value,
+						Signature: property.Signature,
+					})
+				}
+				m.serverPIHasProps = true
+			} else {
+				m.serverPIHasProps = false
+			}
+			// Mark server PlayerInfo as seen so we don't synthesize our own
+			m.serverPlayerInfoSeen = true
+			// Reset flag to allow emission if needed
+			m.playerInfoSent = false
+			// Ensure our PlayerInfo gets emitted with the server data
+			m.ensurePlayerInfoLocked()
+			return
 		}
-	}
-	if sawRemove {
-		// Re-emit our own entry to keep the bot present in the replay.
-		m.ensurePlayerInfo()
 	}
 }
 
@@ -267,6 +247,7 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 	if m.versionHandler != nil {
 		x, y, z, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPos(p)
 		if err == nil {
+			log.Printf("[ReplayMirror] handlePos (version-specific): pos=(%.2f, %.2f, %.2f)", x, y, z)
 			m.emitTeleport(x, y, z, m.lastYaw, m.lastPitch, onGround)
 			return
 		}
@@ -278,6 +259,7 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 	if err := p.Scan(&x, &y, &z, &onGround); err != nil {
 		return
 	}
+	log.Printf("[ReplayMirror] handlePos (fallback): pos=(%.2f, %.2f, %.2f)", float64(x), float64(y), float64(z))
 	m.emitTeleport(float64(x), float64(y), float64(z), m.lastYaw, m.lastPitch, bool(onGround))
 }
 
@@ -286,7 +268,7 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	if m.versionHandler != nil {
 		x, y, z, yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPosRot(p)
 		if err == nil {
-			log.Printf("[ReplayMirror] handlePosRot: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+			log.Printf("[ReplayMirror] handlePosRot (version-specific): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
 				x, y, z, yaw, pitch)
 			m.emitTeleport(x, y, z, yaw, pitch, onGround)
 			return
@@ -300,7 +282,7 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	if err := p.Scan(&x, &y, &z, &yaw, &pitch, &onGround); err != nil {
 		return
 	}
-	log.Printf("[ReplayMirror] handlePosRot: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+	log.Printf("[ReplayMirror] handlePosRot (fallback): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
 		float64(x), float64(y), float64(z), float32(yaw), float32(pitch))
 	m.emitTeleport(float64(x), float64(y), float64(z), float32(yaw), float32(pitch), bool(onGround))
 }
@@ -310,6 +292,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 	if m.versionHandler != nil {
 		yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundRot(p)
 		if err == nil {
+			log.Printf("[ReplayMirror] handleRot (version-specific): yaw=%.2f pitch=%.2f", yaw, pitch)
 			m.emitTeleport(m.lastX, m.lastY, m.lastZ, yaw, pitch, onGround)
 			return
 		}
@@ -321,6 +304,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 	if err := p.Scan(&yaw, &pitch, &onGround); err != nil {
 		return
 	}
+	log.Printf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
 	m.emitTeleport(m.lastX, m.lastY, m.lastZ, float32(yaw), float32(pitch), bool(onGround))
 }
 
@@ -329,6 +313,7 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 	if m.versionHandler != nil {
 		onGround, err := m.versionHandler.Play().Movement().ParseServerboundStatus(p)
 		if err == nil {
+			log.Printf("[ReplayMirror] handleStatus (version-specific): onGround=%v", onGround)
 			m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, onGround)
 			return
 		}
@@ -339,6 +324,7 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 	if err := p.Scan(&onGround); err != nil {
 		return
 	}
+	log.Printf("[ReplayMirror] handleStatus (fallback): onGround=%v", bool(onGround))
 	m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, bool(onGround))
 }
 
@@ -492,6 +478,24 @@ func (m *replayMovementMirror) ensurePlayerInfo() {
 	m.ensurePlayerInfoLocked()
 }
 
+// ensurePlayerInfoLocked makes sure that a PlayerInfo packet describing the
+// local bot is recorded in the replay stream.  It must be called with the
+// mirror mutex already held and will return immediately if a packet has been
+// emitted or if recording is unavailable.  The algorithm enforces the following
+// rules:
+//   - Do not send anything until after the LOGIN packet has been written; the
+//     replay format relies on the server assigning an entity ID during login.
+//   - If we have already seen a server-provided PlayerInfo packet for this
+//     client, echo it verbatim rather than synthesizing our own.
+//   - Otherwise try to gather skin/profile properties from the skin provider or
+//     from any cached local replay data.  If no properties are available we still
+//     record the PlayerInfo entry (without textures) once we have a valid UUID
+//     and name, but only if a login has been seen.
+//   - Build and record a synthetic PlayerInfo packet through the version handler
+//     when no server packet is available.
+//
+// The function sets m.playerInfoSent when a packet is recorded to avoid
+// duplicate emissions.
 func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 	log.Printf("ensurePlayerInfoLocked: entityID=%d name=%q sent=%v loginSeen=%v", m.entityID, m.name, m.playerInfoSent, m.loginSeen)
 	if m.playerInfoSent || m.rec == nil {
@@ -541,67 +545,31 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 		log.Printf("ensurePlayerInfoLocked: emitting without textures for %s (uuid=%s)", name, uuidHex(uuid))
 	}
 
-	// Build a correct PlayerInfoUpdate packet using generated protocol types.
-	action := v1215_clientbound.PlayerInfoActionBitflags{}
-	action.SetAddPlayer(true)
-	action.SetUpdateGameMode(true)
-	action.SetUpdateListed(true)
-	action.SetUpdateLatency(true)
+	// Build a version-aware PlayerInfo packet using the version handler.
+	if m.versionHandler == nil {
+		log.Printf("ensurePlayerInfoLocked: version handler not available, skipping PlayerInfo")
+		return
+	}
 
-	props := make([]v1215_basetypes.GameProfilePropertiesArrayType, 0, len(m.properties))
-	for _, prop := range m.properties {
-		if prop.Name == "" || prop.Value == "" {
-			continue
-		}
-		var sig protocol_models.Option[pk.String]
-		if prop.Signature != "" {
-			sigVal := pk.String(prop.Signature)
-			sig = protocol_models.Option[pk.String]{Has: true, Val: &sigVal}
-		}
-		props = append(props, v1215_basetypes.GameProfilePropertiesArrayType{
-			Name:      pk.String(prop.Name),
-			Value:     pk.String(prop.Value),
-			Signature: sig,
+	props := make([]common.ProfileProperty, 0, len(m.properties))
+	for _, property := range m.properties {
+		props = append(props, common.ProfileProperty{
+			Name:      property.Name,
+			Value:     property.Value,
+			Signature: property.Signature,
 		})
 	}
-	profile := v1215_basetypes.GameProfile{
-		Name: pk.String(name),
-	}
-	profile.Properties.Ary.Ary = props
 
-	entry := v1215_clientbound.PlayerInfoDataArrayType{
-		Uuid:     pk.UUID(uuid),
-		Player:   &profile,
-		Gamemode: ptrVarInt(0),
-		Listed:   ptrVarInt(1),
-		Latency:  ptrVarInt(0),
+	packetID, packetData, err := m.versionHandler.Play().BuildPlayerInfoPacket(uuid, name, props)
+	if err != nil {
+		log.Printf("ensurePlayerInfoLocked: failed to build PlayerInfo packet: %v", err)
+		return
 	}
-
-	data := protocol_models.Array[pk.VarInt, v1215_clientbound.PlayerInfoDataArrayType]{
-		Ary: protocol_models.Ary[pk.VarInt]{Ary: []v1215_clientbound.PlayerInfoDataArrayType{entry}},
+	if err := m.rec.RecordNow(packetID, packetData); err != nil {
+		log.Printf("ensurePlayerInfoLocked: failed to record PlayerInfo packet: %v", err)
+		return
 	}
-	ctx := protocol_models.NewParentContext()
-	ctx.SetField("action/add_player", action.AddPlayer)
-	ctx.SetField("action/initialize_chat", action.InitializeChat)
-	ctx.SetField("action/update_game_mode", action.UpdateGameMode)
-	ctx.SetField("action/update_listed", action.UpdateListed)
-	ctx.SetField("action/update_latency", action.UpdateLatency)
-	ctx.SetField("action/update_display_name", action.UpdateDisplayName)
-	ctx.SetField("action/update_list_order", action.UpdateListOrder)
-	ctx.SetField("action/update_hat", action.UpdateHat)
-	data.SetParentContext(ctx)
-
-	pkt := v1215_clientbound.NewPlayerInfo()
-	pkt.Action = action
-	pkt.Data = data
-	payload := pkt.Marshal().Data
-	_ = m.rec.RecordNow(int32(pkt.PacketID()), payload)
 	m.playerInfoSent = true
-}
-
-func ptrVarInt(v int32) *pk.VarInt {
-	val := pk.VarInt(v)
-	return &val
 }
 
 // playerInfoEntry encodes the minimal entry for PlayerInfo (add_player/listed/latency/gamemode).
@@ -781,28 +749,6 @@ func loadTexturesFromReplay(path string, target [16]byte, targetName string) ([]
 		return fallbackProps, nil
 	}
 	return nil, fmt.Errorf("no properties found for uuid %s in %s", uuidHex(target), path)
-}
-
-// collectProperties converts a GameProfile's properties into our internal slice.
-func collectProperties(gp *v1215_basetypes.GameProfile) []profileProperty {
-	if gp == nil || gp.Properties.Ary.Ary == nil {
-		return nil
-	}
-	values := gp.Properties.Get()
-	props := make([]profileProperty, 0, len(values))
-	for _, p := range values {
-		name := string(p.Name)
-		value := string(p.Value)
-		if name == "" || value == "" {
-			continue
-		}
-		prop := profileProperty{Name: name, Value: value}
-		if p.Signature.Has && p.Signature.Val != nil {
-			prop.Signature = string(*p.Signature.Val)
-		}
-		props = append(props, prop)
-	}
-	return props
 }
 
 // ensurePropertiesFromLocalReplayLocked attempts to reuse skin properties from a local mcpr.

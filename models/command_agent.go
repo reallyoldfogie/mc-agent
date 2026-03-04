@@ -19,12 +19,12 @@ type CommandAgent interface {
 	HasFollowManager() bool
 	IsFollowing() bool
 
-	PlanStatus() PlanStatus
-	StopPlan() error
+	PlanStatus(ctx context.Context) PlanStatus
+	StopPlan(ctx context.Context) error
 
-	FireBow() error
-	FireBowAt(x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
+	FireBow(ctx context.Context) error
+	FireBowAt(ctx context.Context, x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
 
-	NearestPlayerInfo() (NearestPlayerInfo, bool)
-	FindPlayerByName(name string) (x, y, z float64, found bool, err error)
+	NearestPlayerInfo(ctx context.Context) (NearestPlayerInfo, bool)
+	FindPlayerByName(ctx context.Context, name string) (x, y, z float64, found bool, err error)
 }

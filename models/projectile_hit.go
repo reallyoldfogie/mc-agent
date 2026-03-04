@@ -29,8 +29,8 @@ type ProjectileHitResult int
 
 const (
 	ProjectileResultBlock   ProjectileHitResult = iota // hit was confirmed by server (block hit)
-	ProjectileResultEntity                              // hit confirmed to be entity hit
-	ProjectileResultTimeout                             // hit notification fired due to callback timeout
+	ProjectileResultEntity                             // hit confirmed to be entity hit
+	ProjectileResultTimeout                            // hit notification fired due to callback timeout
 )
 
 func (p ProjectileHitResult) String() string {
@@ -47,14 +47,20 @@ func (p ProjectileHitResult) String() string {
 }
 
 type ProjectileHitEvent struct {
-	ProjectileEntityID int32              // ID of the projectile entity
-	ProjectileType     ProjectileType     // Type of projectile (arrow, snowball, etc.)
-	HitType            ProjectileHitType  // What was hit (block vs entity)
-	Position           V3                 // Last known server-reported position
-	FiredAt            time.Time          // When the projectile was fired
-	HitAt              time.Time          // When the hit occurred
+	ProjectileEntityID int32               // ID of the projectile entity
+	ProjectileType     ProjectileType      // Type of projectile (arrow, snowball, etc.)
+	HitType            ProjectileHitType   // What was hit (block vs entity)
+	Position           V3                  // Last known server-reported position
+	FiredAt            time.Time           // When the projectile was fired
+	HitAt              time.Time           // When the hit occurred
 	HitResult          ProjectileHitResult // How the hit was determined (Block/Entity/Timeout)
-	HitEntityID        int32              // ID of entity hit (if HitResult is Entity), 0 otherwise
+	HitEntityID        int32               // ID of entity hit (if HitResult is Entity), 0 otherwise
+	// Hit validation against the intended target (only meaningful when TargetSet is true).
+	TargetPos     V3      // Intended target position
+	TargetSet     bool    // True when a target was specified for this shot
+	HitDistance   float64 // 3-D distance from Position to TargetPos (0 if !TargetSet)
+	TrajectoryHit bool    // True if trajectory passed within HitAcceptanceRadius of target
+	IsValidHit    bool    // true when HitDistance <= HitAcceptanceRadius OR TrajectoryHit
 }
 
 type ProjectileHitCallback func(event ProjectileHitEvent)

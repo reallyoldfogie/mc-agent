@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -118,8 +119,8 @@ func (a *agent) logPlayerInventory(context string) {
 }
 
 func (a *agent) getSlotInfoDeps() (models.SlotResolver, models.ItemManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.inventoryMu.RLock()
+	defer a.inventoryMu.RUnlock()
 	return a.slots, a.itemMgr
 }
 
@@ -134,7 +135,11 @@ func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.Item
 	}
 	name := itemMgr.GetItemNameByID(itemID)
 	if name == "" {
+		// Unknown item ID - construct name but log it for debugging
 		name = fmt.Sprintf("item_%d", itemID)
+		if slot >= 0 && slot <= 8 && count > 0 {
+			log.Printf("[DEBUG] Hotbar slot %d: Unknown item ID %d (count=%d) - no registry entry", slot, itemID, count)
+		}
 	}
 	return name, count
 }
@@ -156,15 +161,19 @@ func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.I
 func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (int, bool) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
+		log.Printf("[%s] FindHotbarSlotWithItem(%s): slots=%v, itemMgr=%v", a.client.Name(), itemName, slots, itemMgr)
 		return -1, false
 	}
 
+	var hotbarDebug []string
 	for slot := minHotbarSlot; slot <= maxHotbarSlot; slot++ {
-		slotName, _ := a.resolveHotbarSlot(slots, itemMgr, slot)
+		slotName, count := a.resolveHotbarSlot(slots, itemMgr, slot)
+		hotbarDebug = append(hotbarDebug, fmt.Sprintf("[%d]=%s(x%d)", slot, slotName, count))
 		if slotName == itemName {
 			return slot, true
 		}
 	}
+	log.Printf("[%s] FindHotbarSlotWithItem(%s): NOT FOUND. Hotbar contents: %v", a.client.Name(), itemName, hotbarDebug)
 	return -1, false
 }
 
@@ -177,6 +186,33 @@ func (a *agent) EquipItemByName(ctx context.Context, itemName string) error {
 	}
 	log.Printf("[Agent %s] Found %s in hotbar slot %d, equipping...", a.client.Name(), itemName, slot)
 	return a.SelectHotbarSlot(ctx, slot)
+}
+
+// WaitForHotbarItem waits for a specific item to appear in the hotbar.
+// This is useful after RCON commands that place items, as there may be inventory sync delays.
+// Returns the slot index when found, or error if timeout/context cancelled.
+func (a *agent) WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (int, error) {
+	// Use a shorter check interval (50ms) with longer total timeout
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	timeout := time.NewTimer(time.Duration(maxWaitMS) * time.Millisecond)
+	defer timeout.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return -1, ctx.Err()
+		case <-timeout.C:
+			return -1, fmt.Errorf("timeout waiting for %s to appear in hotbar (waited %dms)", itemName, maxWaitMS)
+		case <-ticker.C:
+			slot, found := a.FindHotbarSlotWithItem(ctx, itemName)
+			if found {
+				log.Printf("[Agent %s] Item %s appeared in hotbar slot %d", a.client.Name(), itemName, slot)
+				return slot, nil
+			}
+		}
+	}
 }
 
 func (a *agent) initClientInformationHandler(settings basic.Settings) {

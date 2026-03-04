@@ -11,7 +11,6 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/utils"
 )
@@ -25,10 +24,10 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 		return errors.New("movement executor not available")
 	}
 
-	// MoveForward requires PhysicsMovementExecutor for proper manual control
-	pe, ok := a.moveExec.(*movement.PhysicsMovementExecutor)
+	// MoveForward requires an executor with manual movement control support
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
 	if !ok {
-		return fmt.Errorf("MoveForward requires PhysicsMovementExecutor, got %T", a.moveExec)
+		return fmt.Errorf("movement executor doesn't support manual mode (required for MoveForward)")
 	}
 
 	x, y, z, yaw, _, ok := a.GetPosition()
@@ -39,9 +38,14 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 	// Calculate throttle as world-space direction vector based on current yaw
 	// Throttle represents absolute world direction, not player-relative WASD
 	// Forward movement in world coordinates at current yaw angle
+	// Negative distance means backward movement
 	yawRad := float64(yaw) * math.Pi / 180
-	throttleX := -math.Sin(yawRad)
-	throttleZ := math.Cos(yawRad)
+	direction := 1.0
+	if dist < 0 {
+		direction = -1.0
+	}
+	throttleX := direction * (-math.Sin(yawRad))
+	throttleZ := direction * math.Cos(yawRad)
 
 	// Store starting position for progress detection
 	startPos := models.V3{X: x, Y: y, Z: z}
@@ -60,20 +64,20 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 	tickCount *= 1.5
 
 	// Enter manual mode for direct control
-	if err := pe.EnterManualMode(); err != nil {
+	if err := manual.EnterManualMode(); err != nil {
 		return fmt.Errorf("failed to enter manual mode: %w", err)
 	}
-	defer pe.ExitManualMode()
+	defer manual.ExitManualMode()
 	log.Printf("[MoveForward] Entered manual mode, currentYaw=%.2f, targetDist=%.2f", yaw, dist)
 
 	// Set up movement with calculated throttle direction
-	if err := pe.SetManualThrottle(throttleX, throttleZ); err != nil {
+	if err := manual.SetManualThrottle(throttleX, throttleZ); err != nil {
 		return fmt.Errorf("failed to set throttle: %w", err)
 	}
 	log.Printf("[MoveForward] Throttle set to X=%.4f, Z=%.4f (forward direction at yaw=%.2f)", throttleX, throttleZ, yaw)
 
 	// Keep current yaw (we're moving forward, not turning)
-	if err := pe.SetManualRotation(math.NaN(), math.NaN()); err != nil {
+	if err := manual.SetManualRotation(math.NaN(), math.NaN()); err != nil {
 		return fmt.Errorf("failed to set rotation: %w", err)
 	}
 	log.Printf("[MoveForward] Yaw maintained at current direction (%.2f)", yaw)
@@ -390,9 +394,9 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 // Follow starts following a target player by name.
 func (a *agent) Follow(ctx context.Context, target string) error {
 	_ = ctx
-	a.mu.Lock()
+	a.followingMu.RLock()
 	fm := a.followMgr
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	if fm == nil {
 		return errors.New("follow system not available")
 	}
@@ -402,9 +406,9 @@ func (a *agent) Follow(ctx context.Context, target string) error {
 // StopFollow stops any active follow behavior.
 func (a *agent) StopFollow(ctx context.Context) error {
 	_ = ctx
-	a.mu.Lock()
+	a.followingMu.RLock()
 	fm := a.followMgr
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	if fm == nil {
 		return errors.New("follow system not available")
 	}
@@ -415,10 +419,15 @@ func (a *agent) StopFollow(ctx context.Context) error {
 }
 
 // FollowStatus returns the follow manager status string.
-func (a *agent) FollowStatus() string {
-	a.mu.Lock()
+func (a *agent) FollowStatus(ctx context.Context) string {
+	select {
+	case <-ctx.Done():
+		return "Context cancelled"
+	default:
+	}
+	a.followingMu.RLock()
 	fm := a.followMgr
-	a.mu.Unlock()
+	a.followingMu.RUnlock()
 	if fm == nil {
 		return "Follow system not available"
 	}
@@ -426,7 +435,10 @@ func (a *agent) FollowStatus() string {
 }
 
 // ChatEvents exposes chat message events.
-func (a *agent) ChatEvents() <-chan string {
+func (a *agent) ChatEvents(ctx context.Context) <-chan string {
+	// Context parameter allows caller to respect cancellation
+	// ChatEvents itself returns a channel; the caller is responsible for
+	// listening on both the channel and ctx.Done()
 	return a.chatEvents
 }
 

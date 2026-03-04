@@ -129,12 +129,12 @@ func (a *agent) cleanupRemovedEntities() {
 			if now.Sub(projInfo.collisionDetectTime) > 2*time.Second {
 				evt := models.ProjectileHitEvent{
 					ProjectileEntityID: id,
-					HitType:           projInfo.pendingHitType,
-					ProjectileType:    projInfo.projectileType,
-					Position:          projInfo.pendingHitPos, // Use client prediction as fallback
-					FiredAt:           projInfo.firedAt,
-					HitAt:             now,
-					HitResult:         models.ProjectileResultTimeout, // Fired due to server position timeout
+					HitType:            projInfo.pendingHitType,
+					ProjectileType:     projInfo.projectileType,
+					Position:           projInfo.pendingHitPos, // Use client prediction as fallback
+					FiredAt:            projInfo.firedAt,
+					HitAt:              now,
+					HitResult:          models.ProjectileResultTimeout, // Fired due to server position timeout
 				}
 				for _, cb := range projInfo.callbacks {
 					go cb(evt) // Fire asynchronously
@@ -165,12 +165,12 @@ func (a *agent) cleanupRemovedEntities() {
 
 			evt := models.ProjectileHitEvent{
 				ProjectileEntityID: id,
-				HitType:           hitType,
-				ProjectileType:    projInfo.projectileType,
-				Position:          pos,
-				FiredAt:           projInfo.firedAt,
-				HitAt:             now,
-				HitResult:         models.ProjectileResultTimeout, // Fired due to callback timeout
+				HitType:            hitType,
+				ProjectileType:     projInfo.projectileType,
+				Position:           pos,
+				FiredAt:            projInfo.firedAt,
+				HitAt:              now,
+				HitResult:          models.ProjectileResultTimeout, // Fired due to callback timeout
 			}
 			for _, cb := range projInfo.callbacks {
 				go cb(evt) // Fire asynchronously
