@@ -21,7 +21,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 
 	clientName := "unknownClient"
 	if a.client != nil {
-		clientName = a.client.Name()
+		clientName = a.cfg.Name
 	}
 
 	a.wg.Add(1)
@@ -57,7 +57,7 @@ func (a *agent) startStopFileWatcher(stopPath string, ctxDone <-chan struct{}) {
 func (a *agent) removeStopFileIfExists(stopPath string) {
 	clientName := "unknownClient"
 	if a.client != nil {
-		clientName = a.client.Name()
+		clientName = a.cfg.Name
 	}
 
 	if err := os.Remove(stopPath); err == nil {

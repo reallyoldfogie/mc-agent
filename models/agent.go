@@ -51,7 +51,7 @@ type Agent interface {
 
 	// Registry access (version-agnostic lookups)
 	GetRegistry(id string) CustomRegistry
-	LoadEntityTypesFromRegistry(dataPath string) error
+	LoadRegistriesFromFile(dataPath string) error
 
 	// Player UUID resolution
 	ResolvePlayerUUIDByName(name string) ([16]byte, error)

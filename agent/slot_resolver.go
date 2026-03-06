@@ -176,11 +176,11 @@ func newScreenManagerSlotResolver(a *agent) models.SlotResolver {
 // initializeSlotResolver sets up the slot resolver after the screen manager is ready.
 func (a *agent) initializeSlotResolver() {
 	if a.screenMgr == nil {
-		log.Printf("[Agent %s] Cannot initialize slot resolver: screen manager not set", a.client.Name())
+		log.Printf("[Agent %s] Cannot initialize slot resolver: screen manager not set", a.cfg.Name)
 		return
 	}
 
 	resolver := newScreenManagerSlotResolver(a)
 	a.SetSlotResolver(resolver)
-	log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.client.Name())
+	log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.cfg.Name)
 }

@@ -52,8 +52,10 @@ func NewLegacyMovementExecutor(
 }
 
 // SetTelemetryRecorder is a no-op for movementExecutor
-func (me *movementExecutor) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {
-}
+func (me *movementExecutor) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {}
+
+// SetVelocity is a no-op for movementExecutor
+func (me *movementExecutor) SetVelocity(x, y, z float64) error { return nil }
 
 // SetPacketCallback sets an optional callback that will be invoked with each packet before it's sent.
 // This is useful for replay mirroring or packet logging.

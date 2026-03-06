@@ -8,7 +8,7 @@ import (
 
 // onChunkLoad logs chunk load events. In future this can update internal world state.
 func (a *agent) onChunkLoad(pos models.ChunkPos) error {
-	log.Printf("[onChunkLoad %s] Loaded chunk: %#v", a.client.Name(), pos)
+	log.Printf("[onChunkLoad %s] Loaded chunk: %#v", a.cfg.Name, pos)
 	// If we later inject and expose a concrete world, we can dump details.
 	// Placeholder: no internal world stored yet.
 	//spew.Dump(pos)
@@ -24,7 +24,7 @@ func (a *agent) onChunkLoad(pos models.ChunkPos) error {
 
 // onChunkUnload logs chunk unload events.
 func (a *agent) onChunkUnload(pos models.ChunkPos) error {
-	log.Printf("[onChunkUnload %s] Unload chunk: %#v", a.client.Name(), pos)
+	log.Printf("[onChunkUnload %s] Unload chunk: %#v", a.cfg.Name, pos)
 	return nil
 }
 

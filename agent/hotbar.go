@@ -77,37 +77,37 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int) error {
 func (a *agent) logHotbarSelection(action string, targetSlot int, currentSlot int16) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
-		log.Printf("[Agent %s] Hotbar %s: target=%d current=%d", a.client.Name(), action, targetSlot, currentSlot)
+		log.Printf("[Agent %s] Hotbar %s: target=%d current=%d", a.cfg.Name, action, targetSlot, currentSlot)
 		return
 	}
 
 	currentName, currentCount := a.resolveHotbarSlot(slots, itemMgr, int(currentSlot))
 	targetName, targetCount := a.resolveHotbarSlot(slots, itemMgr, targetSlot)
 	log.Printf("[Agent %s] Hotbar %s: target=%d (%s x%d) current=%d (%s x%d)",
-		a.client.Name(), action, targetSlot, targetName, targetCount, currentSlot, currentName, currentCount)
+		a.cfg.Name, action, targetSlot, targetName, targetCount, currentSlot, currentName, currentCount)
 	a.logPlayerInventory(action)
 }
 
 func (a *agent) logHotbarAck(targetSlot int, ackSlot int16) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
-		log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d", a.client.Name(), targetSlot, ackSlot)
+		log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d", a.cfg.Name, targetSlot, ackSlot)
 		return
 	}
 	ackName, ackCount := a.resolveHotbarSlot(slots, itemMgr, int(ackSlot))
-	log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d (%s x%d)", a.client.Name(), targetSlot, ackSlot, ackName, ackCount)
+	log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d (%s x%d)", a.cfg.Name, targetSlot, ackSlot, ackName, ackCount)
 }
 
 func (a *agent) logPlayerInventory(context string) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
-		log.Printf("[Agent %s] Inventory (%s): slot resolver not ready", a.client.Name(), context)
+		log.Printf("[Agent %s] Inventory (%s): slot resolver not ready", a.cfg.Name, context)
 		return
 	}
 
 	var b strings.Builder
 	b.WriteString("[Agent")
-	b.WriteString(a.client.Name())
+	b.WriteString(a.cfg.Name)
 	b.WriteString("] Inventory ")
 	b.WriteString(context)
 	b.WriteString(":")
@@ -161,7 +161,7 @@ func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.I
 func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (int, bool) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
-		log.Printf("[%s] FindHotbarSlotWithItem(%s): slots=%v, itemMgr=%v", a.client.Name(), itemName, slots, itemMgr)
+		log.Printf("[%s] FindHotbarSlotWithItem(%s): slots=%v, itemMgr=%v", a.cfg.Name, itemName, slots, itemMgr)
 		return -1, false
 	}
 
@@ -173,7 +173,7 @@ func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (in
 			return slot, true
 		}
 	}
-	log.Printf("[%s] FindHotbarSlotWithItem(%s): NOT FOUND. Hotbar contents: %v", a.client.Name(), itemName, hotbarDebug)
+	log.Printf("[%s] FindHotbarSlotWithItem(%s): NOT FOUND. Hotbar contents: %v", a.cfg.Name, itemName, hotbarDebug)
 	return -1, false
 }
 
@@ -184,7 +184,7 @@ func (a *agent) EquipItemByName(ctx context.Context, itemName string) error {
 	if !found {
 		return fmt.Errorf("item %s not found in hotbar", itemName)
 	}
-	log.Printf("[Agent %s] Found %s in hotbar slot %d, equipping...", a.client.Name(), itemName, slot)
+	log.Printf("[Agent %s] Found %s in hotbar slot %d, equipping...", a.cfg.Name, itemName, slot)
 	return a.SelectHotbarSlot(ctx, slot)
 }
 
@@ -208,7 +208,7 @@ func (a *agent) WaitForHotbarItem(ctx context.Context, itemName string, maxWaitM
 		case <-ticker.C:
 			slot, found := a.FindHotbarSlotWithItem(ctx, itemName)
 			if found {
-				log.Printf("[Agent %s] Item %s appeared in hotbar slot %d", a.client.Name(), itemName, slot)
+				log.Printf("[Agent %s] Item %s appeared in hotbar slot %d", a.cfg.Name, itemName, slot)
 				return slot, nil
 			}
 		}

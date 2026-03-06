@@ -61,6 +61,11 @@ func (f *fakeMoveExec) SetTelemetryRecorder(recorder models.MovementTelemetryRec
 	// no-op for fake
 }
 
+func (f *fakeMoveExec) SetVelocity(x, y, z float64) error {
+	// no-op for fake
+	return nil
+}
+
 // ManualMovementExecutor implementation for testing
 func (f *fakeMoveExec) EnterManualMode() error {
 	if f.manualMode {

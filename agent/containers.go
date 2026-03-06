@@ -42,7 +42,7 @@ func (a *agent) startPositionHeartbeat(tps int) {
 	}
 
 	if a.moveExec == nil {
-		log.Printf("[Agent %s] Cannot start position heartbeat: movement executor not set", a.client.Name())
+		log.Printf("[Agent %s] Cannot start position heartbeat: movement executor not set", a.cfg.Name)
 		return
 	}
 
@@ -56,15 +56,15 @@ func (a *agent) startPositionHeartbeat(tps int) {
 		ticker := time.NewTicker(time.Second / time.Duration(tps))
 		defer ticker.Stop()
 
-		log.Printf("[Agent %s] Position heartbeat started at %d TPS", a.client.Name(), tps)
+		log.Printf("[Agent %s] Position heartbeat started at %d TPS", a.cfg.Name, tps)
 
 		for {
 			select {
 			case <-a.posHeartbeatStop:
-				log.Printf("[Agent %s] Position heartbeat stopped", a.client.Name())
+				log.Printf("[Agent %s] Position heartbeat stopped", a.cfg.Name)
 				return
 			case <-a.ctx.Done():
-				log.Printf("[Agent %s] Position heartbeat stopped (context cancelled)", a.client.Name())
+				log.Printf("[Agent %s] Position heartbeat stopped (context cancelled)", a.cfg.Name)
 				return
 			case <-ticker.C:
 				// Send current position to server
@@ -126,7 +126,7 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 	face = a.chooseOpenFace(pos, face)
 
 	// Look at the container before opening
-	log.Printf("[Agent %s] Looking at container at (%.1f, %.1f, %.1f)", a.client.Name(), pos.X, pos.Y, pos.Z)
+	log.Printf("[Agent %s] Looking at container at (%.1f, %.1f, %.1f)", a.cfg.Name, pos.X, pos.Y, pos.Z)
 	if err := moveExec.LookAt(pos.X, pos.Y, pos.Z, true); err != nil {
 		return 0, fmt.Errorf("look at container: %w", err)
 	}
@@ -135,13 +135,13 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 	time.Sleep(2 * time.Second)
 
 	// Open the container using helper
-	log.Printf("[Agent %s] Opening container at (%.1f, %.1f, %.1f) face=%d", a.client.Name(), pos.X, pos.Y, pos.Z, face)
+	log.Printf("[Agent %s] Opening container at (%.1f, %.1f, %.1f) face=%d", a.cfg.Name, pos.X, pos.Y, pos.Z, face)
 	windowID, err := ch.OpenContainer(pos, face, timeout, cursorX, cursorY, cursorZ)
 	if err != nil {
 		return 0, fmt.Errorf("open container: %w", err)
 	}
 
-	log.Printf("[Agent %s] Container opened successfully with window ID %d", a.client.Name(), windowID)
+	log.Printf("[Agent %s] Container opened successfully with window ID %d", a.cfg.Name, windowID)
 	time.Sleep(2 * time.Second)
 	return windowID, nil
 }
@@ -198,13 +198,13 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 	}
 
 	// Open the entity container using helper
-	log.Printf("[Agent %s] Opening entity container for entity ID %d", a.client.Name(), entityID)
+	log.Printf("[Agent %s] Opening entity container for entity ID %d", a.cfg.Name, entityID)
 	windowID, err := ch.OpenEntityContainer(entityID, timeout)
 	if err != nil {
 		return 0, fmt.Errorf("open entity container: %w", err)
 	}
 
-	log.Printf("[Agent %s] Entity container opened successfully with window ID %d", a.client.Name(), windowID)
+	log.Printf("[Agent %s] Entity container opened successfully with window ID %d", a.cfg.Name, windowID)
 	return windowID, nil
 }
 
@@ -218,12 +218,12 @@ func (a *agent) CloseContainer() error {
 		return fmt.Errorf("container helper not set - call SetContainerHelper first")
 	}
 
-	log.Printf("[Agent %s] Closing container", a.client.Name())
+	log.Printf("[Agent %s] Closing container", a.cfg.Name)
 	if err := ch.CloseContainer(); err != nil {
 		return fmt.Errorf("close container: %w", err)
 	}
 
-	log.Printf("[Agent %s] Container closed successfully", a.client.Name())
+	log.Printf("[Agent %s] Container closed successfully", a.cfg.Name)
 	return nil
 }
 

@@ -174,6 +174,12 @@ func NewPhysicsMovementExecutor(
 	}
 }
 
+func (pe *PhysicsMovementExecutor) SetVelocity(x, y, z float64) error {
+	// Directly set the velocity in the physics state
+	pe.physicsState.SetVelocity(models.V3{X: x, Y: y, Z: z})
+	return nil
+}
+
 // SetPacketCallback sets an optional callback for packet interception.
 func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface{})) {
 	pe.baseExecutor.SetPacketCallback(callback)

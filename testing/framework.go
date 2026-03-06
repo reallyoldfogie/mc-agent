@@ -800,6 +800,16 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 	})
 
+	// Set RegistriesPath with fallback to test download cache if not explicitly set
+	registriesPath := cfg.RegistriesPath
+	if registriesPath == "" {
+		// Fallback for tests that don't explicitly set RegistriesPath
+		cwd, err := os.Getwd()
+		if err == nil {
+			registriesPath = filepath.Join(cwd, "data", "download-cache", mcVersion)
+		}
+	}
+
 	// Build agent configuration
 	agentCfg := agent.Config{
 		Name:              cfg.Name,
@@ -814,7 +824,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		Client:            botClient,      // CRITICAL: Must provide client!
 		MCDataGenPath:     cfg.MCDataGenPath,
 		MCProtocolGoPath:  cfg.MCProtocolGoPath,
-		RegistriesPath:    cfg.RegistriesPath, // Path to registries.json
+		RegistriesPath:    registriesPath, // Path to registries.json
 		EnableReplay:      cfg.EnableReplay,
 		ReplayOutput:      cfg.ReplayOutput,
 		SkinProvider:      skinProvider,
@@ -833,27 +843,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	// Create managed agent with lifecycle context
 	agentCtx, agentCancel := context.WithCancel(ctx)
 
-	// Load ALL registries from registries.json BEFORE Init()
-	// This provides defaults for registries not sent via config packets (e.g., entity_type, menu)
-	// Uses cfg.RegistriesPath if set, otherwise falls back to test download cache
-	registriesPath := cfg.RegistriesPath
-	if registriesPath == "" {
-		// Fallback for tests that don't explicitly set RegistriesPath
-		cwd, err := os.Getwd()
-		if err != nil {
-			log.Printf("Warning: failed to get working directory: %v", err)
-		} else {
-			registriesPath = filepath.Join(cwd, "data", "download-cache", mcVersion)
-		}
-	}
-
-	if registriesPath != "" {
-		if err := agent.LoadEntityTypesFromRegistry(registriesPath); err != nil {
-			log.Printf("Warning: failed to load registries from %s: %v (hardcoded IDs may be needed)", registriesPath, err)
-		}
-	}
-
-	// Initialize agent (connects to server, goes through config phase)
+	// Initialize agent (connects to server, goes through config phase, loads registries)
 	// Config packets will overwrite any registries loaded from file above
 	if err := agent.Init(agentCtx); err != nil {
 		agentCancel()

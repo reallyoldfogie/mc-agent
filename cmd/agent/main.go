@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
+	"github.com/reallyoldfogie/mc-agent/config"
 	_ "github.com/reallyoldfogie/mc-agent/versions"
-       // _ "github.com/reallyoldfogie/mc-agent/versions/common"
-
+	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
+	// _ "github.com/reallyoldfogie/mc-agent/versions/common"
 )
 
 var (
@@ -34,13 +36,13 @@ var (
 
 	// replay flags
 	enableReplay    = flag.Bool("replay", false, "Enable ReplayMod recording (.mcpr)")
-	replayOut       = flag.String("replay-out", "session.mcpr", "Replay output file path")
+	replayOut       = flag.String("replay-out", "", "Replay output file path")
 	replayGenerator = flag.String("replay-generator", "mc-agent", "Replay generator string")
 
 	skinCacheDir   = flag.String("skin-cache", "skins", "Directory to cache player/default skins")
 	skinNetEnabled = flag.Bool("skin-net", false, "Allow network skin fetches from Mojang (default off)")
 
-	help           = flag.Bool("help", false, "Display help")
+	help = flag.Bool("help", false, "Display help")
 )
 
 func main() {
@@ -68,11 +70,15 @@ func main() {
 	// Handle Microsoft authentication if not in offline mode
 	// This must happen before agent creation to get player name/UUID
 	if !*offline {
-		cid, err := config.Load("configs/config.yaml")
+		cfg, err := config.Load("configs/config.yaml")
 		if err != nil {
 			log.Fatalf("config load failed: %v", err)
 		}
-		mauth, err := msauth.GetMCcredentials(".mc-agent_credCacheFile", cid)
+
+		credCachePath := filepath.Join(cfg.CacheDir, ".credCacheFile")
+		fmt.Printf("Using credential cache path: %s\n", credCachePath)
+
+		mauth, err := msauth.GetMCcredentials(credCachePath, cfg.ClientID)
 		if err != nil {
 			log.Fatalf("auth failed: %v", err)
 		}
@@ -82,13 +88,28 @@ func main() {
 
 	// Prepare rotating log for packet logging
 	_ = os.MkdirAll("./logs", 0760)
-	logWriter := &lumberjack.Logger{
-		Filename:   "./logs/" + time.Now().Format(time.RFC3339) + "_receiver.log",
+	packetLogWriter := &lumberjack.Logger{
+		Filename:   filepath.Join(".", "logs", "packets", auth.Name+"_"+time.Now().Format("20060102_150405")+".log"),
 		MaxSize:    10,
 		MaxBackups: 3,
 		MaxAge:     28,
 		Compress:   true,
 		LocalTime:  true,
+	}
+
+	log.Printf("Packet log: %s", packetLogWriter.Filename)
+
+	// auto-detect version (if not provided)
+	if *mcVersion == "" {
+		detectedVersion, _, err := rof_utils.CheckServerVersion(*address, 0)
+		if err != nil {
+			panic(fmt.Sprintf("auto-detect version from %s failed: %v", *address, err))
+		}
+		*mcVersion = detectedVersion
+	}
+
+	if *replayOut == "" {
+		*replayOut = filepath.Join(".", "replays", *mcVersion, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
 	}
 
 	// Build agent config - version detection, manager resolution, and client creation
@@ -107,7 +128,7 @@ func main() {
 		ReplayOutput:           *replayOut,
 		ReplayGenerator:        *replayGenerator,
 		SkinProvider:           skinProvider,
-		LogWriter:              logWriter,
+		LogWriter:              packetLogWriter,
 	}
 
 	a, err := agent.New(cfg)

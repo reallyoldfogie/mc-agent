@@ -311,9 +311,16 @@ func (a *agent) Init(ctx context.Context) error {
 	a.lifecycleMu.Unlock()
 
 	// Resolve version and protocol (auto-detect from server if not specified)
-	versionAutoDetected, err := a.resolveVersionAndManagers()
+	_, err := a.resolveVersionAndManagers()
 	if err != nil {
 		return err
+	}
+
+	log.Printf("[Agent %s] Trying to load registries from file (%s)", a.cfg.Name, a.cfg.RegistriesPath)
+	// Load client-side registries from file if available
+	// (server config packets will overwrite any registries loaded from file)
+	if err := a.LoadRegistriesFromFile(a.cfg.RegistriesPath); err != nil {
+		log.Printf("[Agent %s][WARN] failed to load registries from file: %v (hardcoded IDs may be needed)", a.cfg.Name, err)
 	}
 
 	// Use prebuilt client when provided
@@ -321,10 +328,7 @@ func (a *agent) Init(ctx context.Context) error {
 		a.client = a.cfg.Client
 	}
 
-	// Create client automatically ONLY if version was auto-detected from server.
-	// This ensures callers who explicitly specify a version must also provide a client,
-	// which maintains backward compatibility with tests and allows proper mocking.
-	if a.client == nil && versionAutoDetected && a.packetMgr != nil {
+	if a.client == nil && a.packetMgr != nil {
 		a.client = bot.NewClient(a.packetMgr)
 		// Set auth on the newly created client if provided in config
 		if a.cfg.Auth.Name != "" || a.cfg.Auth.UUID != "" {
@@ -344,7 +348,7 @@ func (a *agent) Init(ctx context.Context) error {
 
 	// Set version handler on bot client immediately (before connection)
 	if a.client != nil {
-		log.Printf("[Agent %s][DEBUG] Checking version handler: versionHandler=%v", a.client.Name(), a.versionHandler != nil)
+		log.Printf("[Agent %s][DEBUG] Checking version handler: versionHandler=%v", a.cfg.Name, a.versionHandler != nil)
 
 		if a.versionHandler != nil {
 			type versionHandlerSetter interface {
@@ -353,12 +357,12 @@ func (a *agent) Init(ctx context.Context) error {
 			if vhSetter, ok := a.client.(versionHandlerSetter); ok {
 				adapter := NewVersionHandlerAdapter(a.versionHandler)
 				vhSetter.SetVersionHandler(adapter)
-				log.Printf("[Agent %s] Version handler set for %s during Init", a.client.Name(), a.versionHandler.Version())
+				log.Printf("[Agent %s] Version handler set for %s during Init", a.cfg.Name, a.versionHandler.Version())
 			} else {
-				log.Printf("[Agent %s][DEBUG] Type assertion failed for SetVersionHandler", a.client.Name())
+				log.Printf("[Agent %s][DEBUG] Type assertion failed for SetVersionHandler", a.cfg.Name)
 			}
 		} else {
-			log.Printf("[Agent %s][DEBUG] Skipping version handler setup (versionHandler nil)", a.client.Name())
+			log.Printf("[Agent %s][DEBUG] Skipping version handler setup (versionHandler nil)", a.cfg.Name)
 		}
 	}
 
@@ -406,26 +410,26 @@ func (a *agent) Init(ctx context.Context) error {
 			Death:        a.HandleDeath,
 		}, a.packetMgr)
 		a.player = playerConcrete // Assign concrete type to interface field
-		log.Printf("[Agent %s] Player subsystem initialized", a.client.Name())
+		log.Printf("[Agent %s] Player subsystem initialized", a.cfg.Name)
 
 		// Create PlayerList (for player tracking and UUID resolution)
 		playerList := playerlist.New(botClient, a.packetMgr)
 		a.playerList = playerList // Store as interface{}
-		log.Printf("[Agent %s] PlayerList initialized", a.client.Name())
+		log.Printf("[Agent %s] PlayerList initialized", a.cfg.Name)
 		if a.playerUUIDByName == nil {
 			a.playerUUIDByName = func(name string) ([16]byte, error) {
 				players := playerList.Get()
-				log.Printf("[Agent %s] ResolvePlayerUUID: looking for %q in list with %d players", a.client.Name(), name, len(players))
+				log.Printf("[Agent %s] ResolvePlayerUUID: looking for %q in list with %d players", a.cfg.Name, name, len(players))
 				for id, info := range players {
-					log.Printf("[Agent %s] ResolvePlayerUUID: checking player %q (UUID: %s)", a.client.Name(), info.Name, id.String())
+					log.Printf("[Agent %s] ResolvePlayerUUID: checking player %q (UUID: %s)", a.cfg.Name, info.Name, id.String())
 					if info.Name == name {
 						var out [16]byte
 						copy(out[:], id[:])
-						log.Printf("[Agent %s] ResolvePlayerUUID: found %q -> %s", a.client.Name(), name, id.String())
+						log.Printf("[Agent %s] ResolvePlayerUUID: found %q -> %s", a.cfg.Name, name, id.String())
 						return out, nil
 					}
 				}
-				log.Printf("[Agent %s] ResolvePlayerUUID: player %q not found in list", a.client.Name(), name)
+				log.Printf("[Agent %s] ResolvePlayerUUID: player %q not found in list", a.cfg.Name, name)
 				return [16]byte{}, fmt.Errorf("player %s not found", name)
 			}
 		}
@@ -454,7 +458,7 @@ func (a *agent) Init(ctx context.Context) error {
 				},
 			})
 			a.worldMgr = a.mcAgentWorld // mc-agent world implements models.World
-			log.Printf("[Agent %s] Using mc-agent world with version handler for %s", a.client.Name(), a.versionHandler.Version())
+			log.Printf("[Agent %s] Using mc-agent world with version handler for %s", a.cfg.Name, a.versionHandler.Version())
 		} else {
 			// Fall back to mc-bot-go world (constructor requires concrete Player)
 			worldInterface := world.NewWorld(botClient, playerConcrete, world.EventsListener{
@@ -466,16 +470,16 @@ func (a *agent) Init(ctx context.Context) error {
 				},
 			}, a.packetMgr)
 			a.worldMgr = worldInterface
-			log.Printf("[Agent %s] Using mc-bot-go world (no version handler)", a.client.Name())
+			log.Printf("[Agent %s] Using mc-bot-go world (no version handler)", a.cfg.Name)
 		}
 
 		// Create Screen Manager (for inventory/containers)
 		a.screenMgr = screen.NewManager(botClient, containerEvents{agent: a}, a.packetMgr)
-		log.Printf("[Agent %s] Screen manager initialized", a.client.Name())
+		log.Printf("[Agent %s] Screen manager initialized", a.cfg.Name)
 
 		// Initialize slot resolver so inventory can be queried
 		a.slots = newScreenManagerSlotResolver(a)
-		log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.client.Name())
+		log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.cfg.Name)
 
 		a.initHeldSlotTracking()
 		a.initClientInformationHandler(customSettings)
@@ -484,13 +488,13 @@ func (a *agent) Init(ctx context.Context) error {
 		var stateProps *pathfinding.StatePropertyLoader
 		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, filepath.Join("data", "mc-data-gen-cache"), "")
 		if err == nil {
-			log.Printf("[Agent %s] Resolved data path: %s", a.client.Name(), dataBasePath)
+			log.Printf("[Agent %s] Resolved data path: %s", a.cfg.Name, dataBasePath)
 			// Verify path exists and has version directory
 			versionPath := filepath.Join(dataBasePath, a.cfg.Version)
 			if info, err := os.Stat(versionPath); err == nil && info.IsDir() {
-				log.Printf("[Agent %s] Version directory exists: %s", a.client.Name(), versionPath)
+				log.Printf("[Agent %s] Version directory exists: %s", a.cfg.Name, versionPath)
 			} else {
-				log.Printf("[Agent %s] Warning: version directory missing: %s (error: %v)", a.client.Name(), versionPath, err)
+				log.Printf("[Agent %s] Warning: version directory missing: %s (error: %v)", a.cfg.Name, versionPath, err)
 			}
 
 			// Use new unified Minecraft data cache for block properties
@@ -500,24 +504,24 @@ func (a *agent) Init(ctx context.Context) error {
 				if err == nil {
 					if spl, err := pathfinding.NewStatePropertyLoader(blocksJSONPath); err == nil {
 						stateProps = spl
-						log.Printf("[Agent %s] Loaded block state properties from cache", a.client.Name())
+						log.Printf("[Agent %s] Loaded block state properties from cache", a.cfg.Name)
 					} else {
-						log.Printf("[Agent %s] Warning: failed to load state properties: %v", a.client.Name(), err)
+						log.Printf("[Agent %s] Warning: failed to load state properties: %v", a.cfg.Name, err)
 					}
 				} else {
-					log.Printf("[Agent %s] Warning: failed to get blocks.json path: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Warning: failed to get blocks.json path: %v", a.cfg.Name, err)
 				}
 			} else {
-				log.Printf("[Agent %s] Warning: failed to generate Minecraft data cache: %v", a.client.Name(), err)
+				log.Printf("[Agent %s] Warning: failed to generate Minecraft data cache: %v", a.cfg.Name, err)
 			}
 			shapeMgr, err = pathfinding.NewBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps)
 			if err != nil {
-				log.Printf("[Agent %s] Warning: failed to create block shape manager: %v", a.client.Name(), err)
+				log.Printf("[Agent %s] Warning: failed to create block shape manager: %v", a.cfg.Name, err)
 			} else {
-				log.Printf("[Agent %s] Successfully created block shape manager", a.client.Name())
+				log.Printf("[Agent %s] Successfully created block shape manager", a.cfg.Name)
 			}
 		} else {
-			log.Printf("[Agent %s] Warning: failed to resolve data path: %v", a.client.Name(), err)
+			log.Printf("[Agent %s] Warning: failed to resolve data path: %v", a.cfg.Name, err)
 		}
 
 		// Create movement executor (core component needed for container interactions, looking, movement, etc.)
@@ -534,13 +538,13 @@ func (a *agent) Init(ctx context.Context) error {
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
 		if a.worldMgr == nil {
-			log.Printf("[Agent %s] Warning: world manager unavailable", a.client.Name())
+			log.Printf("[Agent %s] Warning: world manager unavailable", a.cfg.Name)
 			executorType = movement.UnknownExecutor
 		} else if shapeMgr == nil {
-			log.Printf("[Agent %s] Warning: block shape data unavailable", a.client.Name())
+			log.Printf("[Agent %s] Warning: block shape data unavailable", a.cfg.Name)
 			executorType = movement.UnknownExecutor
 		} else if a.blockMgr == nil {
-			log.Printf("[Agent %s] Warning: block manager unavailable", a.client.Name())
+			log.Printf("[Agent %s] Warning: block manager unavailable", a.cfg.Name)
 			executorType = movement.UnknownExecutor
 		} else {
 			// Physics executor can be used
@@ -549,12 +553,12 @@ func (a *agent) Init(ctx context.Context) error {
 		}
 
 		if executorType == movement.UnknownExecutor {
-			panic(fmt.Sprintf("Agent %s missing required subsystems: worldMgr=%v, shapeMgr=%v, blockMgr=%v. Cannot initialize movement executor.", a.client.Name(), a.worldMgr != nil, shapeMgr != nil, a.blockMgr != nil))
+			panic(fmt.Sprintf("Agent %s missing required subsystems: worldMgr=%v, shapeMgr=%v, blockMgr=%v. Cannot initialize movement executor.", a.cfg.Name, a.worldMgr != nil, shapeMgr != nil, a.blockMgr != nil))
 		}
 
 		// Allow explicit override to interpolation via config flag
 		a.moveExec = movement.NewExecutor(executorType, execConfig)
-		log.Printf("[Agent %s] Movement executor initialized (%s)", a.client.Name(), executorType.String())
+		log.Printf("[Agent %s] Movement executor initialized (%s)", a.cfg.Name, executorType.String())
 		a.shapeMgr = shapeMgr
 		a.stateProps = stateProps
 
@@ -564,7 +568,7 @@ func (a *agent) Init(ctx context.Context) error {
 				SetMovementHandler(common.MovementHandler)
 			}); ok {
 				movementHandlerSetter.SetMovementHandler(a.versionHandler.Play().Movement())
-				log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.client.Name(), a.versionHandler.Version())
+				log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.cfg.Name, a.versionHandler.Version())
 			}
 		}
 
@@ -590,7 +594,7 @@ func (a *agent) Init(ctx context.Context) error {
 					a.handleClutchPlan(usage, plan)
 				})
 			} else {
-				log.Printf("[Agent %s] Warning: clutch assist enabled but movement executor does not support clutch callbacks", a.client.Name())
+				log.Printf("[Agent %s] Warning: clutch assist enabled but movement executor does not support clutch callbacks", a.cfg.Name)
 			}
 		}
 
@@ -623,7 +627,7 @@ func (a *agent) Init(ctx context.Context) error {
 				}
 
 				log.Printf("[Agent %s] Stuck recovery: re-pathfinding from (%.2f, %.2f, %.2f) -> snapped (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
-					a.client.Name(), currentPos.X, currentPos.Y, currentPos.Z,
+					a.cfg.Name, currentPos.X, currentPos.Y, currentPos.Z,
 					snappedStart.X, snappedStart.Y, snappedStart.Z,
 					snappedGoal.X, snappedGoal.Y, snappedGoal.Z)
 
@@ -633,19 +637,19 @@ func (a *agent) Init(ctx context.Context) error {
 
 				path, err := lowLevelPathfinder.FindPath(context.Background(), snappedStart, snappedGoal, maxSteps)
 				if err != nil {
-					log.Printf("[Agent %s] Stuck recovery pathfinding failed: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Stuck recovery pathfinding failed: %v", a.cfg.Name, err)
 					return nil
 				}
 
 				if !path.Found || len(path.Steps) == 0 {
-					log.Printf("[Agent %s] Stuck recovery: no path found from current position", a.client.Name())
+					log.Printf("[Agent %s] Stuck recovery: no path found from current position", a.cfg.Name)
 					return nil
 				}
 
-				log.Printf("[Agent %s] Stuck recovery: found path with %d steps", a.client.Name(), len(path.Steps))
+				log.Printf("[Agent %s] Stuck recovery: found path with %d steps", a.cfg.Name, len(path.Steps))
 				return path
 			})
-			log.Printf("[Agent %s] Stuck recovery callback configured", a.client.Name())
+			log.Printf("[Agent %s] Stuck recovery callback configured", a.cfg.Name)
 		}
 
 		// Wrap with HPA* for hierarchical pathfinding on long distances
@@ -687,9 +691,9 @@ func (a *agent) Init(ctx context.Context) error {
 				hpaPF.GetBuilder().DebugViz = debugViz
 			}
 
-			log.Printf("[Agent %s] HPA* PathFinder initialized with update handler (batch mode: auto-flush)", a.client.Name())
+			log.Printf("[Agent %s] HPA* PathFinder initialized with update handler (batch mode: auto-flush)", a.cfg.Name)
 		} else {
-			log.Printf("[Agent %s] PathFinder initialized (HPA* without update handler)", a.client.Name())
+			log.Printf("[Agent %s] PathFinder initialized (HPA* without update handler)", a.cfg.Name)
 		}
 
 		if a.pathfind != nil && a.moveExec != nil {
@@ -713,7 +717,7 @@ func (a *agent) Init(ctx context.Context) error {
 					a.GetPosition,
 					a.SendChat,
 					followCfg,
-					func() string { return a.client.Name() },
+					func() string { return a.cfg.Name },
 				)
 			}
 		}
@@ -843,7 +847,7 @@ func (a *agent) Start(ctx context.Context) error {
 			// Set selfId to -1 to match ReplayMod's standard behavior
 			// (all players visible, no special camera entity)
 			a.rec.SetSelfID(-1)
-			log.Printf("[Agent %s][Replay] Set recorder selfId to -1", a.client.Name())
+			log.Printf("[Agent %s][Replay] Set recorder selfId to -1", a.cfg.Name)
 		}
 
 		if a.moveMirror != nil {
@@ -861,7 +865,7 @@ func (a *agent) Start(ctx context.Context) error {
 			if a.cfg.Auth.Name != "" {
 				a.moveMirror.SetEntityMeta(0, a.cfg.Auth.Name, id)
 				log.Printf("[Agent %s][Replay] Initialized MovementMirror with name=%s uuid=%s (entityID will be set later)",
-					a.client.Name(), a.cfg.Auth.Name, a.cfg.Auth.UUID)
+					a.cfg.Name, a.cfg.Auth.Name, a.cfg.Auth.UUID)
 			}
 		}
 	} else {
@@ -884,16 +888,16 @@ func (a *agent) Start(ctx context.Context) error {
 		a.wg.Add(1)
 		go func(ctx context.Context) {
 			defer a.wg.Done()
-			log.Printf("[Agent %s] Game handling loop started", a.client.Name())
+			log.Printf("[Agent %s] Game handling loop started", a.cfg.Name)
 			for {
 				select {
 				case <-ctx.Done():
-					log.Printf("[Agent %s] Game handling loop exiting: context cancelled", a.client.Name())
+					log.Printf("[Agent %s] Game handling loop exiting: context cancelled", a.cfg.Name)
 					return
 				default:
 				}
 				if err := a.client.HandleGame(ctx); err != nil {
-					log.Printf("[Agent %s] Game handling loop exiting: HandleGame returned error: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Game handling loop exiting: HandleGame returned error: %v", a.cfg.Name, err)
 					// Cancel the agent's context to signal shutdown
 					a.lifecycleMu.Lock()
 					if a.cancel != nil {
@@ -911,11 +915,11 @@ func (a *agent) Start(ctx context.Context) error {
 	// Heartbeat fallback: For non-physics executors (InterpolationExecutor)
 	// Both ensure server sees continuous packets to prevent kicks and enable container interactions
 	if physicsExec, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
-		log.Printf("[Agent %s] Starting continuous physics executor", a.client.Name())
+		log.Printf("[Agent %s] Starting continuous physics executor", a.cfg.Name)
 		a.waitForGroundData(baseCtx, 5*time.Second)
 		physicsExec.Start()
 	} else {
-		log.Printf("[Agent %s] Starting position heartbeat (non-physics executor)", a.client.Name())
+		log.Printf("[Agent %s] Starting position heartbeat (non-physics executor)", a.cfg.Name)
 		a.startPositionHeartbeat(20)
 	}
 
@@ -945,7 +949,7 @@ func (a *agent) waitForGroundData(ctx context.Context, timeout time.Duration) {
 	for {
 		select {
 		case <-waitCtx.Done():
-			log.Printf("[Agent %s] Ground check timed out after %s; starting physics anyway", a.client.Name(), timeout)
+			log.Printf("[Agent %s] Ground check timed out after %s; starting physics anyway", a.cfg.Name, timeout)
 			return
 		case <-ticker.C:
 			x, y, z, _, _, ok := a.GetPosition()
@@ -955,13 +959,13 @@ func (a *agent) waitForGroundData(ctx context.Context, timeout time.Duration) {
 
 			// Log progress every second
 			if time.Since(lastLogTime) >= 1*time.Second {
-				log.Printf("[Agent %s] Waiting for chunks at (%.1f, %.1f, %.1f)...", a.client.Name(), x, y, z)
+				log.Printf("[Agent %s] Waiting for chunks at (%.1f, %.1f, %.1f)...", a.cfg.Name, x, y, z)
 				lastLogTime = time.Now()
 			}
 
 			if a.hasLoadedGround(x, y, z) {
 				elapsed := time.Since(startTime)
-				log.Printf("[Agent %s] Ground chunks loaded after %v", a.client.Name(), elapsed)
+				log.Printf("[Agent %s] Ground chunks loaded after %v", a.cfg.Name, elapsed)
 				return
 			}
 		}
@@ -1004,7 +1008,7 @@ func (a *agent) downloadJarsAndGenerateReports() error {
 
 	name := ""
 	if a.client != nil {
-		name = a.client.Name()
+		name = a.cfg.Name
 	}
 
 	// Check if reports already exist
@@ -1043,7 +1047,7 @@ func (a *agent) Done() <-chan struct{} {
 func (a *agent) Close(context.Context) error {
 	// Stop physics executor or position heartbeat before cancelling context
 	if physicsExec, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
-		log.Printf("[Agent %s] Stopping continuous physics executor", a.client.Name())
+		log.Printf("[Agent %s] Stopping continuous physics executor", a.cfg.Name)
 		physicsExec.Stop()
 	} else {
 		a.stopPositionHeartbeat()
@@ -1059,12 +1063,12 @@ func (a *agent) Close(context.Context) error {
 	a.lifecycleMu.Unlock()
 	a.wg.Wait()
 	if a.rec != nil {
-		log.Printf("[Agent %s] [Replay] closing recorder", a.client.Name())
+		log.Printf("[Agent %s] [Replay] closing recorder", a.cfg.Name)
 		if err := a.rec.Close(); err != nil {
 			log.Printf("[agent.replay] ERROR closing recorder: %v", err)
 			return fmt.Errorf("close recorder: %w", err)
 		}
-		log.Printf("[Agent %s] [Replay] closed recorder successfully", a.client.Name())
+		log.Printf("[Agent %s] [Replay] closed recorder successfully", a.cfg.Name)
 		a.rec = nil
 	}
 	return nil
@@ -1239,7 +1243,7 @@ var ErrAlreadyInitialized = errors.New("agent: already initialized")
 func (a *agent) initializeContainerHelper() {
 	if a.screenMgr == nil || a.client == nil {
 		if a.screenMgr == nil {
-			log.Printf("[Agent %s] Warning: Screen manager unavailable, skipping container helper initialization", a.client.Name())
+			log.Printf("[Agent %s] Warning: Screen manager unavailable, skipping container helper initialization", a.cfg.Name)
 		}
 		if a.client == nil {
 			log.Printf("[Agent] Warning: Bot client unavailable, skipping container helper initialization")
@@ -1255,18 +1259,18 @@ func (a *agent) initializeContainerHelper() {
 		// Set container handler (for UseItemOn packets)
 		containerHandler := a.versionHandler.Play().Containers()
 		itemUsage.SetContainerHandler(containerHandler)
-		log.Printf("[Agent %s] Container handler initialized for version %s", a.client.Name(), a.cfg.Version)
+		log.Printf("[Agent %s] Container handler initialized for version %s", a.cfg.Name, a.cfg.Version)
 
 		// Set action handler (for swing/interact packets)
 		actionHandler := a.versionHandler.Play().Actions()
 		itemUsage.SetActionHandler(actionHandler)
-		log.Printf("[Agent %s] Action handler initialized for version %s", a.client.Name(), a.cfg.Version)
+		log.Printf("[Agent %s] Action handler initialized for version %s", a.cfg.Name, a.cfg.Version)
 	}
 
 	// Cast screen manager to concrete type
 	screenMgr, ok := a.screenMgr.(screen.Manager)
 	if !ok {
-		log.Printf("[Agent %s] Warning: Screen manager type assertion failed, skipping container helper initialization", a.client.Name())
+		log.Printf("[Agent %s] Warning: Screen manager type assertion failed, skipping container helper initialization", a.cfg.Name)
 		return
 	}
 
@@ -1279,7 +1283,7 @@ func (a *agent) initializeContainerHelper() {
 
 	// Use setter to properly initialize (now we're not holding a.mu)
 	a.SetContainerHelper(containerHelper)
-	log.Printf("[Agent %s] Container helper automatically initialized after connection", a.client.Name())
+	log.Printf("[Agent %s] Container helper automatically initialized after connection", a.cfg.Name)
 }
 
 func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error) {

@@ -274,12 +274,12 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	targetPos := models.V3{X: targetX, Y: targetY, Z: targetZ}
 
 	log.Printf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=(%.2f, %.2f, %.2f), target input=(%.2f, %.2f, %.2f)",
-		a.client.Name(), botX, botY, botZ, targetX, targetY, targetZ)
+		a.cfg.Name, botX, botY, botZ, targetX, targetY, targetZ)
 
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(models.Arrow, botOrigin, targetPos)
 	if err != nil {
-		log.Printf("[Agent %s] FireBowAtDebug: No valid trajectory: %v", a.client.Name(), err)
+		log.Printf("[Agent %s] FireBowAtDebug: No valid trajectory: %v", a.cfg.Name, err)
 		a.SendChat(fmt.Sprintf("Cannot fire at (%.1f, %.1f, %.1f): %v",
 			targetPos.X, targetPos.Y, targetPos.Z, err))
 
@@ -296,17 +296,17 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	yaw := physics.YawForStartTarget(botOrigin, targetPos)
 
 	log.Printf("[Agent %s] FireBowAtDebug: Yaw BEFORE cast to float32: %.10f°, AFTER cast: %.2f°",
-		a.client.Name(), yaw, float32(yaw))
+		a.cfg.Name, yaw, float32(yaw))
 	log.Printf("[Agent %s] FireBowAtDebug: Yaw calculation debug: dx=%.2f, dz=%.2f, atan2(dz,dx)_rad=%.4f, atan2(dz,dx)_deg=%.2f, yaw_final=%.2f°",
-		a.client.Name(), dx, dz, math.Atan2(dz, dx), math.Atan2(dz, dx)*180/math.Pi, yaw)
+		a.cfg.Name, dx, dz, math.Atan2(dz, dx), math.Atan2(dz, dx)*180/math.Pi, yaw)
 	log.Printf("[Agent %s] FireBowAtDebug: Trajectory validated for arrow: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), yaw=%.2f°, pitch=%.2f°, power=%.3f, blocked=%v",
-		a.client.Name(), botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, yaw, pitch, powerFactor, validSolution.IsBlocked)
+		a.cfg.Name, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, yaw, pitch, powerFactor, validSolution.IsBlocked)
 	log.Printf("[Agent %s] FireBowAtDebug: SendUseItem will send: yaw_float32=%.2f°, pitch_float32=%.2f°",
-		a.client.Name(), float32(yaw), float32(pitch))
+		a.cfg.Name, float32(yaw), float32(pitch))
 
 	// CRITICAL: Send position packet with trajectory-verified pitch BEFORE using bow
 	// This ensures server knows the correct player rotation matching the trajectory we calculated
-	log.Printf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.client.Name(), pitch)
+	log.Printf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.cfg.Name, pitch)
 	if err := a.moveExec.SendPositionAndRotation(botX, botY, botZ, float32(yaw), float32(pitch), true); err != nil {
 		return nil, fmt.Errorf("send position for bow: %w", err)
 	}
@@ -316,12 +316,12 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	a.setPosition(botX, botY, botZ, float32(yaw), float32(pitch))
 
 	// Visualize trajectory with display entities for debugging (uses RCON if available)
-	log.Printf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.client.Name(), len(trajectory))
+	log.Printf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.cfg.Name, len(trajectory))
 	if len(trajectory) > 0 {
 		a.visualizeTrajectory(botOrigin, targetPos, trajectory, yaw, true)
 	} else {
 		log.Printf("[Agent %s] FireBowAtDebug: WARNING: Target at (%.1f, %.1f, %.1f) is unreachable",
-			a.client.Name(), targetPos.X, targetPos.Y, targetPos.Z)
+			a.cfg.Name, targetPos.X, targetPos.Y, targetPos.Z)
 		a.SendChat(fmt.Sprintf("WARNING: Target at (%.1f, %.1f, %.1f) is unreachable",
 			targetPos.X, targetPos.Y, targetPos.Z))
 
@@ -612,11 +612,11 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 			// Successfully equipped from hotbar
 			time.Sleep(50 * time.Millisecond)
 		} else {
-			log.Printf("[Agent %s] EquipItemByName failed for %s: %v. Attempting fallback to inventory search...", a.client.Name(), fullItemName, err)
+			log.Printf("[Agent %s] EquipItemByName failed for %s: %v. Attempting fallback to inventory search...", a.cfg.Name, fullItemName, err)
 			// Not in hotbar, try to find in inventory and move to hotbar
 			slot, found, err := a.FindSlotWith(ctx, itemName, 0)
 			if err != nil || !found {
-				log.Printf("[Agent %s] FindSlotWith also failed for %s in inventory. EquipError: %v, FindError: %v, Found: %v", a.client.Name(), itemName, err, err, found)
+				log.Printf("[Agent %s] FindSlotWith also failed for %s in inventory. EquipError: %v, FindError: %v, Found: %v", a.cfg.Name, itemName, err, err, found)
 				return nil, fmt.Errorf("%s not found in inventory: %v", itemName, err)
 			}
 
@@ -651,7 +651,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(projectileType, botOrigin, targetPos)
 	if err != nil {
-		log.Printf("[Agent %s] ThrowProjectileAt: No valid trajectory for %s: %v", a.client.Name(), itemName, err)
+		log.Printf("[Agent %s] ThrowProjectileAt: No valid trajectory for %s: %v", a.cfg.Name, itemName, err)
 		a.SendChat(fmt.Sprintf("Cannot throw %s at (%.1f, %.1f, %.1f): %v",
 			itemName, x, y, z, err))
 		return nil, err
@@ -661,7 +661,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	trajectory := validSolution.Trajectory
 
 	log.Printf("[Agent %s] ThrowProjectileAt: Trajectory validated for %s: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), pitch=%.2f°, trajectory points=%d, blocked=%v",
-		a.client.Name(), itemName, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, pitch, len(trajectory), validSolution.IsBlocked)
+		a.cfg.Name, itemName, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, pitch, len(trajectory), validSolution.IsBlocked)
 
 	// Check if target is reachable
 	if len(trajectory) == 0 {

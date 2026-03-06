@@ -249,7 +249,7 @@ func (p *playHandler) ParseUpdateRecipes(pkt pk.Packet) (*agent_models.UpdateRec
 
 	// Get the recipes array
 	recipes := declareRecipes.Recipes.Get()
-	if recipes == nil || len(recipes) == 0 {
+	if len(recipes) == 0 {
 		return &payload, nil
 	}
 
@@ -285,7 +285,7 @@ func (p *playHandler) convertIngredientToSlotDisplay(ingredient *basetypes.Ingre
 
 	slots := ingredient.Get()
 
-	if slots == nil || len(slots) == 0 {
+	if len(slots) == 0 {
 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
 	}
 

@@ -117,7 +117,7 @@ func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 func (a *agent) extractCommandFromMessage(msg chat.Message) (string, bool) {
 	botName := ""
 	if a.client != nil {
-		botName = a.client.Name()
+		botName = a.cfg.Name
 	}
 	if botName == "" {
 		return "", false

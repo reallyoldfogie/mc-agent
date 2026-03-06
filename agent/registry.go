@@ -137,10 +137,10 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 	// Handle entity type registry to set player entity type for movement mirror
 	if registryID == "minecraft:entity_type" && a.moveMirror != nil {
 		if playerTypeID, ok := entries["minecraft:player"]; ok {
-			log.Printf("[Registry %s] Setting player entity type to %d for movement mirror", a.client.Name(), playerTypeID)
+			log.Printf("[Registry %s] Setting player entity type to %d for movement mirror", a.cfg.Name, playerTypeID)
 			a.moveMirror.SetEntityType(playerTypeID)
 		} else {
-			log.Printf("[Registry %s] WARNING: minecraft:player not found in entity_type registry", a.client.Name())
+			log.Printf("[Registry %s][WARN] minecraft:player not found in entity_type registry", a.cfg.Name)
 		}
 	}
 
@@ -175,15 +175,10 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 	a.registries[reg.id] = reg
 	a.regMu.Unlock()
 
-	name := "UnknownClient"
-	if a.client != nil {
-		name = a.client.Name()
-	}
-
 	if existed {
-		log.Printf("[Registry %s] ⚠ Overwriting %s registry with %d entries", name, registryID, len(entries))
+		log.Printf("[Registry %s] ⚠ Overwriting %s registry with %d entries", a.cfg.Name, registryID, len(entries))
 	} else {
 
-		log.Printf("[Registry %s] Stored %s registry with %d entries", name, registryID, len(entries))
+		log.Printf("[Registry %s] Stored %s registry with %d entries", a.cfg.Name, registryID, len(entries))
 	}
 }

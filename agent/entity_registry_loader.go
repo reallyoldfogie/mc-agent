@@ -32,17 +32,21 @@ type Registry struct {
 // The registries.json file should be at: {dataPath}/data_generator/reports/registries.json
 //
 // Returns error if file cannot be read or parsed.
-func (a *agent) LoadEntityTypesFromRegistry(dataPath string) error {
+func (a *agent) LoadRegistriesFromFile(dataPath string) error {
 	// Use cfg.RegistriesPath if dataPath not provided
 	if dataPath == "" && a.cfg.RegistriesPath != "" {
 		dataPath = a.cfg.RegistriesPath
 	}
 
 	if dataPath == "" {
-		return fmt.Errorf("no registries path provided (pass dataPath parameter or set cfg.RegistriesPath)")
+		dataPath = "." // Default to current directory if no path provided
+		log.Printf("[RegistryLoader][WARN] No dataPath provided for LoadRegistriesFromFile, defaulting to current directory: %s", dataPath)
 	}
 
-	registryPath := filepath.Join(dataPath, "data_generator", "reports", "registries.json")
+	registryPath := dataPath
+	if fileInfo, err := os.Stat(dataPath); err == nil && fileInfo.IsDir() {
+		registryPath = filepath.Join(dataPath, "data_generator", "reports", "registries.json")
+	}
 
 	// Read the registries file
 	data, err := os.ReadFile(registryPath)
@@ -57,8 +61,11 @@ func (a *agent) LoadEntityTypesFromRegistry(dataPath string) error {
 	}
 
 	if len(registries) == 0 {
+		log.Printf("[RegistryLoader][WARN] no registries found in : %s", registryPath)
 		return fmt.Errorf("no registries found in registries.json")
 	}
+
+	log.Printf("[RegistryLoader] Loading %d registries from file: %s", len(registries), registryPath)
 
 	// Load each registry into the agent's registry system
 	totalLoaded := 0
@@ -70,14 +77,17 @@ func (a *agent) LoadEntityTypesFromRegistry(dataPath string) error {
 		}
 
 		if len(entries) > 0 {
-			// Store in the agent's registry system
+			// Store in the agent's registry system via onRegistryDataCallback
+			// This logs each registry being stored (see registry.go for details)
 			// Note: onRegistryDataCallback handles overwrites - if this registry
 			// is later received via config packet, the packet data will replace this
 			a.onRegistryDataCallback(registryID, entries)
 			totalLoaded++
+		} else {
+			log.Printf("[RegistryLoader] Skipping %s registry (no entries found)", registryID)
 		}
 	}
 
-	log.Printf("[RegistryLoader] Loaded %d registries from %s (entity_type, menu, block, item, etc.)", totalLoaded, registryPath)
+	log.Printf("[RegistryLoader] ✓ Successfully loaded %d registries from file", totalLoaded)
 	return nil
 }

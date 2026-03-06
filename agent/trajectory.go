@@ -37,7 +37,7 @@ func (a *agent) FindValidTrajectory(
 
 	agentName := "unknown"
 	if a.client != nil {
-		agentName = a.client.Name()
+		agentName = a.cfg.Name
 	}
 
 	if a.worldMgr == nil || a.shapeMgr == nil {

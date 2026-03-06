@@ -211,7 +211,7 @@ func (a *agent) onDisconnect2(p pk.Packet) error {
 
 	name := ""
 	if a.client != nil {
-		name = a.client.Name()
+		name = a.cfg.Name
 	}
 
 	if a.versionHandler == nil {
@@ -294,12 +294,16 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 				// Map registry name to EntityType (e.g., "minecraft:player" -> EntityTypePlayer)
 				entityTypeStr = common.EntityType(name)
 			}
+		} else {
+			log.Printf("[onAddEntity] Warning: Entity type registry not ready when registering entity %d. Type ID: %d", entityID, entityType)
 		}
 		if entityTypeStr == "" {
 			entityTypeStr = common.EntityTypeUnknown
 		}
 		a.entityRegistry.RegisterEntity(entityID, entityTypeStr)
 		log.Printf("[onAddEntity] Registered entity %d as type %s in metadata handler", entityID, entityTypeStr)
+	} else {
+		log.Printf("[onAddEntity] Warning: entityRegistry is nil, cannot register entity %d", entityID)
 	}
 
 	if a.moveMirror != nil && entityID == a.GetEntityID() {
@@ -642,6 +646,15 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 	if err != nil {
 		return err
 	}
+	botEntityID := a.GetEntityID()
+	if entityID == botEntityID {
+		err = a.moveExec.SetVelocity(velX, velY, velZ)
+		if err != nil {
+			log.Printf("[onEntityVelocityUpdate] Error setting bot velocity: %v", err)
+		} else {
+			log.Printf("[onEntityVelocityUpdate] EntityID=%d velocity update applied to bot: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
+		}
+	}
 
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
@@ -913,13 +926,13 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 
 	entityID, entries, err := a.versionHandler.Play().Entities().ParseSetEntityMetadata(p)
 	if err != nil {
-		log.Printf("[Agent %s][onSetEntityMetadata] entityID=%d", a.client.Name(), entityID)
+		log.Printf("[Agent %s][onSetEntityMetadata] entityID=%d", a.cfg.Name, entityID)
 		return err
 	}
 
 	if projInfo, exists := a.activeProjectiles[entityID]; exists {
 
-		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.client.Name(), projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
+		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.cfg.Name, projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
 	}
 
 	// Process metadata through the handler system if available
@@ -929,7 +942,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			// Process each metadata entry through the handler
 			result, err := a.metadataHandler.HandleMetadata(entityID, entry)
 			if err != nil {
-				log.Printf("[Agent %s][onSetEntityMetadata] Warning: failed to process metadata for entity %d: %v", a.client.Name(), entityID, err)
+				log.Printf("[Agent %s][onSetEntityMetadata] Warning: failed to process metadata for entity %d: %v", a.cfg.Name, entityID, err)
 				continue
 			}
 			metadataResults = append(metadataResults, result)
@@ -979,7 +992,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	if e, ok := a.entities[entityID]; ok {
 		// Only update if health was actually provided in metadata
 		if health >= 0 {
-			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d health updated: %.1f / %.1f", a.client.Name(), entityID, health, maxHealth)
+			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d health updated: %.1f / %.1f", a.cfg.Name, entityID, health, maxHealth)
 			e.Health = health
 		}
 		e.MaxHealth = maxHealth
@@ -988,7 +1001,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			e.VelX = velocity[0]
 			e.VelY = velocity[1]
 			e.VelZ = velocity[2]
-			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d velocity updated: (%.4f, %.4f, %.4f)", a.client.Name(), entityID, velocity[0], velocity[1], velocity[2])
+			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d velocity updated: (%.4f, %.4f, %.4f)", a.cfg.Name, entityID, velocity[0], velocity[1], velocity[2])
 		}
 		// Store projectile-specific metadata
 		e.shake = shake
@@ -1010,7 +1023,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		projInfo.criticalHit = criticalHit
 		projInfo.pierceLevel = pierceLevel
 		projInfo.potionColor = potionColor
-		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d isInGround=%v (was %v), shake=%d, critical=%v, pierce=%d, color=%d", a.client.Name(), projInfo.projectileType.String(), entityID, isInGround, prevInGround, shake, criticalHit, pierceLevel, potionColor)
+		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d isInGround=%v (was %v), shake=%d, critical=%v, pierce=%d, color=%d", a.cfg.Name, projInfo.projectileType.String(), entityID, isInGround, prevInGround, shake, criticalHit, pierceLevel, potionColor)
 
 		// If arrow just hit a block (isInGround transitioned from false to true), queue callback for server-authoritative position
 		if isInGround && !prevInGround && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
@@ -1380,7 +1393,7 @@ func (a *agent) onUpdateRecipes(p pk.Packet) error {
 
 	payload, err := a.versionHandler.Play().ParseUpdateRecipes(p)
 	if err != nil {
-		log.Printf("[Agent %s] Failed to parse UpdateRecipes: %v", a.client.Name(), err)
+		log.Printf("[Agent %s] Failed to parse UpdateRecipes: %v", a.cfg.Name, err)
 		return nil // Don't fail on parse errors
 	}
 
@@ -1400,30 +1413,30 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 	// Only register handlers when using mc-agent world with version handler
 	if a.versionHandler == nil || a.mcAgentWorld == nil {
 		log.Printf("[Agent %s] worldPacketHandlers: NOT registering (versionHandler=%v, mcAgentWorld=%v)",
-			a.client.Name(), a.versionHandler != nil, a.mcAgentWorld != nil)
+			a.cfg.Name, a.versionHandler != nil, a.mcAgentWorld != nil)
 		return nil
 	}
 
-	log.Printf("[Agent %s] worldPacketHandlers: Registering world packet handlers", a.client.Name())
+	log.Printf("[Agent %s] worldPacketHandlers: Registering world packet handlers", a.cfg.Name)
 	worldHandler := a.versionHandler.Play().World()
 
-	chunkPacketID := a.packetMgr.GetClientboundPacketID("ClientboundLevelChunkWithLight")
+	chunkPacketID := a.packetMgr.GetClientboundPacketID("ClientboundMapChunk")
 	blockUpdateID := a.packetMgr.GetClientboundPacketID("ClientboundBlockUpdate")
-	log.Printf("[Agent %s] Registering chunk handler for packet ID %d", a.client.Name(), chunkPacketID)
-	log.Printf("[Agent %s] Registering block update handler for packet ID %d", a.client.Name(), blockUpdateID)
+	log.Printf("[Agent %s] Registering chunk handler for packet ID %d", a.cfg.Name, chunkPacketID)
+	log.Printf("[Agent %s] Registering block update handler for packet ID %d", a.cfg.Name, blockUpdateID)
 
 	handlers := []bot.PacketHandler{
 		{
 			ID:       chunkPacketID,
 			Priority: 50, // Higher priority than other handlers to process chunk data first
 			F: func(p pk.Packet) error {
-				log.Printf("[Agent %s] Received ClientboundLevelChunkWithLight packet", a.client.Name())
+				log.Printf("[Agent %s] Received ClientboundLevelChunkWithLight packet", a.cfg.Name)
 				chunkX, chunkZ, data, err := worldHandler.ParseChunkData(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse chunk data: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Warning: failed to parse chunk data: %v", a.cfg.Name, err)
 					return nil // Don't fail on parse errors
 				}
-				log.Printf("[Agent %s] Loaded chunk at (%d, %d), data size: %d", a.client.Name(), chunkX, chunkZ, len(data))
+				log.Printf("[Agent %s] Loaded chunk at (%d, %d), data size: %d", a.cfg.Name, chunkX, chunkZ, len(data))
 				return a.mcAgentWorld.HandleChunkLoad(chunkX, chunkZ, data)
 			},
 		},
@@ -1433,7 +1446,7 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				chunkX, chunkZ, err := worldHandler.ParseUnloadChunk(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse unload chunk: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Warning: failed to parse unload chunk: %v", a.cfg.Name, err)
 					return nil
 				}
 				return a.mcAgentWorld.HandleChunkUnload(chunkX, chunkZ)
@@ -1445,10 +1458,10 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				x, y, z, blockStateID, err := worldHandler.ParseBlockUpdate(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse blocks update: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Warning: failed to parse blocks update: %v", a.cfg.Name, err)
 					return nil // Ignore parse errors
 				}
-				log.Printf("[Agent %s] Block update at (%d, %d, %d) -> state %d", a.client.Name(), x, y, z, blockStateID)
+				log.Printf("[Agent %s] Block update at (%d, %d, %d) -> state %d", a.cfg.Name, x, y, z, blockStateID)
 				a.mcAgentWorld.HandleBlockUpdate(x, y, z, blockStateID)
 				return nil
 			},
@@ -1459,7 +1472,7 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				_, blocks, err := worldHandler.ParseSectionBlocksUpdate(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse section blocks update: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Warning: failed to parse section blocks update: %v", a.cfg.Name, err)
 					return nil // Ignore parse errors
 				}
 				a.mcAgentWorld.HandleSectionBlocksUpdate(blocks)
@@ -1477,19 +1490,19 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 
 				// Send acknowledgment immediately
 				if err := worldHandler.SendChunkBatchReceived(a.client.Conn(), a.chunkBatchCount); err != nil {
-					log.Printf("[Agent %s] Error sending chunk batch acknowledgement: %v", a.client.Name(), err)
+					log.Printf("[Agent %s] Error sending chunk batch acknowledgement: %v", a.cfg.Name, err)
 					return nil // Don't fail on ack errors
 				}
 
 				// Log progress periodically
 				if int(a.chunkBatchCount)%10 == 0 || int(a.chunkBatchCount) <= 3 {
-					log.Printf("[Agent %s] Acknowledged %d chunk batches", a.client.Name(), int(a.chunkBatchCount))
+					log.Printf("[Agent %s] Acknowledged %d chunk batches", a.cfg.Name, int(a.chunkBatchCount))
 				}
 				return nil
 			},
 		},
 	}
 
-	log.Printf("[Agent %s] worldPacketHandlers: Returning %d world packet handlers", a.client.Name(), len(handlers))
+	log.Printf("[Agent %s] worldPacketHandlers: Returning %d world packet handlers", a.cfg.Name, len(handlers))
 	return handlers
 }
