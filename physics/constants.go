@@ -123,3 +123,32 @@ const (
 	HoneyBlockSlipperiness = 0.4   // Honey blocks (sticky, very low slipperiness)
 	// Note: Packed ice / blue ice may have slightly different values; add as needed.
 )
+
+// Entity collision constants
+const (
+	// EntitySeparationForce is the push magnitude applied when entities overlap (horizontal only).
+	// Mirrors the 0.05 factor from vanilla Minecraft's Entity.pushAwayFrom().
+	// Scaled by min(1/sqrt(chebyshev), 1) so deep overlaps produce a smaller force
+	// and shallow overlaps (near the edge of AABB contact) produce up to 0.05 blocks/tick.
+	EntitySeparationForce = 0.05
+
+	// Player collision dimensions (in blocks)
+	// Used for generating entity AABBs when entity-specific dimensions unavailable
+	PlayerCollisionWidth  = 0.6 // Horizontal dimension (X/Z)
+	PlayerCollisionHeight = 1.8 // Vertical dimension (Y)
+)
+
+// Water physics constants
+const (
+	// Water flow speed when agent is in flowing water
+	// Scales with water flow level (age 1-7)
+	WaterFlowSpeedBase = 0.15 // Base flow velocity (blocks/tick)
+
+	// Water resistance/drag when submerged
+	// Higher value = more drag (slower movement)
+	WaterDrag = 0.8 // Velocity multiplier per tick
+
+	// Gravity reduction in water
+	// 0.0 = no gravity reduction, 1.0 = full gravity reduction
+	WaterGravityFactor = 0.8 // Use 20% of normal gravity when in water
+)
