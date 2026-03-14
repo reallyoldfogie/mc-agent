@@ -34,9 +34,9 @@ const (
 type ItemUsage struct {
 	client           models.PacketSender
 	packetMgr        protocol_models.PacketMgr
-	containerHandler common.ContainerHandler // Version-specific container handler
-	actionHandler    common.ActionHandler    // Version-specific action handler
-	entityHandler    common.EntityHandler    // Version-specific entity handler
+	containerHandler models.ContainerHandler // Version-specific container handler
+	actionHandler    models.ActionHandler    // Version-specific action handler
+	entityHandler    models.EntityHandler    // Version-specific entity handler
 	sequence         int32                   // Anti-cheat sequence number
 }
 
@@ -51,19 +51,19 @@ func NewItemUsage(client models.PacketSender, packetMgr protocol_models.PacketMg
 
 // SetContainerHandler sets the version-specific container handler.
 // This must be called before using PlaceBlock/UseItemOnBlock for proper version-specific packet handling.
-func (iu *ItemUsage) SetContainerHandler(handler common.ContainerHandler) {
+func (iu *ItemUsage) SetContainerHandler(handler models.ContainerHandler) {
 	iu.containerHandler = handler
 }
 
 // SetActionHandler sets the version-specific action handler.
 // This must be called before using UseItemOnBlockWithCursor/UseItemOnEntity for proper version-specific packet handling.
-func (iu *ItemUsage) SetActionHandler(handler common.ActionHandler) {
+func (iu *ItemUsage) SetActionHandler(handler models.ActionHandler) {
 	iu.actionHandler = handler
 }
 
 // SetEntityHandler sets the version-specific entity handler.
 // This must be called before using UseItemOnEntity/AttackEntity for proper version-specific packet handling.
-func (iu *ItemUsage) SetEntityHandler(handler common.EntityHandler) {
+func (iu *ItemUsage) SetEntityHandler(handler models.EntityHandler) {
 	iu.entityHandler = handler
 }
 

@@ -135,6 +135,14 @@ func (m *testMockShapeManager) IsPowderSnow(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+	return models.V3{} // No flow in mock world
+}
+
+func (m *testMockShapeManager) GetWaterFlowSpeed(stateID uint32) float64 {
+	return 0.0 // No flow in mock world
+}
+
 func (m *testMockShapeManager) BlockName(stateID uint32) string {
 	if stateID == 0 {
 		return "minecraft:air"

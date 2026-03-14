@@ -30,6 +30,10 @@ func (mw *MockWorld) SetBlock(x, y, z int, blockState uint32) {
 	mw.blocks[[3]int{x, y, z}] = blockState
 }
 
+func (mw *MockWorld) GetEntitiesInRange(bb physics.AABB) []models.EntityBounds {
+	return []models.EntityBounds{} // No entities in mock world
+}
+
 // MockShapeProvider implements physics.BlockShapeProvider for testing
 type MockShapeProvider struct{}
 
@@ -133,6 +137,14 @@ func (msp *MockShapeProvider) BlockName(blockStateID uint32) string {
 
 func (msp *MockShapeProvider) FullBlockName(blockStateID uint32) string {
 	return msp.BlockName(blockStateID)
+}
+
+func (msp *MockShapeProvider) GetWaterFlowSpeed(blockStateID uint32) float64 {
+	return 0.0 // No water in mock
+}
+
+func (msp *MockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+	return models.V3{} // No water flow in mock
 }
 
 // Test helper: Create physics executor for testing

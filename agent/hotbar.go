@@ -9,7 +9,6 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
 )
@@ -25,10 +24,10 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int) error {
 		return fmt.Errorf("invalid hotbar slot %d (expected %d-%d)", slot, minHotbarSlot, maxHotbarSlot)
 	}
 	if a.packetMgr == nil || a.client == nil {
-		return ErrInvalidConfig("packet manager or client not initialized")
+		return models.ErrInvalidConfig("packet manager or client not initialized")
 	}
 	if a.heldSlotUpdates == nil {
-		return ErrInvalidConfig("held slot tracking not initialized")
+		return models.ErrInvalidConfig("held slot tracking not initialized")
 	}
 
 	a.heldSlotMu.RLock()
@@ -237,7 +236,7 @@ func (a *agent) initClientInformationHandler(settings basic.Settings) {
 			}
 
 			// Send client information using version handler
-			info := common.ClientInfo{
+			info := models.ClientInfo{
 				Locale:              settings.Locale,
 				ViewDistance:        int8(settings.ViewDistance),
 				ChatMode:            int32(settings.ChatMode),

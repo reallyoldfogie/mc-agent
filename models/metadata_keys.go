@@ -1,4 +1,4 @@
-package common
+package models
 
 // Entity Metadata Key Constants
 // These are the indices used in entity metadata entries across all entity types.

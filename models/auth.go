@@ -1,4 +1,4 @@
-package agent
+package models
 
 // Auth mirrors the authentication details required by the underlying client.
 type Auth struct {

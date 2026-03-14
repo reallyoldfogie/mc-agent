@@ -28,7 +28,7 @@ func (q *quickFollowMgr) SetState(s models.FollowState) {
 }
 
 func TestFollowQuick_StartAndStopMessages(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

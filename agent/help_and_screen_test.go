@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHelpListsLegacyCommands(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -45,7 +46,7 @@ type fakeItemMgr struct{ name string }
 func (f fakeItemMgr) GetItemNameByID(id int) string { return f.name }
 
 func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

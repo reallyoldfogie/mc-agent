@@ -17,6 +17,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-agent/config"
+	"github.com/reallyoldfogie/mc-agent/models"
 	_ "github.com/reallyoldfogie/mc-agent/versions"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 	// _ "github.com/reallyoldfogie/mc-agent/versions/common"
@@ -54,9 +55,9 @@ func main() {
 	}
 
 	// Build Auth from flags (offline support - online auth is handled later, when bot client is created)
-	auth := agent.Auth{}
+	auth := models.Auth{}
 	if *offline {
-		auth = agent.Auth{AccessToken: *accessToken, Name: *name, UUID: *playerID}
+		auth = models.Auth{AccessToken: *accessToken, Name: *name, UUID: *playerID}
 		fmt.Printf("Offline mode => using name=%s uuid=%s\n", auth.Name, auth.UUID)
 	}
 
@@ -83,7 +84,7 @@ func main() {
 			log.Fatalf("auth failed: %v", err)
 		}
 		log.Printf("Authenticated as %s (%s)", mauth.Name, mauth.UUID)
-		auth = agent.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID}
+		auth = models.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID}
 	}
 
 	// Prepare rotating log for packet logging
@@ -114,7 +115,7 @@ func main() {
 
 	// Build agent config - version detection, manager resolution, and client creation
 	// are now handled automatically by agent.Init() if not provided
-	cfg := agent.Config{
+	cfg := models.AgentConfig{
 		Name:                   auth.Name, // Use authenticated name
 		Address:                *address,
 		Version:                *mcVersion, // Empty = auto-detect from server

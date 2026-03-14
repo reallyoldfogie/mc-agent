@@ -1,20 +1,17 @@
-package agent
+package models
 
 import (
 	"io"
 
-	"github.com/reallyoldfogie/mc-agent/agent/plan"
-	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// Config contains all inputs required to construct and run an Agent.
+// AgentConfig contains all inputs required to construct and run an Agent.
 // It is intentionally decoupled from concrete implementations to support testing.
-type Config struct {
+type AgentConfig struct {
 	Name string
 
 	// Connection
@@ -30,9 +27,9 @@ type Config struct {
 	BlockMgr  mc_versions.BlockMgr
 	SoundMgr  mc_versions.SoundMgr
 
-	// Optional: version-specific packet handler. If nil, falls back to existing packet handling.
+	// Version-specific packet handler.
 	// When set, enables version-aware packet construction and parsing via the versions/ package.
-	VersionHandler common.VersionHandler
+	VersionHandler VersionHandler
 
 	// Optional: prebuilt client (useful for tests). If nil, Agent may construct one.
 	Client bot.Client
@@ -62,10 +59,10 @@ type Config struct {
 	ReplayGenerator string // optional generator string; defaults to "mc-agent"
 
 	// Optional: skins provider for replay embedding (pass NewSkinFetcher result)
-	SkinProvider models.SkinProvider
+	SkinProvider SkinProvider
 
 	// Optional: initial plan to execute after Start.
-	InitialPlan *plan.Plan
+	InitialPlan Plan
 
 	// Optional: rcon controller for world maniputation (should only be used for debugging)
 	RCON testenv.RCONHelper
@@ -76,7 +73,7 @@ type Config struct {
 }
 
 // Validate performs basic configuration checks.
-func (c *Config) Validate() error {
+func (c *AgentConfig) Validate() error {
 	if c.Address == "" {
 		return ErrInvalidConfig("Address must be set")
 	}

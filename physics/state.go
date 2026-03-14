@@ -4,6 +4,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -15,6 +16,8 @@ type Inputs = models.Inputs
 // State tracks the physics state of a player entity.
 // This includes position, velocity, rotation, and ground contact flags.
 type state struct {
+	mu sync.RWMutex // Protects all mutable fields for concurrent access
+
 	// Position and velocity
 	Pos models.V3 // Player position (feet level)
 	Vel models.V3 // Player velocity (blocks per tick)
@@ -58,6 +61,8 @@ func NewState(shapeProvider BlockShapeProvider) models.PhysicsState {
 // SetPosition updates the player's position and rotation (for server corrections).
 // This resets velocity and collision flags, as the server has teleported the player.
 func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	// Calculate delta for debugging (server corrections should be rare)
 	deltaX := pos.X - s.Pos.X
 	deltaY := pos.Y - s.Pos.Y
@@ -80,46 +85,64 @@ func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 
 // GetPosition returns the current position and rotation.
 func (s *state) GetPosition() (pos models.V3, yaw, pitch float64, onGround bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Pos, s.yaw, s.pitch, s.onGround
 }
 
 // GetVelocity returns the current velocity.
 func (s *state) GetVelocity() models.V3 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Vel
 }
 
 // Position returns the current position.
 func (s *state) Position() models.V3 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Pos
 }
 
 // Velocity returns the current velocity.
 func (s *state) Velocity() models.V3 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.Vel
 }
 
 // Yaw returns the current yaw.
 func (s *state) Yaw() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.yaw
 }
 
 // Pitch returns the current pitch.
 func (s *state) Pitch() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.pitch
 }
 
 // OnGround reports whether the player is on ground.
 func (s *state) OnGround() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.onGround
 }
 
 // IsSneaking reports whether the player is sneaking.
 func (s *state) IsSneaking() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.isSneaking
 }
 
 // FallDistance reports the current accumulated fall distance in blocks.
 func (s *state) FallDistance() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.fallDistance
 }
 
@@ -130,6 +153,8 @@ func (s *state) GetDimensions() (width, height, eyeHeight float64) {
 
 // SetPositionSimple updates the position without changing rotation or ground status.
 func (s *state) SetPositionSimple(pos models.V3) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Pos = pos
 	// Reset fall distance when position is manually set
 	s.fallDistance = 0.0
@@ -137,21 +162,29 @@ func (s *state) SetPositionSimple(pos models.V3) {
 
 // SetYaw updates the yaw without changing position or pitch.
 func (s *state) SetYaw(yaw float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.yaw = yaw
 }
 
 // SetPitch updates the pitch without changing position or yaw.
 func (s *state) SetPitch(pitch float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.pitch = pitch
 }
 
 // SetVelocity updates the velocity.
 func (s *state) SetVelocity(vel models.V3) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Vel = vel
 }
 
 // SetOnGround updates the grounded flag.
 func (s *state) SetOnGround(onGround bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.onGround = onGround
 	// Reset fall distance when landing
 	if onGround {
@@ -161,17 +194,21 @@ func (s *state) SetOnGround(onGround bool) {
 
 // SetSneaking updates the sneaking flag.
 func (s *state) SetSneaking(sneaking bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.isSneaking = sneaking
 }
 
 // SetFallDistance updates the fall distance.
 func (s *state) SetFallDistance(distance float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.fallDistance = distance
 }
 
-// GetAABB returns the player's current axis-aligned bounding box.
-// Height changes based on sneaking state: 1.8 blocks normally, 1.5 blocks when sneaking.
-func (s *state) GetAABB() AABB {
+// getAABBUnsafe computes the AABB without acquiring the mutex.
+// Must only be called while the write lock is already held (e.g., from within Tick()).
+func (s *state) getAABBUnsafe() AABB {
 	height := s.height
 	if s.isSneaking {
 		height = PlayerHeightSneaking // 1.5 blocks when sneaking
@@ -184,10 +221,20 @@ func (s *state) GetAABB() AABB {
 	}
 }
 
+// GetAABB returns the player's current axis-aligned bounding box.
+// Height changes based on sneaking state: 1.8 blocks normally, 1.5 blocks when sneaking.
+func (s *state) GetAABB() AABB {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getAABBUnsafe()
+}
+
 // Tick advances the physics simulation by one tick (50ms).
 // This applies inputs, updates velocity (gravity, drag, etc.), and moves the player
 // with collision detection and resolution.
 func (s *state) Tick(input Inputs, w World) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t fallDistance=%.2f\n",
 		s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.fallDistance)
@@ -237,17 +284,137 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Y = LadderClimbSpeed * input.ClimbDirection
 	}
 
-	// Apply gravity
-	s.Vel.Y -= Gravity
+	// Check if player body is in water (water physics)
+	// Check feet (more likely to be in water than head when entering)
+	feetBlockX := int(math.Floor(s.Pos.X))
+	feetBlockY := int(math.Floor(s.Pos.Y))
+	feetBlockZ := int(math.Floor(s.Pos.Z))
+	feetBlockState, _ := w.GetBlockStatus(feetBlockX, feetBlockY, feetBlockZ)
+	
+	headBlockX := int(math.Floor(s.Pos.X))
+	headBlockY := int(math.Floor(s.Pos.Y + s.eyeHeight))
+	headBlockZ := int(math.Floor(s.Pos.Z))
+	headBlockState, _ := w.GetBlockStatus(headBlockX, headBlockY, headBlockZ)
+	
+	areFeetInWater := s.shapeProvider.IsWater(feetBlockState) 
+	isHeadInWater := s.shapeProvider.IsWater(headBlockState)
+	
+	isInWater := areFeetInWater || isHeadInWater
 
-	// Apply drag (air resistance)
-	s.Vel.Y *= Drag
-	s.Vel.X *= inertiaFactor
-	s.Vel.Z *= inertiaFactor
+	if os.Getenv("DEBUG_WATER_FLOW") != "" {
+		log.Printf("[Water] Feet: (%d,%d,%d) stateID=%d isWater=%v (head=%v feet=%v), Head: (%d,%d,%d)\n",
+			feetBlockX, feetBlockY, feetBlockZ, feetBlockState, isInWater, isHeadInWater, areFeetInWater,
+			int(math.Floor(s.Pos.X)), int(math.Floor(s.Pos.Y+s.eyeHeight)), int(math.Floor(s.Pos.Z)))
+	}
 
-	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t collision=(h=%t v=%t)\n",
-		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.collision.horizontal, s.collision.vertical)
-	log.Printf("[PhysicsState][Tick] \t %#v", *s)
+	if isInWater {
+		// Apply reduced gravity in water
+		s.Vel.Y -= Gravity * WaterGravityFactor
+
+		// Apply water drag (higher than air drag)
+		s.Vel.X *= WaterDrag
+		s.Vel.Y *= WaterDrag
+		s.Vel.Z *= WaterDrag
+
+		// Apply water flow current
+		// Check multiple points and accumulate flows weighted by their speed.
+		// This handles opposing flows by letting stronger currents dominate.
+		var accumulatedFlowDir models.V3
+		var bestFlowSpeed float64
+		
+		// Helper function to check a point and accumulate flow weighted by speed
+		checkPoint := func(x, y, z int) {
+			blockState, loaded := w.GetBlockStatus(x, y, z)
+			if !loaded || !s.shapeProvider.IsWater(blockState) {
+				return
+			}
+			flowDir := s.shapeProvider.GetWaterFlowDirection(x, y, z, w)
+			flowSpeed := s.shapeProvider.GetWaterFlowSpeed(blockState)
+			// Only count horizontal flow
+			if flowDir.X != 0 || flowDir.Z != 0 {
+				// Weight the flow vector by its speed so stronger currents dominate
+				accumulatedFlowDir.X += flowDir.X * flowSpeed
+				accumulatedFlowDir.Z += flowDir.Z * flowSpeed
+				if flowSpeed > bestFlowSpeed {
+					bestFlowSpeed = flowSpeed
+				}
+			}
+		}
+		
+		// Check feet (center)
+		if areFeetInWater {
+			checkPoint(feetBlockX, feetBlockY, feetBlockZ)
+		}
+		
+		// Check mid-body (center and 4 corners)
+		// This handles straddling different water levels
+		midBodyY := int(math.Floor(s.Pos.Y + s.height*0.6))
+		midCenterX := int(math.Floor(s.Pos.X))
+		midCenterZ := int(math.Floor(s.Pos.Z))
+		
+		// Center
+		checkPoint(midCenterX, midBodyY, midCenterZ)
+		
+		// Four corners of the horizontal footprint
+		// Each corner is at ±width/2 from center
+		cornerOffset := int(math.Ceil(s.width / 2))
+		if cornerOffset < 1 {
+			cornerOffset = 1 // Minimum offset of 1 block
+		}
+		checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ+cornerOffset) // NE
+		checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ-cornerOffset) // SE
+		checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ+cornerOffset) // NW
+		checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ-cornerOffset) // SW
+		
+		// Check head
+		if isHeadInWater {
+			checkPoint(int(math.Floor(s.Pos.X)), int(math.Floor(s.Pos.Y+s.eyeHeight)), int(math.Floor(s.Pos.Z)))
+		}
+		
+		// Normalize accumulated flow if we found any
+		var flowDir models.V3
+		var flowSpeed float64 = bestFlowSpeed
+		magnitude := accumulatedFlowDir.DistanceTo(models.V3{})
+		if magnitude > 0.01 {
+			// Normalize the weighted direction
+			flowDir = models.V3{
+				X: accumulatedFlowDir.X / magnitude,
+				Y: 0, // No vertical flow
+				Z: accumulatedFlowDir.Z / magnitude,
+			}
+		}
+
+		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			log.Printf("[Water] Flow: speed=%.3f dir=(%.2f,%.2f,%.2f) accum=(%.2f,%.2f)\n",
+				flowSpeed, flowDir.X, flowDir.Y, flowDir.Z, accumulatedFlowDir.X, accumulatedFlowDir.Z)
+		}
+
+		// Apply flow velocity (horizontal only, don't apply vertical flow as it causes jumping)
+		if flowSpeed > 0 && flowDir.DistanceTo(models.V3{}) > 0.01 {
+			flowVel := WaterFlowSpeedBase * flowSpeed
+			// Only apply horizontal components, never modify Y (vertical)
+			s.Vel.X += flowDir.X * flowVel
+			s.Vel.Z += flowDir.Z * flowVel
+			if os.Getenv("DEBUG_WATER_FLOW") != "" {
+				log.Printf("[Water] Applied flow: velBefore=(%.3f,%.3f,%.3f) flowVel=%.3f velAfter=(%.3f,%.3f,%.3f)\n",
+					s.Vel.X-flowDir.X*flowVel, s.Vel.Y, s.Vel.Z-flowDir.Z*flowVel, flowVel, s.Vel.X, s.Vel.Y, s.Vel.Z)
+			}
+		} else if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			log.Printf("[Water] Flow NOT applied: flowSpeed=%.3f flowDist=%.3f\n", flowSpeed, flowDir.DistanceTo(models.V3{}))
+		}
+	} else {
+		// Normal physics (air)
+		// Apply gravity
+		s.Vel.Y -= Gravity
+
+		// Apply drag (air resistance)
+		s.Vel.Y *= Drag
+		s.Vel.X *= inertiaFactor
+		s.Vel.Z *= inertiaFactor
+	}
+
+	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t collision=(h=%t v=%t)\n",
+		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, isInWater, s.collision.horizontal, s.collision.vertical)
 
 	return nil
 }
@@ -349,9 +516,10 @@ func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 }
 
 // tickPosition updates position with collision detection and step-up mechanics.
+// Must only be called while the write lock is already held
 func (s *state) tickPosition(w World) {
 	// Get player bounding box
-	playerBB := s.GetAABB()
+	playerBB := s.getAABBUnsafe()
 
 	// Edge prevention when sneaking happens BEFORE collision detection
 	// Implements Minecraft's adjustMovementForSneaking() algorithm
@@ -403,6 +571,10 @@ func (s *state) tickPosition(w World) {
 			log.Printf("[StepUp] NOT using step-up (failed conditions)\n")
 		}
 	}
+
+	// Check for entity collisions and apply separation/velocity from entity contact
+	// Entity collisions happen after block collisions
+	s.handleEntityCollisions(newPlayerBB, &newVel, w)
 
 	// Update collision flags BEFORE edge prevention (needed to determine onGround status)
 	s.collision.horizontal = newVel.X != s.Vel.X || newVel.Z != s.Vel.Z
@@ -502,6 +674,53 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 		}
 	}
 	return dX, dZ
+}
+
+// handleEntityCollisions applies a geometry-based horizontal separation impulse when
+// another entity's AABB overlaps with the player.
+//
+// This mirrors vanilla Minecraft's Entity.pushAwayFrom() formula:
+//
+//	chebyshev = max(|dx|, |dz|)  (Chebyshev distance between centres)
+//	sqrtF     = sqrt(chebyshev)
+//	scale     = min(1/sqrtF, 1) * EntitySeparationForce
+//	pushX     = (dx/sqrtF) * scale,  pushZ = (dz/sqrtF) * scale
+//
+// Key properties:
+//   - Deep overlaps (chebyshev → 0) produce a tiny force, so a /tp to the operator's
+//     exact position causes minimal drift rather than the runaway 7-block displacement
+//     that occurred when entity *velocity* was copied each tick.
+//   - Shallow overlaps (chebyshev near 0.6, edge of AABB contact) produce up to
+//     EntitySeparationForce blocks/tick, giving visible bump response.
+//   - No vertical (Y) component — gravity and block physics handle vertical separation.
+//   - Entities whose centres are < 0.01 blocks apart receive no push (matches vanilla).
+//
+// Knockback and server-applied impulses are delivered via ClientboundEntityVelocity →
+// onEntityVelocityUpdate → moveExec.SetVelocity and are unaffected by this function.
+func (s *state) handleEntityCollisions(playerBB AABB, newVel *models.V3, w World) {
+	entities := w.GetEntitiesInRange(playerBB)
+	for _, entity := range entities {
+		entityCenterX := (entity.AABB.X.Min + entity.AABB.X.Max) / 2
+		entityCenterZ := (entity.AABB.Z.Min + entity.AABB.Z.Max) / 2
+		playerCenterX := (playerBB.X.Min + playerBB.X.Max) / 2
+		playerCenterZ := (playerBB.Z.Min + playerBB.Z.Max) / 2
+
+		// Separation direction: entity centre → player centre
+		dx := playerCenterX - entityCenterX
+		dz := playerCenterZ - entityCenterZ
+
+		chebyshev := math.Max(math.Abs(dx), math.Abs(dz))
+		if chebyshev < 0.01 {
+			// Entities at nearly the same position — no push (matches vanilla behaviour).
+			continue
+		}
+
+		// Vanilla formula: scale by min(1/sqrt(chebyshev), 1) * EntitySeparationForce.
+		sqrtF := math.Sqrt(chebyshev)
+		scale := math.Min(1.0/sqrtF, 1.0) * EntitySeparationForce
+		newVel.X += (dx / sqrtF) * scale
+		newVel.Z += (dz / sqrtF) * scale
+	}
 }
 
 // isSpaceAroundPlayerEmpty checks if there's space for the player to move.
@@ -680,17 +899,43 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 // AtLookTarget returns true if the player's current look direction matches
 // the target yaw and pitch within a small tolerance.
 func (s *state) AtLookTarget(targetYaw, targetPitch float64) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	deltaYaw := math.Abs(NormalizeAngle(targetYaw - s.yaw))
 	deltaPitch := math.Abs(targetPitch - s.pitch)
 	return deltaYaw <= 0.8 && deltaPitch <= 1.1
+}
+
+// copyFieldsUnsafe copies all mutable fields into a new state without copying the mutex.
+// Must only be called while the caller holds at least a read lock on the source state.
+func (s *state) copyFieldsUnsafe() state {
+	return state{
+		Pos:           s.Pos,
+		Vel:           s.Vel,
+		yaw:           s.yaw,
+		pitch:         s.pitch,
+		onGround:      s.onGround,
+		isSneaking:    s.isSneaking,
+		collision:     s.collision,
+		tick:          s.tick,
+		lastJump:      s.lastJump,
+		fallDistance:  s.fallDistance,
+		width:         s.width,
+		height:        s.height,
+		eyeHeight:     s.eyeHeight,
+		shapeProvider: s.shapeProvider,
+	}
 }
 
 // PredictMovement simulates N ticks ahead without modifying the current state.
 // Returns a slice of predicted states, one for each tick simulated.
 // This is useful for path validation and trajectory prediction.
 func (s *state) PredictMovement(inputs []Inputs, maxTicks int, w World) []models.PhysicsState {
-	// Create a copy of current state for simulation
-	predicted := *s
+	// Create a copy of the current state's fields for simulation.
+	// Fields are copied explicitly to avoid copying the mutex.
+	s.mu.RLock()
+	predicted := s.copyFieldsUnsafe()
+	s.mu.RUnlock()
 
 	// Limit prediction to maxTicks or length of inputs
 	ticks := maxTicks
@@ -705,7 +950,10 @@ func (s *state) PredictMovement(inputs []Inputs, maxTicks int, w World) []models
 	for i := 0; i < ticks; i++ {
 		input := inputs[i]
 		predicted.Tick(input, w)
-		snapshot := predicted
+		// Snapshot current fields without copying the mutex
+		predicted.mu.RLock()
+		snapshot := predicted.copyFieldsUnsafe()
+		predicted.mu.RUnlock()
 		results = append(results, &snapshot)
 	}
 
@@ -717,7 +965,9 @@ func (s *state) PredictMovement(inputs []Inputs, maxTicks int, w World) []models
 // Useful for quick fall distance calculations. This is an approximate prediction
 // that doesn't account for full collision physics.
 func (s *state) PredictPosition(vel models.V3, ticks int, w World) models.V3 {
+	s.mu.RLock()
 	pos := s.Pos
+	s.mu.RUnlock()
 	currentVel := vel
 
 	for i := 0; i < ticks; i++ {
@@ -758,16 +1008,21 @@ func (s *state) PredictPosition(vel models.V3, ticks int, w World) models.V3 {
 // This is a simplified check that doesn't account for full physics simulation.
 // Returns true if collision is detected, false otherwise.
 func (s *state) WillCollide(targetPos models.V3, w World) bool {
-	// Create AABB at target position
+	s.mu.RLock()
 	height := s.height
-	if s.isSneaking {
+	isSneaking := s.isSneaking
+	width := s.width
+	s.mu.RUnlock()
+
+	// Create AABB at target position
+	if isSneaking {
 		height = PlayerHeightSneaking
 	}
 
 	targetBB := AABB{
-		X: MinMax{Min: targetPos.X - s.width/2, Max: targetPos.X + s.width/2},
+		X: MinMax{Min: targetPos.X - width/2, Max: targetPos.X + width/2},
 		Y: MinMax{Min: targetPos.Y, Max: targetPos.Y + height},
-		Z: MinMax{Min: targetPos.Z - s.width/2, Max: targetPos.Z + s.width/2},
+		Z: MinMax{Min: targetPos.Z - width/2, Max: targetPos.Z + width/2},
 	}
 
 	// Get collision boxes at target

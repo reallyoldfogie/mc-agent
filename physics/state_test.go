@@ -29,6 +29,11 @@ func (m *mockWorld) GetBlockStatus(x, y, z int) (uint32, bool) {
 	return val, exists // m.blocks[[3]int{x, y, z}]
 }
 
+// GetEntitiesInRange returns empty slice (no entity collision in tests)
+func (m *mockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBounds {
+	return []models.EntityBounds{} // No entities in mock world for tests
+}
+
 // mockShapeProvider provides simple block collision data
 type mockShapeProvider struct {
 	passableBlocks   map[uint32]bool
@@ -159,8 +164,18 @@ func (m *mockShapeProvider) IsSlimeBlock(blockID uint32) bool {
 	return m.slimeBlocks[blockID]
 }
 
-func (m *mockShapeProvider) IsPowderSnow(blockID uint32) bool {
-	return m.powderSnowBlocks[blockID]
+func (m *mockShapeProvider) IsPowderSnow(blockStateID uint32) bool {
+	return m.powderSnowBlocks[blockStateID]
+}
+
+// GetWaterFlowDirection stub (returns no flow for tests)
+func (m *mockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+	return models.V3{} // No flow in mock world
+}
+
+// GetWaterFlowSpeed stub (returns no speed for tests)
+func (m *mockShapeProvider) GetWaterFlowSpeed(blockStateID uint32) float64 {
+	return 0.0 // No flow in mock world
 }
 
 func (m *mockShapeProvider) BlockName(blockStateID uint32) string {

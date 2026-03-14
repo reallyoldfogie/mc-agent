@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/reallyoldfogie/mc-agent/versions/common"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // ChunkPos represents a chunk position in the world.
@@ -32,7 +32,7 @@ type EventsListener struct {
 // Manager implements the world state manager.
 // It stores loaded chunks and provides block state lookups.
 type Manager struct {
-	versionHandler common.VersionHandler
+	versionHandler models.VersionHandler
 	events         EventsListener
 
 	// useCalculatedDataLen is true for 1.21.5+ where data array length
@@ -47,7 +47,7 @@ type Manager struct {
 }
 
 // NewManager creates a new world manager.
-func NewManager(versionHandler common.VersionHandler, events EventsListener) *Manager {
+func NewManager(versionHandler models.VersionHandler, events EventsListener) *Manager {
 	// Determine if we should use calculated data length based on version
 	// In 1.21.5+, the data array length is not sent as a VarInt but must be calculated
 	useCalculatedLen := false
@@ -189,7 +189,7 @@ func (m *Manager) HandleBlockUpdate(x, y, z int64, blockStateID int32) {
 }
 
 // HandleSectionBlocksUpdate updates multiple blocks in a section.
-func (m *Manager) HandleSectionBlocksUpdate(blocks []common.BlockUpdate) {
+func (m *Manager) HandleSectionBlocksUpdate(blocks []models.BlockUpdate) {
 	for _, block := range blocks {
 		m.setBlockOverride(block.X, block.Y, block.Z, uint32(block.BlockStateID))
 	}

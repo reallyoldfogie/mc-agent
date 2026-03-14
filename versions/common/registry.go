@@ -3,6 +3,8 @@ package common
 import (
 	"fmt"
 	"sync"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 var (
@@ -10,12 +12,12 @@ var (
 	handlersMu sync.RWMutex
 
 	// handlers maps version strings to their handler constructors
-	handlers = make(map[string]func() VersionHandler)
+	handlers = make(map[string]func() models.VersionHandler)
 )
 
 // RegisterVersionHandler registers a version handler constructor.
 // This is typically called from init() in version-specific packages.
-func RegisterVersionHandler(version string, constructor func() VersionHandler) {
+func RegisterVersionHandler(version string, constructor func() models.VersionHandler) {
 	handlersMu.Lock()
 	defer handlersMu.Unlock()
 	handlers[version] = constructor
@@ -23,7 +25,7 @@ func RegisterVersionHandler(version string, constructor func() VersionHandler) {
 
 // GetVersionHandler returns a new VersionHandler for the given version string.
 // Returns nil and an error if the version is not supported.
-func GetVersionHandler(version string) (VersionHandler, error) {
+func GetVersionHandler(version string) (models.VersionHandler, error) {
 	handlersMu.RLock()
 	constructor, ok := handlers[version]
 	handlersMu.RUnlock()

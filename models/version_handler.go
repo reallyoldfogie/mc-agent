@@ -1,10 +1,7 @@
-// Package common provides shared interfaces and utilities for version-specific
-// network traffic handlers.
-package common
+package models
 
 import (
 	pk "github.com/Tnze/go-mc/net/packet"
-	agent_models "github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -141,7 +138,7 @@ type PlayHandler interface {
 	// ParseUpdateRecipes parses a ClientboundUpdateRecipes (DeclareRecipes) packet.
 	// Returns the parsed payload containing property sets and stonecutter entries.
 	// Returns nil, nil if the packet format is not supported for this version.
-	ParseUpdateRecipes(p pk.Packet) (*agent_models.UpdateRecipesPayload, error)
+	ParseUpdateRecipes(p pk.Packet) (*UpdateRecipesPayload, error)
 
 	// BuildPlayerInfoPacket builds a PlayerInfo packet for replay recording.
 	// Returns the packet ID and raw marshaled packet data.
@@ -150,76 +147,21 @@ type PlayHandler interface {
 	// properties: list of game profile properties (name/value/signature tuples)
 	BuildPlayerInfoPacket(uuid [16]byte, name string, properties []ProfileProperty) (packetID int32, packetData []byte, err error)
 
+	// BuildSpawnEntityPacket builds a SpawnEntity packet for replay recording.
+	// Returns the packet ID and raw marshaled packet data.
+	// entityID: unique entity ID
+	// uuid: entity UUID
+	// entityType: entity type ID
+	// x, y, z: entity position
+	// yaw, pitch: entity rotation (in 1/256ths of a full turn)
+	// objectData: extra data (e.g., projectile owner ID)
+	// velX, velY, velZ: velocity components in blocks per tick
+	BuildSpawnEntityPacket(entityID int32, uuid [16]byte, entityType int32, x, y, z float64, yaw, pitch int8, objectData int32, velX, velY, velZ float64) (packetID int32, packetData []byte, err error)
+
 	// ParsePlayerInfo parses a complete PlayerInfo packet and extracts all entries and action data.
 	// packet: the raw ClientboundPlayerInfo packet to parse
 	// Returns the parsed update structure with all entry data.
 	ParsePlayerInfo(packet pk.Packet) (*PlayerInfoUpdate, error)
-}
-
-// ProfileProperty represents a game profile property (texture, signature, etc.)
-type ProfileProperty struct {
-	Name      string
-	Value     string
-	Signature string
-}
-
-// PlayerInfoEntry represents a single player entry in a PlayerInfo packet
-type PlayerInfoEntry struct {
-	UUID       [16]byte
-	Name       string
-	Properties []ProfileProperty
-	// Action flags - populated based on what actions apply to this entry
-	AddPlayer   bool
-	GameMode    *int32
-	Listed      *bool
-	Latency     *int32
-	DisplayName *string
-}
-
-// PlayerInfoUpdate represents a complete PlayerInfo packet update
-type PlayerInfoUpdate struct {
-	Action  uint8 // Bitflags indicating what actions are present (0x01=add, 0x80=remove, etc)
-	Entries []PlayerInfoEntry
-}
-
-// HasAddPlayer returns true if the add_player action is present
-func (u *PlayerInfoUpdate) HasAddPlayer() bool {
-	return u.Action&0x01 != 0
-}
-
-// HasInitializeChat returns true if the initialize_chat action is present
-func (u *PlayerInfoUpdate) HasInitializeChat() bool {
-	return u.Action&0x02 != 0
-}
-
-// HasUpdateGameMode returns true if the update_game_mode action is present
-func (u *PlayerInfoUpdate) HasUpdateGameMode() bool {
-	return u.Action&0x04 != 0
-}
-
-// HasUpdateListed returns true if the update_listed action is present
-func (u *PlayerInfoUpdate) HasUpdateListed() bool {
-	return u.Action&0x08 != 0
-}
-
-// HasUpdateLatency returns true if the update_latency action is present
-func (u *PlayerInfoUpdate) HasUpdateLatency() bool {
-	return u.Action&0x10 != 0
-}
-
-// HasUpdateDisplayName returns true if the update_display_name action is present
-func (u *PlayerInfoUpdate) HasUpdateDisplayName() bool {
-	return u.Action&0x20 != 0
-}
-
-// HasUpdateListOrder returns true if the update_list_order action is present
-func (u *PlayerInfoUpdate) HasUpdateListOrder() bool {
-	return u.Action&0x40 != 0
-}
-
-// HasRemovePlayer returns true if the remove_player action is present
-func (u *PlayerInfoUpdate) HasRemovePlayer() bool {
-	return u.Action&0x80 != 0
 }
 
 // MovementHandler handles player movement packets.
@@ -265,7 +207,7 @@ type ActionHandler interface {
 	// hand: 0=main hand, 1=offhand
 	// sequence: anti-cheat sequence number
 	// yaw, pitch: player rotation at time of use
-	SendUseItem(conn PacketWriter, hand agent_models.Hand, sequence int32, yaw, pitch float32) error
+	SendUseItem(conn PacketWriter, hand Hand, sequence int32, yaw, pitch float32) error
 
 	// SendPlayerAction sends a player action packet (dig, release bow, swap hands, etc.).
 	// status: action ID (see PlayerAction constants)
@@ -276,7 +218,7 @@ type ActionHandler interface {
 
 	// SendSwing sends an arm swing animation packet.
 	// hand: 0=main hand, 1=offhand
-	SendSwing(conn PacketWriter, hand agent_models.Hand) error
+	SendSwing(conn PacketWriter, hand Hand) error
 }
 
 // EntityHandler handles entity-related packets.
@@ -313,8 +255,8 @@ type EntityHandler interface {
 	ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, velX, velY, velZ float64, err error)
 
 	// ParseEntityEquipment parses an entity equipment packet
-	// Returns entityID and a slice of equipment entries (slot + item pairs)
-	// Each entry contains a slot index (0=main hand, 1=off hand, 2-5=armor) and the item data
+	// Returns entityID and a slice of equipment entries (InventorySlot + item pairs)
+	// Each entry contains a InventorySlot index (0=main hand, 1=off hand, 2-5=armor) and the item data
 	ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []EquipmentEntry, err error)
 
 	// ParseEntityHeadRotation parses an entity head rotation packet
@@ -329,14 +271,14 @@ type EntityHandler interface {
 	// entityID: target entity
 	// hand: 0=main hand, 1=offhand
 	// sneaking: whether player is sneaking
-	SendInteract(conn PacketWriter, entityID int32, hand agent_models.Hand, sneaking bool) error
+	SendInteract(conn PacketWriter, entityID int32, hand Hand, sneaking bool) error
 
 	// SendInteractAt sends an entity interaction packet at a specific position.
 	// entityID: target entity
 	// targetX, targetY, targetZ: position on entity to interact with
 	// hand: 0=main hand, 1=offhand
 	// sneaking: whether player is sneaking
-	SendInteractAt(conn PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand agent_models.Hand, sneaking bool) error
+	SendInteractAt(conn PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand Hand, sneaking bool) error
 
 	// SendAttack sends an attack packet to hit an entity (left-click).
 	// entityID: target entity
@@ -347,19 +289,19 @@ type EntityHandler interface {
 // ContainerHandler handles container/inventory packets.
 type ContainerHandler interface {
 	// SendContainerClick sends a container click packet
-	SendContainerClick(conn PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]Slot, carriedItem Slot) error
+	SendContainerClick(conn PacketWriter, windowID int8, stateID, InventorySlot int32, button int8, mode int32, changedSlots map[int16]InventorySlot, carriedItem InventorySlot) error
 
 	// SendContainerClose sends a container close packet
 	SendContainerClose(conn PacketWriter, windowID int8) error
 
-	// SendSetCreativeModeSlot sends a creative mode slot update
-	SendSetCreativeModeSlot(conn PacketWriter, slot int16, item Slot) error
+	// SendSetCreativeModeSlot sends a creative mode InventorySlot update
+	SendSetCreativeModeSlot(conn PacketWriter, InventorySlot int16, item InventorySlot) error
 
 	// SendPickItem sends a pick item packet (for creative mode)
-	SendPickItem(conn PacketWriter, slot int32) error
+	SendPickItem(conn PacketWriter, InventorySlot int32) error
 
 	// SendSetCarriedItem sends a held item change packet
-	SendSetCarriedItem(conn PacketWriter, slot int16) error
+	SendSetCarriedItem(conn PacketWriter, InventorySlot int16) error
 
 	// SendUseItemOn sends a use item on block packet (right-click on block).
 	// This is used for opening containers, placing blocks, and interacting with blocks.
@@ -369,40 +311,40 @@ type ContainerHandler interface {
 	// cursorX, cursorY, cursorZ: click position on block face (0.0-1.0)
 	// insideBlock: whether the player's head is inside a block
 	// sequence: anti-cheat sequence number
-	SendUseItemOn(conn PacketWriter, hand agent_models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
+	SendUseItemOn(conn PacketWriter, hand Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error
 
 	// ParseOpenScreen parses a container open packet
 	ParseOpenScreen(p pk.Packet) (windowID int8, windowType int32, title string, err error)
 
 	// ParseContainerSetContent parses a container content packet
-	ParseContainerSetContent(p pk.Packet) (windowID int8, stateID int32, slots []Slot, carriedItem Slot, err error)
+	ParseContainerSetContent(p pk.Packet) (windowID int8, stateID int32, slots []InventorySlot, carriedItem InventorySlot, err error)
 
-	// ParseContainerSetSlot parses a slot update packet
-	ParseContainerSetSlot(p pk.Packet) (windowID int8, stateID int32, slot int16, item Slot, err error)
+	// ParseContainerSetSlot parses a InventorySlot update packet
+	ParseContainerSetSlot(p pk.Packet) (windowID int8, stateID int32, InventorySlot int16, item InventorySlot, err error)
 
-	// ParseHeldItemSlot parses a held item slot packet (handles version differences in slot type)
-	ParseHeldItemSlot(p pk.Packet) (slot int16, err error)
+	// ParseHeldItemSlot parses a held item InventorySlot packet (handles version differences in InventorySlot type)
+	ParseHeldItemSlot(p pk.Packet) (InventorySlot int16, err error)
 
 	// SendContainerButtonClick sends a container button click packet.
-	// Used for: enchanting table (slot 0-2), stonecutter (recipe index),
+	// Used for: enchanting table (InventorySlot 0-2), stonecutter (recipe index),
 	// loom (pattern index), beacon (confirm), lectern (page navigation).
 	// windowID: container window ID
 	// buttonID: button/option to select (meaning depends on container type)
 	SendContainerButtonClick(conn PacketWriter, windowID int8, buttonID int8) error
 }
 
-// Slot represents an inventory slot.
-type Slot struct {
+// InventorySlot represents an inventory InventorySlot.
+type InventorySlot struct {
 	Present bool
 	ItemID  int32
 	Count   int32
 	NBT     []byte // Raw NBT data if present
 }
 
-// EquipmentEntry represents a single equipment slot update (slot + item).
+// EquipmentEntry represents a single equipment InventorySlot update (InventorySlot + item).
 type EquipmentEntry struct {
-	Slot int32 // Equipment slot (0=main hand, 1=off hand, 2-5=armor)
-	Item Slot  // The item in this equipment slot
+	InventorySlot int32         // Equipment InventorySlot (0=main hand, 1=off hand, 2-5=armor)
+	Item          InventorySlot // The item in this equipment InventorySlot
 }
 
 // ChatHandler handles chat and command packets.

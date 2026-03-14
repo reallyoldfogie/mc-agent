@@ -5,12 +5,11 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockContainerHandler implements common.ContainerHandler for testing
+// mockContainerHandler implements models.ContainerHandler for testing
 type mockContainerHandler struct {
 	buttonClicks []buttonClickCall
 }
@@ -20,38 +19,38 @@ type buttonClickCall struct {
 	buttonID int8
 }
 
-func (m *mockContainerHandler) SendContainerButtonClick(conn common.PacketWriter, windowID int8, buttonID int8) error {
+func (m *mockContainerHandler) SendContainerButtonClick(conn models.PacketWriter, windowID int8, buttonID int8) error {
 	m.buttonClicks = append(m.buttonClicks, buttonClickCall{windowID: windowID, buttonID: buttonID})
 	return nil
 }
 
 // Stub implementations for other ContainerHandler methods
-func (m *mockContainerHandler) SendContainerClick(conn common.PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]common.Slot, carriedItem common.Slot) error {
+func (m *mockContainerHandler) SendContainerClick(conn models.PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]models.InventorySlot, carriedItem models.InventorySlot) error {
 	return nil
 }
-func (m *mockContainerHandler) SendContainerClose(conn common.PacketWriter, windowID int8) error {
+func (m *mockContainerHandler) SendContainerClose(conn models.PacketWriter, windowID int8) error {
 	return nil
 }
-func (m *mockContainerHandler) SendSetCreativeModeSlot(conn common.PacketWriter, slot int16, item common.Slot) error {
+func (m *mockContainerHandler) SendSetCreativeModeSlot(conn models.PacketWriter, slot int16, item models.InventorySlot) error {
 	return nil
 }
-func (m *mockContainerHandler) SendPickItem(conn common.PacketWriter, slot int32) error {
+func (m *mockContainerHandler) SendPickItem(conn models.PacketWriter, slot int32) error {
 	return nil
 }
-func (m *mockContainerHandler) SendSetCarriedItem(conn common.PacketWriter, slot int16) error {
+func (m *mockContainerHandler) SendSetCarriedItem(conn models.PacketWriter, slot int16) error {
 	return nil
 }
-func (m *mockContainerHandler) SendUseItemOn(conn common.PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
+func (m *mockContainerHandler) SendUseItemOn(conn models.PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
 	return nil
 }
 func (m *mockContainerHandler) ParseOpenScreen(p pk.Packet) (windowID int8, windowType int32, title string, err error) {
 	return 0, 0, "", nil
 }
-func (m *mockContainerHandler) ParseContainerSetContent(p pk.Packet) (windowID int8, stateID int32, slots []common.Slot, carriedItem common.Slot, err error) {
-	return 0, 0, nil, common.Slot{}, nil
+func (m *mockContainerHandler) ParseContainerSetContent(p pk.Packet) (windowID int8, stateID int32, slots []models.InventorySlot, carriedItem models.InventorySlot, err error) {
+	return 0, 0, nil, models.InventorySlot{}, nil
 }
-func (m *mockContainerHandler) ParseContainerSetSlot(p pk.Packet) (windowID int8, stateID int32, slot int16, item common.Slot, err error) {
-	return 0, 0, 0, common.Slot{}, nil
+func (m *mockContainerHandler) ParseContainerSetSlot(p pk.Packet) (windowID int8, stateID int32, slot int16, item models.InventorySlot, err error) {
+	return 0, 0, 0, models.InventorySlot{}, nil
 }
 func (m *mockContainerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 	return 0, nil

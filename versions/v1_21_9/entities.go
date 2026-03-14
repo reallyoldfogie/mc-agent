@@ -175,21 +175,21 @@ func (e *entityHandler) ParseEntityEvent(p pk.Packet) (entityID int32, eventID i
 // Returns all metadata entries with handler IDs extracted from the protocol packet.
 // Entity metadata indices vary by entity type. See:
 // https://minecraft.wiki/w/Java_Edition_protocol/Entity_metadata#Entity_Metadata
-func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, entries []common.MetadataEntry, err error) {
+func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, entries []models.MetadataEntry, err error) {
 	pkt := cb.NewEntityMetadata()
 	if err = pkt.Scan(p); err != nil {
 		return 0, nil, common.ErrPacketParse{PacketName: "EntityMetadata", Cause: err}
 	}
 
 	entityID = int32(pkt.EntityId)
-	entries = make([]common.MetadataEntry, len(pkt.Metadata.Entries))
+	entries = make([]models.MetadataEntry, len(pkt.Metadata.Entries))
 
 	for i, entry := range pkt.Metadata.Entries {
 		// Extract the handler type from the metadata entry
 		// The Type field contains the handler type string (e.g., "byte", "float", "vector3")
-		handlerID := common.HandlerTypeFromString(entry.Type.Value)
+		handlerID := models.HandlerTypeFromString(entry.Type.Value)
 
-		entries[i] = common.MetadataEntry{
+		entries[i] = models.MetadataEntry{
 			Key:       int32(entry.Key),
 			HandlerID: handlerID,
 			Value:     entry.Value,
@@ -225,14 +225,14 @@ func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, 
 
 // ParseEntityEquipment parses an entity equipment packet.
 // Returns entity ID and a slice of equipment entries (slot + item pairs).
-func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []common.EquipmentEntry, err error) {
+func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []models.EquipmentEntry, err error) {
 	pkt := cb.NewEntityEquipment()
 	if err = pkt.Scan(p); err != nil {
 		return 0, nil, common.ErrPacketParse{PacketName: "EntityEquipment", Cause: err}
 	}
 
 	entityID = int32(pkt.EntityId)
-	equipment = make([]common.EquipmentEntry, 0, len(pkt.Equipments.Values))
+	equipment = make([]models.EquipmentEntry, 0, len(pkt.Equipments.Values))
 
 	// Equipments is a TopBitSetTerminatedArray of EquipmentEntry objects
 	// Each entry contains both slot index and item data
@@ -242,16 +242,16 @@ func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equip
 		}
 
 		// Convert protocol Slot to common Slot format
-		item := common.Slot{
+		item := models.InventorySlot{
 			Present: int32(entry.Item.ItemCount) != 0,
 			ItemID:  0, // TODO: Extract from entry.Item complex structure
 			Count:   int32(entry.Item.ItemCount),
 			NBT:     nil, // TODO: Extract from entry.Item complex structure
 		}
 
-		equipment = append(equipment, common.EquipmentEntry{
-			Slot: int32(entry.Slot),
-			Item: item,
+		equipment = append(equipment, models.EquipmentEntry{
+			InventorySlot: int32(entry.Slot),
+			Item:          item,
 		})
 
 		log.Printf("[v1.21.9 Entity][ParseEntityEquipment]: entityID=%d, slot=%d, itemCount=%d",
@@ -296,7 +296,7 @@ func (e *entityHandler) ParseEntityLook(p pk.Packet) (entityID int32, yaw, pitch
 }
 
 // SendInteract sends an entity interaction packet (right-click with hand).
-func (e *entityHandler) SendInteract(conn common.PacketWriter, entityID int32, hand models.Hand, sneaking bool) error {
+func (e *entityHandler) SendInteract(conn models.PacketWriter, entityID int32, hand models.Hand, sneaking bool) error {
 	pkt := sb.NewUseEntity()
 	pkt.Target = pk.VarInt(entityID)
 	pkt.Mouse = pk.VarInt(common.InteractionTypeInteract)
@@ -316,7 +316,7 @@ func (e *entityHandler) SendInteract(conn common.PacketWriter, entityID int32, h
 }
 
 // SendInteractAt sends an entity interaction packet at a specific position.
-func (e *entityHandler) SendInteractAt(conn common.PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
+func (e *entityHandler) SendInteractAt(conn models.PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
 	pkt := sb.NewUseEntity()
 	pkt.Target = pk.VarInt(entityID)
 	pkt.Mouse = pk.VarInt(common.InteractionTypeInteractAt)
@@ -340,7 +340,7 @@ func (e *entityHandler) SendInteractAt(conn common.PacketWriter, entityID int32,
 }
 
 // SendAttack sends an attack packet to hit an entity (left-click).
-func (e *entityHandler) SendAttack(conn common.PacketWriter, entityID int32, sneaking bool) error {
+func (e *entityHandler) SendAttack(conn models.PacketWriter, entityID int32, sneaking bool) error {
 	pkt := sb.NewUseEntity()
 	pkt.Target = pk.VarInt(entityID)
 	pkt.Mouse = pk.VarInt(common.InteractionTypeAttack)

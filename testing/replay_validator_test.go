@@ -8,22 +8,31 @@ import (
 	"github.com/reallyoldfogie/mc-replay-go/mcpr"
 )
 
-// TestValidateExistingReplays validates all replay files in the replays directory.
+// TestValidateExistingReplays validates all replay files in the replays directory
+// and all subdirectories recursively.
 // This is useful for batch-validating old replay files that may have been created
 // before automatic validation was implemented.
 func TestValidateExistingReplays(t *testing.T) {
-	replaysDir := "./replays"
-	entries, err := os.ReadDir(replaysDir)
+	replaysDir := "../replays"
+
+	var replayFiles []string
+
+	// Walk through all subdirectories recursively
+	err := filepath.WalkDir(replaysDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Skip directories, only process files
+		if !d.IsDir() && filepath.Ext(d.Name()) == ".mcpr" {
+			replayFiles = append(replayFiles, path)
+		}
+		return nil
+	})
+
 	if err != nil {
 		t.Skipf("No replays directory found: %v", err)
 		return
-	}
-
-	var replayFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".mcpr" {
-			replayFiles = append(replayFiles, filepath.Join(replaysDir, entry.Name()))
-		}
 	}
 
 	if len(replayFiles) == 0 {
@@ -38,7 +47,7 @@ func TestValidateExistingReplays(t *testing.T) {
 	invalidCount := 0
 
 	for _, replayPath := range replayFiles {
-		t.Run(filepath.Base(replayPath), func(t *testing.T) {
+		t.Run(filepath.Base(filepath.Dir(replayPath))+"/"+filepath.Base(replayPath), func(t *testing.T) {
 			// Validate using mc-replay-go's built-in validator
 			err := mcpr.ValidateFile(replayPath)
 

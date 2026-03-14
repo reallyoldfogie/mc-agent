@@ -9,6 +9,7 @@ import (
 	mcnet "github.com/Tnze/go-mc/net"
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/google/uuid"
+	"github.com/reallyoldfogie/mc-agent/models"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/require"
@@ -130,7 +131,7 @@ func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack             
 func (f *fakeClient) SetVersionHandler(bot.VersionHandler)                            {}
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -163,7 +164,7 @@ func TestInitRegistersCoreHandlers(t *testing.T) {
 }
 
 func TestCleanupRemovedEntities(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

@@ -28,7 +28,7 @@ type movementExecutor struct {
 	onPacketSent func(pkt interface{})
 	// Optional version-specific movement handler. When set, uses version-aware packet
 	// construction instead of the generic packets.go functions.
-	movementHandler versions_common.MovementHandler
+	movementHandler models.MovementHandler
 }
 
 // NewLegacyMovementExecutor creates a new MovementExecutor
@@ -66,7 +66,7 @@ func (me *movementExecutor) SetPacketCallback(callback func(pkt interface{})) {
 // SetMovementHandler sets an optional version-specific movement handler.
 // When set, the executor will use version-aware packet construction instead of
 // the generic packets.go functions.
-func (me *movementExecutor) SetMovementHandler(handler versions_common.MovementHandler) {
+func (me *movementExecutor) SetMovementHandler(handler models.MovementHandler) {
 	me.movementHandler = handler
 }
 

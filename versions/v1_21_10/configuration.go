@@ -4,6 +4,7 @@ import (
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.10/configuration/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.10/configuration/serverbound"
@@ -17,7 +18,7 @@ type configurationHandler struct {
 
 // SendFinishConfiguration sends a finish configuration packet to transition to play state.
 // Uses the generated FinishConfiguration packet struct from mc-protocol-go.
-func (c *configurationHandler) SendFinishConfiguration(conn common.PacketWriter) error {
+func (c *configurationHandler) SendFinishConfiguration(conn models.PacketWriter) error {
 	pkt := sb.NewFinishConfiguration()
 
 	log.Printf("[v1.21.10 Configuration] SendFinishConfiguration")
@@ -30,7 +31,7 @@ func (c *configurationHandler) SendFinishConfiguration(conn common.PacketWriter)
 
 // SendKeepAlive sends a keep-alive response packet.
 // Uses the generated KeepAlive packet struct from mc-protocol-go.
-func (c *configurationHandler) SendKeepAlive(conn common.PacketWriter, id int64) error {
+func (c *configurationHandler) SendKeepAlive(conn models.PacketWriter, id int64) error {
 	pkt := sb.NewKeepAlive()
 	pkt.KeepAliveId = pk.Long(id)
 
@@ -44,7 +45,7 @@ func (c *configurationHandler) SendKeepAlive(conn common.PacketWriter, id int64)
 
 // SendPong sends a pong response packet.
 // Uses the generated Pong packet struct from mc-protocol-go.
-func (c *configurationHandler) SendPong(conn common.PacketWriter, pingID int32) error {
+func (c *configurationHandler) SendPong(conn models.PacketWriter, pingID int32) error {
 	pkt := sb.NewPong()
 	pkt.Id = pk.Int(pingID)
 
@@ -59,7 +60,7 @@ func (c *configurationHandler) SendPong(conn common.PacketWriter, pingID int32) 
 // SendClientInformation sends client settings/information.
 // Uses the generated CustomPayload packet struct from mc-protocol-go.
 // Note: In 1.21.10, client information is typically sent via a custom payload during configuration.
-func (c *configurationHandler) SendClientInformation(conn common.PacketWriter, info common.ClientInfo) error {
+func (c *configurationHandler) SendClientInformation(conn models.PacketWriter, info models.ClientInfo) error {
 	// Client information is version-specific and may need special handling
 	// For now, this is a placeholder that would need to be implemented based on
 	// the specific protocol requirements for 1.21.10
@@ -72,7 +73,7 @@ func (c *configurationHandler) SendClientInformation(conn common.PacketWriter, i
 
 // SendResourcePackResponse sends a resource pack response packet.
 // Uses the generated ResourcePackReceive packet struct from mc-protocol-go.
-func (c *configurationHandler) SendResourcePackResponse(conn common.PacketWriter, uuid [16]byte, result int32) error {
+func (c *configurationHandler) SendResourcePackResponse(conn models.PacketWriter, uuid [16]byte, result int32) error {
 	pkt := sb.NewResourcePackReceive()
 	pkt.Uuid = pk.UUID(uuid)
 	pkt.Result = pk.VarInt(result)

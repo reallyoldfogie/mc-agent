@@ -31,7 +31,7 @@ func TestChestInteraction(t *testing.T) {
 			serverCfg := DefaultServerConfig()
 			serverCfg.Memory = "512M"
 			serverCfg.Version = tt.MCVersion
-			serverCfg.GameMode = "survival"
+			serverCfg.GameMode = GameModeSurvival
 			serverCfg.ExtraEnv = map[string]string{
 				"FORCE_GAMEMODE": "true",
 			}

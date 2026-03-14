@@ -7,12 +7,12 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -67,6 +67,7 @@ type PhysicsMovementExecutor struct {
 	modeMu    sync.RWMutex
 	running   bool
 	runningMu sync.RWMutex
+	isDead    atomic.Bool // True while the player is dead; suppresses position updates
 	stopChan  chan struct{}
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -187,7 +188,7 @@ func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface
 
 // SetMovementHandler sets an optional version-specific movement handler.
 // This forwards to the base executor for version-aware packet construction.
-func (pe *PhysicsMovementExecutor) SetMovementHandler(handler common.MovementHandler) {
+func (pe *PhysicsMovementExecutor) SetMovementHandler(handler models.MovementHandler) {
 	pe.baseExecutor.SetMovementHandler(handler)
 }
 
@@ -328,6 +329,18 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 // SyncWithServer is an alias for HandleServerCorrection for backward compatibility.
 func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool) {
 	pe.HandleServerCorrection(x, y, z, yaw, pitch, onGround)
+}
+
+// NotifyDead pauses position updates to the server.
+// Call when the player dies to prevent sending invalid falling positions that corrupt playerdata.
+func (pe *PhysicsMovementExecutor) NotifyDead() {
+	pe.isDead.Store(true)
+}
+
+// NotifyRespawned resumes position updates to the server.
+// Call when the server confirms the respawn position via onClientboundPosition.
+func (pe *PhysicsMovementExecutor) NotifyRespawned() {
+	pe.isDead.Store(false)
 }
 
 // trackPredictionError records a prediction error for monitoring.
@@ -1303,6 +1316,9 @@ func (pe *PhysicsMovementExecutor) checkClutch() {
 
 // sendPositionUpdate sends the current physics state position to the server.
 func (pe *PhysicsMovementExecutor) sendPositionUpdate() {
+	if pe.isDead.Load() {
+		return
+	}
 	pos, yaw, pitch, onGround := pe.physicsState.GetPosition()
 
 	yawFloat32 := float32(yaw)

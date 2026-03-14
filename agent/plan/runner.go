@@ -13,8 +13,8 @@ import (
 type Runner struct {
 	mu      sync.Mutex
 	agent   models.Agent
-	status  PlanStatus
-	events  chan PlanEvent
+	status  models.PlanStatus
+	events  chan models.PlanEvent
 	cancel  context.CancelFunc
 	running bool
 }
@@ -23,18 +23,18 @@ type Runner struct {
 func NewRunner(agent models.Agent) *Runner {
 	return &Runner{
 		agent:  agent,
-		status: PlanStatus{State: PlanIdle},
-		events: make(chan PlanEvent, 64),
+		status: models.PlanStatus{State: PlanIdle},
+		events: make(chan models.PlanEvent, 64),
 	}
 }
 
 // Start executes the plan asynchronously with a background context.
-func (r *Runner) Start(plan Plan) error {
+func (r *Runner) Start(plan models.Plan) error {
 	return r.StartWithContext(context.Background(), plan)
 }
 
 // StartWithContext executes the plan asynchronously with the provided context.
-func (r *Runner) StartWithContext(ctx context.Context, plan Plan) error {
+func (r *Runner) StartWithContext(ctx context.Context, plan models.Plan) error {
 	if len(plan.Steps) == 0 {
 		return errors.New("plan has no steps")
 	}
@@ -47,7 +47,7 @@ func (r *Runner) StartWithContext(ctx context.Context, plan Plan) error {
 	r.running = true
 	ctx, cancel := context.WithCancel(ctx)
 	r.cancel = cancel
-	r.status = PlanStatus{
+	r.status = models.PlanStatus{
 		PlanName:  plan.Name,
 		State:     PlanRunning,
 		StepIndex: -1,
@@ -55,7 +55,7 @@ func (r *Runner) StartWithContext(ctx context.Context, plan Plan) error {
 		StartedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
-	r.emit(PlanEvent{
+	r.emit(models.PlanEvent{
 		Type:     EventPlanStarted,
 		Time:     time.Now(),
 		PlanName: plan.Name,
@@ -82,18 +82,18 @@ func (r *Runner) Stop() error {
 }
 
 // Status returns the latest plan status snapshot.
-func (r *Runner) Status() PlanStatus {
+func (r *Runner) Status() models.PlanStatus {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.status
 }
 
 // Events returns a stream of plan progress events.
-func (r *Runner) Events() <-chan PlanEvent {
+func (r *Runner) Events() <-chan models.PlanEvent {
 	return r.events
 }
 
-func (r *Runner) run(ctx context.Context, plan Plan) {
+func (r *Runner) run(ctx context.Context, plan models.Plan) {
 	onError := plan.Policy.OnError
 	if onError != ContinueOnError {
 		onError = StopOnError
@@ -106,7 +106,7 @@ func (r *Runner) run(ctx context.Context, plan Plan) {
 		}
 
 		r.setStep(plan.Name, i, len(plan.Steps), step)
-		r.emit(PlanEvent{
+		r.emit(models.PlanEvent{
 			Type:      EventStepStarted,
 			Time:      time.Now(),
 			PlanName:  plan.Name,
@@ -127,7 +127,7 @@ func (r *Runner) run(ctx context.Context, plan Plan) {
 			} else {
 				errMsg = "step failed"
 			}
-			r.emit(PlanEvent{
+			r.emit(models.PlanEvent{
 				Type:      EventStepFailed,
 				Time:      time.Now(),
 				PlanName:  plan.Name,
@@ -145,7 +145,7 @@ func (r *Runner) run(ctx context.Context, plan Plan) {
 		}
 
 		if result.Status == StepSkipped {
-			r.emit(PlanEvent{
+			r.emit(models.PlanEvent{
 				Type:      EventStepSkipped,
 				Time:      time.Now(),
 				PlanName:  plan.Name,
@@ -156,7 +156,7 @@ func (r *Runner) run(ctx context.Context, plan Plan) {
 			continue
 		}
 
-		r.emit(PlanEvent{
+		r.emit(models.PlanEvent{
 			Type:      EventStepCompleted,
 			Time:      time.Now(),
 			PlanName:  plan.Name,
@@ -188,7 +188,7 @@ func (r *Runner) setError(errMsg string) {
 	r.mu.Unlock()
 }
 
-func (r *Runner) finish(plan Plan, state PlanState, msg string, err error) {
+func (r *Runner) finish(plan models.Plan, state PlanState, msg string, err error) {
 	errMsg := ""
 	if err != nil {
 		errMsg = err.Error()
@@ -209,7 +209,7 @@ func (r *Runner) finish(plan Plan, state PlanState, msg string, err error) {
 		eventType = EventPlanCanceled
 	}
 
-	r.emit(PlanEvent{
+	r.emit(models.PlanEvent{
 		Type:     eventType,
 		Time:     time.Now(),
 		PlanName: plan.Name,
@@ -218,7 +218,7 @@ func (r *Runner) finish(plan Plan, state PlanState, msg string, err error) {
 	})
 }
 
-func (r *Runner) emit(ev PlanEvent) {
+func (r *Runner) emit(ev models.PlanEvent) {
 	select {
 	case r.events <- ev:
 	default:

@@ -16,7 +16,7 @@ type actionHandler struct {
 	packetMgr protocol_models.PacketMgr
 }
 
-func (a *actionHandler) SendUseItem(conn common.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
+func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
 	pkt := sb.NewUseItem()
 	pkt.Hand = pk.VarInt(hand)
 	pkt.Sequence = pk.VarInt(sequence)
@@ -30,7 +30,7 @@ func (a *actionHandler) SendUseItem(conn common.PacketWriter, hand models.Hand, 
 	return nil
 }
 
-func (a *actionHandler) SendPlayerAction(conn common.PacketWriter, status int32, x, y, z int, face int32, sequence int32) error {
+func (a *actionHandler) SendPlayerAction(conn models.PacketWriter, status int32, x, y, z int, face int32, sequence int32) error {
 	pkt := sb.NewBlockDig()
 	pkt.Status = pk.VarInt(status)
 	pkt.Location = basetypes.Position{X: int64(x), Y: int64(y), Z: int64(z)}
@@ -45,7 +45,7 @@ func (a *actionHandler) SendPlayerAction(conn common.PacketWriter, status int32,
 	return nil
 }
 
-func (a *actionHandler) SendSwing(conn common.PacketWriter, hand models.Hand) error {
+func (a *actionHandler) SendSwing(conn models.PacketWriter, hand models.Hand) error {
 	pkt := sb.NewArmAnimation()
 	pkt.Hand = pk.VarInt(hand)
 

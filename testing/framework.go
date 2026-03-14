@@ -59,7 +59,7 @@ type TestInstance struct {
 type ManagedAgent struct {
 	Name      string
 	Agent     models.Agent
-	Config    agent.Config
+	Config    models.AgentConfig
 	Cam       *ManagedAgent
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -631,7 +631,7 @@ type AgentConfig struct {
 	SkinNetEnabled    bool
 	HPADebugPathBlock string                // Explicit block name to use (expects <color>_stained_glass)
 	HPADebugPathColor string                // Color name to use when block is not specified
-	VersionHandler    common.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
+	VersionHandler    models.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
 
 	EnableCamAgent bool // Whether to spawn a companion cam agent
 }
@@ -768,7 +768,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	soundMgr := mc_versions.GetSoundMgrForVersion(mcVersion)
 
 	// Get version handler (either from config or auto-detect)
-	var versionHandler common.VersionHandler
+	var versionHandler models.VersionHandler
 	if cfg.VersionHandler != nil {
 		versionHandler = cfg.VersionHandler
 		log.Printf("[%s] Using provided version handler for %s", cfg.Name, mcVersion)
@@ -811,12 +811,12 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	}
 
 	// Build agent configuration
-	agentCfg := agent.Config{
+	agentCfg := models.AgentConfig{
 		Name:              cfg.Name,
 		Address:           cfg.ServerAddress,
 		Version:           mcVersion,
 		ProtocolVersion:   protocolVersion,
-		Auth:              agent.Auth{Name: cfg.Name, UUID: "", AccessToken: ""},
+		Auth:              models.Auth{Name: cfg.Name, UUID: "", AccessToken: ""},
 		PacketMgr:         packetMgr,
 		BlockMgr:          blockMgr,
 		SoundMgr:          soundMgr,

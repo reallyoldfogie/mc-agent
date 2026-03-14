@@ -14,7 +14,7 @@ func TestOnUpdateRecipes_ParsesAndStores(t *testing.T) {
 	for _, versionTest := range models.StandardVersionTests {
 		t.Run(versionTest.Name, func(t *testing.T) {
 			version := versionTest.MCVersion
-			a, err := agentpkg.New(agentpkg.Config{Version: version, Address: "test"})
+			a, err := agentpkg.New(models.AgentConfig{Version: version, Address: "test"})
 			require.NoError(t, err)
 
 			// Build version-specific packet
@@ -88,7 +88,7 @@ func TestExportLastUpdateRecipesAsJSON(t *testing.T) {
 	for _, versionTest := range models.StandardVersionTests {
 		t.Run(versionTest.Name, func(t *testing.T) {
 			version := versionTest.MCVersion
-			a, err := agentpkg.New(agentpkg.Config{Version: version, Address: "test"})
+			a, err := agentpkg.New(models.AgentConfig{Version: version, Address: "test"})
 			require.NoError(t, err)
 
 			// Build version-specific packet

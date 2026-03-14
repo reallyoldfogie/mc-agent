@@ -357,3 +357,214 @@ func (bsm *blockShapeManager) IsSlimeBlock(blockStateID uint32) bool {
 func (bsm *blockShapeManager) IsPowderSnow(blockStateID uint32) bool {
 	return bsm.BlockName(blockStateID) == "minecraft:powder_snow"
 }
+
+// GetWaterFlowSpeed returns the flow speed multiplier for water based on the block's age property.
+// Age 0 (source): returns 0.0 (no flow)
+// Age 1-7 (flowing): returns proportional speed where age 7 = 1.0
+func (bsm *blockShapeManager) GetWaterFlowSpeed(blockStateID uint32) float64 {
+	if !bsm.IsWater(blockStateID) {
+		return 0.0 // Not water
+	}
+
+	// Get water age/level property (0-7)
+	_, props := bsm.blockInfoFromStateID(blockStateID)
+	if len(props) == 0 {
+		// No properties means water source (age 0)
+		return 0.0
+	}
+
+	// Check for 'level' or 'age' property (Minecraft uses 'level' for water)
+	levelStr, hasLevel := props["level"]
+	if !hasLevel {
+		levelStr, hasLevel = props["age"]
+	}
+	if !hasLevel {
+		return 0.0 // Source block, no flow
+	}
+
+	// Parse level (0-7)
+	var level int
+	fmt.Sscanf(levelStr, "%d", &level)
+	if level < 0 || level > 7 {
+		level = 0
+	}
+
+	if level == 0 {
+		return 0.0 // Source, no flow
+	}
+
+	// Flowing water: age 1 = 1/7 speed, age 7 = 7/7 speed
+	// Normalized to 0.0-1.0
+	return float64(level) / 7.0
+}
+
+// GetWaterFlowDirection determines the direction water flows at a given position.
+// Returns normalized V3 vector (0,0,0) if not flowing water.
+// For flowing water, calculates direction toward neighboring blocks with lower age.
+func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+	if world == nil {
+		return models.V3{} // No direction
+	}
+
+	blockState, loaded := world.GetBlockStatus(x, y, z)
+	if !loaded || !bsm.IsWater(blockState) {
+		return models.V3{} // Not water
+	}
+
+	// Get current water level
+	_, props := bsm.blockInfoFromStateID(blockState)
+	levelStr, hasLevel := props["level"]
+	if !hasLevel {
+		levelStr, hasLevel = props["age"]
+	}
+	if !hasLevel {
+		return models.V3{} // Source block, no flow direction
+	}
+
+	var currentLevel int
+	fmt.Sscanf(levelStr, "%d", &currentLevel)
+	// Level 0 = source block. It should still flow toward adjacent water.
+	// Levels 1-7 and 8 are valid flowing water.
+	if currentLevel < 0 || currentLevel > 8 {
+		return models.V3{} // Invalid level
+	}
+
+	// Find neighboring water blocks with lower level (flow direction)
+	var flowDir models.V3
+	neighbors := [][3]int{
+		{x + 1, y, z}, // East
+		{x - 1, y, z}, // West
+		{x, y, z + 1}, // South
+		{x, y, z - 1}, // North
+		{x, y - 1, z}, // Down
+	}
+
+	for i, neighbor := range neighbors {
+		nState, nLoaded := world.GetBlockStatus(neighbor[0], neighbor[1], neighbor[2])
+		if !nLoaded || !bsm.IsWater(nState) {
+			continue
+		}
+
+		// Get neighbor water level
+		_, nProps := bsm.blockInfoFromStateID(nState)
+		nLevelStr, nHasLevel := nProps["level"]
+		if !nHasLevel {
+			nLevelStr, nHasLevel = nProps["age"]
+		}
+
+		var neighborLevel int
+		if nHasLevel {
+			fmt.Sscanf(nLevelStr, "%d", &neighborLevel)
+			// Clamp to valid range 0-8 (8 is valid downflow)
+			if neighborLevel < 0 {
+				neighborLevel = 0
+			} else if neighborLevel > 8 {
+				neighborLevel = 8
+			}
+		} else {
+			neighborLevel = 0 // Source block (level 0)
+		}
+
+		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			neighborName := "?"
+			switch i {
+			case 0:
+				neighborName = "East"
+			case 1:
+				neighborName = "West"
+			case 2:
+				neighborName = "South"
+			case 3:
+				neighborName = "North"
+			case 4:
+				neighborName = "Down"
+			}
+			log.Printf("[WaterFlow] flowDirection: %s (%d,%d,%d): level=%d (cur=%d, diff=%d)\n",
+				neighborName, neighbor[0], neighbor[1], neighbor[2], neighborLevel, currentLevel, neighborLevel-currentLevel)
+		}
+
+		// Flow toward higher level numbers (lower surface height)
+		// Flow away from lower level numbers (higher surface height, sources)
+		// Special case: Level 8 is downflow - never flow horizontally toward it
+		// Only consider if neighbor level is different from current
+		if neighborLevel != currentLevel {
+			switch i {
+			case 0: // East (+X)
+				if neighborLevel == 8 {
+					// Never flow horizontally toward downflow
+					flowDir.X -= 1.0 // Flow away from level 8
+				} else if neighborLevel > currentLevel {
+					flowDir.X += 1.0 // Flow toward lower surface (higher level number)
+				} else {
+					flowDir.X -= 1.0 // Flow away from higher surface (lower level number)
+				}
+			case 1: // West (-X)
+				if neighborLevel == 8 {
+					flowDir.X += 1.0 // Flow away from level 8
+				} else if neighborLevel > currentLevel {
+					flowDir.X -= 1.0
+				} else {
+					flowDir.X += 1.0
+				}
+			case 2: // South (+Z)
+				if neighborLevel == 8 {
+					flowDir.Z -= 1.0 // Flow away from level 8
+				} else if neighborLevel > currentLevel {
+					flowDir.Z += 1.0
+				} else {
+					flowDir.Z -= 1.0
+				}
+			case 3: // North (-Z)
+				if neighborLevel == 8 {
+					flowDir.Z += 1.0 // Flow away from level 8
+				} else if neighborLevel > currentLevel {
+					flowDir.Z -= 1.0
+				} else {
+					flowDir.Z += 1.0
+				}
+			case 4: // Down (-Y)
+				if neighborLevel > currentLevel {
+					flowDir.Y -= 1.0 // Flow down toward lower surface
+				} else {
+					flowDir.Y += 1.0 // Flow away from higher surface
+				}
+			}
+		}
+	}
+
+	// Normalize direction
+	magnitude := flowDir.DistanceTo(models.V3{})
+	if magnitude < 0.001 {
+		// Special case: level 8 water is downflow. If no gradient found, flow downward.
+		if currentLevel == 8 {
+			if os.Getenv("DEBUG_WATER_FLOW") != "" {
+				log.Printf("[WaterFlow] Level 8 at (%d,%d,%d) - no gradient, defaulting to downflow\n",
+					x, y, z)
+			}
+			return models.V3{X: 0, Y: -1, Z: 0}
+		}
+		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			log.Printf("[WaterFlow] No flow direction at (%d,%d,%d) level=%d - no gradient\n",
+				x, y, z, currentLevel)
+		}
+		return models.V3{} // No flow direction
+	} else {
+		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			log.Printf("[WaterFlow] magnitude=%.4f at (%d,%d,%d) level=%d \n",
+				magnitude, x, y, z, currentLevel)
+		}
+	}
+
+	result := models.V3{
+		X: flowDir.X / magnitude,
+		Y: flowDir.Y / magnitude,
+		Z: flowDir.Z / magnitude,
+	}
+
+	if os.Getenv("DEBUG_WATER_FLOW") != "" {
+		log.Printf("[WaterFlow] At (%d,%d,%d) level=%d: flow=(%.3f,%.3f,%.3f) (magnitude=%.3f)\n",
+			x, y, z, currentLevel, result.X, result.Y, result.Z, magnitude)
+	}
+
+	return result
+}

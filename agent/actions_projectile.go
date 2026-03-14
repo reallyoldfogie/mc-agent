@@ -9,7 +9,6 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 )
 
 const (
@@ -74,9 +73,9 @@ func (a *agent) setCallbackRegistrationTime(entityID int32) {
 
 // getPacketWriter returns a PacketWriter for sending packets.
 // In production, this uses the bot.Conn. In tests, it can be overridden.
-func (a *agent) getPacketWriter() (common.PacketWriter, error) {
+func (a *agent) getPacketWriter() (models.PacketWriter, error) {
 	// Try to use client directly if it implements PacketWriter (common in tests)
-	if pw, ok := a.client.(common.PacketWriter); ok {
+	if pw, ok := a.client.(models.PacketWriter); ok {
 		return pw, nil
 	}
 	// Fall back to using Conn() for production
@@ -557,13 +556,13 @@ func (a *agent) SwapInventoryWithHotbar(ctx context.Context, inventorySlot, hotb
 
 	err := containerHandler.SendContainerClick(
 		a.client.Conn(),
-		0,                           // windowID = player inventory
-		0,                           // stateID
-		int32(inventorySlot),        // slot to swap from
-		int8(hotbarSlot),            // button = hotbar slot to swap to
-		2,                           // mode = hotbar key press (swap mode)
-		make(map[int16]common.Slot), // let server respond with changes
-		common.Slot{},               // cursor item
+		0,                                    // windowID = player inventory
+		0,                                    // stateID
+		int32(inventorySlot),                 // slot to swap from
+		int8(hotbarSlot),                     // button = hotbar slot to swap to
+		2,                                    // mode = hotbar key press (swap mode)
+		make(map[int16]models.InventorySlot), // let server respond with changes
+		models.InventorySlot{},               // cursor item
 	)
 
 	if err != nil {

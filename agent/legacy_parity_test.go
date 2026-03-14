@@ -35,7 +35,7 @@ func (f *fakeFollowMgr) GetState() models.FollowState { return models.StateIdle 
 
 // Ensure follow <name> works, stopFollow respects active/inactive, and followStatus returns string
 func TestFollowCommands(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -69,7 +69,7 @@ func TestFollowCommands(t *testing.T) {
 
 // moveTo invalid args and already at target
 func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -102,7 +102,7 @@ func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
 
 // moveForward negative with yaw 0 should move -Z
 func TestMoveForward_NegativeYaw0(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -128,7 +128,7 @@ func TestMoveForward_NegativeYaw0(t *testing.T) {
 
 // moveForward with yaw 90 should move -X
 func TestMoveForward_Yaw90(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -154,7 +154,7 @@ func TestMoveForward_Yaw90(t *testing.T) {
 
 // moveUp negative
 func TestMoveUp_Negative(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -187,7 +187,7 @@ func (fakePFFail) FindGroundBelow(x, z float64, startY float64, maxSearchDepth f
 }
 
 func TestFindPath_InvalidAndError(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -213,7 +213,7 @@ func TestFindPath_InvalidAndError(t *testing.T) {
 
 // startTracking double-start and stopTracking not active
 func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -253,7 +253,7 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 
 // OnPlayerChat routing
 func TestOnPlayerChat_Routing(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

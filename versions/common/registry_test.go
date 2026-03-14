@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -14,12 +15,12 @@ type mockVersionHandler struct {
 	protocolVersion uint
 }
 
-func (m *mockVersionHandler) Version() string                      { return m.version }
-func (m *mockVersionHandler) ProtocolVersion() uint                { return m.protocolVersion }
-func (m *mockVersionHandler) PacketMgr() protocol_models.PacketMgr { return nil }
-func (m *mockVersionHandler) Login() LoginHandler                  { return nil }
-func (m *mockVersionHandler) Configuration() ConfigurationHandler  { return nil }
-func (m *mockVersionHandler) Play() PlayHandler                    { return nil }
+func (m *mockVersionHandler) Version() string                            { return m.version }
+func (m *mockVersionHandler) ProtocolVersion() uint                      { return m.protocolVersion }
+func (m *mockVersionHandler) PacketMgr() protocol_models.PacketMgr       { return nil }
+func (m *mockVersionHandler) Login() models.LoginHandler                 { return nil }
+func (m *mockVersionHandler) Configuration() models.ConfigurationHandler { return nil }
+func (m *mockVersionHandler) Play() models.PlayHandler                   { return nil }
 
 // mockLoginHandler implements LoginHandler for testing
 type mockLoginHandler struct{}
@@ -40,7 +41,7 @@ func (m *mockLoginHandler) ParseEncryptionRequest(p pk.Packet) (serverID string,
 
 func TestRegisterAndGetVersionHandler(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-1.0", func() VersionHandler {
+	RegisterVersionHandler("test-1.0", func() models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-1.0",
 			protocolVersion: 100,
@@ -71,7 +72,7 @@ func TestGetVersionHandlerNotFound(t *testing.T) {
 
 func TestHasVersionHandler(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-2.0", func() VersionHandler {
+	RegisterVersionHandler("test-2.0", func() models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-2.0",
 			protocolVersion: 200,
@@ -89,7 +90,7 @@ func TestHasVersionHandler(t *testing.T) {
 
 func TestSupportedVersions(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-3.0", func() VersionHandler {
+	RegisterVersionHandler("test-3.0", func() models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-3.0",
 			protocolVersion: 300,

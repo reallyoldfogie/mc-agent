@@ -1,4 +1,4 @@
-package common
+package models
 
 // MetadataHandlerType represents the data type of an entity metadata value.
 // These are the handler IDs from Minecraft's TrackedDataHandlerRegistry.

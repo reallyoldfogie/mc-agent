@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -531,4 +532,162 @@ func BuildBlockStepsDescending(ctx context.Context, rcon testenv.RCONHelper, x, 
 	}
 
 	return nil
+}
+
+// BlockState represents a block and its state information
+type BlockState struct {
+	Pos     models.V3 // Block position
+	Name    string    // Block name (e.g., "minecraft:water")
+	StateID uint32    // Internal state ID (from agent's world view)
+	Level   int       // Water level (0-8, for water blocks only)
+}
+
+// LogBlocksInArea queries and logs all blocks in an 8x8x8 area around the agent.
+// It provides both server-side (RCON) view and agent's internal world view for comparison.
+// centerPos should be the agent's position
+func LogBlocksInArea(ctx context.Context, t *testing.T, rcon testenv.RCONHelper, agent *ManagedAgent, centerPos models.V3, halfSize int) {
+	t.Helper()
+
+	// Calculate bounding box (8x8x8 around center)
+	minX := int(math.Floor(centerPos.X)) - halfSize
+	maxX := int(math.Floor(centerPos.X)) + halfSize
+	minY := int(math.Floor(centerPos.Y)) - halfSize
+	maxY := int(math.Floor(centerPos.Y)) + halfSize
+	minZ := int(math.Floor(centerPos.Z)) - halfSize
+	maxZ := int(math.Floor(centerPos.Z)) + halfSize
+
+	t.Logf("=== Block State Analysis (8x8x8 around agent at %.1f, %.1f, %.1f) ===", centerPos.X, centerPos.Y, centerPos.Z)
+	t.Logf("Area: X[%d-%d] Y[%d-%d] Z[%d-%d]", minX, maxX, minY, maxY, minZ, maxZ)
+
+	// Collect blocks from both server and agent views
+	waterBlocks := []BlockState{}
+	allBlocks := []BlockState{}
+
+	world := agent.Agent.GetWorld()
+	if world == nil {
+		t.Logf("[ERROR] Agent world not available, cannot get agent's block states")
+		return
+	}
+
+	shapeMgr := agent.Agent.BlockShapeManager()
+	if shapeMgr == nil {
+		t.Logf("[ERROR] Agent BlockShapeManager not available, cannot get agent's block states")
+		return
+	}
+
+	for y := minY; y <= maxY; y++ {
+		for z := minZ; z <= maxZ; z++ {
+			for x := minX; x <= maxX; x++ {
+				pos := models.V3{X: float64(x), Y: float64(y), Z: float64(z)}
+
+				// Get server-side block data DISABLED, SINCE GetBlockAt ONLY WORKS ON BLOCK ENTITIES (CHESTS, FURNACES, ETC.) AND RETURNS UNKNOWN FOR NORMAL BLOCKS
+				// serverBlock, _ := GetBlockAt(ctx, rcon, pos)
+
+				// Get agent's internal block state
+				var agentStateID uint32
+				var agentBlockName string
+				if agent != nil && agent.Agent != nil {
+					agentStateID, _ = world.GetBlockAt(pos.X, pos.Y, pos.Z)
+					agentBlockName = shapeMgr.FullBlockName(agentStateID)
+				}
+
+				bs := BlockState{
+					Pos:     pos,
+					Name:    agentBlockName,
+					StateID: agentStateID,
+				}
+
+				if agentStateID == 0 {
+					continue
+				}
+
+				if shapeMgr.IsWater(agentStateID) {
+					fmt.Printf("Found water block at (%d, %d, %d) with StateID=%d (%s)\n", x, y, z, agentStateID, agentBlockName)
+					// Try to extract level from properties [level=3] format
+					if idx := strings.Index(agentBlockName, "[level="); idx != -1 {
+						// fmt.Printf("Found '[level=' at index %d in block name '%s'\n", idx, agentBlockName)
+						closeIdx := strings.Index(agentBlockName, "]")
+						extractedLevelStr := agentBlockName[idx+7 : closeIdx]
+						// fmt.Printf("Found ']' at index %d in block name '%s'\n", closeIdx, agentBlockName)
+						if levelStr, err := strconv.Atoi(extractedLevelStr); err == nil {
+							fmt.Printf("Parsed water level: %d from block name '%s' (extractedLevelStr: '%s')\n", levelStr, agentBlockName, extractedLevelStr)
+							bs.Level = levelStr
+						}
+					} else {
+						bs.Level = 0 // Source block
+					}
+					waterBlocks = append(waterBlocks, bs)
+
+				}
+
+				allBlocks = append(allBlocks, bs)
+			}
+		}
+	}
+
+	// Log water blocks with details
+	t.Logf("\n--- Water Blocks (%d total) ---", len(waterBlocks))
+	if len(waterBlocks) > 0 {
+		// Group by Y level
+		byLevel := make(map[int][]BlockState)
+		for _, bs := range waterBlocks {
+			byLevel[int(bs.Pos.Y)] = append(byLevel[int(bs.Pos.Y)], bs)
+		}
+
+		for y := maxY; y >= minY; y-- {
+			if blocks, ok := byLevel[y]; ok {
+				t.Logf("Y=%d:", y)
+				for _, bs := range blocks {
+					typeStr := fmt.Sprintf("source(lvl=%d)", bs.Level)
+					if bs.Level > 0 {
+						typeStr = fmt.Sprintf("flowing(lvl=%d)", bs.Level)
+					}
+					t.Logf("  (%d, %d, %d) %s [StateID=%d%s] %s",
+						int(bs.Pos.X), int(bs.Pos.Y), int(bs.Pos.Z), typeStr, bs.StateID,
+						func() string {
+							if bs.StateID == 0 {
+								return ", NOT in agent world"
+							}
+							return ""
+						}(), bs.Name)
+				}
+			}
+		}
+	} else {
+		t.Logf("(no water blocks found)")
+	}
+
+	// Log all other blocks
+	nonWater := []BlockState{}
+	for _, bs := range allBlocks {
+		if !strings.Contains(strings.ToLower(bs.Name), "water") {
+			nonWater = append(nonWater, bs)
+		}
+	}
+
+	if len(nonWater) > 0 {
+		t.Logf("\n--- Other Blocks (%d total) ---", len(nonWater))
+		for _, bs := range nonWater {
+			t.Logf("(%d, %d, %d) %s [StateID=%d]",
+				int(bs.Pos.X), int(bs.Pos.Y), int(bs.Pos.Z), bs.Name, bs.StateID)
+		}
+	}
+
+	// Summary stats
+	totalWater := len(waterBlocks)
+	totalOther := len(nonWater)
+	agentAwareWater := 0
+	for _, bs := range waterBlocks {
+		if bs.StateID != 0 {
+			agentAwareWater++
+		}
+	}
+
+	t.Logf("\n--- Summary ---")
+	t.Logf("Total blocks: %d (water=%d, other=%d)", totalWater+totalOther, totalWater, totalOther)
+	t.Logf("Water blocks agent is aware of: %d/%d", agentAwareWater, totalWater)
+	if totalWater > 0 && agentAwareWater < totalWater {
+		t.Logf("⚠️  Agent missing %d water blocks in world view!", totalWater-agentAwareWater)
+	}
+	t.Logf("=== End Block State Analysis ===\n")
 }

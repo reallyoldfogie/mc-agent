@@ -6,35 +6,35 @@ import (
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.11/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.11/play/serverbound"
-	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// chatHandler implements common.ChatHandler for 1.21.11.
+// chatHandler implements models.ChatHandler for 1.21.11.
 type chatHandler struct {
 	packetMgr protocol_models.PacketMgr
 }
 
 // SendChat sends a chat message.
 // In 1.21.11, chat messages require timestamps, salt, and signature fields for secure chat.
-func (c *chatHandler) SendChat(conn common.PacketWriter, message string) error {
+func (c *chatHandler) SendChat(conn models.PacketWriter, message string) error {
 	pkt := sb.NewChatMessage()
 	pkt.Message = pk.String(message)
 	pkt.Timestamp = pk.Long(time.Now().UnixMilli())
 	pkt.Salt = pk.Long(0) // No signature
-	pkt.Signature = models.Option[models.FixedBuffer256]{Has: false}
+	pkt.Signature = protocol_models.Option[protocol_models.FixedBuffer256]{Has: false}
 	pkt.Offset = pk.VarInt(0)
-	pkt.Acknowledged = models.FixedBuffer3{}
+	pkt.Acknowledged = protocol_models.FixedBuffer3{}
 	pkt.Checksum = pk.UnsignedByte(0)
 
 	return conn.WritePacket(pkt.Marshal())
 }
 
 // SendCommand sends a command (without the leading slash).
-func (c *chatHandler) SendCommand(conn common.PacketWriter, command string) error {
+func (c *chatHandler) SendCommand(conn models.PacketWriter, command string) error {
 	pkt := sb.NewChatCommand()
 	pkt.Command = pk.String(command)
 
@@ -90,21 +90,21 @@ func (c *chatHandler) ParseDisguisedChat(p pk.Packet) (message string, err error
 // For string values, it returns the string directly.
 // For compound values (like text components), it attempts to extract the "text" field.
 // Falls back to fmt.Sprintf for other types.
-func extractNBTString(nbt models.AnonymousNBT) string {
+func extractNBTString(nbt protocol_models.AnonymousNBT) string {
 	if nbt.Value == nil {
 		return ""
 	}
 
 	// If the value is a string, return it directly
-	if strVal, ok := nbt.Value.(*models.NBTString); ok {
+	if strVal, ok := nbt.Value.(*protocol_models.NBTString); ok {
 		return strVal.Value
 	}
 
 	// If it's a compound, try to extract the "text" field (common for text components)
-	if compound, ok := nbt.Value.(*models.NBTCompound); ok {
+	if compound, ok := nbt.Value.(*protocol_models.NBTCompound); ok {
 		for _, tag := range compound.Tags {
 			if tag.Name == "text" {
-				if strVal, ok := tag.Value.(*models.NBTString); ok {
+				if strVal, ok := tag.Value.(*protocol_models.NBTString); ok {
 					return strVal.Value
 				}
 			}

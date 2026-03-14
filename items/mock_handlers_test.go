@@ -5,39 +5,38 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 )
 
-// MockContainerHandler implements common.ContainerHandler for testing
+// MockContainerHandler implements models.ContainerHandler for testing
 type MockContainerHandler struct {
 }
 
-func (m *MockContainerHandler) SendContainerClick(conn common.PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]common.Slot, carriedItem common.Slot) error {
+func (m *MockContainerHandler) SendContainerClick(conn models.PacketWriter, windowID int8, stateID, slot int32, button int8, mode int32, changedSlots map[int16]models.InventorySlot, carriedItem models.InventorySlot) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockContainerHandler) SendContainerClose(conn common.PacketWriter, windowID int8) error {
+func (m *MockContainerHandler) SendContainerClose(conn models.PacketWriter, windowID int8) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockContainerHandler) SendSetCreativeModeSlot(conn common.PacketWriter, slot int16, item common.Slot) error {
+func (m *MockContainerHandler) SendSetCreativeModeSlot(conn models.PacketWriter, slot int16, item models.InventorySlot) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockContainerHandler) SendPickItem(conn common.PacketWriter, slot int32) error {
+func (m *MockContainerHandler) SendPickItem(conn models.PacketWriter, slot int32) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockContainerHandler) SendSetCarriedItem(conn common.PacketWriter, slot int16) error {
+func (m *MockContainerHandler) SendSetCarriedItem(conn models.PacketWriter, slot int16) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockContainerHandler) SendUseItemOn(conn common.PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
+func (m *MockContainerHandler) SendUseItemOn(conn models.PacketWriter, hand models.Hand, x, y, z int, face int32, cursorX, cursorY, cursorZ float32, insideBlock bool, sequence int32) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
@@ -46,43 +45,43 @@ func (m *MockContainerHandler) ParseOpenScreen(p pk.Packet) (int8, int32, string
 	return 0, 0, "", nil
 }
 
-func (m *MockContainerHandler) ParseContainerSetContent(p pk.Packet) (int8, int32, []common.Slot, common.Slot, error) {
-	return 0, 0, nil, common.Slot{}, nil
+func (m *MockContainerHandler) ParseContainerSetContent(p pk.Packet) (int8, int32, []models.InventorySlot, models.InventorySlot, error) {
+	return 0, 0, nil, models.InventorySlot{}, nil
 }
 
-func (m *MockContainerHandler) ParseContainerSetSlot(p pk.Packet) (int8, int32, int16, common.Slot, error) {
-	return 0, 0, 0, common.Slot{}, nil
+func (m *MockContainerHandler) ParseContainerSetSlot(p pk.Packet) (int8, int32, int16, models.InventorySlot, error) {
+	return 0, 0, 0, models.InventorySlot{}, nil
 }
 
 func (m *MockContainerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 	return 0, nil
 }
 
-func (m *MockContainerHandler) SendContainerButtonClick(conn common.PacketWriter, windowID int8, buttonID int8) error {
+func (m *MockContainerHandler) SendContainerButtonClick(conn models.PacketWriter, windowID int8, buttonID int8) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-// MockActionHandler implements common.ActionHandler for testing
+// MockActionHandler implements models.ActionHandler for testing
 type MockActionHandler struct {
 }
 
-func (m *MockActionHandler) SendUseItem(conn common.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
+func (m *MockActionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockActionHandler) SendPlayerAction(conn common.PacketWriter, status int32, x, y, z int, face int32, sequence int32) error {
+func (m *MockActionHandler) SendPlayerAction(conn models.PacketWriter, status int32, x, y, z int, face int32, sequence int32) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockActionHandler) SendSwing(conn common.PacketWriter, hand models.Hand) error {
+func (m *MockActionHandler) SendSwing(conn models.PacketWriter, hand models.Hand) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-// MockEntityHandler implements common.EntityHandler for testing
+// MockEntityHandler implements models.EntityHandler for testing
 type MockEntityHandler struct {
 }
 
@@ -110,7 +109,7 @@ func (m *MockEntityHandler) ParseEntityEvent(p pk.Packet) (int32, int8, error) {
 	return 0, 0, nil
 }
 
-func (m *MockEntityHandler) ParseSetEntityMetadata(p pk.Packet) (int32, []common.MetadataEntry, error) {
+func (m *MockEntityHandler) ParseSetEntityMetadata(p pk.Packet) (int32, []models.MetadataEntry, error) {
 	return 0, nil, nil
 }
 
@@ -122,7 +121,7 @@ func (m *MockEntityHandler) ParseEntityVelocityUpdate(p pk.Packet) (int32, float
 	return 0, 0, 0, 0, nil
 }
 
-func (m *MockEntityHandler) ParseEntityEquipment(p pk.Packet) (int32, []common.EquipmentEntry, error) {
+func (m *MockEntityHandler) ParseEntityEquipment(p pk.Packet) (int32, []models.EquipmentEntry, error) {
 	return 0, nil, nil
 }
 
@@ -134,17 +133,17 @@ func (m *MockEntityHandler) ParseEntityLook(p pk.Packet) (int32, int8, int8, boo
 	return 0, 0, 0, false, nil
 }
 
-func (m *MockEntityHandler) SendInteract(conn common.PacketWriter, entityID int32, hand models.Hand, sneaking bool) error {
+func (m *MockEntityHandler) SendInteract(conn models.PacketWriter, entityID int32, hand models.Hand, sneaking bool) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockEntityHandler) SendInteractAt(conn common.PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
+func (m *MockEntityHandler) SendInteractAt(conn models.PacketWriter, entityID int32, targetX, targetY, targetZ float32, hand models.Hand, sneaking bool) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
 
-func (m *MockEntityHandler) SendAttack(conn common.PacketWriter, entityID int32, sneaking bool) error {
+func (m *MockEntityHandler) SendAttack(conn models.PacketWriter, entityID int32, sneaking bool) error {
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }

@@ -7,6 +7,7 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func appendField(buf *bytes.Buffer, f pk.FieldEncoder) {
 }
 
 func TestOnClientboundPosition_Absolute(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -69,7 +70,7 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 }
 
 func TestOnRegistryData(t *testing.T) {
-	agentInt, err := New(Config{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)

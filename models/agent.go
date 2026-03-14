@@ -72,4 +72,7 @@ type Agent interface {
 	String() string
 
 	GetPacketLogWriter() io.Writer //TODO: use to log start/stop of projectiles
+
+	Config() AgentConfig
+	BlockShapeManager() BlockShapeManager
 }

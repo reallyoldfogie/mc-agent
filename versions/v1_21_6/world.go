@@ -3,6 +3,7 @@ package v1_21_6
 
 import (
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.6/play/clientbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -32,7 +33,7 @@ func (w *worldHandler) ParseBlockUpdate(p pk.Packet) (x, y, z int64, blockStateI
 
 // ParseSectionBlocksUpdate parses a multi-block update packet.
 // Returns the section position and a list of block updates within that section.
-func (w *worldHandler) ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, blocks []common.BlockUpdate, err error) {
+func (w *worldHandler) ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, blocks []models.BlockUpdate, err error) {
 	pkt := cb.NewMultiBlockChange()
 	if err = pkt.Scan(p); err != nil {
 		return 0, nil, common.ErrPacketParse{PacketName: "MultiBlockChange", Cause: err}
@@ -55,7 +56,7 @@ func (w *worldHandler) ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, 
 	//   - bits 4-7: Z within section (0-15)
 	//   - bits 8-11: Y within section (0-15)
 	records := pkt.Records.Get()
-	blocks = make([]common.BlockUpdate, len(records))
+	blocks = make([]models.BlockUpdate, len(records))
 	for i, record := range records {
 		blockState := int32(record) >> 12
 		localX := int64((record >> 8) & 0xF)
@@ -67,7 +68,7 @@ func (w *worldHandler) ParseSectionBlocksUpdate(p pk.Packet) (sectionPos int64, 
 		worldZ := int64(sectionZ)*16 + localZ
 		worldY := int64(sectionY)*16 + localY
 
-		blocks[i] = common.BlockUpdate{
+		blocks[i] = models.BlockUpdate{
 			X:            worldX,
 			Y:            worldY,
 			Z:            worldZ,
@@ -113,7 +114,7 @@ func (w *worldHandler) ParseUnloadChunk(p pk.Packet) (chunkX, chunkZ int32, err 
 
 // SendChunkBatchReceived sends an acknowledgment for received chunk batches.
 // This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
-func (w *worldHandler) SendChunkBatchReceived(conn common.PacketWriter, batchCount float32) error {
+func (w *worldHandler) SendChunkBatchReceived(conn models.PacketWriter, batchCount float32) error {
 	packetID := w.packetMgr.GetServerboundPacketID("ServerboundChunkBatchReceived")
 	if packetID < 0 {
 		return common.ErrPacketParse{PacketName: "ServerboundChunkBatchReceived", Cause: nil}

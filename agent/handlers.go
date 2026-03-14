@@ -12,7 +12,6 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 )
 
@@ -287,18 +286,18 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 
 	// Register entity in the metadata handler's entity registry
 	if a.entityRegistry != nil {
-		var entityTypeStr common.EntityType
+		var entityTypeStr models.EntityType
 		reg := a.GetRegistry("minecraft:entity_type")
 		if reg != nil && reg.IsReady() {
 			if name, ok := reg.GetNameByID(entityType); ok {
 				// Map registry name to EntityType (e.g., "minecraft:player" -> EntityTypePlayer)
-				entityTypeStr = common.EntityType(name)
+				entityTypeStr = models.EntityType(name)
 			}
 		} else {
 			log.Printf("[onAddEntity] Warning: Entity type registry not ready when registering entity %d. Type ID: %d", entityID, entityType)
 		}
 		if entityTypeStr == "" {
-			entityTypeStr = common.EntityTypeUnknown
+			entityTypeStr = models.EntityTypeUnknown
 		}
 		a.entityRegistry.RegisterEntity(entityID, entityTypeStr)
 		log.Printf("[onAddEntity] Registered entity %d as type %s in metadata handler", entityID, entityTypeStr)
@@ -936,7 +935,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	}
 
 	// Process metadata through the handler system if available
-	var metadataResults []common.MetadataProcessResult
+	var metadataResults []models.MetadataProcessResult
 	if a.metadataHandler != nil {
 		for _, entry := range entries {
 			// Process each metadata entry through the handler
@@ -1162,7 +1161,7 @@ func (a *agent) onEntityEquipment(p pk.Packet) error {
 
 	// Log all equipment updates in this packet
 	for _, eq := range equipment {
-		log.Printf("[onEntityEquipment] Entity %d equipment slot %d: itemID=%d, count=%d", entityID, eq.Slot, eq.Item.ItemID, eq.Item.Count)
+		log.Printf("[onEntityEquipment] Entity %d equipment slot %d: itemID=%d, count=%d", entityID, eq.InventorySlot, eq.Item.ItemID, eq.Item.Count)
 	}
 	return nil
 }
@@ -1244,7 +1243,7 @@ func (a *agent) onSetEquipment(p pk.Packet) error {
 	return nil
 }
 
-// onLogin captures the bot's entity ID.
+// onLogin captures the bot's entity ID and resumes physics after respawn or reconnect.
 func (a *agent) onLogin(p pk.Packet) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
@@ -1268,6 +1267,15 @@ func (a *agent) onLogin(p pk.Packet) error {
 		}
 		a.moveMirror.SetEntityMeta(entityID, a.cfg.Auth.Name, id)
 		// Entity type is set via registry callback during configuration phase
+	}
+	// Resume position updates after respawn or reconnect.
+	// If the agent was dead (isDead=true), this clears it so physics can send positions again.
+	// Closes the race window between server respawn and NotifyRespawned() being called.
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
+		notifier.NotifyRespawned()
 	}
 	return nil
 }
@@ -1297,16 +1305,30 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	teleport := a.teleport
 	a.fallbackHandlersMu.RUnlock()
 
-	// Absolute base position
+	// Apply position and rotation with respect to relative flags.
+	// Flag bits: 0x01=X relative, 0x02=Y relative, 0x04=Z relative, 0x08=Yaw relative, 0x10=Pitch relative
 	a.posMu.Lock()
-	a.posX, a.posY, a.posZ = X, Y, Z
-	// Rotation may be relative per flags
-	if Flags&0x08 != 0 {
+	if Flags&0x01 != 0 { // X relative
+		a.posX += X
+	} else {
+		a.posX = X
+	}
+	if Flags&0x02 != 0 { // Y relative
+		a.posY += Y
+	} else {
+		a.posY = Y
+	}
+	if Flags&0x04 != 0 { // Z relative
+		a.posZ += Z
+	} else {
+		a.posZ = Z
+	}
+	if Flags&0x08 != 0 { // Yaw relative
 		a.posYaw += Yaw
 	} else {
 		a.posYaw = Yaw
 	}
-	if Flags&0x10 != 0 {
+	if Flags&0x10 != 0 { // Pitch relative
 		a.posPitch += Pitch
 	} else {
 		a.posPitch = Pitch
@@ -1334,10 +1356,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		syncer.SyncWithServer(a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, true)
 	}
 
-	// Accept teleport BEFORE unlocking mutex.
-	// This prevents a race condition where the physics executor starts sending
-	// movement packets before the teleport confirmation is sent, which causes
-	// "Invalid move player packet received" errors on the server.
+	// Send teleport confirmation before resuming physics to prevent out-of-order packets.
 	// Prefer auto-created player, fall back to injected teleport
 	t := a.player
 	if t == nil {
@@ -1345,6 +1364,9 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	}
 	if t != nil {
 		_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
+	}
+	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
+		notifier.NotifyRespawned()
 	}
 
 	a.posMu.Unlock()

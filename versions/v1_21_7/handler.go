@@ -6,12 +6,12 @@ import (
 	"fmt"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	agent_models "github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/basetypes"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/serverbound"
-	"github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -22,7 +22,7 @@ const (
 	ProtocolVersion = 772
 )
 
-// Handler implements common.VersionHandler for Minecraft 1.21.7.
+// Handler implements models.VersionHandler for Minecraft 1.21.7.
 type Handler struct {
 	packetMgr protocol_models.PacketMgr
 
@@ -56,7 +56,7 @@ func (h *Handler) PacketMgr() protocol_models.PacketMgr {
 }
 
 // Login returns the login phase handler.
-func (h *Handler) Login() common.LoginHandler {
+func (h *Handler) Login() models.LoginHandler {
 	if h.loginHandler == nil {
 		h.loginHandler = &loginHandler{packetMgr: h.packetMgr}
 	}
@@ -64,7 +64,7 @@ func (h *Handler) Login() common.LoginHandler {
 }
 
 // Configuration returns the configuration phase handler.
-func (h *Handler) Configuration() common.ConfigurationHandler {
+func (h *Handler) Configuration() models.ConfigurationHandler {
 	if h.configHandler == nil {
 		h.configHandler = &configurationHandler{packetMgr: h.packetMgr}
 	}
@@ -72,7 +72,7 @@ func (h *Handler) Configuration() common.ConfigurationHandler {
 }
 
 // Play returns the play phase handler.
-func (h *Handler) Play() common.PlayHandler {
+func (h *Handler) Play() models.PlayHandler {
 	if h.playHandler == nil {
 		h.playHandler = &playHandler{packetMgr: h.packetMgr}
 	}
@@ -83,7 +83,7 @@ func (h *Handler) Play() common.PlayHandler {
 
 // configurationHandler is implemented in configuration.go
 
-// playHandler implements common.PlayHandler for 1.21.7.
+// playHandler implements models.PlayHandler for 1.21.7.
 type playHandler struct {
 	packetMgr protocol_models.PacketMgr
 
@@ -96,42 +96,42 @@ type playHandler struct {
 	actions    *actionHandler
 }
 
-func (p *playHandler) Movement() common.MovementHandler {
+func (p *playHandler) Movement() models.MovementHandler {
 	if p.movement == nil {
 		p.movement = &movementHandler{packetMgr: p.packetMgr}
 	}
 	return p.movement
 }
 
-func (p *playHandler) Entities() common.EntityHandler {
+func (p *playHandler) Entities() models.EntityHandler {
 	if p.entities == nil {
 		p.entities = &entityHandler{packetMgr: p.packetMgr}
 	}
 	return p.entities
 }
 
-func (p *playHandler) Containers() common.ContainerHandler {
+func (p *playHandler) Containers() models.ContainerHandler {
 	if p.containers == nil {
 		p.containers = &containerHandler{packetMgr: p.packetMgr}
 	}
 	return p.containers
 }
 
-func (p *playHandler) Chat() common.ChatHandler {
+func (p *playHandler) Chat() models.ChatHandler {
 	if p.chat == nil {
 		p.chat = &chatHandler{packetMgr: p.packetMgr}
 	}
 	return p.chat
 }
 
-func (p *playHandler) World() common.WorldHandler {
+func (p *playHandler) World() models.WorldHandler {
 	if p.world == nil {
 		p.world = &worldHandler{packetMgr: p.packetMgr}
 	}
 	return p.world
 }
 
-func (p *playHandler) Actions() common.ActionHandler {
+func (p *playHandler) Actions() models.ActionHandler {
 	if p.actions == nil {
 		p.actions = &actionHandler{packetMgr: p.packetMgr}
 	}
@@ -140,7 +140,7 @@ func (p *playHandler) Actions() common.ActionHandler {
 
 // SendClientInformation sends client settings/information.
 // In 1.21.7, CommonSettings has 9 fields (including ParticleStatus).
-func (p *playHandler) SendClientInformation(conn common.PacketWriter, info common.ClientInfo) error {
+func (p *playHandler) SendClientInformation(conn models.PacketWriter, info models.ClientInfo) error {
 	pkt := basetypes.NewCommonSettings()
 	pkt.SetPacketID(int32(p.packetMgr.GetServerboundPacketID("ServerboundCommonSettings")))
 	pkt.Locale = pk.String(info.Locale)
@@ -160,14 +160,14 @@ func (p *playHandler) SendClientInformation(conn common.PacketWriter, info commo
 }
 
 // SendCustomPayload sends a custom payload packet (plugin channels).
-func (p *playHandler) SendCustomPayload(conn common.PacketWriter, channel string, payload string) error {
+func (p *playHandler) SendCustomPayload(conn models.PacketWriter, channel string, payload string) error {
 	pkt := sb.NewCustomPayload()
 	pkt.Channel = pk.String(channel)
 	var buf bytes.Buffer
 	if _, err := pk.String(payload).WriteTo(&buf); err != nil {
 		return common.ErrPacketSend{PacketName: "CustomPayload", Cause: err}
 	}
-	pkt.Data = models.RestBuffer{Data: buf.Bytes()}
+	pkt.Data = protocol_models.RestBuffer{Data: buf.Bytes()}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "CustomPayload", Cause: err}
@@ -345,7 +345,7 @@ func (p *playHandler) convertProtocolSlotDisplay(slot cb.SlotDisplay) agent_mode
 }
 
 // BuildPlayerInfoPacket builds a PlayerInfo packet for replay recording (v1.21.7).
-func (p *playHandler) BuildPlayerInfoPacket(uuid [16]byte, name string, properties []common.ProfileProperty) (int32, []byte, error) {
+func (p *playHandler) BuildPlayerInfoPacket(uuid [16]byte, name string, properties []models.ProfileProperty) (int32, []byte, error) {
 	action := cb.PlayerInfoActionBitflags{}
 	action.SetAddPlayer(true)
 	action.SetUpdateGameMode(true)
@@ -408,13 +408,35 @@ func (p *playHandler) BuildPlayerInfoPacket(uuid [16]byte, name string, properti
 	return packetID, packetData, nil
 }
 
+// BuildSpawnEntityPacket builds a SpawnEntity packet for replay recording (v1.21.7).
+// Uses separate velocity X/Y/Z fields (i16).
+func (p *playHandler) BuildSpawnEntityPacket(entityID int32, uuid [16]byte, entityType int32, x, y, z float64, yaw, pitch int8, objectData int32, velX, velY, velZ float64) (int32, []byte, error) {
+	pkt := cb.NewSpawnEntity()
+	pkt.EntityId = pk.VarInt(entityID)
+	pkt.ObjectUUID = pk.UUID(uuid)
+	pkt.Type = pk.VarInt(entityType)
+	pkt.X = pk.Double(x)
+	pkt.Y = pk.Double(y)
+	pkt.Z = pk.Double(z)
+	pkt.Pitch = pk.Byte(pitch)
+	pkt.Yaw = pk.Byte(yaw)
+	pkt.HeadPitch = pk.Byte(yaw)
+	pkt.ObjectData = pk.VarInt(objectData)
+	pkt.VelocityX = pk.Short(int16(velX * 8000))
+	pkt.VelocityY = pk.Short(int16(velY * 8000))
+	pkt.VelocityZ = pk.Short(int16(velZ * 8000))
+	packetID := int32(pkt.PacketID())
+	packetData := pkt.Marshal().Data
+	return packetID, packetData, nil
+}
+
 func ptrVarInt(v int32) *pk.VarInt {
 	val := pk.VarInt(v)
 	return &val
 }
 
 // ExtractPlayerInfoProperties extracts game profile properties from a PlayerInfo packet (v1.21.7).
-func (p *playHandler) ExtractPlayerInfoProperties(packet pk.Packet) []common.ProfileProperty {
+func (p *playHandler) ExtractPlayerInfoProperties(packet pk.Packet) []models.ProfileProperty {
 	// Create a new PlayerInfo packet and scan the raw packet data
 	playerInfoPkt := cb.NewPlayerInfo()
 	if err := playerInfoPkt.Scan(packet); err != nil {
@@ -440,14 +462,14 @@ func (p *playHandler) ExtractPlayerInfoProperties(packet pk.Packet) []common.Pro
 
 	// Extract properties
 	gpProps := gp.Properties.Get()
-	props := make([]common.ProfileProperty, 0, len(gpProps))
+	props := make([]models.ProfileProperty, 0, len(gpProps))
 	for _, prop := range gpProps {
 		name := string(prop.Name)
 		value := string(prop.Value)
 		if name == "" || value == "" {
 			continue
 		}
-		profileProp := common.ProfileProperty{Name: name, Value: value}
+		profileProp := models.ProfileProperty{Name: name, Value: value}
 		if prop.Signature.Has && prop.Signature.Val != nil {
 			profileProp.Signature = string(*prop.Signature.Val)
 		}
@@ -457,7 +479,7 @@ func (p *playHandler) ExtractPlayerInfoProperties(packet pk.Packet) []common.Pro
 }
 
 // ParsePlayerInfo parses a complete PlayerInfo packet and extracts all entries and action data (v1.21.7).
-func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*common.PlayerInfoUpdate, error) {
+func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*models.PlayerInfoUpdate, error) {
 	playerInfoPkt := cb.NewPlayerInfo()
 	if err := playerInfoPkt.Scan(packet); err != nil {
 		return nil, fmt.Errorf("failed to scan PlayerInfo packet: %w", err)
@@ -465,13 +487,13 @@ func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*common.PlayerInfoUpdat
 
 	action := playerInfoPkt.GetAction()
 	dataEntries := playerInfoPkt.GetData().Get()
-	update := &common.PlayerInfoUpdate{
+	update := &models.PlayerInfoUpdate{
 		Action:  uint8(action.UnsignedByte),
-		Entries: make([]common.PlayerInfoEntry, 0, len(dataEntries)),
+		Entries: make([]models.PlayerInfoEntry, 0, len(dataEntries)),
 	}
 
 	for _, entry := range dataEntries {
-		infoEntry := common.PlayerInfoEntry{
+		infoEntry := models.PlayerInfoEntry{
 			UUID: [16]byte(entry.Uuid),
 		}
 
@@ -480,14 +502,14 @@ func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*common.PlayerInfoUpdat
 			if gameProfile, ok := entry.Player.(*basetypes.GameProfile); ok && gameProfile != nil {
 				infoEntry.Name = string(gameProfile.Name)
 				gameProfileProperties := gameProfile.Properties.Get()
-				infoEntry.Properties = make([]common.ProfileProperty, 0, len(gameProfileProperties))
+				infoEntry.Properties = make([]models.ProfileProperty, 0, len(gameProfileProperties))
 				for _, property := range gameProfileProperties {
 					propertyName := string(property.Name)
 					propertyValue := string(property.Value)
 					if propertyName == "" || propertyValue == "" {
 						continue
 					}
-					profileProperty := common.ProfileProperty{Name: propertyName, Value: propertyValue}
+					profileProperty := models.ProfileProperty{Name: propertyName, Value: propertyValue}
 					if property.Signature.Has && property.Signature.Val != nil {
 						profileProperty.Signature = string(*property.Signature.Val)
 					}

@@ -287,6 +287,16 @@ func (msm *MockShapeManager) FullBlockName(blockStateID uint32) string {
 	return msm.blockName(blockStateID)
 }
 
+// GetWaterFlowDirection returns the flow direction (stub for mock - returns zero vector)
+func (msm *MockShapeManager) GetWaterFlowDirection(x, y, z int, world agentmodels.PhysicsWorld) agentmodels.V3 {
+	return agentmodels.V3{} // No flow in mock
+}
+
+// GetWaterFlowSpeed returns the flow speed (stub for mock - returns zero)
+func (msm *MockShapeManager) GetWaterFlowSpeed(blockStateID uint32) float64 {
+	return 0.0 // No flow in mock
+}
+
 // TestLogger provides logging for tests
 type TestLogger struct {
 	messages []string

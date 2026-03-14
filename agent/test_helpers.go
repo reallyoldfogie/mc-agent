@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // captureChat is a Chat implementation that captures messages sent via SendMessage.
@@ -99,7 +100,7 @@ func toLower(s string) string {
 // setupChatCapture is a simple helper to create an agent and return a captureChat for testing.
 // This is the preferred way for tests that need to capture chat output.
 func setupChatCapture(t interface{ Fatalf(string, ...interface{}) }, version string) (*agent, *captureChat) {
-	agentInt, err := New(Config{Version: version, Address: "127.0.0.1:25565"})
+	agentInt, err := New(models.AgentConfig{Version: version, Address: "127.0.0.1:25565"})
 	if err != nil {
 		t.Fatalf("Failed to create agent: %v", err)
 	}

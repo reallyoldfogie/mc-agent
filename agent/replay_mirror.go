@@ -15,7 +15,6 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 	gouuid "github.com/google/uuid"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 )
@@ -25,7 +24,7 @@ import (
 type replayMovementMirror struct {
 	rec            *recorder.Recorder
 	pm             protocol_models.PacketMgr
-	versionHandler common.VersionHandler
+	versionHandler models.VersionHandler
 
 	mu                   sync.Mutex
 	entityID             int32
@@ -64,7 +63,7 @@ type replayMovementMirror struct {
 
 // NewReplayMovementMirror constructs a movement mirror if both recorder and
 // packet manager are provided. It returns nil when either dependency is nil.
-func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, versionHandler common.VersionHandler, sp models.SkinProvider) MovementMirror {
+func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, versionHandler models.VersionHandler, sp models.SkinProvider) MovementMirror {
 	if rec == nil || pm == nil {
 		return nil
 	}
@@ -435,24 +434,24 @@ func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z flo
 }
 
 func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float32) {
-	// Build add entity packet - pk.Marshal already produces Data WITHOUT packet ID
-	add := pk.Marshal(
-		m.cbidAddEnt,
-		pk.VarInt(m.entityID),
-		pk.UUID(m.uuid),
-		pk.VarInt(m.entityType),
-		pk.Double(x),
-		pk.Double(y),
-		pk.Double(z),
-		pk.Angle(angleToByte(pitch)),
-		pk.Angle(angleToByte(yaw)),
-		pk.Angle(angleToByte(yaw)),
-		pk.VarInt(0), // data
-		pk.Short(0),  // velX
-		pk.Short(0),  // velY
-		pk.Short(0),  // velZ
+	// Build SpawnEntity packet using version-aware handler
+	// Converts float32 yaw/pitch to int8 angle bytes
+	yawByte := angleToByte(yaw)
+	pitchByte := angleToByte(pitch)
+	packetID, packetData, err := m.versionHandler.Play().BuildSpawnEntityPacket(
+		m.entityID,
+		m.uuid,
+		m.entityType,
+		x, y, z,
+		int8(yawByte), int8(pitchByte),
+		0,     // objectData
+		0, 0, 0, // velX, velY, velZ (zero velocity on spawn)
 	)
-	_ = m.rec.RecordNow(int32(add.ID), add.Data)
+	if err != nil {
+		log.Printf("[ReplayMirror] Error building SpawnEntity packet: %v", err)
+		return
+	}
+	_ = m.rec.RecordNow(packetID, packetData)
 }
 
 func angleToByte(f float32) byte {
@@ -551,9 +550,9 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 		return
 	}
 
-	props := make([]common.ProfileProperty, 0, len(m.properties))
+	props := make([]models.ProfileProperty, 0, len(m.properties))
 	for _, property := range m.properties {
-		props = append(props, common.ProfileProperty{
+		props = append(props, models.ProfileProperty{
 			Name:      property.Name,
 			Value:     property.Value,
 			Signature: property.Signature,

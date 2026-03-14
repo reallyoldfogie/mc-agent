@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 func TestStopFileWatcher(t *testing.T) {
@@ -14,7 +16,7 @@ func TestStopFileWatcher(t *testing.T) {
 	stopFile := filepath.Join(tmpDir, "test.stop")
 
 	// Create a minimal agent config
-	cfg := Config{
+	cfg := models.AgentConfig{
 		Address:      "test:25565",
 		Version:      "1.21.5",
 		StopFilePath: stopFile,
@@ -90,7 +92,7 @@ func TestStopFileWatcher(t *testing.T) {
 
 func TestStopFileWatcherDisabled(t *testing.T) {
 	// Create agent without stop file path
-	cfg := Config{
+	cfg := models.AgentConfig{
 		Address:      "test:25565",
 		Version:      "1.21.5",
 		StopFilePath: "", // Disabled
@@ -126,7 +128,7 @@ func TestRemoveStopFileIfExists(t *testing.T) {
 	tmpDir := t.TempDir()
 	stopFile := filepath.Join(tmpDir, "test.stop")
 
-	cfg := Config{
+	cfg := models.AgentConfig{
 		Address: "test:25565",
 		Version: "1.21.5",
 	}

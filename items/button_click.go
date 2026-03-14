@@ -10,7 +10,7 @@ import (
 type ButtonClicker struct {
 	client           models.PacketSender
 	packetMgr        protocol_models.PacketMgr
-	containerHandler common.ContainerHandler
+	containerHandler models.ContainerHandler
 }
 
 // NewButtonClicker creates a new ButtonClicker
@@ -23,7 +23,7 @@ func NewButtonClicker(client models.PacketSender, packetMgr protocol_models.Pack
 
 // SetContainerHandler sets the version-specific container handler.
 // This must be called before using ClickButton for proper version-specific packet handling.
-func (bc *ButtonClicker) SetContainerHandler(handler common.ContainerHandler) {
+func (bc *ButtonClicker) SetContainerHandler(handler models.ContainerHandler) {
 	bc.containerHandler = handler
 }
 

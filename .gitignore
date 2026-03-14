@@ -62,6 +62,7 @@ tmp/
 /testing/versions/
 /testing/libraries/
 /libraries/
+*.test
 
 # Credential and authentication files
 *creds*

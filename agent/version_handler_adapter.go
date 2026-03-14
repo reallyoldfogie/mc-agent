@@ -4,18 +4,18 @@ import (
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 )
 
-// versionHandlerAdapter adapts mc-agent's common.VersionHandler to mc-bot-go's bot.VersionHandler interface
+// versionHandlerAdapter adapts mc-agent's models.VersionHandler to mc-bot-go's bot.VersionHandler interface
 type versionHandlerAdapter struct {
-	handler common.VersionHandler
+	handler models.VersionHandler
 }
 
 // NewVersionHandlerAdapter creates a new adapter that wraps an mc-agent version handler
 // for use with mc-bot-go
-func NewVersionHandlerAdapter(handler common.VersionHandler) bot.VersionHandler {
+func NewVersionHandlerAdapter(handler models.VersionHandler) bot.VersionHandler {
 	return &versionHandlerAdapter{handler: handler}
 }
 
@@ -34,7 +34,7 @@ func (a *versionHandlerAdapter) Configuration() bot.ConfigurationHandler {
 
 // loginHandlerAdapter adapts mc-agent's LoginHandler to mc-bot-go's bot.LoginHandler interface
 type loginHandlerAdapter struct {
-	handler common.LoginHandler
+	handler models.LoginHandler
 }
 
 func (a *loginHandlerAdapter) SendLoginStart(conn bot.PacketWriter, username string, uuid [16]byte) error {
@@ -61,7 +61,7 @@ func (a *loginHandlerAdapter) ParseEncryptionRequest(p pk.Packet) (serverID stri
 
 // configurationHandlerAdapter adapts mc-agent's ConfigurationHandler to mc-bot-go's bot.ConfigurationHandler interface
 type configurationHandlerAdapter struct {
-	handler common.ConfigurationHandler
+	handler models.ConfigurationHandler
 }
 
 func (a *configurationHandlerAdapter) SendFinishConfiguration(conn bot.PacketWriter) error {

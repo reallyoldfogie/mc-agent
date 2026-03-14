@@ -5,15 +5,12 @@ import "github.com/reallyoldfogie/mc-agent/models"
 // Type aliases to models for plan helpers.
 type (
 	Step          = models.Step
-	Plan          = models.Plan
 	PlanPolicy    = models.PlanPolicy
 	ErrorPolicy   = models.ErrorPolicy
 	StepStatus    = models.StepStatus
 	StepResult    = models.StepResult
 	PlanState     = models.PlanState
-	PlanStatus    = models.PlanStatus
 	PlanEventType = models.PlanEventType
-	PlanEvent     = models.PlanEvent
 )
 
 const (

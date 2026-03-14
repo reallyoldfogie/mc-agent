@@ -31,7 +31,7 @@ type ContainerHelper struct {
 	screenMgr        mcscreen.Manager
 	client           bot.Client
 	packetMgr        protocol_models.PacketMgr
-	movementHandler  common.MovementHandler // Version-specific movement handler
+	movementHandler  models.MovementHandler // Version-specific movement handler
 	currentWindowID  byte
 	entityIDProvider EntityIDProvider // Optional: for entity containers that need player's entity ID
 }
@@ -49,7 +49,7 @@ func NewContainerHelper(itemUsage *ItemUsage, invMgr models.InventoryManager, sc
 
 // SetMovementHandler sets the version-specific movement handler.
 // This must be called before using OpenEntityContainer for proper version-specific packet handling.
-func (ch *ContainerHelper) SetMovementHandler(handler common.MovementHandler) {
+func (ch *ContainerHelper) SetMovementHandler(handler models.MovementHandler) {
 	ch.movementHandler = handler
 }
 

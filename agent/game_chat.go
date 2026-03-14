@@ -9,6 +9,8 @@ import (
 	"github.com/Tnze/go-mc/chat"
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Placeholder stubs for game and chat handlers to be filled during migration
@@ -46,13 +48,21 @@ func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
 // onDeath handles player death events.
 func (a *agent) onDeath() {
 	log.Printf("Died and respawn scheduled")
-	// Auto-respawn after 5 seconds when respawner is set
-	a.fallbackHandlersMu.RLock()
-	var r Respawner = nil
-	if rr, ok := any(a.teleport).(Respawner); ok {
+	// Pause physics position updates while dead to prevent corrupting server-side playerdata
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
+		notifier.NotifyDead()
+	}
+	// Auto-respawn after 5 seconds when respawner is available
+	// Prefer auto-created player subsystem, fall back to injected teleport
+	var r models.Respawner
+	if rr, ok := any(a.player).(models.Respawner); ok {
+		r = rr
+	} else if rr, ok := any(a.teleport).(models.Respawner); ok {
 		r = rr
 	}
-	a.fallbackHandlersMu.RUnlock()
 	if r != nil {
 		go func() { time.Sleep(5 * time.Second); _ = r.Respawn() }()
 	}

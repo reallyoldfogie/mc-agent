@@ -4,20 +4,21 @@ import (
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.11/login/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.11/login/serverbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// loginHandler implements common.LoginHandler for 1.21.11.
+// loginHandler implements models.LoginHandler for 1.21.11.
 type loginHandler struct {
 	packetMgr protocol_models.PacketMgr
 }
 
 // SendLoginStart sends a login start packet with username and UUID.
 // Uses the generated LoginStart packet struct from mc-protocol-go.
-func (l *loginHandler) SendLoginStart(conn common.PacketWriter, username string, uuid [16]byte) error {
+func (l *loginHandler) SendLoginStart(conn models.PacketWriter, username string, uuid [16]byte) error {
 	pkt := sb.NewLoginStart()
 	pkt.Username = pk.String(username)
 	pkt.PlayerUUID = pk.UUID(uuid)
@@ -32,7 +33,7 @@ func (l *loginHandler) SendLoginStart(conn common.PacketWriter, username string,
 
 // SendEncryptionResponse sends an encryption response packet with shared secret and verify token.
 // Uses the generated EncryptionBegin packet struct from mc-protocol-go.
-func (l *loginHandler) SendEncryptionResponse(conn common.PacketWriter, sharedSecret, verifyToken []byte) error {
+func (l *loginHandler) SendEncryptionResponse(conn models.PacketWriter, sharedSecret, verifyToken []byte) error {
 	pkt := sb.NewEncryptionBegin()
 	pkt.SharedSecret = pk.ByteArray(sharedSecret)
 	pkt.VerifyToken = pk.ByteArray(verifyToken)
@@ -48,7 +49,7 @@ func (l *loginHandler) SendEncryptionResponse(conn common.PacketWriter, sharedSe
 
 // SendLoginAcknowledged sends a login acknowledged packet to transition to configuration state.
 // Uses the generated LoginAcknowledged packet struct from mc-protocol-go.
-func (l *loginHandler) SendLoginAcknowledged(conn common.PacketWriter) error {
+func (l *loginHandler) SendLoginAcknowledged(conn models.PacketWriter) error {
 	pkt := sb.NewLoginAcknowledged()
 
 	log.Printf("[v1.21.11 Login] SendLoginAcknowledged")

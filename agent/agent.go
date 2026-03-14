@@ -41,8 +41,7 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_utils "github.com/reallyoldfogie/mc-protocol-go/utils"
 
-	"github.com/reallyoldfogie/mc-replay-go/adapters"
-	"github.com/reallyoldfogie/mc-replay-go/mcpr"
+"github.com/reallyoldfogie/mc-replay-go/mcpr"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 )
 
@@ -113,7 +112,7 @@ type activeProjectileInfo struct {
 }
 
 type agent struct {
-	cfg Config
+	cfg models.AgentConfig
 
 	// lifecycle
 	ctx    context.Context
@@ -144,7 +143,7 @@ type agent struct {
 	packetMgr      protocol_models.PacketMgr
 	blockMgr       protocol_versions.BlockMgr
 	soundMgr       protocol_versions.SoundMgr
-	versionHandler common.VersionHandler // optional version-specific packet handler
+	versionHandler models.VersionHandler // optional version-specific packet handler
 
 	// internal state placeholders (expanded during migration)
 	// tracking
@@ -247,12 +246,12 @@ type agent struct {
 	activeProjectiles    map[int32]*activeProjectileInfo
 
 	// entity metadata handling
-	entityRegistry  *common.EntityRegistry
-	metadataHandler common.MetadataHandler
+	entityRegistry  *models.EntityRegistry
+	metadataHandler models.MetadataHandler
 }
 
 // New constructs an agent with the provided configuration.
-func New(cfg Config) (models.Agent, error) {
+func New(cfg models.AgentConfig) (models.Agent, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -291,7 +290,7 @@ func New(cfg Config) (models.Agent, error) {
 		commandRegistry:    actions.NewRegistry(),
 		pendingProjectiles: []pendingProjectileInfo{},
 		activeProjectiles:  map[int32]*activeProjectileInfo{},
-		entityRegistry:     common.NewEntityRegistry(),
+		entityRegistry:     models.NewEntityRegistry(),
 	}
 	a.planRunner = plan.NewRunner(a)
 
@@ -380,7 +379,7 @@ func (a *agent) Init(ctx context.Context) error {
 
 	// Initialize entity metadata handler with entity registry
 	if a.entityRegistry != nil {
-		a.metadataHandler = common.NewBasicMetadataProcessor(a.entityRegistry)
+		a.metadataHandler = models.NewBasicMetadataProcessor(a.entityRegistry)
 		log.Printf("[Agent] Entity metadata handler initialized")
 	}
 
@@ -548,7 +547,10 @@ func (a *agent) Init(ctx context.Context) error {
 			executorType = movement.UnknownExecutor
 		} else {
 			// Physics executor can be used
-			execConfig.World = movement.NewPhysicsWorldAdapter(a.worldMgr)
+			// Create physics world adapter with entity collision support
+			physicsWorldAdapter := movement.NewPhysicsWorldAdapter(a.worldMgr)
+			physicsWorldAdapter.WithEntityProvider(a) // Agent implements EntityProvider
+			execConfig.World = physicsWorldAdapter
 			execConfig.ShapeProvider = shapeMgr
 		}
 
@@ -565,7 +567,7 @@ func (a *agent) Init(ctx context.Context) error {
 		// Wire up version handler to movement executor if available
 		if a.versionHandler != nil {
 			if movementHandlerSetter, ok := a.moveExec.(interface {
-				SetMovementHandler(common.MovementHandler)
+				SetMovementHandler(models.MovementHandler)
 			}); ok {
 				movementHandlerSetter.SetMovementHandler(a.versionHandler.Play().Movement())
 				log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.cfg.Name, a.versionHandler.Version())
@@ -785,8 +787,9 @@ func (a *agent) Init(ctx context.Context) error {
 				}
 				// Use bundle delimiter filtering to avoid recording unconsumed buffer data
 				// Login phase packets (including Set Compression) are filtered at the bot client level
-				bundleDelimiterID := int32(a.packetMgr.GetClientboundPacketID("ClientboundBundleDelimiter"))
-				a.client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
+				// bundleDelimiterID := int32(a.packetMgr.GetClientboundPacketID("ClientboundBundleDelimiter"))
+				// DISABLED: Duplicate recording - packets already recorded by mc-bot-go/bot/replay.go
+			// a.client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
 			} else {
 				// If recorder setup fails, continue without recording
 			}
@@ -794,6 +797,14 @@ func (a *agent) Init(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (a *agent) BlockShapeManager() models.BlockShapeManager {
+	return a.shapeMgr
+}
+
+func (a *agent) Config() models.AgentConfig {
+	return a.cfg
 }
 
 // Start connects to the server and begins background tasks.
@@ -1142,7 +1153,7 @@ func (a *agent) ResolvePlayerUUIDByName(name string) ([16]byte, error) {
 	f := a.playerUUIDByName
 	a.playerResolversMu.RUnlock()
 	if f == nil {
-		return [16]byte{}, ErrInvalidConfig("player UUID resolver not set")
+		return [16]byte{}, models.ErrInvalidConfig("player UUID resolver not set")
 	}
 	return f(name)
 }
@@ -1220,11 +1231,7 @@ func (a *agent) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) 
 	a.moveExec.SetTelemetryRecorder(recorder)
 }
 
-// Errors
-type configError string
-
-func (e configError) Error() string     { return string(e) }
-func ErrInvalidConfig(msg string) error { return configError(msg) }
+// errors
 
 var ErrAlreadyInitialized = errors.New("agent: already initialized")
 
@@ -1296,7 +1303,7 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 	versionAutoDetected = false
 	if a.cfg.Version == "" {
 		if a.cfg.Address == "" {
-			return false, ErrInvalidConfig("cannot auto-detect version: Address not set")
+			return false, models.ErrInvalidConfig("cannot auto-detect version: Address not set")
 		}
 		detectedVersion, detectedProtocol, err := rof_utils.CheckServerVersion(a.cfg.Address, 0)
 		if err != nil {
@@ -1314,13 +1321,13 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 			a.cfg.ProtocolVersion = proto
 			log.Printf("[%s] Resolved protocol %d for version %s", name, proto, a.cfg.Version)
 		} else {
-			return false, ErrInvalidConfig(fmt.Sprintf("unknown version %q: cannot resolve protocol version", a.cfg.Version))
+			return false, models.ErrInvalidConfig(fmt.Sprintf("unknown version %q: cannot resolve protocol version", a.cfg.Version))
 		}
 	} else {
 		// Validate that specified ProtocolVersion matches Version
 		if expectedProto, ok := protocol_versions.VersionProtocol[a.cfg.Version]; ok {
 			if a.cfg.ProtocolVersion != expectedProto {
-				return false, ErrInvalidConfig(fmt.Sprintf(
+				return false, models.ErrInvalidConfig(fmt.Sprintf(
 					"version/protocol mismatch: version %s expects protocol %d, but ProtocolVersion is %d",
 					a.cfg.Version, expectedProto, a.cfg.ProtocolVersion))
 			}
@@ -1331,7 +1338,7 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 	if a.cfg.VersionHandler != nil {
 		handlerVersion := a.cfg.VersionHandler.Version()
 		if handlerVersion != a.cfg.Version {
-			return false, ErrInvalidConfig(fmt.Sprintf(
+			return false, models.ErrInvalidConfig(fmt.Sprintf(
 				"VersionHandler mismatch: handler is for %s, but Config.Version is %s",
 				handlerVersion, a.cfg.Version))
 		}
@@ -1342,7 +1349,7 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 	if a.cfg.PacketMgr == nil {
 		a.cfg.PacketMgr = protocol_versions.GetPacketMgrForVersion(a.cfg.Version)
 		if a.cfg.PacketMgr == nil {
-			return false, ErrInvalidConfig(fmt.Sprintf("no PacketMgr available for version %s", a.cfg.Version))
+			return false, models.ErrInvalidConfig(fmt.Sprintf("no PacketMgr available for version %s", a.cfg.Version))
 		}
 		log.Printf("[%s] Derived PacketMgr for version %s", name, a.cfg.Version)
 	}
@@ -1360,7 +1367,7 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 			log.Printf("[%s] Warning: no VersionHandler for %s (using provided client without version-specific handling)", name, a.cfg.Version)
 		} else if vh == nil {
 			if a.cfg.Client == nil {
-				return false, ErrInvalidConfig(fmt.Sprintf(
+				return false, models.ErrInvalidConfig(fmt.Sprintf(
 					"no VersionHandler available for version %s (supported: %v)",
 					a.cfg.Version, common.SupportedVersions()))
 			}

@@ -5,6 +5,7 @@ import (
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/serverbound"
@@ -21,7 +22,7 @@ type movementHandler struct {
 
 // SendPosition sends a position update packet (position only, no rotation).
 // Uses the generated Position packet struct from mc-protocol-go.
-func (m *movementHandler) SendPosition(conn common.PacketWriter, x, y, z float64, onGround bool) error {
+func (m *movementHandler) SendPosition(conn models.PacketWriter, x, y, z float64, onGround bool) error {
 	pkt := sb.NewPosition()
 	pkt.X = pk.Double(x)
 	pkt.Y = pk.Double(y)
@@ -38,7 +39,7 @@ func (m *movementHandler) SendPosition(conn common.PacketWriter, x, y, z float64
 
 // SendPositionAndRotation sends a combined position and rotation packet.
 // Uses the generated PositionLook packet struct from mc-protocol-go.
-func (m *movementHandler) SendPositionAndRotation(conn common.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (m *movementHandler) SendPositionAndRotation(conn models.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
 	pkt := sb.NewPositionLook()
 	pkt.X = pk.Double(x)
 	pkt.Y = pk.Double(y)
@@ -58,7 +59,7 @@ func (m *movementHandler) SendPositionAndRotation(conn common.PacketWriter, x, y
 
 // SendRotation sends a rotation update packet (rotation only, no position).
 // Uses the generated Look packet struct from mc-protocol-go.
-func (m *movementHandler) SendRotation(conn common.PacketWriter, yaw, pitch float32, onGround bool) error {
+func (m *movementHandler) SendRotation(conn models.PacketWriter, yaw, pitch float32, onGround bool) error {
 	pkt := sb.NewLook()
 	pkt.Yaw = pk.Float(yaw)
 	pkt.Pitch = pk.Float(pitch)
@@ -87,7 +88,7 @@ func (m *movementHandler) SendRotation(conn common.PacketWriter, yaw, pitch floa
 //   - 6: Stop jump with horse  -> EntityAction "stop_horse_jump"
 //   - 7: Open horse inventory  -> EntityAction "open_vehicle_inventory"
 //   - 8: Start flying with elytra -> EntityAction "start_elytra_flying"
-func (m *movementHandler) SendPlayerCommand(conn common.PacketWriter, entityID, actionID int32) error {
+func (m *movementHandler) SendPlayerCommand(conn models.PacketWriter, entityID, actionID int32) error {
 	// Handle sneaking via PlayerInput packet (new in 1.21.7)
 	if actionID == common.ActionStartSneaking {
 		m.isSneaking = true
@@ -136,7 +137,7 @@ func (m *movementHandler) SendPlayerCommand(conn common.PacketWriter, entityID, 
 
 // sendPlayerInput sends a PlayerInput packet with current movement states.
 // This is the new packet in 1.21.7 for handling movement inputs including sneaking.
-func (m *movementHandler) sendPlayerInput(conn common.PacketWriter) error {
+func (m *movementHandler) sendPlayerInput(conn models.PacketWriter) error {
 	pkt := sb.NewPlayerInput()
 	pkt.Inputs.SetShift(m.isSneaking)
 	pkt.Inputs.SetSprint(m.isSprinting)
@@ -153,7 +154,7 @@ func (m *movementHandler) sendPlayerInput(conn common.PacketWriter) error {
 
 // SendTeleportConfirm confirms a server-requested teleport.
 // Uses the generated TeleportConfirm packet struct from mc-protocol-go.
-func (m *movementHandler) SendTeleportConfirm(conn common.PacketWriter, teleportID int32) error {
+func (m *movementHandler) SendTeleportConfirm(conn models.PacketWriter, teleportID int32) error {
 	pkt := sb.NewTeleportConfirm()
 	pkt.TeleportId = pk.VarInt(teleportID)
 
@@ -170,7 +171,7 @@ func (m *movementHandler) SendTeleportConfirm(conn common.PacketWriter, teleport
 //
 // Flags:
 //   - 0x02: Is flying
-func (m *movementHandler) SendPlayerAbilities(conn common.PacketWriter, flags byte) error {
+func (m *movementHandler) SendPlayerAbilities(conn models.PacketWriter, flags byte) error {
 	pkt := sb.NewAbilities()
 	pkt.Flags = pk.Byte(flags)
 
@@ -263,21 +264,21 @@ func (m *movementHandler) ParseServerboundStatus(p pk.Packet) (onGround bool, er
 // Convenience methods for common actions
 
 // SendStartSneaking sends a command to start sneaking.
-func (m *movementHandler) SendStartSneaking(conn common.PacketWriter, entityID int32) error {
+func (m *movementHandler) SendStartSneaking(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStartSneaking)
 }
 
 // SendStopSneaking sends a command to stop sneaking.
-func (m *movementHandler) SendStopSneaking(conn common.PacketWriter, entityID int32) error {
+func (m *movementHandler) SendStopSneaking(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStopSneaking)
 }
 
 // SendStartSprinting sends a command to start sprinting.
-func (m *movementHandler) SendStartSprinting(conn common.PacketWriter, entityID int32) error {
+func (m *movementHandler) SendStartSprinting(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStartSprinting)
 }
 
 // SendStopSprinting sends a command to stop sprinting.
-func (m *movementHandler) SendStopSprinting(conn common.PacketWriter, entityID int32) error {
+func (m *movementHandler) SendStopSprinting(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStopSprinting)
 }

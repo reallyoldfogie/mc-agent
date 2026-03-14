@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
@@ -16,7 +17,7 @@ func (a *agent) FindSlotWith(ctx context.Context, itemName string, windowID int)
 		return -1, false, ctx.Err()
 	}
 	if a.itemMgr == nil {
-		return -1, false, ErrInvalidConfig("item manager not initialized")
+		return -1, false, models.ErrInvalidConfig("item manager not initialized")
 	}
 
 	normalized := normalizeItemName(itemName)
