@@ -316,3 +316,31 @@ func (e *entityHandler) ParseEntityLook(p pk.Packet) (entityID int32, yaw, pitch
 
 	return entityID, yaw, pitch, onGround, nil
 }
+
+// ParseDamageEvent parses a DamageEvent packet.
+// Returns entity ID, source type ID, source cause entity ID, source direct entity ID,
+// and optional source position. Entity IDs of 0 mean "no entity" (protocol sends ID+1).
+func (e *entityHandler) ParseDamageEvent(p pk.Packet) (entityID int32, sourceTypeID int32, sourceCauseID int32, sourceDirectID int32, sourceX, sourceY, sourceZ float64, hasSourcePosition bool, err error) {
+	pkt := cb.NewDamageEvent()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, 0, 0, 0, 0, false, common.ErrPacketParse{PacketName: "DamageEvent", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	sourceTypeID = int32(pkt.SourceTypeId)
+	// Protocol sends entity ID + 1, where 0 means "no entity"
+	sourceCauseID = int32(pkt.SourceCauseId) - 1
+	sourceDirectID = int32(pkt.SourceDirectId) - 1
+
+	if pos := pkt.SourcePosition.Pointer(); pos != nil {
+		hasSourcePosition = true
+		sourceX = float64(pos.X)
+		sourceY = float64(pos.Y)
+		sourceZ = float64(pos.Z)
+	}
+
+	log.Printf("[%s][ParseDamageEvent] entityID=%d sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
+		"1.21.4", entityID, sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ)
+
+	return entityID, sourceTypeID, sourceCauseID, sourceDirectID, sourceX, sourceY, sourceZ, hasSourcePosition, nil
+}

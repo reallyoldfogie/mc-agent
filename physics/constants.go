@@ -138,6 +138,17 @@ const (
 	PlayerCollisionHeight = 1.8 // Vertical dimension (Y)
 )
 
+// Knockback constants (vanilla Minecraft values)
+const (
+	// KnockbackHorizontalStrength is the horizontal velocity applied per knockback event.
+	// Vanilla Minecraft applies 0.4 blocks/tick in the attack direction.
+	KnockbackHorizontalStrength = 0.4
+
+	// KnockbackVerticalStrength is the upward velocity applied per knockback event.
+	// Vanilla Minecraft always applies a 0.4 blocks/tick upward component.
+	KnockbackVerticalStrength = 0.4
+)
+
 // Water physics constants
 const (
 	// Water flow speed when agent is in flowing water

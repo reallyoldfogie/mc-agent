@@ -147,3 +147,7 @@ func (m *MockEntityHandler) SendAttack(conn models.PacketWriter, entityID int32,
 	var buf bytes.Buffer
 	return conn.WritePacket(pk.Packet{Data: buf.Bytes()})
 }
+
+func (m *MockEntityHandler) ParseDamageEvent(p pk.Packet) (int32, int32, int32, int32, float64, float64, float64, bool, error) {
+	return 0, 0, 0, 0, 0, 0, 0, false, nil
+}

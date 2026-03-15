@@ -89,6 +89,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onEntityStatus,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDamageEvent"),
+			Name:     "ClientboundDamageEvent",
+			Priority: 0,
+			F:        a.onDamageEvent,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundGameEvent"),
 			Name:     "ClientboundGameEvent",
 			Priority: 0,
@@ -674,6 +680,110 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 		e.LastMetadataUpdate = time.Now() // Record when velocity was updated for interpolation
 	}
 	a.entitiesMu.Unlock()
+	return nil
+}
+
+// onDamageEvent handles ClientboundDamageEvent packets.
+// When the agent is damaged, this calculates and applies knockback based on the damage source.
+// Knockback direction is determined from either:
+//  1. The tracked position of the attacking entity (sourceDirectID or sourceCauseID)
+//  2. The explicit source position provided in the packet
+//
+// This complements onEntityVelocityUpdate which handles server-applied velocity (used for
+// knockback enchantment levels > 0, explosions, etc.). The DamageEvent handler provides
+// a fallback for cases where the server doesn't send a velocity packet (e.g. fist attacks
+// with no knockback enchantment that still cause visual/physics knockback).
+func (a *agent) onDamageEvent(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	entityID, sourceTypeID, sourceCauseID, sourceDirectID, sourceX, sourceY, sourceZ, hasSourcePosition, err :=
+		a.versionHandler.Play().Entities().ParseDamageEvent(p)
+	if err != nil {
+		return err
+	}
+
+	// Only process knockback for the agent itself
+	botEntityID := a.GetEntityID()
+	if entityID != botEntityID {
+		return nil
+	}
+
+	log.Printf("[onDamageEvent] Agent damaged: sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
+		sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ)
+
+	// Determine the attacker position for knockback direction.
+	// Priority: sourceDirectID entity position > sourceCauseID entity position > explicit source position.
+	var attackerX, attackerZ float64
+	var hasAttackerPos bool
+
+	// Try the direct source entity first (e.g. the arrow or the player hitting us)
+	if sourceDirectID >= 0 {
+		a.entitiesMu.RLock()
+		if attackerEntity, ok := a.entities[sourceDirectID]; ok {
+			attackerX = attackerEntity.X
+			attackerZ = attackerEntity.Z
+			hasAttackerPos = true
+		}
+		a.entitiesMu.RUnlock()
+	}
+
+	// Fall back to the cause entity (e.g. the player who shot the arrow)
+	if !hasAttackerPos && sourceCauseID >= 0 {
+		a.entitiesMu.RLock()
+		if causeEntity, ok := a.entities[sourceCauseID]; ok {
+			attackerX = causeEntity.X
+			attackerZ = causeEntity.Z
+			hasAttackerPos = true
+		}
+		a.entitiesMu.RUnlock()
+	}
+
+	// Fall back to the explicit source position from the packet
+	if !hasAttackerPos && hasSourcePosition {
+		attackerX = sourceX
+		attackerZ = sourceZ
+		hasAttackerPos = true
+	}
+
+	if !hasAttackerPos {
+		log.Printf("[onDamageEvent] No attacker position available for knockback calculation")
+		return nil
+	}
+
+	// Calculate knockback direction: attacker → agent (push away from attacker)
+	agentX, _, agentZ, _, _, initialized := a.GetPosition()
+	if !initialized {
+		return nil
+	}
+
+	dirX := agentX - attackerX
+	dirZ := agentZ - attackerZ
+
+	// Normalize the direction vector
+	magnitude := math.Sqrt(dirX*dirX + dirZ*dirZ)
+	if magnitude < 0.01 {
+		// Attacker at same position — no meaningful knockback direction
+		log.Printf("[onDamageEvent] Attacker too close for directional knockback (dist=%.4f)", magnitude)
+		return nil
+	}
+	dirX /= magnitude
+	dirZ /= magnitude
+
+	// Apply knockback velocity (vanilla: 0.4 horizontal, 0.4 vertical)
+	knockbackX := dirX * physics.KnockbackHorizontalStrength
+	knockbackZ := dirZ * physics.KnockbackHorizontalStrength
+	knockbackY := physics.KnockbackVerticalStrength
+
+	if err := a.moveExec.SetVelocity(knockbackX, knockbackY, knockbackZ); err != nil {
+		log.Printf("[onDamageEvent] Error applying knockback velocity: %v", err)
+		return nil
+	}
+
+	log.Printf("[onDamageEvent] Applied knockback: vel=(%.4f, %.4f, %.4f) dir=(%.2f, %.2f) from attacker at (%.2f, %.2f)",
+		knockbackX, knockbackY, knockbackZ, dirX, dirZ, attackerX, attackerZ)
+
 	return nil
 }
 

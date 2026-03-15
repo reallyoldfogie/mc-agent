@@ -127,8 +127,18 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 	require.NoError(t, err, "spawn agent")
 	t.Cleanup(func() {
-		if agent != nil && agent.BotClient() != nil {
-			_ = agent.BotClient().Close()
+		if agent != nil {
+			// CRITICAL: Stop agent first to finalize replay recordings
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := agent.Stop(stopCtx); err != nil {
+				t.Logf("Warning: agent stop failed: %v", err)
+			}
+			stopCancel()
+
+			// Then close bot client
+			if agent.BotClient() != nil {
+				_ = agent.BotClient().Close()
+			}
 		}
 	})
 

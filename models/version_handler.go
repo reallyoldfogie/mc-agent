@@ -284,6 +284,13 @@ type EntityHandler interface {
 	// entityID: target entity
 	// sneaking: whether player is sneaking
 	SendAttack(conn PacketWriter, entityID int32, sneaking bool) error
+
+	// ParseDamageEvent parses a ClientboundDamageEvent packet.
+	// Returns the damaged entity ID, damage source type ID, the entity that caused the damage
+	// (sourceCauseID, 0 if none), the entity that directly dealt the damage (sourceDirectID, 0 if none),
+	// and an optional source position.
+	// sourceCauseID and sourceDirectID use 0 to mean "no entity" (protocol sends ID+1, 0 = absent).
+	ParseDamageEvent(p pk.Packet) (entityID int32, sourceTypeID int32, sourceCauseID int32, sourceDirectID int32, sourceX, sourceY, sourceZ float64, hasSourcePosition bool, err error)
 }
 
 // ContainerHandler handles container/inventory packets.
