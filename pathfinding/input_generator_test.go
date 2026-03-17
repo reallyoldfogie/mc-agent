@@ -49,6 +49,14 @@ func (m *mockPhysicsState) IsSneaking() bool {
 	return m.sneaking
 }
 
+func (m *mockPhysicsState) IsSwimming() bool {
+	return false
+}
+
+func (m *mockPhysicsState) IsInWater() bool {
+	return false
+}
+
 func (m *mockPhysicsState) FallDistance() float64 {
 	return 0
 }

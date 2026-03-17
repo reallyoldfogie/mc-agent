@@ -23,6 +23,7 @@ const (
 	Jump2ToClimb      = models.Jump2ToClimb
 	SwimUp            = models.SwimUp
 	SwimDown          = models.SwimDown
+	ExitWater         = models.ExitWater
 	Drop2North        = models.Drop2North
 	Drop2South        = models.Drop2South
 	Drop2East         = models.Drop2East

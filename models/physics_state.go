@@ -8,6 +8,8 @@ type PhysicsState interface {
 	Pitch() float64
 	OnGround() bool
 	IsSneaking() bool
+	IsSwimming() bool
+	IsInWater() bool
 	FallDistance() float64
 	GetDimensions() (width, height, eyeHeight float64)
 	GetAABB() AABB

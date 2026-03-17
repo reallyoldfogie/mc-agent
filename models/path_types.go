@@ -26,6 +26,7 @@ const (
 	Jump2ToClimb // Sprint jump 2 blocks to land on/grab climbable (vine/ladder across gap)
 	SwimUp
 	SwimDown
+	ExitWater // Exit from water onto adjacent solid ground
 	Drop2North
 	Drop2South
 	Drop2East
@@ -78,6 +79,8 @@ func (mt MovementType) String() string {
 		return "SwimUp"
 	case SwimDown:
 		return "SwimDown"
+	case ExitWater:
+		return "ExitWater"
 	case Drop2North:
 		return "Drop2North"
 	case Drop2South:
@@ -140,6 +143,8 @@ func (mt MovementType) BaseCost() float64 {
 		return 2.5
 	case SwimDown:
 		return 1.5
+	case ExitWater:
+		return 1.0 // Exiting water to ground
 	case Drop2North, Drop2South, Drop2East, Drop2West:
 		return 1.5
 	case TraverseNorthEast, TraverseNorthWest, TraverseSouthEast, TraverseSouthWest:

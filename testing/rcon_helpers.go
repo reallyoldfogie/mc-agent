@@ -691,3 +691,27 @@ func LogBlocksInArea(ctx context.Context, t *testing.T, rcon testenv.RCONHelper,
 	}
 	t.Logf("=== End Block State Analysis ===\n")
 }
+
+// GetPlayerHealth gets the player's current health via RCON.
+// Returns health as float32 (max 20.0 for full health).
+func GetPlayerHealth(ctx context.Context, rcon testenv.RCONHelper, playerName string) (float32, error) {
+	cmd := fmt.Sprintf("data get entity %s Health", playerName)
+	resp, err := rcon.Exec(ctx, cmd)
+	if err != nil {
+		return 0, err
+	}
+
+	// Response format: "<player> has the following entity data: 20.0f"
+	re := regexp.MustCompile(`(-?\d+\.?\d*)f$`)
+	match := re.FindStringSubmatch(strings.TrimSpace(resp))
+	if match == nil || len(match) != 2 {
+		return 0, fmt.Errorf("failed to parse health from response: %s", resp)
+	}
+
+	healthVal, err := strconv.ParseFloat(match[1], 32)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse health value %q: %w", match[1], err)
+	}
+
+	return float32(healthVal), nil
+}

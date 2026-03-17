@@ -298,8 +298,15 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 
 	case SwimDown:
 		// Swimming down in water
-		// Sneak button makes you swim down
-		out.Sneak = true
+		// Sneak button makes you swim down, but sneaking on land prevents the transition from solid to water.
+		if currentState.IsInWater() {
+			out.Sneak = true
+		}
+
+	case ExitWater:
+		// Exiting water onto adjacent solid ground
+		// Must jump to break water surface and transition to standing on ground
+		out.Jump = true
 
 	// 2-block drops
 	case Drop2North, Drop2South, Drop2East, Drop2West:
@@ -416,6 +423,11 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 	case SwimDown:
 		// Swimming down: ~0.15 blocks/tick (faster with sneak)
 		return int(dist/0.12) + 15
+
+	case ExitWater:
+		// Exiting water with jump: ~15 ticks for jump + transition
+		// Quick exit movement
+		return 15
 
 	// Exiting climb movements
 	case ExitClimb:

@@ -159,7 +159,18 @@ const (
 	// Higher value = more drag (slower movement)
 	WaterDrag = 0.8 // Velocity multiplier per tick
 
-	// Gravity reduction in water
-	// 0.0 = no gravity reduction, 1.0 = full gravity reduction
-	WaterGravityFactor = 0.8 // Use 20% of normal gravity when in water
+	// WaterGravityFactor is the fraction of normal gravity applied when in water.
+	// Vanilla Minecraft uses ~0.02 blocks/tick² underwater (25% of the normal 0.08).
+	WaterGravityFactor = 0.25
+)
+
+// Swimming constants
+const (
+	// SwimUpVelocity is the upward velocity applied each tick while the jump input
+	// is held and the player is in water. Vanilla Minecraft uses ~0.04 blocks/tick.
+	SwimUpVelocity = 0.04
+
+	// SwimDownVelocity is the downward velocity applied each tick while the sneak
+	// input is held and the player is in water.
+	SwimDownVelocity = 0.04
 )

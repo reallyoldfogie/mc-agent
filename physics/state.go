@@ -34,6 +34,10 @@ type state struct {
 		horizontal bool // True if horizontal (X/Z) velocity was clamped by collision
 	}
 
+	// Water/swimming state (updated at the start of each Tick)
+	isSwimming bool // True if player's head is submerged in water
+	isInWater  bool // True if player's feet or head are in water
+
 	// Internal state
 	tick         uint32  // Current tick number
 	lastJump     uint32  // Tick when player last jumped (for cooldown)
@@ -139,6 +143,20 @@ func (s *state) IsSneaking() bool {
 	return s.isSneaking
 }
 
+// IsSwimming reports whether the player's head is submerged in water.
+func (s *state) IsSwimming() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isSwimming
+}
+
+// IsInWater reports whether any part of the player (feet or head) is in water.
+func (s *state) IsInWater() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isInWater
+}
+
 // FallDistance reports the current accumulated fall distance in blocks.
 func (s *state) FallDistance() float64 {
 	s.mu.RLock()
@@ -236,13 +254,21 @@ func (s *state) Tick(input Inputs, w World) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t fallDistance=%.2f\n",
-		s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.fallDistance)
+	log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t swimming=%t fallDistance=%.2f\n",
+		s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.isSwimming, s.fallDistance)
 
 	s.tick++
 
 	// Update sneaking state from inputs
 	s.isSneaking = input.Sneak
+
+	// Detect water state FIRST so swim-up/down inputs work in applyMovementInputs
+	s.detectWaterState(w)
+
+	// Reset fall distance when in water (water negates all fall damage)
+	if s.isInWater {
+		s.fallDistance = 0.0
+	}
 
 	// Calculate ground-based inertia and acceleration
 	inertiaFactor := Inertia
@@ -264,7 +290,7 @@ func (s *state) Tick(input Inputs, w World) error {
 		}
 	}
 
-	// Update velocity based on inputs
+	// Update velocity based on inputs (swim-up/down uses s.isInWater)
 	s.tickVelocity(input, inertiaFactor, accelFactor, w)
 
 	// Update position with collision detection
@@ -284,30 +310,45 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Y = LadderClimbSpeed * input.ClimbDirection
 	}
 
-	// Check if player body is in water (water physics)
-	// Check feet (more likely to be in water than head when entering)
+	// Apply gravity, drag, and water flow based on water state
+	s.applyEnvironmentForces(inertiaFactor, w)
+
+	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t swimming=%t collision=(h=%t v=%t)\n",
+		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.isInWater, s.isSwimming, s.collision.horizontal, s.collision.vertical)
+
+	return nil
+}
+
+// detectWaterState checks if the player is in water and updates isInWater/isSwimming.
+// Must only be called while the write lock is held.
+func (s *state) detectWaterState(w World) {
 	feetBlockX := int(math.Floor(s.Pos.X))
 	feetBlockY := int(math.Floor(s.Pos.Y))
 	feetBlockZ := int(math.Floor(s.Pos.Z))
 	feetBlockState, _ := w.GetBlockStatus(feetBlockX, feetBlockY, feetBlockZ)
-	
+
 	headBlockX := int(math.Floor(s.Pos.X))
 	headBlockY := int(math.Floor(s.Pos.Y + s.eyeHeight))
 	headBlockZ := int(math.Floor(s.Pos.Z))
 	headBlockState, _ := w.GetBlockStatus(headBlockX, headBlockY, headBlockZ)
-	
-	areFeetInWater := s.shapeProvider.IsWater(feetBlockState) 
+
+	areFeetInWater := s.shapeProvider.IsWater(feetBlockState)
 	isHeadInWater := s.shapeProvider.IsWater(headBlockState)
-	
-	isInWater := areFeetInWater || isHeadInWater
+
+	s.isInWater = areFeetInWater || isHeadInWater
+	s.isSwimming = isHeadInWater
 
 	if os.Getenv("DEBUG_WATER_FLOW") != "" {
 		log.Printf("[Water] Feet: (%d,%d,%d) stateID=%d isWater=%v (head=%v feet=%v), Head: (%d,%d,%d)\n",
-			feetBlockX, feetBlockY, feetBlockZ, feetBlockState, isInWater, isHeadInWater, areFeetInWater,
-			int(math.Floor(s.Pos.X)), int(math.Floor(s.Pos.Y+s.eyeHeight)), int(math.Floor(s.Pos.Z)))
+			feetBlockX, feetBlockY, feetBlockZ, feetBlockState, s.isInWater, isHeadInWater, areFeetInWater,
+			headBlockX, headBlockY, headBlockZ)
 	}
+}
 
-	if isInWater {
+// applyEnvironmentForces applies gravity, drag, and water flow based on current water state.
+// Must only be called while the write lock is held.
+func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
+	if s.isInWater {
 		// Apply reduced gravity in water
 		s.Vel.Y -= Gravity * WaterGravityFactor
 
@@ -317,106 +358,97 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Z *= WaterDrag
 
 		// Apply water flow current
-		// Check multiple points and accumulate flows weighted by their speed.
-		// This handles opposing flows by letting stronger currents dominate.
-		var accumulatedFlowDir models.V3
-		var bestFlowSpeed float64
-		
-		// Helper function to check a point and accumulate flow weighted by speed
-		checkPoint := func(x, y, z int) {
-			blockState, loaded := w.GetBlockStatus(x, y, z)
-			if !loaded || !s.shapeProvider.IsWater(blockState) {
-				return
-			}
-			flowDir := s.shapeProvider.GetWaterFlowDirection(x, y, z, w)
-			flowSpeed := s.shapeProvider.GetWaterFlowSpeed(blockState)
-			// Only count horizontal flow
-			if flowDir.X != 0 || flowDir.Z != 0 {
-				// Weight the flow vector by its speed so stronger currents dominate
-				accumulatedFlowDir.X += flowDir.X * flowSpeed
-				accumulatedFlowDir.Z += flowDir.Z * flowSpeed
-				if flowSpeed > bestFlowSpeed {
-					bestFlowSpeed = flowSpeed
-				}
-			}
-		}
-		
-		// Check feet (center)
-		if areFeetInWater {
-			checkPoint(feetBlockX, feetBlockY, feetBlockZ)
-		}
-		
-		// Check mid-body (center and 4 corners)
-		// This handles straddling different water levels
-		midBodyY := int(math.Floor(s.Pos.Y + s.height*0.6))
-		midCenterX := int(math.Floor(s.Pos.X))
-		midCenterZ := int(math.Floor(s.Pos.Z))
-		
-		// Center
-		checkPoint(midCenterX, midBodyY, midCenterZ)
-		
-		// Four corners of the horizontal footprint
-		// Each corner is at ±width/2 from center
-		cornerOffset := int(math.Ceil(s.width / 2))
-		if cornerOffset < 1 {
-			cornerOffset = 1 // Minimum offset of 1 block
-		}
-		checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ+cornerOffset) // NE
-		checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ-cornerOffset) // SE
-		checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ+cornerOffset) // NW
-		checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ-cornerOffset) // SW
-		
-		// Check head
-		if isHeadInWater {
-			checkPoint(int(math.Floor(s.Pos.X)), int(math.Floor(s.Pos.Y+s.eyeHeight)), int(math.Floor(s.Pos.Z)))
-		}
-		
-		// Normalize accumulated flow if we found any
-		var flowDir models.V3
-		var flowSpeed float64 = bestFlowSpeed
-		magnitude := accumulatedFlowDir.DistanceTo(models.V3{})
-		if magnitude > 0.01 {
-			// Normalize the weighted direction
-			flowDir = models.V3{
-				X: accumulatedFlowDir.X / magnitude,
-				Y: 0, // No vertical flow
-				Z: accumulatedFlowDir.Z / magnitude,
-			}
-		}
-
-		if os.Getenv("DEBUG_WATER_FLOW") != "" {
-			log.Printf("[Water] Flow: speed=%.3f dir=(%.2f,%.2f,%.2f) accum=(%.2f,%.2f)\n",
-				flowSpeed, flowDir.X, flowDir.Y, flowDir.Z, accumulatedFlowDir.X, accumulatedFlowDir.Z)
-		}
-
-		// Apply flow velocity (horizontal only, don't apply vertical flow as it causes jumping)
-		if flowSpeed > 0 && flowDir.DistanceTo(models.V3{}) > 0.01 {
-			flowVel := WaterFlowSpeedBase * flowSpeed
-			// Only apply horizontal components, never modify Y (vertical)
-			s.Vel.X += flowDir.X * flowVel
-			s.Vel.Z += flowDir.Z * flowVel
-			if os.Getenv("DEBUG_WATER_FLOW") != "" {
-				log.Printf("[Water] Applied flow: velBefore=(%.3f,%.3f,%.3f) flowVel=%.3f velAfter=(%.3f,%.3f,%.3f)\n",
-					s.Vel.X-flowDir.X*flowVel, s.Vel.Y, s.Vel.Z-flowDir.Z*flowVel, flowVel, s.Vel.X, s.Vel.Y, s.Vel.Z)
-			}
-		} else if os.Getenv("DEBUG_WATER_FLOW") != "" {
-			log.Printf("[Water] Flow NOT applied: flowSpeed=%.3f flowDist=%.3f\n", flowSpeed, flowDir.DistanceTo(models.V3{}))
-		}
+		s.applyWaterFlow(w)
 	} else {
 		// Normal physics (air)
-		// Apply gravity
 		s.Vel.Y -= Gravity
-
-		// Apply drag (air resistance)
 		s.Vel.Y *= Drag
 		s.Vel.X *= inertiaFactor
 		s.Vel.Z *= inertiaFactor
 	}
+}
 
-	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t collision=(h=%t v=%t)\n",
-		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, isInWater, s.collision.horizontal, s.collision.vertical)
+// applyWaterFlow accumulates water flow from multiple sample points around the player
+// and applies the resulting velocity. Must only be called while the write lock is held.
+func (s *state) applyWaterFlow(w World) {
+	var accumulatedFlowDir models.V3
+	var bestFlowSpeed float64
 
-	return nil
+	feetBlockX := int(math.Floor(s.Pos.X))
+	feetBlockY := int(math.Floor(s.Pos.Y))
+	feetBlockZ := int(math.Floor(s.Pos.Z))
+	feetBlockState, _ := w.GetBlockStatus(feetBlockX, feetBlockY, feetBlockZ)
+	areFeetInWater := s.shapeProvider.IsWater(feetBlockState)
+	isHeadInWater := s.isSwimming
+
+	checkPoint := func(x, y, z int) {
+		blockState, loaded := w.GetBlockStatus(x, y, z)
+		if !loaded || !s.shapeProvider.IsWater(blockState) {
+			return
+		}
+		flowDir := s.shapeProvider.GetWaterFlowDirection(x, y, z, w)
+		flowSpeed := s.shapeProvider.GetWaterFlowSpeed(blockState)
+		if flowDir.X != 0 || flowDir.Z != 0 {
+			accumulatedFlowDir.X += flowDir.X * flowSpeed
+			accumulatedFlowDir.Z += flowDir.Z * flowSpeed
+			if flowSpeed > bestFlowSpeed {
+				bestFlowSpeed = flowSpeed
+			}
+		}
+	}
+
+	if areFeetInWater {
+		checkPoint(feetBlockX, feetBlockY, feetBlockZ)
+	}
+
+	// Check mid-body (center and 4 corners)
+	midBodyY := int(math.Floor(s.Pos.Y + s.height*0.6))
+	midCenterX := int(math.Floor(s.Pos.X))
+	midCenterZ := int(math.Floor(s.Pos.Z))
+
+	checkPoint(midCenterX, midBodyY, midCenterZ)
+
+	cornerOffset := int(math.Ceil(s.width / 2))
+	if cornerOffset < 1 {
+		cornerOffset = 1
+	}
+	checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ+cornerOffset)
+	checkPoint(midCenterX+cornerOffset, midBodyY, midCenterZ-cornerOffset)
+	checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ+cornerOffset)
+	checkPoint(midCenterX-cornerOffset, midBodyY, midCenterZ-cornerOffset)
+
+	if isHeadInWater {
+		checkPoint(int(math.Floor(s.Pos.X)), int(math.Floor(s.Pos.Y+s.eyeHeight)), int(math.Floor(s.Pos.Z)))
+	}
+
+	// Normalize accumulated flow
+	var flowDir models.V3
+	flowSpeed := bestFlowSpeed
+	magnitude := accumulatedFlowDir.DistanceTo(models.V3{})
+	if magnitude > 0.01 {
+		flowDir = models.V3{
+			X: accumulatedFlowDir.X / magnitude,
+			Y: 0,
+			Z: accumulatedFlowDir.Z / magnitude,
+		}
+	}
+
+	if os.Getenv("DEBUG_WATER_FLOW") != "" {
+		log.Printf("[Water] Flow: speed=%.3f dir=(%.2f,%.2f,%.2f) accum=(%.2f,%.2f)\n",
+			flowSpeed, flowDir.X, flowDir.Y, flowDir.Z, accumulatedFlowDir.X, accumulatedFlowDir.Z)
+	}
+
+	if flowSpeed > 0 && flowDir.DistanceTo(models.V3{}) > 0.01 {
+		flowVel := WaterFlowSpeedBase * flowSpeed
+		s.Vel.X += flowDir.X * flowVel
+		s.Vel.Z += flowDir.Z * flowVel
+		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+			log.Printf("[Water] Applied flow: flowVel=%.3f velAfter=(%.3f,%.3f,%.3f)\n",
+				flowVel, s.Vel.X, s.Vel.Y, s.Vel.Z)
+		}
+	} else if os.Getenv("DEBUG_WATER_FLOW") != "" {
+		log.Printf("[Water] Flow NOT applied: flowSpeed=%.3f flowDist=%.3f\n", flowSpeed, flowDir.DistanceTo(models.V3{}))
+	}
 }
 
 // tickVelocity updates velocity based on player inputs.
@@ -474,8 +506,17 @@ func (s *state) applyLookInputs(input Inputs) {
 
 // applyMovementInputs updates velocity based on throttle and jump inputs.
 func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
-	// Handle jump (with cooldown)
-	if input.Jump && s.tick >= s.lastJump+MinJumpTicks && s.onGround {
+	// Handle jump / swim-up / swim-down
+	if s.isInWater {
+		// In water: jump input swims up, sneak input swims down (no cooldown)
+		if input.Jump {
+			s.Vel.Y += SwimUpVelocity
+		}
+		if input.Sneak {
+			s.Vel.Y -= SwimDownVelocity
+		}
+	} else if input.Jump && s.tick >= s.lastJump+MinJumpTicks && s.onGround {
+		// On ground: normal jump with cooldown
 		s.lastJump = s.tick
 		s.Vel.Y = JumpVelocity
 	}
@@ -916,6 +957,8 @@ func (s *state) copyFieldsUnsafe() state {
 		pitch:         s.pitch,
 		onGround:      s.onGround,
 		isSneaking:    s.isSneaking,
+		isSwimming:    s.isSwimming,
+		isInWater:     s.isInWater,
 		collision:     s.collision,
 		tick:          s.tick,
 		lastJump:      s.lastJump,

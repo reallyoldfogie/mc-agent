@@ -953,8 +953,9 @@ func NewPositionTracker(inst *TestInstance, pollInterval time.Duration) *Positio
 }
 
 // Start begins tracking agent positions.
-func (pt *PositionTracker) Start(ctx context.Context) {
+func (pt *PositionTracker) Start(ctx context.Context) *PositionTracker {
 	go pt.track(ctx)
+	return pt
 }
 
 // Stop halts position tracking.
@@ -976,22 +977,28 @@ func (pt *PositionTracker) track(ctx context.Context) {
 		case <-pt.stopCh:
 			return
 		case <-ticker.C:
-			pt.updatePositions(ctx)
+			pt.updatePositions()
 		}
 	}
 }
 
 // updatePositions queries RCON for all agent positions.
-func (pt *PositionTracker) updatePositions(ctx context.Context) {
+// Uses a short timeout for RCON queries to prevent the tracker from hanging
+// if RCON becomes unresponsive.
+func (pt *PositionTracker) updatePositions() {
 	pt.inst.mu.RLock()
 	agents := make([]*ManagedAgent, len(pt.inst.Agents))
 	copy(agents, pt.inst.Agents)
 	pt.inst.mu.RUnlock()
 
+	// Use a 5-second timeout per RCON query to prevent indefinite hanging
+	rconCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	for _, agent := range agents {
-		x, y, z, err := pt.inst.RCON.GetEntityPos(ctx, agent.Name)
+		x, y, z, err := pt.inst.RCON.GetEntityPos(rconCtx, agent.Name)
 		if err != nil {
-			// Agent may not be in world yet; skip
+			// Agent may not be in world yet, RCON timeout, or other error; skip
 			continue
 		}
 
@@ -1012,8 +1019,15 @@ func (pt *PositionTracker) GetPosition(name string) (models.V3, bool) {
 }
 
 // WaitForPosition waits until an agent reaches a target position within tolerance.
+// Uses an isolated timeout to prevent cascading from parent context deadlines,
+// while still respecting parent context cancellation.
 func (pt *PositionTracker) WaitForPosition(ctx context.Context, name string, target models.V3, tolerance float64, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	startTime := time.Now()
+	fmt.Printf("[WaitForPosition] START: %s, timeout=%v, deadline=%v\n", name, timeout, startTime.Add(timeout))
+
+	// Create an isolated timeout context so WaitForPosition's timeout is independent
+	// of the parent context's deadline (which might be much longer, like 15 minutes).
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	ticker := time.NewTicker(pt.pollInterval)
@@ -1021,14 +1035,24 @@ func (pt *PositionTracker) WaitForPosition(ctx context.Context, name string, tar
 
 	for {
 		select {
+		case <-timeoutCtx.Done():
+			fmt.Printf("[WaitForPosition] TIMEOUT: %s after %v\n", name, time.Since(startTime))
+			return fmt.Errorf("PositionTracker: timeout waiting for %s to reach position", name)
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for %s to reach position", name)
+			// Parent context cancelled or timed out - exit immediately
+			fmt.Printf("[WaitForPosition] PARENT_CANCELLED: %s after %v\n", name, time.Since(startTime))
+			return fmt.Errorf("PositionTracker: parent context cancelled while waiting for %s", name)
 		case <-ticker.C:
 			pos, ok := pt.GetPosition(name)
 			if !ok {
+				fmt.Printf("[PositionTracker] No position for %s yet (elapsed: %v)\n", name, time.Since(startTime))
 				continue
 			}
-			if pos.DistanceTo(target) <= tolerance {
+			dist := pos.DistanceTo(target)
+			fmt.Printf("[PositionTracker] %s at %.2f, %.2f, %.2f (dist=%.2f, tolerance=%.2f, elapsed=%v)\n",
+				name, pos.X, pos.Y, pos.Z, dist, tolerance, time.Since(startTime))
+			if dist <= tolerance {
+				fmt.Printf("[PositionTracker] REACHED: %s after %v\n", name, time.Since(startTime))
 				return nil
 			}
 		}

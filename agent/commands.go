@@ -143,13 +143,13 @@ func (a *agent) followPath(ctx context.Context, path *models.Path) error {
 	}
 
 	if exec, ok := a.moveExec.(interface {
-		ExecutePath(*pathfinding.Path) error
+		ExecutePathWithContext(context.Context, *pathfinding.Path) error
 	}); ok {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Printf("[followPath] Exec implements ExecutePath, using it.")
-		return exec.ExecutePath(path)
+		log.Printf("[followPath] Exec implements ExecutePathWithContext, using it.")
+		return exec.ExecutePathWithContext(ctx, path)
 	}
 
 	log.Printf("[followPath] Exec doesn't implement ExecutePath, using fallback")
@@ -193,10 +193,10 @@ func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) er
 
 	// Calculate step limit based on distance
 	maxSteps := max(
-		// Allow 150x distance for complex terrain
-		int(distance*150),
-		// Minimum 10000 steps for short segments
-		10000)
+		// Allow 200x distance for complex terrain (increased from 150 for water pathfinding)
+		int(distance*200),
+		// Minimum 20000 steps for short segments (increased from 10000 for water/swimming)
+		20000)
 
 	path, err := a.pathfind.FindPath(ctx, start, goal, maxSteps)
 	if err != nil {

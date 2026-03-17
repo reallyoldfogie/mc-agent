@@ -366,18 +366,28 @@ func (pe *PhysicsMovementExecutor) GetAveragePredictionError() float64 {
 
 // ExecutePath executes a complete path using the continuous physics system.
 // The executor must be started with Start() before calling this method.
+// Deprecated: Use ExecutePathWithContext instead to pass a parent context.
 func (pe *PhysicsMovementExecutor) ExecutePath(path *pathfinding.Path) error {
+	return pe.ExecutePathWithContext(context.Background(), path)
+}
+
+// ExecutePathWithContext executes a complete path using the continuous physics system,
+// respecting the parent context's deadline. This allows callers with time constraints
+// to interrupt path execution.
+func (pe *PhysicsMovementExecutor) ExecutePathWithContext(ctx context.Context, path *pathfinding.Path) error {
 	if err := pe.SetPath(path); err != nil {
 		return err
 	}
 
 	timeout := time.Duration(len(path.Steps)) * 30 * time.Second
 
-	// Wait for path completion with timeout (0 = no additional timeout, context timeout applies)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	// Wait for path completion, respecting the parent context's deadline.
+	// If the parent context has a tighter deadline than our calculated timeout,
+	// context.WithTimeout will use the earlier deadline.
+	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	completed, err := pe.WaitForPathCompletion(ctx, 0)
+	completed, err := pe.WaitForPathCompletion(execCtx, 0)
 	if !completed && err == nil {
 		// Timeout occurred but no error - treat as success for backward compatibility
 		return nil

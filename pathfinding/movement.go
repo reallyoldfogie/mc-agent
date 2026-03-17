@@ -87,6 +87,13 @@ func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 		return false // Too far
 	}
 
+	// Cannot ascend/jump from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
+	}
+
 	// Debug ascend checks for start position (use integer equality since models.V3 uses float64 for block coords)
 	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
 		log.Printf("[DEBUG CanAscend] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
@@ -146,6 +153,13 @@ func (mv *MovementValidator) CanAscendStairs(from, to models.V3) bool {
 	}
 	if dx*dx+dz*dz > 1 {
 		return false // Too far
+	}
+
+	// Cannot ascend stairs from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
 	}
 
 	// Check if the ground block at target is a stair
@@ -224,7 +238,7 @@ func (mv *MovementValidator) CanDescendStairs(from, to models.V3) bool {
 // Requires:
 // - to.Y < from.Y (and to.Y >= from.Y - 3 for safety)
 // - Destination is passable
-// - Has ground support
+// - Has ground support (or is water)
 func (mv *MovementValidator) CanDescend(from, to models.V3) bool {
 	// Check destination is lower
 	dy := from.Y - to.Y
@@ -247,7 +261,13 @@ func (mv *MovementValidator) CanDescend(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if there's ground to stand on
+	// Check if destination is water (allowed even without ground support below)
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if toLoaded && toStateID != 0 && mv.shapeMgr.IsWater(toStateID) {
+		return true // Water is a valid drop target even without ground support
+	}
+
+	// For non-water destinations, require ground support
 	if !mv.hasGroundSupport(to) {
 		return false
 	}
@@ -356,6 +376,13 @@ func (mv *MovementValidator) CanDiagonalAscend(from, to models.V3) bool {
 		return false
 	}
 
+	// Cannot diagonally ascend from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
+	}
+
 	// Check if destination is passable
 	if !mv.isPositionPassable(to) {
 		return false
@@ -398,6 +425,13 @@ func (mv *MovementValidator) CanJump2(from, to models.V3) bool {
 		return false
 	}
 
+	// Cannot jump from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
+	}
+
 	// Check if destination is passable
 	if !mv.isPositionPassable(to) {
 		return false
@@ -429,6 +463,13 @@ func (mv *MovementValidator) CanClimb(from, to models.V3) bool {
 		return false
 	}
 
+	// Cannot climb from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
+	}
+
 	// Check if there's a climbable block at destination
 	stateID, loaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
 	if !loaded || stateID == 0 {
@@ -439,6 +480,7 @@ func (mv *MovementValidator) CanClimb(from, to models.V3) bool {
 }
 
 // CanSwim checks if the bot can swim horizontally through water
+// Allows entering water from solid ground or swimming water-to-water.
 func (mv *MovementValidator) CanSwim(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
@@ -454,25 +496,17 @@ func (mv *MovementValidator) CanSwim(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water
+	// Check if destination is water (required)
 	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
 	if !toLoaded || toStateID == 0 {
 		return false
 	}
-	if !mv.shapeMgr.IsWater(toStateID) {
-		return false
-	}
 
-	// Check if from position is also water (must already be swimming)
-	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if !fromLoaded || fromStateID == 0 {
-		return false
-	}
-
-	return mv.shapeMgr.IsWater(fromStateID)
+	return mv.shapeMgr.IsWater(toStateID)
 }
 
 // CanSwimUp checks if the bot can swim upward in water
+// Allows entering water from above (e.g., descending into water then ascending) or swimming water-to-water upward.
 func (mv *MovementValidator) CanSwimUp(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
@@ -488,25 +522,18 @@ func (mv *MovementValidator) CanSwimUp(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water
+	// Check if destination is water (required)
 	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
 	if !toLoaded || toStateID == 0 {
 		return false
 	}
-	if !mv.shapeMgr.IsWater(toStateID) {
-		return false
-	}
 
-	// Check if from position is also water (must already be swimming)
-	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if !fromLoaded || fromStateID == 0 {
-		return false
-	}
-
-	return mv.shapeMgr.IsWater(fromStateID)
+	return mv.shapeMgr.IsWater(toStateID)
 }
 
 // CanSwimDown checks if the bot can swim downward in water
+// Only allows swimming down when already in water (water-to-water downward).
+// For transitioning from solid ground to water, use Descend instead.
 func (mv *MovementValidator) CanSwimDown(from, to models.V3) bool {
 	dx := to.X - from.X
 	dz := to.Z - from.Z
@@ -522,22 +549,107 @@ func (mv *MovementValidator) CanSwimDown(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water
+	// Check if destination is water (required)
 	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
 	if !toLoaded || toStateID == 0 {
 		return false
 	}
+
 	if !mv.shapeMgr.IsWater(toStateID) {
 		return false
 	}
 
-	// Check if from position is also water (must already be swimming)
+	// Only allow SwimDown if already in water at the starting position
+	// This ensures we're swimming within water, not transitioning from ground to water
+	// Transitioning from ground to water should use Descend instead
 	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
-	if !fromLoaded || fromStateID == 0 {
+	if !fromLoaded {
 		return false
 	}
 
 	return mv.shapeMgr.IsWater(fromStateID)
+}
+
+// CanExitWater checks if the bot can exit from water onto adjacent solid ground
+// Allows two scenarios:
+// - Scenario 1: Same-level exit (destination ground at same Y as water, with solid support below)
+// - Scenario 2: Step-up exit (water at Y, solid ground at Y+1 if water itself is on solid)
+func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	dy := to.Y - from.Y
+
+	// Must be adjacent horizontally (cardinal direction only)
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	// Must be same level or up to 1 block higher
+	if dy < 0 || dy > 1 {
+		return false
+	}
+
+	// Must be currently in water
+	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	if !fromLoaded || !mv.shapeMgr.IsWater(fromStateID) {
+		return false
+	}
+
+	// Check if destination is passable (feet and head)
+	if !mv.isPositionPassable(to) {
+		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: destination not passable",
+			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+		return false
+	}
+
+	// Check that destination is NOT water (we're exiting water, not swimming sideways)
+	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	if !toLoaded {
+		return false // Chunk not loaded
+	}
+	if toStateID != 0 && mv.shapeMgr.IsWater(toStateID) {
+		return false // Destination is water - not a valid exit from water
+	}
+
+	// Scenario 1: Same-level exit (dy == 0)
+	// Destination must have ground support (solid block below at to.Y-1)
+	if dy == 0 {
+		if mv.hasGroundSupport(to) {
+			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: same-level exit",
+				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			return true
+		}
+		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: no ground support (same-level)",
+			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+	}
+
+	// Scenario 2: Step-up exit (dy == 1)
+	// Agent is stepping up from water into air (standing on ground that's below the water surface)
+	// The destination (to.Y) should be passable (air) with solid ground support below
+	if dy == 1 {
+		// Check if destination is passable (feet and head)
+		if !mv.isPositionPassable(to) {
+			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: destination not passable (step-up)",
+				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			return false
+		}
+
+		// Check if there's ground support below the destination
+		if !mv.hasGroundSupport(to) {
+			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: no ground support (step-up)",
+				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			return false
+		}
+
+		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: step-up exit to air with ground support",
+			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+		return true
+	}
+
+	return false
 }
 
 // isOnClimbable checks if the given position has a climbable block (ladder/vine)
@@ -571,6 +683,13 @@ func (mv *MovementValidator) CanEnterClimb(from, to models.V3) bool {
 		return false
 	}
 
+	// Cannot enter climb from water - use ExitWater instead
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
+	}
+
 	// Check if target has a climbable block
 	return mv.isOnClimbable(to)
 }
@@ -600,6 +719,13 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 	// Must be on a climbable block
 	if !mv.isOnClimbable(from) {
 		return false
+	}
+
+	// Cannot exit climb from water (shouldn't happen if on climbable, but check for safety)
+	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+		if mv.shapeMgr.IsWater(fromStateID) {
+			return false
+		}
 	}
 
 	// Get the block at target position
@@ -1018,6 +1144,33 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 				Position: toDown,
 				Movement: SwimDown,
 				Cost:     SwimDown.BaseCost(),
+			})
+		}
+	}
+
+	// Exit water - cardinal directions only
+	for _, dir := range cardinalDirs {
+		// Same level exit
+		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
+		if mv.CanExitWater(from, to) {
+			log.Printf("[GetPossibleMoves] Adding ExitWater same-level: from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
+				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			moves = append(moves, PathStep{
+				Position: to,
+				Movement: ExitWater,
+				Cost:     ExitWater.BaseCost(),
+			})
+		}
+
+		// Step-up exit (1 block higher)
+		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
+		if mv.CanExitWater(from, toUp) {
+			log.Printf("[GetPossibleMoves] Adding ExitWater step-up: from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
+				from.X, from.Y, from.Z, toUp.X, toUp.Y, toUp.Z)
+			moves = append(moves, PathStep{
+				Position: toUp,
+				Movement: ExitWater,
+				Cost:     ExitWater.BaseCost() + 0.5, // Slightly more expensive for step-up
 			})
 		}
 	}
