@@ -126,3 +126,28 @@ func SendStartSneaking(client bot.Client, packetMgr protocol_models.PacketMgr, e
 func SendStopSneaking(client bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
 	return SendPlayerCommand(client, packetMgr, entityID, ActionStopSneaking)
 }
+
+// SendMoveVehicle sends a vehicle movement packet while the player is riding a vehicle/mount.
+// This is sent instead of player position packets when mounted.
+// Packet: ServerboundMoveVehicle
+// Fields: X (Double), Y (Double), Z (Double), Yaw (Float), Pitch (Float), OnGround (Boolean)
+func SendMoveVehicle(client bot.Client, packetMgr protocol_models.PacketMgr, x, y, z float64, yaw, pitch float32, onGround bool) error {
+	log.Printf("[Movement] Sending ServerboundMoveVehicle: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v", x, y, z, yaw, pitch, onGround)
+	pkt := packet.Marshal(
+		packetMgr.GetServerboundPacketID("ServerboundMoveVehicle"),
+		packet.Double(x),
+		packet.Double(y),
+		packet.Double(z),
+		packet.Float(yaw),
+		packet.Float(pitch),
+		packet.Boolean(onGround),
+	)
+	return client.Conn().WritePacket(pkt)
+}
+
+// SendLeaveVehicle sends a command to leave the current vehicle (dismount).
+// This is equivalent to sneaking while mounted.
+func SendLeaveVehicle(client bot.Client, packetMgr protocol_models.PacketMgr, entityID int32) error {
+	log.Printf("[Movement] Sending player command to leave vehicle: entityID=%d", entityID)
+	return SendPlayerCommand(client, packetMgr, entityID, ActionStartSneaking)
+}

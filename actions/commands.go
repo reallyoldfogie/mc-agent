@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID>, dismount, vehiclejump [power], planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -499,5 +499,63 @@ func (FireBowAt) Execute(ctx context.Context, agent CommandAgent, args []string)
 			_ = agent.SendChat("Fire bow at error: " + err.Error())
 		}
 	}()
+	return nil
+}
+
+type Mount struct{}
+
+func (Mount) Name() string  { return "mount" }
+func (Mount) Usage() string { return "mount <entityID>" }
+func (Mount) Execute(ctx context.Context, agent CommandAgent, args []string) error {
+	if len(args) < 1 {
+		_ = agent.SendChat("Usage: mount <entityID>")
+		return nil
+	}
+	entityID, err := strconv.ParseInt(args[0], 10, 32)
+	if err != nil {
+		_ = agent.SendChat("Invalid entity ID")
+		return nil
+	}
+	if err := agent.MountEntity(ctx, int32(entityID)); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Mount failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat(fmt.Sprintf("Attempting to mount entity %d", entityID))
+	return nil
+}
+
+type Dismount struct{}
+
+func (Dismount) Name() string  { return "dismount" }
+func (Dismount) Usage() string { return "dismount" }
+func (Dismount) Execute(ctx context.Context, agent CommandAgent, _ []string) error {
+	if err := agent.DismountEntity(); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Dismount failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat("Dismounting...")
+	return nil
+}
+
+type VehicleJump struct{}
+
+func (VehicleJump) Name() string  { return "vehiclejump" }
+func (VehicleJump) Usage() string { return "vehiclejump [power]" }
+func (VehicleJump) Execute(ctx context.Context, agent CommandAgent, args []string) error {
+	power := int32(100) // Default to maximum power
+	if len(args) > 0 {
+		p, err := strconv.ParseInt(args[0], 10, 32)
+		if err != nil {
+			_ = agent.SendChat("Usage: vehiclejump [power] - power must be 0-100")
+			return nil
+		}
+		power = int32(p)
+	}
+
+	if err := agent.JumpVehicle(ctx, power); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Jump failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat(fmt.Sprintf("Jumping with power %d", power))
 	return nil
 }

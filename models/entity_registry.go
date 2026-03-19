@@ -33,6 +33,11 @@ const (
 	EntityTypeDonkey         EntityType = "donkey"
 	EntityTypeMule           EntityType = "mule"
 	EntityTypeCaravanLlama   EntityType = "camel"
+	EntityTypeBoat           EntityType = "boat"
+	EntityTypeChestBoat      EntityType = "chest_boat"
+	EntityTypePig            EntityType = "pig"
+	EntityTypeStrider        EntityType = "strider"
+	EntityTypeMinecart       EntityType = "minecart"
 
 	// Projectiles
 	EntityTypeArrow            EntityType = "arrow"
@@ -173,6 +178,17 @@ func (t EntityType) IsProjectile() bool {
 func (t EntityType) IsDisplayEntity() bool {
 	switch t {
 	case EntityTypeBlockDisplay, EntityTypeItemDisplay, EntityTypeTextDisplay:
+		return true
+	default:
+		return false
+	}
+}
+
+// IsRideable returns true if the entity type is rideable
+func (t EntityType) IsRideable() bool {
+	switch t {
+	case EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
+		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCaravanLlama:
 		return true
 	default:
 		return false

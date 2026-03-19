@@ -810,9 +810,11 @@ func (a *agent) itemUsageOrCreate() (*items.ItemUsage, error) {
 		return nil, errors.New("item usage not available")
 	}
 	a.itemUsage = items.NewItemUsage(a.client.Conn(), a.packetMgr)
-	// Set version-specific container handler if available
+	// Set version-specific handlers if available
 	if a.versionHandler != nil {
 		a.itemUsage.SetContainerHandler(a.versionHandler.Play().Containers())
+		a.itemUsage.SetActionHandler(a.versionHandler.Play().Actions())
+		a.itemUsage.SetEntityHandler(a.versionHandler.Play().Entities())
 	}
 	return a.itemUsage, nil
 }

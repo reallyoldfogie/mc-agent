@@ -126,6 +126,16 @@ func (f *fakeMoveExec) SetManualRotation(yaw, pitch float64) error {
 	return nil
 }
 
+// SetMounted is a no-op for the fake executor
+func (f *fakeMoveExec) SetMounted(vehicleEntityID int32) error {
+	return nil
+}
+
+// SetDismounted is a no-op for the fake executor
+func (f *fakeMoveExec) SetDismounted() error {
+	return nil
+}
+
 type fakePF struct {
 	start, pathGoal models.V3
 	called          bool

@@ -34,6 +34,12 @@ type trackedEntity struct {
 	lastServerX, lastServerY, lastServerZ float64   // Previous server position
 	lastServerUpdateTime                  time.Time // When lastServer position was received
 	currentServerUpdateTime               time.Time // When current (X, Y, Z) position was received
+	// Entity attributes (health, speed, etc.)
+	Attributes map[string]float64 // Entity attribute values (e.g. "generic.movement_speed")
+	// Boat-specific metadata (only populated for boat/chest-boat entity types)
+	BoatVariant     models.BoatVariant // Wood type (oak, spruce, birch, etc.)
+	BoatPaddleLeft  bool               // Left paddle turning
+	BoatPaddleRight bool               // Right paddle turning
 }
 
 // TrackedEntityInfo exposes entity tracking data for external use (tests, following, etc.)
@@ -74,6 +80,27 @@ func (a *agent) setEntityID(id int32) {
 	a.entIDMu.Lock()
 	a.entID = id
 	a.entIDMu.Unlock()
+}
+
+// setMountedEntity sets the mounted vehicle entity ID. Pass -1 to indicate dismounted.
+func (a *agent) setMountedEntity(entityID int32) {
+	a.mountedEntityMu.Lock()
+	defer a.mountedEntityMu.Unlock()
+	a.mountedEntityID = entityID
+}
+
+// getMountedEntityID returns the currently mounted entity ID, or -1 if not mounted.
+func (a *agent) getMountedEntityID() int32 {
+	a.mountedEntityMu.RLock()
+	defer a.mountedEntityMu.RUnlock()
+	return a.mountedEntityID
+}
+
+// IsMounted returns true if the agent is currently riding a vehicle/mount.
+func (a *agent) IsMounted() bool {
+	a.mountedEntityMu.RLock()
+	defer a.mountedEntityMu.RUnlock()
+	return a.mountedEntityID != -1
 }
 
 // snapshotEntities returns a shallow copy of tracked entities for external consumption/tests.

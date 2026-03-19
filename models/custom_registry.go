@@ -6,4 +6,5 @@ type CustomRegistry interface {
 	GetNameByID(id int32) (string, bool)
 	GetIDByName(name string) (int32, bool)
 	IsReady() bool
+	Dump()
 }

@@ -387,3 +387,41 @@ func (e *entityHandler) ParseDamageEvent(p pk.Packet) (entityID int32, sourceTyp
 
 	return entityID, sourceTypeID, sourceCauseID, sourceDirectID, sourceX, sourceY, sourceZ, hasSourcePosition, nil
 }
+
+// ParseSetPassengers parses a ClientboundSetPassengers packet.
+// Returns the vehicle entity ID and a list of passenger entity IDs.
+func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, passengerEntityIDs []int32, err error) {
+	pkt := cb.NewSetPassengers()
+	if err = pkt.Scan(p); err != nil {
+		return 0, nil, common.ErrPacketParse{PacketName: "SetPassengers", Cause: err}
+	}
+
+	vehicleEntityID = int32(pkt.EntityId)
+
+	// Convert passengers array to int32 slice
+	passengers := pkt.Passengers.Get()
+	passengerEntityIDs = make([]int32, len(passengers))
+	for i, passengerID := range passengers {
+		passengerEntityIDs[i] = int32(passengerID)
+	}
+
+	log.Printf("[v1.21.10 Entity] ParseSetPassengers: vehicleID=%d, passengers=%v", vehicleEntityID, passengerEntityIDs)
+
+	return vehicleEntityID, passengerEntityIDs, nil
+}
+
+
+// ParseEntityUpdateAttributes parses an entity attributes update packet.
+func (e *entityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]float64, error) {
+	pkt := cb.NewEntityUpdateAttributes()
+	if err := pkt.Scan(p); err != nil {
+		return 0, nil, common.ErrPacketParse{PacketName: "EntityUpdateAttributes", Cause: err}
+	}
+	attrs := make(map[string]float64)
+	// Extract attribute values from the properties array
+	for _, prop := range pkt.Properties.Get() {
+		// Key is the attribute name string, Value is the attribute value (float64)
+		attrs[prop.Key.Value] = float64(prop.Value)
+	}
+	return int32(pkt.EntityId), attrs, nil
+}

@@ -151,3 +151,11 @@ func (m *MockEntityHandler) SendAttack(conn models.PacketWriter, entityID int32,
 func (m *MockEntityHandler) ParseDamageEvent(p pk.Packet) (int32, int32, int32, int32, float64, float64, float64, bool, error) {
 	return 0, 0, 0, 0, 0, 0, 0, false, nil
 }
+
+func (m *MockEntityHandler) ParseSetPassengers(p pk.Packet) (int32, []int32, error) {
+	return 0, nil, nil
+}
+
+func (m *MockEntityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]float64, error) {
+	return 0, nil, nil
+}

@@ -155,6 +155,9 @@ type agent struct {
 	entIDMu sync.RWMutex
 	entID   int32
 
+	mountedEntityMu sync.RWMutex
+	mountedEntityID int32 // -1 = not mounted
+
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
 
@@ -291,6 +294,7 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 		pendingProjectiles: []pendingProjectileInfo{},
 		activeProjectiles:  map[int32]*activeProjectileInfo{},
 		entityRegistry:     models.NewEntityRegistry(),
+		mountedEntityID:    -1, // -1 indicates not mounted
 	}
 	a.planRunner = plan.NewRunner(a)
 
@@ -598,6 +602,21 @@ func (a *agent) Init(ctx context.Context) error {
 			} else {
 				log.Printf("[Agent %s] Warning: clutch assist enabled but movement executor does not support clutch callbacks", a.cfg.Name)
 			}
+		}
+
+		// Set up mounted entity position getter and version handler for riding support
+		if positionGetter, ok := a.moveExec.(interface {
+			SetMountedEntityPositionGetter(models.MountedEntityPositionGetter)
+		}); ok {
+			positionGetter.SetMountedEntityPositionGetter(a)
+			log.Printf("[Agent %s] Movement executor configured for mounted entity position tracking", a.cfg.Name)
+		}
+
+		if versionHandlerSetter, ok := a.moveExec.(interface {
+			SetVersionHandler(models.VersionHandler)
+		}); ok && a.versionHandler != nil {
+			versionHandlerSetter.SetVersionHandler(a.versionHandler)
+			log.Printf("[Agent %s] Movement executor configured with version handler for vehicle movement", a.cfg.Name)
 		}
 
 		// Create pathfinder if data paths are configured

@@ -30,7 +30,7 @@ var (
 	mcVersion      = flag.String("version", "", "target MC version (empty = auto-detect from server)")
 	offline        = flag.Bool("offline", false, "use offline mode")
 	accessToken    = flag.String("token", "", "AccessToken - offline mode only")
-	mcDataPath     = flag.String("data-path", "", "Path to mc-data-gen data directory")
+	mcDataPath     = flag.String("data-path", "", "Path to mc-data-gen data directory (empty=auto-detect; use 'build/cache/mc-data-gen' for centralized cache)")
 	protoGoPath    = flag.String("protocol-path", "", "Path to mc-protocol-go directory")
 	disablePhysics = flag.Bool("disable-physics", false, "Disable physics-based movement (defaults to physics enabled)")
 	enableClutch   = flag.Bool("clutch", false, "Enable clutch assist during physics movement")

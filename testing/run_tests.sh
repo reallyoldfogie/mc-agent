@@ -123,7 +123,7 @@ echo -e "${GREEN}✓ Directories ready${NC}"
 echo ""
 
 # Build test command (run from testing directory)
-TEST_CMD="go test . -count 1 "
+TEST_CMD="go test ./... -count 1 "
 if [ -n "$TEST_PATTERN" ]; then
     TEST_CMD="$TEST_CMD -run "${TEST_PATTERN@Q}
 fi

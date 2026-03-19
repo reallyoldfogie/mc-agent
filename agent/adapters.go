@@ -92,3 +92,17 @@ func (m movementMirrorAdapter) SetEntityMeta(id int32, name string, uuid [16]byt
 }
 func (m movementMirrorAdapter) SetEntityType(entityType int32) { m.m.SetEntityType(entityType) }
 func (m movementMirrorAdapter) HandlePlayerInfo(p pk.Packet)   { m.m.HandlePlayerInfo(p) }
+
+// GetMountedEntityPosition returns the position of a mounted entity by ID.
+// This implements the MountedEntityPositionGetter interface for use by the movement executor.
+func (a *agent) GetMountedEntityPosition(entityID int32) (x, y, z float64, found bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists || entity.Removed {
+		return 0, 0, 0, false
+	}
+
+	return entity.X, entity.Y, entity.Z, true
+}

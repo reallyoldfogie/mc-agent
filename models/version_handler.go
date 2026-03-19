@@ -185,6 +185,20 @@ type MovementHandler interface {
 	// SendPlayerAbilities sends player abilities (flying, etc.)
 	SendPlayerAbilities(conn PacketWriter, flags byte) error
 
+	// SendMoveVehicle sends a vehicle movement packet while mounted.
+	// Sent instead of SendPosition when the player is riding a vehicle/mount.
+	SendMoveVehicle(conn PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error
+
+	// SendVehicleInput sends directional input for the currently mounted vehicle.
+	// For v1_21_1–3 translates to SteerVehicle (float-based);
+	// for v1_21_4–11 uses PlayerInput bitflags.
+	SendVehicleInput(conn PacketWriter, forward, backward, left, right, jump, sneak bool) error
+
+	// SendPlayerCommandWithParam sends a player command with an optional parameter.
+	// Like SendPlayerCommand but includes the optional jump boost parameter (0–100),
+	// only used for ActionStartJumpHorse.
+	SendPlayerCommandWithParam(conn PacketWriter, entityID, actionID, jumpBoost int32) error
+
 	// ParsePlayerPosition parses a clientbound player position packet
 	ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float32, flags int32, err error)
 
@@ -291,6 +305,14 @@ type EntityHandler interface {
 	// and an optional source position.
 	// sourceCauseID and sourceDirectID use 0 to mean "no entity" (protocol sends ID+1, 0 = absent).
 	ParseDamageEvent(p pk.Packet) (entityID int32, sourceTypeID int32, sourceCauseID int32, sourceDirectID int32, sourceX, sourceY, sourceZ float64, hasSourcePosition bool, err error)
+
+	// ParseSetPassengers parses a ClientboundSetPassengers packet.
+	// Returns the vehicle entity ID and a list of passenger entity IDs.
+	ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, passengerEntityIDs []int32, err error)
+
+	// ParseEntityUpdateAttributes parses a ClientboundEntityUpdateAttributes packet.
+	// Returns the entity ID and a map of attribute names to their values.
+	ParseEntityUpdateAttributes(p pk.Packet) (entityID int32, attributes map[string]float64, err error)
 }
 
 // ContainerHandler handles container/inventory packets.

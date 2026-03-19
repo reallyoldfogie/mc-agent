@@ -27,6 +27,8 @@ const (
 	PhysicsModeNavigating
 	// PhysicsModeManual - Agent is under external control (for special actions)
 	PhysicsModeManual
+	// PhysicsModeRiding - Agent is riding/mounted on a vehicle, server controls position
+	PhysicsModeRiding
 )
 
 // String returns the name of the physics mode.
@@ -38,6 +40,8 @@ func (pm PhysicsMode) String() string {
 		return "Navigating"
 	case PhysicsModeManual:
 		return "Manual"
+	case PhysicsModeRiding:
+		return "Riding"
 	default:
 		return "Unknown"
 	}
@@ -102,6 +106,12 @@ type PhysicsMovementExecutor struct {
 	stuckRecovery     StuckRecoveryFn // Callback for recovery when stuck
 	stuckRecoveryLock sync.Mutex      // Prevent concurrent recovery attempts
 	isRecovering      bool            // Whether we're currently in recovery
+
+	// Mounted/riding state
+	mountedEntityMu         sync.RWMutex
+	mountedEntityID         int32 // -1 = not mounted
+	entityPositionGetter    models.MountedEntityPositionGetter
+	versionHandler          models.VersionHandler
 	recoveryAttempt   int             // Which recovery stage we're on (0=none, 1=sideways, 2=repath)
 	sidewaysDirection int             // Which sideways direction to try (-1=left, 1=right)
 	sidewaysStartTime time.Time       // When sideways recovery started
@@ -181,6 +191,28 @@ func (pe *PhysicsMovementExecutor) SetVelocity(x, y, z float64) error {
 	return nil
 }
 
+// SetMounted transitions the executor to mounted/riding mode.
+// The executor will then send vehicle movement packets instead of player position packets.
+func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	pe.mountedEntityID = vehicleEntityID
+	pe.SetMode(PhysicsModeRiding)
+	log.Printf("[SetMounted] Agent mounted on entity %d", vehicleEntityID)
+	return nil
+}
+
+// SetDismounted transitions the executor back from mounted mode to normal movement mode.
+// The executor will resume sending player position packets.
+func (pe *PhysicsMovementExecutor) SetDismounted() error {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	pe.mountedEntityID = -1
+	pe.SetMode(PhysicsModeIdle)
+	log.Printf("[SetDismounted] Agent dismounted from vehicle")
+	return nil
+}
+
 // SetPacketCallback sets an optional callback for packet interception.
 func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface{})) {
 	pe.baseExecutor.SetPacketCallback(callback)
@@ -190,6 +222,20 @@ func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface
 // This forwards to the base executor for version-aware packet construction.
 func (pe *PhysicsMovementExecutor) SetMovementHandler(handler models.MovementHandler) {
 	pe.baseExecutor.SetMovementHandler(handler)
+}
+
+// SetVersionHandler sets the version handler for sending version-specific packets (used for riding).
+func (pe *PhysicsMovementExecutor) SetVersionHandler(handler models.VersionHandler) {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	pe.versionHandler = handler
+}
+
+// SetMountedEntityPositionGetter sets the interface for retrieving mounted entity positions.
+func (pe *PhysicsMovementExecutor) SetMountedEntityPositionGetter(getter models.MountedEntityPositionGetter) {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	pe.entityPositionGetter = getter
 }
 
 // SetClutchCallback sets an optional callback for clutch planning signals.
@@ -771,6 +817,10 @@ func (pe *PhysicsMovementExecutor) tick() {
 		inputs = pe.generateNavigationInputs()
 	case PhysicsModeManual:
 		inputs = pe.generateManualInputs()
+	case PhysicsModeRiding:
+		// While riding, just send vehicle position updates and don't tick physics
+		pe.handleRidingMode()
+		return
 	default:
 		inputs = physics.Inputs{} // Zero inputs
 	}
@@ -1251,6 +1301,71 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 		inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
 
 	return inputs
+}
+
+// handleRidingMode handles the riding/mounted mode tick.
+// While riding, the server controls the position, so we send vehicle position updates
+// and handle vehicle steering from manual inputs.
+func (pe *PhysicsMovementExecutor) handleRidingMode() {
+	// Get mounted entity ID and version handler
+	pe.mountedEntityMu.RLock()
+	mountedEntityID := pe.mountedEntityID
+	versionHandler := pe.versionHandler
+	pe.mountedEntityMu.RUnlock()
+
+	// Get the mounted entity's position
+	if pe.entityPositionGetter == nil {
+		log.Printf("[handleRidingMode] Entity position getter not set, cannot send vehicle updates")
+		return
+	}
+
+	mountX, mountY, mountZ, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
+	if !found {
+		log.Printf("[handleRidingMode] Mounted entity %d not found", mountedEntityID)
+		return
+	}
+
+	// Update physics state to track the vehicle position
+	_, yaw, pitch, onGround := pe.physicsState.GetPosition()
+	pe.physicsState.SetPosition(
+		models.V3{X: mountX, Y: mountY, Z: mountZ},
+		yaw,
+		pitch,
+		onGround,
+	)
+
+	// Send vehicle position update instead of player position
+	if versionHandler != nil {
+		if err := versionHandler.Play().Movement().SendMoveVehicle(
+			pe.baseExecutor.client.Conn(),
+			mountX, mountY, mountZ,
+			float32(yaw), float32(pitch),
+			onGround,
+		); err != nil {
+			log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+		}
+
+		// Send vehicle input based on manual throttle inputs
+		pe.manualInputsMu.RLock()
+		inputs := pe.manualInputs
+		pe.manualInputsMu.RUnlock()
+
+		forward := inputs.ThrottleZ > 0.1
+		backward := inputs.ThrottleZ < -0.1
+		right := inputs.ThrottleX > 0.1
+		left := inputs.ThrottleX < -0.1
+		jump := inputs.Jump
+		sneak := inputs.Sneak
+
+		if err := versionHandler.Play().Movement().SendVehicleInput(
+			pe.baseExecutor.client.Conn(),
+			forward, backward, left, right, jump, sneak,
+		); err != nil {
+			log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
+		}
+	} else {
+		log.Printf("[handleRidingMode] Version handler not set")
+	}
 }
 
 // applyMovementState applies sprint/sneak state changes based on inputs.

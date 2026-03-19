@@ -224,3 +224,76 @@ func (m *movementHandler) SendStartSprinting(conn models.PacketWriter, entityID 
 func (m *movementHandler) SendStopSprinting(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStopSprinting)
 }
+
+// SendMoveVehicle sends a vehicle movement packet while the player is riding a vehicle/mount.
+// This is sent instead of player position packets when mounted.
+// Note: v1.21.1 does not include onGround in VehicleMove packets (added in v1.21.4+)
+func (m *movementHandler) SendMoveVehicle(conn models.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
+	pkt := sb.NewVehicleMove()
+	pkt.X = pk.Double(x)
+	pkt.Y = pk.Double(y)
+	pkt.Z = pk.Double(z)
+	pkt.Yaw = pk.Float(yaw)
+	pkt.Pitch = pk.Float(pitch)
+
+	log.Printf("[v1.21.1 Movement] SendMoveVehicle: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v (field not sent in v1.21.1)", x, y, z, yaw, pitch, onGround)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "VehicleMove", Cause: err}
+	}
+	return nil
+}
+
+// SendVehicleInput sends directional input for the mounted vehicle.
+// v1.21.1–3 use SteerVehicle with float-based forward/sideways inputs.
+func (m *movementHandler) SendVehicleInput(conn models.PacketWriter, forward, backward, left, right, jump, sneak bool) error {
+	pkt := sb.NewSteerVehicle()
+
+	if forward {
+		pkt.Forward = pk.Float(1.0)
+	} else if backward {
+		pkt.Forward = pk.Float(-1.0)
+	} else {
+		pkt.Forward = pk.Float(0.0)
+	}
+
+	if right {
+		pkt.Sideways = pk.Float(1.0)
+	} else if left {
+		pkt.Sideways = pk.Float(-1.0)
+	} else {
+		pkt.Sideways = pk.Float(0.0)
+	}
+
+	var flags byte
+	if jump {
+		flags |= 0x01
+	}
+	if sneak {
+		flags |= 0x02
+	}
+	pkt.Jump = pk.UnsignedByte(flags)
+
+	log.Printf("[v1.21.1 Movement] SendVehicleInput: forward=%.1f sideways=%.1f flags=%d", pkt.Forward, pkt.Sideways, flags)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "SteerVehicle", Cause: err}
+	}
+	return nil
+}
+
+// SendPlayerCommandWithParam sends a player command with an optional parameter.
+// v1.21.1–3 use EntityAction which includes JumpBoost field.
+func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, entityID, actionID, jumpBoost int32) error {
+	pkt := sb.NewEntityAction()
+	pkt.EntityId = pk.VarInt(entityID)
+	pkt.ActionId = pk.VarInt(actionID)
+	pkt.JumpBoost = pk.VarInt(jumpBoost)
+
+	log.Printf("[v1.21.1 Movement] SendPlayerCommandWithParam: entityID=%d actionID=%d jumpBoost=%d", entityID, actionID, jumpBoost)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "EntityAction", Cause: err}
+	}
+	return nil
+}

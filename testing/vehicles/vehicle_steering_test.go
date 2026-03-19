@@ -1,0 +1,185 @@
+package vehicles
+
+import (
+	"testing"
+	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/stretchr/testify/require"
+)
+
+// TestBoatSteering verifies that the agent can mount a boat and steer it using manual inputs
+func TestBoatSteering(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			defer cleanup()
+
+			// Teleport agent to a location with water
+			_, err := helper.Instance.RCON.Exec(ctx, "execute in minecraft:the_end run fill 0 50 0 50 50 50 water")
+			require.NoError(t, err, "fill water area")
+
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 25 51 25")
+			require.NoError(t, err, "teleport agent")
+
+			time.Sleep(500 * time.Millisecond) // Wait for position update
+
+			// Get agent's initial position
+			x1, y1, z1, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			require.True(t, initialized, "agent position should be initialized")
+
+			// Summon a boat at the agent's location
+			boatEntityID, err := helper.SummonBoat(ctx, x1, y1, z1, "oak") // oak boat
+			require.NoError(t, err, "summon boat")
+
+			time.Sleep(500 * time.Millisecond) // Wait for boat to spawn
+
+			// Mount the boat
+			err = helper.MountEntity(ctx, boatEntityID)
+			require.NoError(t, err, "mount boat")
+
+			// Wait for mount confirmation
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err, "agent should be mounted")
+
+			// Enter manual mode
+			err = helper.EnterManualMode()
+			require.NoError(t, err, "enter manual mode")
+
+			// Set throttle to move forward
+			helper.SetManualThrottle(0, 1.0) // positive Z = forward
+
+			// Wait for movement (boat should move forward)
+			time.Sleep(2 * time.Second)
+
+			// Get agent's position after moving forward
+			x2, y2, z2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+			// Verify agent moved forward (positive Z direction)
+			distance := GetDistance(x1, y1, z1, x2, y2, z2)
+			require.Greater(t, distance, 0.5, "agent should have moved forward at least 0.5 blocks")
+			require.Greater(t, z2, z1, "agent should have moved in positive Z direction")
+
+			// Test lateral movement (steer right)
+			initialX := x2
+
+			// Stop forward movement and steer right
+			helper.SetManualThrottle(1.0, 0.5) // positive X = right, positive Z = forward
+
+			time.Sleep(1 * time.Second)
+
+			x3, _, z3, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+			// Verify agent moved right (positive X direction)
+			require.Greater(t, x3, initialX, "agent should have moved in positive X direction")
+
+			// Test backward movement
+			helper.SetManualThrottle(0, -1.0) // negative Z = backward
+
+			time.Sleep(1 * time.Second)
+
+			x4, _, z4, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+			// Verify agent moved backward
+			require.Less(t, z4, z3, "agent should have moved backward")
+
+			// Test stop
+			helper.SetManualThrottle(0, 0)
+
+			time.Sleep(500 * time.Millisecond)
+
+			x5, _, z5, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+			// Position should be approximately the same (no movement)
+			distance = GetDistance(x4, 0, z4, x5, 0, z5)
+			require.Less(t, distance, 0.1, "agent should have minimal movement when throttle is zero")
+
+			// Exit manual mode
+			err = helper.ExitManualMode()
+			require.NoError(t, err, "exit manual mode")
+
+			// Dismount
+			err = helper.DismountEntity()
+			require.NoError(t, err, "dismount vehicle")
+
+			// Verify dismount
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err, "agent should be dismounted")
+		})
+	}
+}
+
+// TestSteering validates steering input system for mounted vehicles
+func TestVehicleSteeringInputs(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			defer cleanup()
+
+			// Setup water area
+			_, err := helper.Instance.RCON.Exec(ctx, "execute in minecraft:the_end run fill 0 50 0 100 50 100 water")
+			require.NoError(t, err, "fill water area")
+
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 50 51 50")
+			require.NoError(t, err, "teleport agent")
+
+			time.Sleep(500 * time.Millisecond)
+
+			x1, y1, z1, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+			// Summon boat
+			boatEntityID, err := helper.SummonBoat(ctx, x1, y1, z1, "oak")
+			require.NoError(t, err, "summon boat")
+
+			time.Sleep(500 * time.Millisecond)
+
+			// Mount and enter manual mode
+			err = helper.MountEntity(ctx, boatEntityID)
+			require.NoError(t, err, "mount boat")
+
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err, "agent should be mounted")
+
+			err = helper.EnterManualMode()
+			require.NoError(t, err, "enter manual mode")
+
+			// Test multiple throttle combinations
+			testCases := []struct {
+				name      string
+				throttleX float64
+				throttleZ float64
+				duration  time.Duration
+			}{
+				{"forward", 0, 1.0, 1 * time.Second},
+				{"backward", 0, -1.0, 1 * time.Second},
+				{"right", 1.0, 0, 1 * time.Second},
+				{"left", -1.0, 0, 1 * time.Second},
+				{"forward-right", 0.7, 0.7, 1 * time.Second},
+				{"forward-left", -0.7, 0.7, 1 * time.Second},
+				{"stop", 0, 0, 500 * time.Millisecond},
+			}
+
+			for _, tc := range testCases {
+				t.Run(tc.name, func(t *testing.T) {
+					px, _, pz, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+					helper.SetManualThrottle(tc.throttleX, tc.throttleZ)
+					time.Sleep(tc.duration)
+					x2, _, z2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+
+					// For non-zero throttle, verify movement occurred
+					if tc.throttleX != 0 || tc.throttleZ != 0 {
+						distance := GetDistance(px, 0, pz, x2, 0, z2)
+						require.Greater(t, distance, 0.2, "throttle %v,%v should cause movement", tc.throttleX, tc.throttleZ)
+					}
+				})
+			}
+
+			// Exit manual mode and dismount
+			err = helper.ExitManualMode()
+			require.NoError(t, err, "exit manual mode")
+
+			err = helper.DismountEntity()
+			require.NoError(t, err, "dismount")
+		})
+	}
+}

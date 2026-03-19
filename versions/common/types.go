@@ -65,6 +65,7 @@ const (
 	ActionStopJumpHorse     = 6
 	ActionOpenVehicleInv    = 7
 	ActionStartFlyingElytra = 8
+	ActionLeaveVehicle      = 0 // Same as ActionStartSneaking - sneak while mounted to dismount
 )
 
 // Player action status IDs (ServerboundPlayerAction/BlockDig)

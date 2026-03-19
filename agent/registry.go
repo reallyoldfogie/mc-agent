@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -36,6 +37,13 @@ func (r *customRegistry) GetIDByName(name string) (int32, bool) {
 
 func (r *customRegistry) IsReady() bool {
 	return r.ready
+}
+
+func (r *customRegistry) Dump() {
+	fmt.Printf("\n%s\n", r.id)
+	for k, v := range r.byName {
+		fmt.Printf("%s: %d\n", k, v)
+	}
 }
 
 // registryHandlers returns config-phase handlers to capture registry data.
@@ -129,6 +137,17 @@ func (a *agent) GetEntityTypeID(entityName string) (int32, bool) {
 		return 0, false
 	}
 	return reg.GetIDByName(entityName)
+}
+
+func (a *agent) DumpRegistry(regName string) {
+	reg := a.GetRegistry(regName)
+	if reg == nil || !reg.IsReady() {
+		fmt.Printf("[DUMP] registry %s not loaded", regName)
+		return
+	} else {
+		fmt.Printf("%#v\n", reg)
+	}
+	reg.Dump()
 }
 
 // onRegistryDataCallback handles registry data received during configuration phase.

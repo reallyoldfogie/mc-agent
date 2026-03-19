@@ -21,12 +21,17 @@ mc-agent.exe
 *.test
 *.out
 bin/
+build/
 dist/
 daze
 main
 main.exe
 list_all_packets
 mc-agent-refactor
+testing/vehicles/data
+testing/vehicles/libraries
+testing/vehicles/versions
+
 
 # Legacy implementations 
 /old/

@@ -224,3 +224,58 @@ func (m *movementHandler) SendStartSprinting(conn models.PacketWriter, entityID 
 func (m *movementHandler) SendStopSprinting(conn models.PacketWriter, entityID int32) error {
 	return m.SendPlayerCommand(conn, entityID, common.ActionStopSprinting)
 }
+
+// SendMoveVehicle sends a vehicle movement packet while the player is riding a vehicle/mount.
+// This is sent instead of player position packets when mounted.
+func (m *movementHandler) SendMoveVehicle(conn models.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
+	pkt := sb.NewVehicleMove()
+	pkt.X = pk.Double(x)
+	pkt.Y = pk.Double(y)
+	pkt.Z = pk.Double(z)
+	pkt.Yaw = pk.Float(yaw)
+	pkt.Pitch = pk.Float(pitch)
+	pkt.OnGround = pk.Boolean(onGround)
+
+	log.Printf("[v1.21.5 Movement] SendMoveVehicle: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v", x, y, z, yaw, pitch, onGround)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "VehicleMove", Cause: err}
+	}
+	return nil
+}
+
+// SendVehicleInput sends directional input for the mounted vehicle.
+// v1.21.5+ uses PlayerInput with bitflags for all directions.
+func (m *movementHandler) SendVehicleInput(conn models.PacketWriter, forward, backward, left, right, jump, sneak bool) error {
+	pkt := sb.NewPlayerInput()
+	pkt.Inputs.SetForward(forward)
+	pkt.Inputs.SetBackward(backward)
+	pkt.Inputs.SetLeft(left)
+	pkt.Inputs.SetRight(right)
+	pkt.Inputs.SetJump(jump)
+	pkt.Inputs.SetShift(sneak)
+
+	log.Printf("[v1.21.5 Movement] SendVehicleInput: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v",
+		forward, backward, left, right, jump, sneak)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "PlayerInput", Cause: err}
+	}
+	return nil
+}
+
+// SendPlayerCommandWithParam sends a player command with an optional parameter.
+// v1.21.5+ uses EntityAction which includes JumpBoost field.
+func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, entityID, actionID, jumpBoost int32) error {
+	pkt := sb.NewEntityAction()
+	pkt.EntityId = pk.VarInt(entityID)
+	pkt.ActionId = pk.VarInt(actionID)
+	pkt.JumpBoost = pk.VarInt(jumpBoost)
+
+	log.Printf("[v1.21.5 Movement] SendPlayerCommandWithParam: entityID=%d actionID=%d jumpBoost=%d", entityID, actionID, jumpBoost)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "EntityAction", Cause: err}
+	}
+	return nil
+}

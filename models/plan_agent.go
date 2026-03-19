@@ -18,6 +18,8 @@ type PlanAgent interface {
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
 	GetEntityTypeID(entityName string) (int32, bool)
 
+	DumpRegistry(reg string)
+
 	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
 
 	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error

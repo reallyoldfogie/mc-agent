@@ -38,7 +38,27 @@ const (
 
 	// Additional Living Entity fields (16+)
 	EntityMetadataKeyMainHand EntityMetadataKeyType = 19 // byte: 0 = main hand, 1 = off hand
+
+	// Boat/Chest Boat Metadata (AbstractBoat type)
+	EntityMetadataKeyBoatVariant     EntityMetadataKeyType = 11 // VarInt: boat wood type (0-8)
+	EntityMetadataKeyBoatPaddleLeft  EntityMetadataKeyType = 12 // boolean: left paddle turning
+	EntityMetadataKeyBoatPaddleRight EntityMetadataKeyType = 13 // boolean: right paddle turning
 )
 
 // EntityMetadataKeyType is a type alias for metadata key indices
 type EntityMetadataKeyType int32
+
+// BoatVariant represents the type/wood of a boat entity
+type BoatVariant int32
+
+const (
+	BoatVariantOak      BoatVariant = 0
+	BoatVariantSpruce   BoatVariant = 1
+	BoatVariantBirch    BoatVariant = 2
+	BoatVariantJungle   BoatVariant = 3
+	BoatVariantAcacia   BoatVariant = 4
+	BoatVariantDarkOak  BoatVariant = 5
+	BoatVariantMangrove BoatVariant = 6
+	BoatVariantBamboo   BoatVariant = 7
+	BoatVariantCherry   BoatVariant = 8
+)

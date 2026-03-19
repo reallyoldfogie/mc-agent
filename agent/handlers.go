@@ -95,6 +95,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onDamageEvent,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetPassengers"),
+			Name:     "ClientboundSetPassengers",
+			Priority: 0,
+			F:        a.onSetPassengers,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundGameEvent"),
 			Name:     "ClientboundGameEvent",
 			Priority: 0,
@@ -1117,6 +1123,26 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		e.criticalHit = criticalHit
 		e.pierceLevel = pierceLevel
 		e.potionColor = potionColor
+
+		// Handle boat-specific metadata
+		// Check if this is a boat entity type and update paddle/variant metadata
+		for _, entry := range entries {
+			switch int(entry.Key) {
+			case int(models.EntityMetadataKeyBoatVariant):
+				if variantVal, ok := entry.Value.(int32); ok {
+					e.BoatVariant = models.BoatVariant(variantVal)
+				}
+			case int(models.EntityMetadataKeyBoatPaddleLeft):
+				if paddleVal, ok := entry.Value.(bool); ok {
+					e.BoatPaddleLeft = paddleVal
+				}
+			case int(models.EntityMetadataKeyBoatPaddleRight):
+				if paddleVal, ok := entry.Value.(bool); ok {
+					e.BoatPaddleRight = paddleVal
+				}
+			}
+		}
+
 		// Update last metadata update timestamp
 		e.LastMetadataUpdate = time.Now()
 	}
@@ -1246,15 +1272,28 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 }
 
 // onEntityUpdateAttributes handles entity attribute updates (health, speed, etc.).
-// For now, we log these but don't need to take action.
 func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
 	}
 
-	// Note: This packet is complex and contains multiple attributes.
-	// For now, we'll just log that we received it and not parse the contents.
-	log.Printf("[onEntityUpdateAttributes] Received entity attributes update")
+	entityID, attrs, err := a.versionHandler.Play().Entities().ParseEntityUpdateAttributes(p)
+	if err != nil {
+		return err
+	}
+
+	a.entitiesMu.Lock()
+	if entity, ok := a.entities[entityID]; ok {
+		if entity.Attributes == nil {
+			entity.Attributes = make(map[string]float64)
+		}
+		for key, value := range attrs {
+			entity.Attributes[key] = value
+		}
+		log.Printf("[onEntityUpdateAttributes] Updated attributes for entity %d: %v", entityID, attrs)
+	}
+	a.entitiesMu.Unlock()
+
 	return nil
 }
 
@@ -1536,6 +1575,50 @@ func (a *agent) onUpdateRecipes(p pk.Packet) error {
 	a.recipesMu.Lock()
 	a.lastUpdateRecipes = payload
 	a.recipesMu.Unlock()
+	return nil
+}
+
+// onSetPassengers handles the ClientboundSetPassengers packet to track mount state.
+func (a *agent) onSetPassengers(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	vehicleID, passengerIDs, err := a.versionHandler.Play().Entities().ParseSetPassengers(p)
+	if err != nil {
+		return err
+	}
+
+	agentID := a.GetEntityID()
+	isPassenger := false
+	for _, pid := range passengerIDs {
+		if pid == agentID {
+			isPassenger = true
+			break
+		}
+	}
+
+	currentMount := a.getMountedEntityID()
+	if isPassenger && currentMount != vehicleID {
+		// Agent just mounted a vehicle
+		log.Printf("[onSetPassengers] Agent mounted entity %d (vehicle with %d passengers)", vehicleID, len(passengerIDs))
+		a.setMountedEntity(vehicleID)
+		if a.moveExec != nil {
+			if err := a.moveExec.SetMounted(vehicleID); err != nil {
+				log.Printf("[onSetPassengers] Error setting movement executor mounted state: %v", err)
+			}
+		}
+	} else if !isPassenger && currentMount == vehicleID {
+		// Agent just dismounted from the vehicle
+		log.Printf("[onSetPassengers] Agent dismounted from entity %d", vehicleID)
+		a.setMountedEntity(-1)
+		if a.moveExec != nil {
+			if err := a.moveExec.SetDismounted(); err != nil {
+				log.Printf("[onSetPassengers] Error setting movement executor dismounted state: %v", err)
+			}
+		}
+	}
+
 	return nil
 }
 

@@ -16,6 +16,15 @@ type MovementExecutor interface {
 
 	SetVelocity(x, y, z float64) error
 
+	// SetMounted transitions the executor to mounted/riding mode.
+	// The executor should switch to sending vehicle movement packets (ServerboundMoveVehicle).
+	// vehicleEntityID: the entity ID of the vehicle being ridden
+	SetMounted(vehicleEntityID int32) error
+
+	// SetDismounted transitions the executor back from mounted mode to normal movement mode.
+	// The executor should switch back to sending player movement packets (ServerboundMovePlayerPos, etc).
+	SetDismounted() error
+
 	SetTelemetryRecorder(recorder MovementTelemetryRecorder)
 }
 

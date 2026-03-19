@@ -362,3 +362,13 @@ func (me *movementExecutor) StopSneaking() error {
 	}
 	return err
 }
+
+// SetMounted is a no-op for legacy executor (legacy mode doesn't support mounting)
+func (me *movementExecutor) SetMounted(vehicleEntityID int32) error {
+	return nil
+}
+
+// SetDismounted is a no-op for legacy executor (legacy mode doesn't support mounting)
+func (me *movementExecutor) SetDismounted() error {
+	return nil
+}
