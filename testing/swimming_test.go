@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
 	"testing"
 	"time"
 
@@ -226,7 +225,6 @@ func TestSwimming_PathfindingAcrossWater(t *testing.T) {
 			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
 				fmt.Sprintf("swimming_pathfind_across_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
 				agentCfg.Name)
-			_ = os.MkdirAll("./replays", 0755)
 
 			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err, "spawn agent")
@@ -395,9 +393,8 @@ func TestSwimming_PathfindingDropIntoWater(t *testing.T) {
 			)
 			agentCfg.EnableReplay = true
 			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_pathfind_drop_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
+				fmt.Sprintf("swimming_phys_pathfind_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
 				agentCfg.Name)
-			_ = os.MkdirAll("./replays", 0755)
 
 			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err, "spawn agent")
@@ -568,9 +565,8 @@ func TestSwimming_PathfindingSwimUp(t *testing.T) {
 			)
 			agentCfg.EnableReplay = true
 			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_pathfind_swimup_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
+				fmt.Sprintf("swimming_phys_fluid_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
 				agentCfg.Name)
-			_ = os.MkdirAll("./replays", 0755)
 
 			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err, "spawn agent")
@@ -713,9 +709,8 @@ func TestSwimming_PathfindingSwimDown(t *testing.T) {
 			)
 			agentCfg.EnableReplay = true
 			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_pathfind_swimdown_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
+				fmt.Sprintf("swimming_jump_climb_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
 				agentCfg.Name)
-			_ = os.MkdirAll("./replays", 0755)
 
 			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err, "spawn agent")

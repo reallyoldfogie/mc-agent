@@ -164,6 +164,31 @@ const (
 	WaterGravityFactor = 0.25
 )
 
+// Boat physics constants (from Minecraft 1.21.10 AbstractBoatEntity)
+// Per-tick velocity multipliers and gravity for different boat conditions.
+const (
+	// Standard boat in water
+	BoatInWaterVelocityMultiplier = 0.9   // Velocity multiplier per tick
+	BoatInWaterGravity            = -0.04 // Gravitational acceleration (blocks/tick²)
+
+	// Boat fully submerged in water
+	BoatUnderWaterVelocityMultiplier = 0.45  // Significant drag underwater
+	BoatUnderWaterGravity            = -0.04 // Same gravity as in water
+
+	// Boat under flowing water (stronger current effect)
+	BoatUnderFlowingWaterVelocityMultiplier = 0.9   // Same as standard water
+	BoatUnderFlowingWaterGravity            = -0.0007 // Reduced gravity in flowing water
+
+	// Boat on land surfaces (these are the block slipperiness values)
+	BoatOnLandStandardVelocityMultiplier = 0.6   // Default block friction
+	BoatOnLandIceVelocityMultiplier      = 0.98  // Ice and packed ice
+	BoatOnLandBlueIceVelocityMultiplier  = 0.989 // Blue ice (highest slipperiness)
+	BoatOnLandGravity                    = -0.04 // Standard gravity on land
+
+	// Note: When on land with player controlling boat, slipperiness is halved (AbstractBoatEntity:565)
+	BoatOnLandPlayerControlHalving = 0.5 // Multiply slipperiness by this when player controls boat
+)
+
 // Swimming constants
 const (
 	// SwimUpVelocity is the upward velocity applied each tick while the jump input

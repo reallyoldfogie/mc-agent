@@ -26,6 +26,8 @@ type MovementExecutor interface {
 	SetDismounted() error
 
 	SetTelemetryRecorder(recorder MovementTelemetryRecorder)
+
+	SetMovementHandler(MovementHandler)
 }
 
 // ManualMovementExecutor is an optional interface for executors that support frame-by-frame physics
@@ -48,5 +50,21 @@ type ManualMovementExecutor interface {
 
 	// SetManualRotation sets the yaw and pitch for the current and next frames.
 	// Use math.NaN() to maintain the current rotation value without changing it.
+	SetManualRotation(yaw, pitch float64) error
+}
+
+// ManualMovement provides passthrough access to manual movement control on the agent.
+// These methods delegate to the underlying movement executor if it supports ManualMovementExecutor.
+type ManualMovement interface {
+	// EnterManualMode enables frame-by-frame physics simulation control on the agent.
+	EnterManualMode() error
+
+	// ExitManualMode disables frame-by-frame physics simulation control on the agent.
+	ExitManualMode() error
+
+	// SetManualThrottle sets directional input for movement.
+	SetManualThrottle(westEastThrottle, northSouthThrottle float64) error
+
+	// SetManualRotation sets rotation input (yaw/pitch).
 	SetManualRotation(yaw, pitch float64) error
 }

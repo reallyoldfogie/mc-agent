@@ -41,7 +41,7 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_utils "github.com/reallyoldfogie/mc-protocol-go/utils"
 
-"github.com/reallyoldfogie/mc-replay-go/mcpr"
+	"github.com/reallyoldfogie/mc-replay-go/mcpr"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 )
 
@@ -570,12 +570,8 @@ func (a *agent) Init(ctx context.Context) error {
 
 		// Wire up version handler to movement executor if available
 		if a.versionHandler != nil {
-			if movementHandlerSetter, ok := a.moveExec.(interface {
-				SetMovementHandler(models.MovementHandler)
-			}); ok {
-				movementHandlerSetter.SetMovementHandler(a.versionHandler.Play().Movement())
-				log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.cfg.Name, a.versionHandler.Version())
-			}
+			a.moveExec.SetMovementHandler(a.versionHandler.Play().Movement())
+			log.Printf("[Agent %s] Movement executor using version-specific handler for %s", a.cfg.Name, a.versionHandler.Version())
 		}
 
 		if a.cfg.EnableClutchAssist {
@@ -808,7 +804,7 @@ func (a *agent) Init(ctx context.Context) error {
 				// Login phase packets (including Set Compression) are filtered at the bot client level
 				// bundleDelimiterID := int32(a.packetMgr.GetClientboundPacketID("ClientboundBundleDelimiter"))
 				// DISABLED: Duplicate recording - packets already recorded by mc-bot-go/bot/replay.go
-			// a.client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
+				// a.client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
 			} else {
 				// If recorder setup fails, continue without recording
 			}
@@ -1248,6 +1244,80 @@ func (a *agent) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) 
 
 	// Set telemetry on physics executor
 	a.moveExec.SetTelemetryRecorder(recorder)
+}
+
+// Manual movement passthrough methods
+
+// EnterManualMode enables frame-by-frame physics simulation control.
+// Requires the movement executor to support ManualMovementExecutor.
+func (a *agent) EnterManualMode() error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.EnterManualMode()
+}
+
+// ExitManualMode disables frame-by-frame physics simulation control.
+func (a *agent) ExitManualMode() error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.ExitManualMode()
+}
+
+// SetManualThrottle sets directional input for manual movement.
+// westEastThrottle: positive = east, negative = west
+// northSouthThrottle: positive = south, negative = north
+func (a *agent) SetManualThrottle(westEastThrottle, northSouthThrottle float64) error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.SetManualThrottle(westEastThrottle, northSouthThrottle)
+}
+
+// SetManualRotation sets yaw and pitch for manual control.
+// Use math.NaN() to maintain current rotation without changing it.
+func (a *agent) SetManualRotation(yaw, pitch float64) error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.SetManualRotation(yaw, pitch)
 }
 
 // errors

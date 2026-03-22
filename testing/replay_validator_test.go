@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr"
 )
 
@@ -13,12 +14,16 @@ import (
 // This is useful for batch-validating old replay files that may have been created
 // before automatic validation was implemented.
 func TestValidateExistingReplays(t *testing.T) {
-	replaysDir := "../replays"
+	cacheDir, err := utils.FindOrCreateCacheDir()
+	if err != nil {
+		t.Fatalf("find cache directory: %v", err)
+	}
+	replaysDir := filepath.Join(cacheDir, "replays")
 
 	var replayFiles []string
 
 	// Walk through all subdirectories recursively
-	err := filepath.WalkDir(replaysDir, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(replaysDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

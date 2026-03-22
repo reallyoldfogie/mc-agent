@@ -66,6 +66,8 @@ func (f *fakeMoveExec) SetVelocity(x, y, z float64) error {
 	return nil
 }
 
+func (f *fakeMoveExec) SetMovementHandler(models.MovementHandler) {}
+
 // ManualMovementExecutor implementation for testing
 func (f *fakeMoveExec) EnterManualMode() error {
 	if f.manualMode {

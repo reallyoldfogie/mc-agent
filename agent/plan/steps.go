@@ -360,7 +360,7 @@ func (s UseItemOnBlock) Run(ctx context.Context, agent models.Agent) (StepResult
 type UseItemOnEntity struct {
 	IDValue  string
 	EntityID int32
-	Hand     int
+	Hand     models.Hand
 	Sneaking bool
 	Timeout  time.Duration
 }

@@ -28,13 +28,16 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 		t.Fatalf("create framework: %v", err)
 	}
 
-	serverCfg := testingpkg.DefaultServerConfig()
+	serverCfg := testingpkg.FlatWorldServerConfig()
 	serverCfg.Memory = "512M"
 	serverCfg.Version = mcVersion
 	serverCfg.GameMode = testingpkg.GameModeSurvival
 	serverCfg.ExtraEnv = map[string]string{
 		"FORCE_GAMEMODE": "true",
 	}
+	// serverCfg.MountDirs = []string{"loggingConfig"}
+	// serverCfg.ExtraEnv = map[string]string{"JVM_OPTS": "-Dfabric.development=true -Dlog4j2.configurationFile=/data/loggingConfig/log4j2.xml"}
+
 	serverCfg.PullImage = false
 	testingpkg.RequireIntegrationEnv(t, serverCfg)
 
@@ -52,10 +55,11 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 	// The FindOrCreateCacheDir utility can be used by other code that manages caches explicitly.
 
 	agentCfg := testingpkg.AgentConfig{
-		Name:          "VehicleBot",
-		ServerAddress: addr,
-		Version:       serverCfg.Version,
-		MCDataGenPath: "", // Auto-detect: downloads to data/mc-data-gen-cache by default
+		Name:           "VehicleBot",
+		ServerAddress:  addr,
+		Version:        serverCfg.Version,
+		MCDataGenPath:  "", // Auto-detect: downloads to data/mc-data-gen-cache by default
+		EnableCamAgent: true,
 	}
 
 	managedAgent, err := framework.SpawnAgent(ctx, inst, agentCfg)
@@ -84,12 +88,24 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 	return helper, ctx, wrappedCancel
 }
 
-// Cleanup stops the server and closes logging
+// Cleanup stops the agent, server, and closes logging
 func (vh *VehicleTestHelper) Cleanup() {
-	vh.Framework.CloseAgentLog()
+	// CRITICAL: Stop the agent first to ensure replay files are properly closed
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer stopCancel()
-	_ = vh.Framework.StopServer(stopCtx, vh.Instance, true)
+	if vh.ManagedAgent != nil {
+		if err := vh.ManagedAgent.Stop(stopCtx); err != nil {
+			vh.t.Logf("WARNING: Agent stop returned error: %v", err)
+		}
+	}
+
+	// Close agent logging
+	vh.Framework.CloseAgentLog()
+
+	// Stop the server
+	stopCtx2, stopCancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopCancel2()
+	_ = vh.Framework.StopServer(stopCtx2, vh.Instance, true)
 }
 
 // SummonBoat summons a boat at the specified location and returns its entity ID
@@ -121,6 +137,11 @@ func (vh *VehicleTestHelper) SummonBoat(ctx context.Context, x, y, z float64, va
 	if variant == "bamboo" {
 		entityTypeName = "minecraft:bamboo_raft"
 	}
+
+	if vh.Instance.Server.Version == "1.21.1" {
+		entityTypeName = "minecraft:boat"
+	}
+
 	boatTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID(entityTypeName)
 	if !ok {
 		vh.ManagedAgent.Agent.DumpRegistry("minecraft:entity_type")
@@ -138,11 +159,27 @@ func (vh *VehicleTestHelper) SummonBoat(ctx context.Context, x, y, z float64, va
 
 // SummonHorse summons a tamed and saddled horse at the specified location and returns its entity ID
 func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (int32, error) {
-	// Summon the horse
-	cmd := fmt.Sprintf(
-		"summon minecraft:horse %f %f %f {Tame:1b,SaddleItem:{id:\"minecraft:saddle\",Count:1b}}",
-		x, y, z,
-	)
+	// Summon command varies by version due to saddle NBT location change in 1.21.5
+	// See docs/horse-nbt-data.md for version-specific NBT requirements
+	// 1.21.1-1.21.4: SaddleItem is a top-level tag
+	// 1.21.5+: Saddle is nested under equipment.saddle
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	if version < "1.21.5" {
+		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+		cmd = fmt.Sprintf(
+			`summon minecraft:horse %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0}`,
+			x, y, z,
+		)
+	} else {
+		// Versions 1.21.5+: Use equipment.saddle structure
+		cmd = fmt.Sprintf(
+			`summon minecraft:horse %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}},Variant:0}`,
+			x, y, z,
+		)
+	}
+
 	_, err := vh.Instance.RCON.Exec(ctx, cmd)
 	if err != nil {
 		return 0, fmt.Errorf("summon horse: %w", err)
@@ -289,33 +326,17 @@ func (vh *VehicleTestHelper) JumpVehicle(ctx context.Context, power int32) error
 
 // SetManualThrottle sets the manual throttle for movement
 func (vh *VehicleTestHelper) SetManualThrottle(throttleX, throttleZ float64) {
-	agentImpl, ok := vh.ManagedAgent.Agent.(interface {
-		SetManualThrottle(throttleX, throttleZ float64)
-	})
-	if !ok {
-		vh.t.Fatal("agent does not support SetManualThrottle")
+	if err := vh.ManagedAgent.Agent.SetManualThrottle(throttleX, throttleZ); err != nil {
+		vh.t.Fatalf("SetManualThrottle failed: %v", err)
 	}
-	agentImpl.SetManualThrottle(throttleX, throttleZ)
 }
 
 // EnterManualMode switches to manual movement mode
 func (vh *VehicleTestHelper) EnterManualMode() error {
-	agentImpl, ok := vh.ManagedAgent.Agent.(interface {
-		EnterManualMode() error
-	})
-	if !ok {
-		return fmt.Errorf("agent does not support EnterManualMode")
-	}
-	return agentImpl.EnterManualMode()
+	return vh.ManagedAgent.Agent.EnterManualMode()
 }
 
 // ExitManualMode switches out of manual movement mode
 func (vh *VehicleTestHelper) ExitManualMode() error {
-	agentImpl, ok := vh.ManagedAgent.Agent.(interface {
-		ExitManualMode() error
-	})
-	if !ok {
-		return fmt.Errorf("agent does not support ExitManualMode")
-	}
-	return agentImpl.ExitManualMode()
+	return vh.ManagedAgent.Agent.ExitManualMode()
 }

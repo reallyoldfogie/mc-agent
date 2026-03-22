@@ -23,6 +23,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-agent/models"
+	agentutils "github.com/reallyoldfogie/mc-agent/utils"
 	_ "github.com/reallyoldfogie/mc-agent/versions" // Import to register version handlers
 	"github.com/reallyoldfogie/mc-agent/versions/common"
 
@@ -147,6 +148,7 @@ func clearServerWorldData(cacheDir string) {
 	worldDirs := []string{"world", "world_nether", "world_the_end"}
 	for _, dir := range worldDirs {
 		path := filepath.Join(cacheDir, dir)
+		log.Printf("deleting %s", path)
 		if err := os.RemoveAll(path); err != nil {
 			log.Printf("[Framework.StartServer] failed to remove world data %s: %v", path, err)
 		}
@@ -274,6 +276,7 @@ type ServerConfig struct {
 	EstimatedMemoryMB    int           // Estimated memory for this server in MB (auto-calculated from Memory field)
 	MemoryCheckRetries   int           // Number of times to retry memory check (default: 5)
 	MemoryCheckRetryWait time.Duration // Wait between retries (default: 15 seconds)
+	MountDirs            []string      // directories to be mounted to container
 }
 
 // DefaultServerConfig returns a sensible default configuration for tests.
@@ -404,16 +407,16 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 
 	// if _, ok := os.LookupEnv("JVM_OPTS"); ok {
 	// 	extraEnv["JVM_OPTS"] += " -Dfabric.development=true -Dlog4j2.configurationFile=/data/log4j2.xml"
-	// 	extraEnv["JVM_OPTS"] += " -Dfabric.development=true"
+	// 	// extraEnv["JVM_OPTS"] += " -Dfabric.development=true"
 	// } else {
 	// 	extraEnv["JVM_OPTS"] = "-Dfabric.development=true -Dlog4j2.configurationFile=/data/log4j2.xml"
 	// 	// extraEnv["JVM_OPTS"] = "-Dfabric.development=true"
 	// }
 
-	// extraEnv["LOG_LEVEL"] = "DEBUG" // Enable debug logging for tests
-	// extraEnv["LOG_CONSOLE_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
-	// extraEnv["LOG_FILE_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
-	// extraEnv["LOG_TERMINAL_FORMAT"] = "[%d{yyyy-mm-ddTHH:mm:ss.SSS}] [%s/%t/%p] %m%n"
+	// extraEnv["LOG_LEVEL"] = "debug" // Enable debug logging for tests
+	// extraEnv["LOG_CONSOLE_FORMAT"] = "[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t/%level]: %msg%n"
+	// extraEnv["LOG_FILE_FORMAT"] = "[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t/%level]: %msg%n"
+	// extraEnv["LOG_TERMINAL_FORMAT"] = "[%d{yyyy-MM-dd HH:mm:ss.SSS}] [%t/%level]: %msg%n"
 
 	// Set up cache directory for server JARs to avoid repeated downloads
 	// Use version-specific directory so the container can reuse downloaded JARs
@@ -443,6 +446,10 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		ConfigDir:  getConfigDir(cfg.Version), // Load configs if they exist for this version
 		OutputDir:  getOutputDir(cfg.Version), // Load output dir if it exists for this version
 		ExtraEnv:   extraEnv,
+	}
+
+	if cfg.MountDirs != nil {
+		serverCfg.MountDirs = cfg.MountDirs
 	}
 
 	clearServerWorldData(cacheDir)
@@ -568,14 +575,20 @@ func (f *Framework) setupAgentLogging() error {
 		return nil
 	}
 
-	// Create logs directory
-	logsDir := "./logs/agents"
+	// Get centralized cache directory
+	cacheDir, err := agentutils.FindOrCreateCacheDir()
+	if err != nil {
+		return fmt.Errorf("find cache directory: %w", err)
+	}
+
+	// Create logs directory in cache
+	logsDir := filepath.Join(cacheDir, "logs", "agents")
 	if err := ensureDir(logsDir); err != nil {
 		return fmt.Errorf("create logs directory: %w", err)
 	}
 
 	// Create log file with timestamp
-	logFile := fmt.Sprintf("%s/agents_%s.log", logsDir, time.Now().Format("20060102_150405"))
+	logFile := filepath.Join(logsDir, fmt.Sprintf("agents_%s.log", time.Now().Format("20060102_150405")))
 	fullFileName, _ := filepath.Abs(logFile)
 	file, err := os.Create(logFile)
 	if err != nil {
@@ -703,7 +716,11 @@ func camAgentName(base string) string {
 
 func camReplayOutput(base, name string) string {
 	if base == "" {
-		return fmt.Sprintf("./replays/%s_cam.mcpr", name)
+		cacheDir, err := agentutils.FindOrCreateCacheDir()
+		if err != nil {
+			panic(fmt.Sprintf("find cache directory: %v", err))
+		}
+		return filepath.Join(cacheDir, "replays", fmt.Sprintf("%s_cam.mcpr", name))
 	}
 	const suffix = ".mcpr"
 	if before, ok := strings.CutSuffix(base, suffix); ok {
@@ -716,8 +733,12 @@ func normalizeReplayOutput(version, output, name string) string {
 	if output == "" {
 		output = fmt.Sprintf("%s_%s.mcpr", name, time.Now().Format("20060102_150405"))
 	}
+	cacheDir, err := agentutils.FindOrCreateCacheDir()
+	if err != nil {
+		panic(fmt.Sprintf("find cache directory: %v", err))
+	}
 	base := filepath.Base(output)
-	return filepath.Join("./replays", version, base)
+	return filepath.Join(cacheDir, "replays", version, base)
 }
 
 func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, cfg AgentConfig, addToInstance bool) (*ManagedAgent, error) {
@@ -751,9 +772,14 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	}
 
 	// Setup packet logging (raw packet captures for debugging)
-	_ = os.MkdirAll("./logs/packets", 0760)
+	cacheDir, err := agentutils.FindOrCreateCacheDir()
+	if err != nil {
+		return nil, fmt.Errorf("find cache directory: %w", err)
+	}
+	packetLogsDir := filepath.Join(cacheDir, "logs", "packets")
+	_ = os.MkdirAll(packetLogsDir, 0760)
 	receiverLog := &lumberjack.Logger{
-		Filename:   fmt.Sprintf("./logs/packets/%s_%s.log", cfg.Name, time.Now().Format("20060102_150405")),
+		Filename:   filepath.Join(packetLogsDir, fmt.Sprintf("%s_%s.log", cfg.Name, time.Now().Format("20060102_150405"))),
 		MaxSize:    10, // megabytes
 		MaxBackups: 3,
 		MaxAge:     28, // days
@@ -1118,8 +1144,14 @@ func (f *Framework) captureServerLogs(ctx context.Context, inst *testenv.Instanc
 		return nil
 	}
 
+	// Get centralized cache directory
+	cacheDir, err := agentutils.FindOrCreateCacheDir()
+	if err != nil {
+		return fmt.Errorf("find cache directory: %w", err)
+	}
+
 	// Create logs directory if it doesn't exist
-	logsDir := "./logs/servers"
+	logsDir := filepath.Join(cacheDir, "logs", "servers")
 	if err := ensureDir(logsDir); err != nil {
 		return fmt.Errorf("create logs directory: %w", err)
 	}

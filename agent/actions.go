@@ -603,7 +603,7 @@ func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face int, h
 }
 
 // UseItemOnEntity uses the held item on an entity.
-func (a *agent) UseItemOnEntity(ctx context.Context, entityID int32, hand int, sneaking bool) error {
+func (a *agent) UseItemOnEntity(ctx context.Context, entityID int32, hand models.Hand, sneaking bool) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -611,7 +611,7 @@ func (a *agent) UseItemOnEntity(ctx context.Context, entityID int32, hand int, s
 	if err != nil {
 		return err
 	}
-	return usage.UseItemOnEntity(entityID, models.Hand(hand), sneaking)
+	return usage.UseItemOnEntity(entityID, hand, sneaking)
 }
 
 // HasLineOfSight checks if the agent can see the target position.

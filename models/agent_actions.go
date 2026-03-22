@@ -22,7 +22,7 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
 	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
 	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error
-	UseItemOnEntity(ctx context.Context, entityID int32, hand int, sneaking bool) error
+	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
 	SelectHotbarSlot(ctx context.Context, slot int) error
 	FindSlotWith(ctx context.Context, itemName string, windowID int) (slot int, found bool, err error)
 	WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (slot int, err error)

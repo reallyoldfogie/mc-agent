@@ -15,6 +15,7 @@ type Agent interface {
 	ChatOperations
 	ScreenOperations
 	WorldOperations
+	ManualMovement
 
 	// Lifecycle
 	Init(ctx context.Context) error

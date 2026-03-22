@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"strings"
+
 	pk "github.com/Tnze/go-mc/net/packet"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
@@ -105,4 +107,38 @@ func (a *agent) GetMountedEntityPosition(entityID int32) (x, y, z float64, found
 	}
 
 	return entity.X, entity.Y, entity.Z, true
+}
+
+// GetMountedEntityType returns the entity type ID of a mounted entity by ID.
+// Returns the entity type and found flag.
+func (a *agent) GetMountedEntityType(entityID int32) (int32, bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists || entity.Removed {
+		return 0, false
+	}
+
+	return entity.EntityType, true
+}
+
+// IsMountedEntityBoat checks if a mounted entity is a boat or raft by type ID.
+// Returns true if the entity is a boat or raft variant (e.g., boat, oak_boat, chest_boat, bamboo_raft).
+func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	// Check if entity type name contains "boat" or "raft" (handles boat, oak_boat, chest_boat, bamboo_raft, etc.)
+	return strings.Contains(entityTypeName, "boat") || strings.Contains(entityTypeName, "raft")
 }

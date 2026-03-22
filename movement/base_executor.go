@@ -1,4 +1,5 @@
 // # go:build legacy
+
 package movement
 
 import (
@@ -12,8 +13,9 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// movementExecutor implements MovementExecutor
-type movementExecutor struct {
+// baseMovementExecutor implements a base MovementExecutor
+// It does not implement a full MovementExecutor (some methods are no-ops)
+type baseMovementExecutor struct {
 	client    bot.Client
 	packetMgr protocol_models.PacketMgr
 	// Reference to bot position tracking (will be passed from main)
@@ -25,21 +27,21 @@ type movementExecutor struct {
 	isSprinting bool
 	isSneaking  bool
 	// Optional callback for packet interception (e.g., replay mirror)
-	onPacketSent func(pkt interface{})
+	onPacketSent func(pkt any)
 	// Optional version-specific movement handler. When set, uses version-aware packet
 	// construction instead of the generic packets.go functions.
 	movementHandler models.MovementHandler
 }
 
-// NewLegacyMovementExecutor creates a new MovementExecutor
-func NewLegacyMovementExecutor(
+// NewBaseMovementExecutor creates a new MovementExecutor
+func newBaseMovementExecutor(
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
 	setBotPos func(float64, float64, float64, float32, float32),
 	getBotEntityID func() int32,
-) MovementExecutor {
-	return &movementExecutor{
+) *baseMovementExecutor {
+	return &baseMovementExecutor{
 		client:         client,
 		packetMgr:      packetMgr,
 		getBotPosition: getBotPos,
@@ -51,52 +53,44 @@ func NewLegacyMovementExecutor(
 	}
 }
 
-// SetTelemetryRecorder is a no-op for movementExecutor
-func (me *movementExecutor) SetTelemetryRecorder(recorder models.MovementTelemetryRecorder) {}
-
-// SetVelocity is a no-op for movementExecutor
-func (me *movementExecutor) SetVelocity(x, y, z float64) error { return nil }
-
 // SetPacketCallback sets an optional callback that will be invoked with each packet before it's sent.
 // This is useful for replay mirroring or packet logging.
-func (me *movementExecutor) SetPacketCallback(callback func(pkt interface{})) {
+func (me *baseMovementExecutor) SetPacketCallback(callback func(pkt any)) {
 	me.onPacketSent = callback
 }
 
 // SetMovementHandler sets an optional version-specific movement handler.
 // When set, the executor will use version-aware packet construction instead of
 // the generic packets.go functions.
-func (me *movementExecutor) SetMovementHandler(handler models.MovementHandler) {
+func (me *baseMovementExecutor) SetMovementHandler(handler models.MovementHandler) {
 	me.movementHandler = handler
 }
 
-func (me *movementExecutor) IsSneaking() bool {
+func (me *baseMovementExecutor) IsSneaking() bool {
 	return me.isSneaking
 }
 
-func (me *movementExecutor) IsSprinting() bool {
+func (me *baseMovementExecutor) IsSprinting() bool {
 	return me.isSprinting
 }
 
 // SendPosition sends a position update packet
-func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
+func (me *baseMovementExecutor) SendPosition(x, y, z float64, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
-		// Use version-specific handler if available, otherwise fall back to generic packets
+		// Use version-specific handler if available
 		if me.movementHandler != nil {
 			err = me.movementHandler.SendPosition(me.client.Conn(), x, y, z, onGround)
-		} else {
-			err = SendPositionWithCallback(me.client, me.packetMgr, x, y, z, onGround, me.onPacketSent)
-		}
-		// If sneaking, also send the sneak command to maintain sneak state
-		if err == nil && me.isSneaking {
-			entityID := me.getBotEntityID()
-			if me.movementHandler != nil {
+
+			// If sneaking, also send the sneak command to maintain sneak state
+			if err == nil && me.isSneaking {
+				entityID := me.getBotEntityID()
 				_ = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSneaking)
-			} else {
-				_ = SendStartSneaking(me.client, me.packetMgr, entityID)
+
 			}
+		} else {
+			return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 		}
 	}
 
@@ -109,7 +103,7 @@ func (me *movementExecutor) SendPosition(x, y, z float64, onGround bool) error {
 }
 
 // SendPositionAndRotation sends a combined position and rotation update packet
-func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (me *baseMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -117,17 +111,15 @@ func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch 
 		// Use version-specific handler if available, otherwise fall back to generic packets
 		if me.movementHandler != nil {
 			err = me.movementHandler.SendPositionAndRotation(me.client.Conn(), x, y, z, yaw, pitch, onGround)
-		} else {
-			err = SendPositionAndRotationWithCallback(me.client, me.packetMgr, x, y, z, yaw, pitch, onGround, me.onPacketSent)
-		}
-		// If sneaking, also send the sneak command to maintain sneak state
-		if err == nil && me.isSneaking {
-			entityID := me.getBotEntityID()
-			if me.movementHandler != nil {
+
+			// If sneaking, also send the sneak command to maintain sneak state
+			if me.isSneaking {
+				entityID := me.getBotEntityID()
 				_ = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSneaking)
-			} else {
-				_ = SendStartSneaking(me.client, me.packetMgr, entityID)
+
 			}
+		} else {
+			return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 		}
 	}
 
@@ -145,7 +137,7 @@ func (me *movementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch 
 }
 
 // SendRotation sends a rotation update packet
-func (me *movementExecutor) SendRotation(yaw, pitch float32, onGround bool) error {
+func (me *baseMovementExecutor) SendRotation(yaw, pitch float32, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -153,7 +145,7 @@ func (me *movementExecutor) SendRotation(yaw, pitch float32, onGround bool) erro
 		if me.movementHandler != nil {
 			err = me.movementHandler.SendRotation(me.client.Conn(), yaw, pitch, onGround)
 		} else {
-			err = SendRotationWithCallback(me.client, me.packetMgr, yaw, pitch, onGround, me.onPacketSent)
+			return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 		}
 	}
 
@@ -166,7 +158,7 @@ func (me *movementExecutor) SendRotation(yaw, pitch float32, onGround bool) erro
 }
 
 // MoveTowards moves the bot towards target coordinates by a given distance
-func (me *movementExecutor) MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error) {
+func (me *baseMovementExecutor) MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error) {
 	// Get current position
 	botX, botY, botZ, yaw, pitch, initialized := me.getBotPosition()
 	if !initialized {
@@ -224,7 +216,7 @@ func (me *movementExecutor) MoveTowards(targetX, targetY, targetZ float64, dista
 }
 
 // LookAt rotates the bot to look at target coordinates
-func (me *movementExecutor) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
+func (me *baseMovementExecutor) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
 	// Get current position
 	botX, botY, botZ, _, _, initialized := me.getBotPosition()
 	if !initialized {
@@ -268,7 +260,7 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 }
 
 // StartSprinting sends a command to start sprinting
-func (me *movementExecutor) StartSprinting() error {
+func (me *baseMovementExecutor) StartSprinting() error {
 	if me.isSprinting {
 		return nil // Already sprinting, no need to send packet
 	}
@@ -283,7 +275,7 @@ func (me *movementExecutor) StartSprinting() error {
 	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSprinting)
 	} else {
-		err = SendStartSprinting(me.client, me.packetMgr, entityID)
+		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
 		me.isSprinting = true
@@ -292,7 +284,7 @@ func (me *movementExecutor) StartSprinting() error {
 }
 
 // StopSprinting sends a command to stop sprinting
-func (me *movementExecutor) StopSprinting() error {
+func (me *baseMovementExecutor) StopSprinting() error {
 	if !me.isSprinting {
 		return nil // Not sprinting, no need to send packet
 	}
@@ -307,7 +299,7 @@ func (me *movementExecutor) StopSprinting() error {
 	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStopSprinting)
 	} else {
-		err = SendStopSprinting(me.client, me.packetMgr, entityID)
+		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
 		me.isSprinting = false
@@ -316,7 +308,7 @@ func (me *movementExecutor) StopSprinting() error {
 }
 
 // StartSneaking sends a command to start sneaking
-func (me *movementExecutor) StartSneaking() error {
+func (me *baseMovementExecutor) StartSneaking() error {
 	if me.isSneaking {
 		return nil // Already sneaking, no need to send packet
 	}
@@ -331,7 +323,7 @@ func (me *movementExecutor) StartSneaking() error {
 	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSneaking)
 	} else {
-		err = SendStartSneaking(me.client, me.packetMgr, entityID)
+		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
 		me.isSneaking = true
@@ -340,7 +332,7 @@ func (me *movementExecutor) StartSneaking() error {
 }
 
 // StopSneaking sends a command to stop sneaking
-func (me *movementExecutor) StopSneaking() error {
+func (me *baseMovementExecutor) StopSneaking() error {
 	if !me.isSneaking {
 		return nil // Not sneaking, no need to send packet
 	}
@@ -355,20 +347,10 @@ func (me *movementExecutor) StopSneaking() error {
 	if me.movementHandler != nil {
 		err = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStopSneaking)
 	} else {
-		err = SendStopSneaking(me.client, me.packetMgr, entityID)
+		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
 		me.isSneaking = false
 	}
 	return err
-}
-
-// SetMounted is a no-op for legacy executor (legacy mode doesn't support mounting)
-func (me *movementExecutor) SetMounted(vehicleEntityID int32) error {
-	return nil
-}
-
-// SetDismounted is a no-op for legacy executor (legacy mode doesn't support mounting)
-func (me *movementExecutor) SetDismounted() error {
-	return nil
 }

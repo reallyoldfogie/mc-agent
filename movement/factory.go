@@ -13,9 +13,6 @@ type ExecutorType int
 
 const (
 	UnknownExecutor ExecutorType = iota
-	// LegacyInterpolationExecutor uses simple position interpolation (default, legacy behavior)
-	// DEPRECATED: Use PhysicExecutor instead. This will be removed in a future version.
-	LegacyInterpolationExecutor
 	// PhysicsExecutor uses realistic physics simulation with inputs
 	PhysicsExecutor
 )
@@ -23,8 +20,6 @@ const (
 // String returns the name of the executor type.
 func (et ExecutorType) String() string {
 	switch et {
-	case LegacyInterpolationExecutor:
-		return "Interpolation"
 	case PhysicsExecutor:
 		return "Physics"
 	case UnknownExecutor:
@@ -52,17 +47,6 @@ type ExecutorConfig struct {
 // NewExecutor creates a movement executor of the specified type.
 // For PhysicsExecutor, config.World and config.ShapeProvider must be provided.
 func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecutor {
-	// switch executorType {
-	// case InterpolationExecutor:
-	// 	return NewMovementExecutor(
-	// 		config.Client,
-	// 		config.PacketMgr,
-	// 		config.GetBotPos,
-	// 		config.SetBotPos,
-	// 		config.GetBotEntityID,
-	// 	)
-
-	// case PhysicsExecutor:
 	return NewPhysicsMovementExecutor(
 		config.Ctx,
 		config.Client,
@@ -73,15 +57,4 @@ func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecu
 		config.World,
 		config.ShapeProvider,
 	)
-
-	// default:
-	// 	// Default to interpolation executor
-	// 	return NewMovementExecutor(
-	// 		config.Client,
-	// 		config.PacketMgr,
-	// 		config.GetBotPos,
-	// 		config.SetBotPos,
-	// 		config.GetBotEntityID,
-	// 	)
-	// }
 }

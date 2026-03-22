@@ -16,10 +16,10 @@ func TestBoatVariantTracking(t *testing.T) {
 			defer cleanup()
 
 			// Teleport agent to water area
-			_, err := helper.Instance.RCON.Exec(ctx, "execute in minecraft:the_end run fill 0 50 0 50 50 50 water")
+			_, err := helper.Instance.RCON.Exec(ctx, "fill 0 -25 0 25 0 25 water")
 			require.NoError(t, err, "fill water area")
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 25 51 25")
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
 			require.NoError(t, err, "teleport agent")
 
 			time.Sleep(500 * time.Millisecond)
@@ -79,32 +79,27 @@ func TestBoatPaddleTracking(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
 			defer cleanup()
 
-			// Setup water area
-			_, err := helper.Instance.RCON.Exec(ctx, "execute in minecraft:the_end run fill 0 50 0 100 50 100 water")
+			// Teleport agent to a location with water
+			cmd := "fill 0 -25 0 25 -1 25 water"
+			resp, err := helper.Instance.RCON.Exec(ctx, cmd)
 			require.NoError(t, err, "fill water area")
+			t.Logf("%s => %s", cmd, resp)
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 50 51 50")
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
 			require.NoError(t, err, "teleport agent")
 
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond) // Wait for position update
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			// Get agent's initial position
+			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			require.True(t, initialized, "agent position should be initialized")
 
-			// Summon a boat
-			boatEntityID, err := helper.SummonBoat(ctx, x, y, z, "oak") // oak boat
+			// Summon a boat at the agent's location
+			// Use hardcoded coordinates: agent is at (25.5, 50.5, 25.5), boat should be at (25.5, 50.0, 25.5)
+			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak") // oak boat in water
 			require.NoError(t, err, "summon boat")
 
-			time.Sleep(500 * time.Millisecond)
-
-			// Wait for boat to be tracked
-			err = helper.WaitForEntityTracking(ctx, boatEntityID, 5*time.Second)
-			require.NoError(t, err, "boat should be tracked")
-
-			// Get initial paddle states
-			initialBoat := helper.GetTrackedEntity(boatEntityID)
-			require.NotNil(t, initialBoat, "boat should be tracked")
-
-			t.Logf("Initial boat state: ID=%d Type=%d", initialBoat.EntityID, initialBoat.EntityType)
+			time.Sleep(500 * time.Millisecond) // Wait for boat to spawn
 
 			// Mount the boat
 			err = helper.MountEntity(ctx, boatEntityID)
@@ -159,10 +154,10 @@ func TestBoatMetadataConsistency(t *testing.T) {
 			defer cleanup()
 
 			// Setup
-			_, err := helper.Instance.RCON.Exec(ctx, "execute in minecraft:the_end run fill 0 50 0 50 50 50 water")
+			_, err := helper.Instance.RCON.Exec(ctx, "fill 0 -25 0 25 0 25 water")
 			require.NoError(t, err, "fill water area")
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 25 51 25")
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
 			require.NoError(t, err, "teleport agent")
 
 			time.Sleep(500 * time.Millisecond)

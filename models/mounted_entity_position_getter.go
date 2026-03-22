@@ -6,4 +6,7 @@ type MountedEntityPositionGetter interface {
 	// GetMountedEntityPosition returns the current position of the mounted entity by ID.
 	// Returns (x, y, z, found) - found is false if the entity is not tracked.
 	GetMountedEntityPosition(entityID int32) (x, y, z float64, found bool)
+
+	GetMountedEntityType(entityID int32) (int32, bool)
+	IsMountedEntityBoat(int32) bool
 }

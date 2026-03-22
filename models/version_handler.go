@@ -192,7 +192,14 @@ type MovementHandler interface {
 	// SendVehicleInput sends directional input for the currently mounted vehicle.
 	// For v1_21_1–3 translates to SteerVehicle (float-based);
 	// for v1_21_4–11 uses PlayerInput bitflags.
+	// Note: For boats, use SendBoatPaddleState instead.
 	SendVehicleInput(conn PacketWriter, forward, backward, left, right, jump, sneak bool) error
+
+	// SendBoatPaddleState sends boat paddle state (which oars are paddling).
+	// Only used for boats; horses and other vehicles use SendVehicleInput.
+	// leftPaddling: true to paddle with left oar
+	// rightPaddling: true to paddle with right oar
+	SendBoatPaddleState(conn PacketWriter, leftPaddling, rightPaddling bool) error
 
 	// SendPlayerCommandWithParam sends a player command with an optional parameter.
 	// Like SendPlayerCommand but includes the optional jump boost parameter (0–100),

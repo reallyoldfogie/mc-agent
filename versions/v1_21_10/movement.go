@@ -353,3 +353,18 @@ func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, e
 	}
 	return nil
 }
+
+// SendBoatPaddleState sends boat paddle state (which oars are paddling).
+// v1.21.10+ uses the SteerBoat packet.
+func (m *movementHandler) SendBoatPaddleState(conn models.PacketWriter, leftPaddling, rightPaddling bool) error {
+	pkt := sb.NewSteerBoat()
+	pkt.LeftPaddle = pk.Boolean(leftPaddling)
+	pkt.RightPaddle = pk.Boolean(rightPaddling)
+
+	log.Printf("[v1.21.10 Movement] SendBoatPaddleState: left=%v right=%v", leftPaddling, rightPaddling)
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "SteerBoat", Cause: err}
+	}
+	return nil
+}

@@ -2,6 +2,7 @@ package items
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"math/rand"
 	"time"
@@ -145,44 +146,31 @@ func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face BlockFace, hand models.H
 }
 
 // UseItemOnEntity uses an item on an entity (e.g., bucket on fish to catch it, open horse inventory).
-// This sends a ServerboundInteract packet.
-// NOTE: For entities like horses, Minecraft client sends TWO interact packets:
-// 1. InteractWith (type 2) with a hit position
-// 2. InteractAt (type 0) simple interact
-// This method now sends both to match real client behavior (required in 1.21.5+).
+// This sends a ServerboundInteract (type 0) packet.
 func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand models.Hand, sneaking bool) error {
-	fmt.Printf("[UseItemOnEntity] → Sending 3-packet sequence for entity %d\n", entityID)
+	log.Printf("[UseItemOnEntity] → Interacting with entity %d\n", entityID)
 
-	// First, send InteractWith packet with a hit position (type 2)
-	// Use position similar to what real Minecraft client sends (roughly center-ish of entity body)
-	hitX, hitY, hitZ := float32(0.5), float32(1.0), float32(0.0)
-	fmt.Printf("[UseItemOnEntity]   1/3: InteractWith (type 2) at position (%.2f, %.2f, %.2f)\n", hitX, hitY, hitZ)
-	if err := iu.UseItemOnEntityAt(entityID, hitX, hitY, hitZ, hand, sneaking); err != nil {
-		fmt.Printf("[UseItemOnEntity] ✗ Error sending InteractWith: %v\n", err)
-		return fmt.Errorf("send interact-with: %w", err)
-	}
-
-	// Then send simple InteractAt packet (type 0)
-	fmt.Printf("[UseItemOnEntity]   2/3: InteractAt (type 0)\n")
+	// Send type 0 (INTERACT) packet
 	if iu.entityHandler == nil {
+		log.Printf("[UseItemOnEntity] ✗ entity handler not set")
 		return common.ErrHandlerNotSet{HandlerName: "EntityHandler"}
 	}
 	if err := iu.entityHandler.SendInteract(iu.client, entityID, hand, sneaking); err != nil {
-		fmt.Printf("[UseItemOnEntity] ✗ Error sending InteractAt: %v\n", err)
-		return fmt.Errorf("send interact-at: %w", err)
-	}
-
-	// Finally, send swing packet (matches real client behavior)
-	fmt.Printf("[UseItemOnEntity]   3/3: Swing\n")
-	if iu.actionHandler == nil {
-		return common.ErrHandlerNotSet{HandlerName: "ActionHandler"}
-	}
-	if err := iu.actionHandler.SendSwing(iu.client, hand); err != nil {
-		fmt.Printf("[UseItemOnEntity] ✗ Error sending Swing: %v\n", err)
+		log.Printf("[UseItemOnEntity] ✗ Error: %v\n", err)
 		return err
 	}
 
-	fmt.Printf("[UseItemOnEntity] ✓ All 3 packets sent successfully\n")
+	// Optional: swing packet
+	if iu.actionHandler == nil {
+		log.Printf("[UseItemOnEntity] ✗ action handler not set")
+		return common.ErrHandlerNotSet{HandlerName: "ActionHandler"}
+	}
+	if err := iu.actionHandler.SendSwing(iu.client, hand); err != nil {
+		log.Printf("[UseItemOnEntity] ✗ Error: %v\n", err)
+		return err
+	}
+
+	log.Printf("[UseItemOnEntity] ✓ Complete\n")
 	return nil
 }
 

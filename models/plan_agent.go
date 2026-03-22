@@ -23,5 +23,5 @@ type PlanAgent interface {
 	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
 
 	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error
-	UseItemOnEntity(ctx context.Context, entityID int32, hand int, sneaking bool) error
+	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
 }

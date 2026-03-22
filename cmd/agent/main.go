@@ -18,6 +18,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-agent/config"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	_ "github.com/reallyoldfogie/mc-agent/versions"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 	// _ "github.com/reallyoldfogie/mc-agent/versions/common"
@@ -88,9 +89,14 @@ func main() {
 	}
 
 	// Prepare rotating log for packet logging
-	_ = os.MkdirAll("./logs", 0760)
+	cacheDir, err := utils.FindOrCreateCacheDir()
+	if err != nil {
+		log.Fatalf("find cache directory: %v", err)
+	}
+	packetLogsDir := filepath.Join(cacheDir, "logs", "packets")
+	_ = os.MkdirAll(packetLogsDir, 0760)
 	packetLogWriter := &lumberjack.Logger{
-		Filename:   filepath.Join(".", "logs", "packets", auth.Name+"_"+time.Now().Format("20060102_150405")+".log"),
+		Filename:   filepath.Join(packetLogsDir, auth.Name+"_"+time.Now().Format("20060102_150405")+".log"),
 		MaxSize:    10,
 		MaxBackups: 3,
 		MaxAge:     28,
@@ -110,7 +116,8 @@ func main() {
 	}
 
 	if *replayOut == "" {
-		*replayOut = filepath.Join(".", "replays", *mcVersion, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
+		replayDir := filepath.Join(cacheDir, "replays", *mcVersion)
+		*replayOut = filepath.Join(replayDir, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
 	}
 
 	// Build agent config - version detection, manager resolution, and client creation

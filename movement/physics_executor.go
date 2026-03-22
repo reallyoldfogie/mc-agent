@@ -58,7 +58,7 @@ type StuckRecoveryFn func(currentPos models.V3, goalPos models.V3) *pathfinding.
 // and sending position updates to the server.
 type PhysicsMovementExecutor struct {
 	// Base executor for packet sending
-	baseExecutor *movementExecutor
+	baseExecutor *baseMovementExecutor
 
 	// Physics simulation
 	physicsState  models.PhysicsState
@@ -108,14 +108,14 @@ type PhysicsMovementExecutor struct {
 	isRecovering      bool            // Whether we're currently in recovery
 
 	// Mounted/riding state
-	mountedEntityMu         sync.RWMutex
-	mountedEntityID         int32 // -1 = not mounted
-	entityPositionGetter    models.MountedEntityPositionGetter
-	versionHandler          models.VersionHandler
-	recoveryAttempt   int             // Which recovery stage we're on (0=none, 1=sideways, 2=repath)
-	sidewaysDirection int             // Which sideways direction to try (-1=left, 1=right)
-	sidewaysStartTime time.Time       // When sideways recovery started
-	sidewaysTimeout   time.Duration   // How long to try sideways before giving up
+	mountedEntityMu      sync.RWMutex
+	mountedEntityID      int32 // -1 = not mounted
+	entityPositionGetter models.MountedEntityPositionGetter
+	versionHandler       models.VersionHandler
+	recoveryAttempt      int           // Which recovery stage we're on (0=none, 1=sideways, 2=repath)
+	sidewaysDirection    int           // Which sideways direction to try (-1=left, 1=right)
+	sidewaysStartTime    time.Time     // When sideways recovery started
+	sidewaysTimeout      time.Duration // How long to try sideways before giving up
 
 	// Manual input state (thread-safe)
 	manualInputsMu sync.RWMutex  // Protects manual inputs
@@ -134,7 +134,7 @@ func NewPhysicsMovementExecutor(
 	shapeProvider physics.BlockShapeProvider,
 ) *PhysicsMovementExecutor {
 	// Create base executor for packet sending
-	baseExecutor := &movementExecutor{
+	baseExecutor := &baseMovementExecutor{
 		client:         client,
 		packetMgr:      packetMgr,
 		getBotPosition: getBotPos,
@@ -182,6 +182,7 @@ func NewPhysicsMovementExecutor(
 		stuckThreshold:    3 * time.Second, // Default: stuck if no progress for 3 seconds
 		sidewaysTimeout:   2 * time.Second, // Try sideways recovery for 2 seconds before re-pathing
 		sidewaysDirection: 1,               // Start with right
+		mountedEntityID:   -1,              // Not mounted initially
 	}
 }
 
@@ -602,15 +603,8 @@ func (pe *PhysicsMovementExecutor) IsManualMode() bool {
 }
 
 // SetManualInputs sets all manual inputs at once.
-// Validates mode and returns error if not in manual mode.
+// Works in manual mode and while mounted (for vehicle control).
 func (pe *PhysicsMovementExecutor) SetManualInputs(inputs models.Inputs) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	pe.manualInputsMu.Lock()
 	pe.manualInputs = inputs
 	pe.manualInputsMu.Unlock()
@@ -627,16 +621,9 @@ func (pe *PhysicsMovementExecutor) GetManualInputs() models.Inputs {
 
 // SetManualThrottle sets the movement direction for next tick.
 // westEastThrottle: X-axis movement (-1.0 to +1.0, negative=west, positive=east)
-// thronorthSouthThrottlettleZ: Z-axis movement (-1.0 to +1.0, negative=north, positive=south)
-// Returns error if not in manual mode.
+// northSouthThrottle: Z-axis movement (-1.0 to +1.0, negative=north, positive=south)
+// Works in manual mode and while mounted (for vehicle steering).
 func (pe *PhysicsMovementExecutor) SetManualThrottle(westEastThrottle, northSouthThrottle float64) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	// Clamp values to [-1.0, 1.0]
 	westEastThrottle = math.Max(-1.0, math.Min(1.0, westEastThrottle))
 	northSouthThrottle = math.Max(-1.0, math.Min(1.0, northSouthThrottle))
@@ -654,16 +641,9 @@ func (pe *PhysicsMovementExecutor) SetManualThrottle(westEastThrottle, northSout
 // SetManualRotation sets yaw and pitch for looking direction.
 // yaw: horizontal look direction (degrees, 0=south, 90=west, 180=north, 270=east)
 // pitch: vertical look direction (degrees, -90=up, 0=forward, 90=down)
-// Pass math.NaN() for yaw to keep current yaw.
-// Returns error if not in manual mode.
+// Pass math.NaN() for yaw or pitch to keep current value.
+// Works in manual mode and while mounted.
 func (pe *PhysicsMovementExecutor) SetManualRotation(yaw, pitch float64) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	pe.manualInputsMu.Lock()
 	// Only update yaw if not NaN (allows "don't change" semantics)
 	if !math.IsNaN(yaw) {
@@ -681,14 +661,8 @@ func (pe *PhysicsMovementExecutor) SetManualRotation(yaw, pitch float64) error {
 }
 
 // SetManualJump sets whether jump button is pressed.
+// Works in manual mode and while mounted.
 func (pe *PhysicsMovementExecutor) SetManualJump(enabled bool) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	pe.manualInputsMu.Lock()
 	pe.manualInputs.Jump = enabled
 	pe.manualInputsMu.Unlock()
@@ -697,14 +671,8 @@ func (pe *PhysicsMovementExecutor) SetManualJump(enabled bool) error {
 }
 
 // SetManualSprint sets whether sprint button is pressed.
+// Works in manual mode and while mounted.
 func (pe *PhysicsMovementExecutor) SetManualSprint(enabled bool) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	pe.manualInputsMu.Lock()
 	pe.manualInputs.Sprint = enabled
 	pe.manualInputsMu.Unlock()
@@ -713,14 +681,8 @@ func (pe *PhysicsMovementExecutor) SetManualSprint(enabled bool) error {
 }
 
 // SetManualSneak sets whether sneak button is pressed.
+// Works in manual mode and while mounted.
 func (pe *PhysicsMovementExecutor) SetManualSneak(enabled bool) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	pe.manualInputsMu.Lock()
 	pe.manualInputs.Sneak = enabled
 	pe.manualInputsMu.Unlock()
@@ -731,14 +693,8 @@ func (pe *PhysicsMovementExecutor) SetManualSneak(enabled bool) error {
 // SetManualClimbDirection sets the ladder/vine climb direction.
 // direction: +1.0=climb up, -1.0=climb down, 0.0=no climb
 // Clamps to valid range [-1.0, 1.0].
+// Works in manual mode (ladder/vine climbing).
 func (pe *PhysicsMovementExecutor) SetManualClimbDirection(direction float64) error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	// Clamp to valid range
 	direction = math.Max(-1.0, math.Min(1.0, direction))
 
@@ -751,14 +707,8 @@ func (pe *PhysicsMovementExecutor) SetManualClimbDirection(direction float64) er
 
 // ResetManualInputs clears all manual inputs to zero.
 // Sets yaw/pitch to current position state to preserve look direction.
+// Works in manual mode and while mounted.
 func (pe *PhysicsMovementExecutor) ResetManualInputs() error {
-	pe.modeMu.RLock()
-	if pe.mode != PhysicsModeManual {
-		pe.modeMu.RUnlock()
-		return fmt.Errorf("not in manual mode (currently %s)", pe.mode)
-	}
-	pe.modeMu.RUnlock()
-
 	// Get current rotation from physics state
 	_, yaw, pitch, _ := pe.physicsState.GetPosition()
 
@@ -803,6 +753,17 @@ func (pe *PhysicsMovementExecutor) continuousTickLoop() {
 
 // tick performs one physics simulation tick.
 func (pe *PhysicsMovementExecutor) tick() {
+	// Check if mounted (separate from mode)
+	pe.mountedEntityMu.RLock()
+	isMounted := pe.mountedEntityID >= 0
+	pe.mountedEntityMu.RUnlock()
+
+	// If mounted, handle riding instead of normal physics
+	if isMounted {
+		pe.handleRidingMode()
+		return
+	}
+
 	// Get current mode
 	pe.modeMu.RLock()
 	mode := pe.mode
@@ -818,9 +779,12 @@ func (pe *PhysicsMovementExecutor) tick() {
 	case PhysicsModeManual:
 		inputs = pe.generateManualInputs()
 	case PhysicsModeRiding:
-		// While riding, just send vehicle position updates and don't tick physics
-		pe.handleRidingMode()
-		return
+		// This should only be reached if SetMounted was called but agent later dismounted
+		// Just switch to idle mode
+		pe.modeMu.Lock()
+		pe.mode = PhysicsModeIdle
+		pe.modeMu.Unlock()
+		inputs = pe.generateIdleInputs()
 	default:
 		inputs = physics.Inputs{} // Zero inputs
 	}
@@ -1304,8 +1268,10 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 }
 
 // handleRidingMode handles the riding/mounted mode tick.
-// While riding, the server controls the position, so we send vehicle position updates
-// and handle vehicle steering from manual inputs.
+// Protocol order (per Minecraft spec):
+// 1. Send input first (PlayerInput or BoatPaddleState) - server needs to know input before position
+// 2. Calculate new position locally with physics
+// 3. Send VehicleMove with the calculated position - server validates against expected movement
 func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	// Get mounted entity ID and version handler
 	pe.mountedEntityMu.RLock()
@@ -1313,59 +1279,267 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	versionHandler := pe.versionHandler
 	pe.mountedEntityMu.RUnlock()
 
-	// Get the mounted entity's position
+	if versionHandler == nil {
+		log.Printf("[handleRidingMode] Version handler not set")
+		return
+	}
+
 	if pe.entityPositionGetter == nil {
 		log.Printf("[handleRidingMode] Entity position getter not set, cannot send vehicle updates")
 		return
 	}
 
+	// Get current vehicle position from server state
 	mountX, mountY, mountZ, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
 	if !found {
 		log.Printf("[handleRidingMode] Mounted entity %d not found", mountedEntityID)
 		return
 	}
 
-	// Update physics state to track the vehicle position
-	_, yaw, pitch, onGround := pe.physicsState.GetPosition()
-	pe.physicsState.SetPosition(
-		models.V3{X: mountX, Y: mountY, Z: mountZ},
-		yaw,
-		pitch,
-		onGround,
-	)
+	// Get throttle inputs
+	pe.manualInputsMu.RLock()
+	inputs := pe.manualInputs
+	pe.manualInputsMu.RUnlock()
 
-	// Send vehicle position update instead of player position
-	if versionHandler != nil {
-		if err := versionHandler.Play().Movement().SendMoveVehicle(
-			pe.baseExecutor.client.Conn(),
-			mountX, mountY, mountZ,
-			float32(yaw), float32(pitch),
-			onGround,
-		); err != nil {
-			log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+	// STEP 1: Send control input FIRST (before position update)
+	// This tells server what input state we have so it can validate movement
+
+	// Determine vehicle type to send appropriate control packet
+	var isBoat bool
+	if et, found := pe.entityPositionGetter.GetMountedEntityType(mountedEntityID); found {
+		isBoat = pe.entityPositionGetter.IsMountedEntityBoat(et)
+	}
+
+	// Use any non-zero throttle to determine direction
+	// Threshold of 0.01 to avoid floating point noise near zero
+	forward := inputs.ThrottleZ > 0.01
+	backward := inputs.ThrottleZ < -0.01
+	right := inputs.ThrottleX > 0.01
+	left := inputs.ThrottleX < -0.01
+	jump := inputs.Jump
+	sneak := inputs.Sneak
+
+	log.Printf("[handleRidingMode] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
+		forward, backward, left, right, jump, sneak, inputs.ThrottleX, inputs.ThrottleZ)
+
+	// Send control packet based on vehicle type
+	if isBoat {
+		// For boats: send paddle state first
+		leftPaddle := false
+		rightPaddle := false
+
+		if forward || backward {
+			// Forward or backward motion: both paddles active
+			leftPaddle = true
+			rightPaddle = true
+		} else {
+			// Turning without forward motion
+			if right {
+				// Turn right: activate left paddle
+				leftPaddle = true
+			} else if left {
+				// Turn left: activate right paddle
+				rightPaddle = true
+			}
 		}
 
-		// Send vehicle input based on manual throttle inputs
-		pe.manualInputsMu.RLock()
-		inputs := pe.manualInputs
-		pe.manualInputsMu.RUnlock()
+		log.Printf("[handleRidingMode] Boat paddle state: left=%v right=%v (throttle: X=%.2f Z=%.2f)",
+			leftPaddle, rightPaddle, inputs.ThrottleX, inputs.ThrottleZ)
 
-		forward := inputs.ThrottleZ > 0.1
-		backward := inputs.ThrottleZ < -0.1
-		right := inputs.ThrottleX > 0.1
-		left := inputs.ThrottleX < -0.1
-		jump := inputs.Jump
-		sneak := inputs.Sneak
-
+		if err := versionHandler.Play().Movement().SendBoatPaddleState(
+			pe.baseExecutor.client.Conn(),
+			leftPaddle, rightPaddle,
+		); err != nil {
+			log.Printf("[handleRidingMode] Failed to send boat paddle state packet: %v", err)
+		}
+	} else {
+		// For other vehicles (horses, etc.): send player input
+		log.Printf("[handleRidingMode] SendVehicleInput(<conn>, %t, %t, %t, %t, %t, %t)", forward, backward, left, right, jump, sneak)
 		if err := versionHandler.Play().Movement().SendVehicleInput(
 			pe.baseExecutor.client.Conn(),
 			forward, backward, left, right, jump, sneak,
 		); err != nil {
 			log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
 		}
-	} else {
-		log.Printf("[handleRidingMode] Version handler not set")
 	}
+
+	// STEP 2: Calculate new vehicle position locally with physics
+	// Apply input direction and physics (gravity, friction, etc.)
+	_, yaw, pitch, _ := pe.physicsState.GetPosition()
+
+	// Boats in water should never have onGround=true
+	// Horses on land may have onGround=true
+	var onGround bool
+	if isBoat {
+		// Boats are always in water (or should be), so onGround is always false
+		onGround = false
+	} else {
+		// Horses/other vehicles may be on ground
+		// For now assume they're on ground since we're in manual control
+		onGround = true
+	}
+
+	// Calculate velocity based on throttle and current state
+	// Boats in water accelerate based on paddle input
+	// Horses accelerate based on input direction
+	var velocityX, velocityY, velocityZ float64
+
+	if isBoat {
+		// Boat physics from Minecraft 1.21.10 source (AbstractBoatEntity)
+		// Apply throttle and then multiply by environment-specific multiplier each tick
+
+		// Determine boat's surface condition
+		blockBelowBoat := pe.getBlockBelowBoat(mountX, mountY, mountZ)
+		velMultiplier, gravityVal := pe.getBoatPhysicsValues(mountX, mountY, mountZ, blockBelowBoat)
+
+		// Apply throttle input and velocity multiplier
+		velocityZ = inputs.ThrottleZ * velMultiplier
+		velocityX = inputs.ThrottleX * velMultiplier
+
+		// For boats in water: server controls vertical position to maintain floating.
+		// Don't apply gravity client-side; let the server handle buoyancy.
+		// Only apply gravity if boat is on land or in the air.
+		if pe.shapeProvider != nil && pe.shapeProvider.IsWater(blockBelowBoat) {
+			// Boat is in water - no gravity, server maintains floating
+			velocityY = 0.0
+		} else {
+			// Boat is on land or in air - apply gravity
+			velocityY = gravityVal
+		}
+
+		log.Printf("[handleRidingMode] Boat physics: surface=%s multiplier=%.3f gravity=%.4f throttle=(%.2f,%.2f) velocity=(%.3f,%.3f,%.3f)",
+			pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, gravityVal, inputs.ThrottleX, inputs.ThrottleZ, velocityX, velocityY, velocityZ)
+	} else {
+		// Horse physics: accelerate based on input
+		const horseAcceleration = 0.1
+		const horseDrag = 0.9
+
+		velocityZ = inputs.ThrottleZ * horseAcceleration
+		velocityX = inputs.ThrottleX * horseAcceleration
+
+		velocityX *= horseDrag
+		velocityZ *= horseDrag
+
+		// Apply gravity
+		velocityY = -0.04
+	}
+
+	// Calculate new position
+	newX := mountX + velocityX
+	newY := mountY + velocityY
+	newZ := mountZ + velocityZ
+
+	log.Printf("[handleRidingMode] Calculated movement: vel=(%.3f, %.3f, %.3f) newPos=(%.2f, %.2f, %.2f)",
+		velocityX, velocityY, velocityZ, newX, newY, newZ)
+
+	// Update physics state with new calculated position
+	pe.physicsState.SetPosition(
+		models.V3{X: newX, Y: newY, Z: newZ},
+		yaw,
+		pitch,
+		onGround,
+	)
+
+	// STEP 3: Send position update AFTER input (so server validates with input state)
+	// Server will:
+	// 1. Know what input we sent (from step 1)
+	// 2. Calculate expected movement based on that input
+	// 3. Validate our position is within expected range
+	if err := versionHandler.Play().Movement().SendMoveVehicle(
+		pe.baseExecutor.client.Conn(),
+		newX, newY, newZ,
+		float32(yaw), float32(pitch),
+		onGround,
+	); err != nil {
+		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+	}
+}
+
+// getBlockBelowBoat returns the block state directly below the boat's current position.
+// This is used to determine what surface the boat is on.
+func (pe *PhysicsMovementExecutor) getBlockBelowBoat(boatX, boatY, boatZ float64) uint32 {
+	if pe.world == nil {
+		return 0 // Air - assume boat is in water if we can't check
+	}
+
+	// Check block directly below boat (round down Y coordinate)
+	blockX := int(math.Floor(boatX))
+	blockY := int(math.Floor(boatY - 0.1)) // Slightly below to get the surface block
+	blockZ := int(math.Floor(boatZ))
+
+	blockState, loaded := pe.world.GetBlockStatus(blockX, blockY, blockZ)
+	if !loaded {
+		return 0 // Not loaded, assume air
+	}
+	return blockState
+}
+
+// getBoatPhysicsValues returns the velocity multiplier and gravity for the boat
+// based on its current environment (water, flowing water, or land with different surfaces).
+// Per Minecraft 1.21.10 source: AbstractBoatEntity.java
+func (pe *PhysicsMovementExecutor) getBoatPhysicsValues(boatX, boatY, boatZ float64, blockBelowBoat uint32) (float64, float64) {
+	if pe.shapeProvider == nil {
+		// Fallback: assume boat is in water
+		return physics.BoatInWaterVelocityMultiplier, physics.BoatInWaterGravity
+	}
+
+	// Check if boat is in water
+	isWater := pe.shapeProvider.IsWater(blockBelowBoat)
+	if isWater {
+		// Boat is in water - check if it's under flowing water (current affects gravity)
+		isFlowing := pe.shapeProvider.GetWaterFlowSpeed(blockBelowBoat) > 0.0
+		if isFlowing {
+			// Under flowing water: reduced gravity due to strong current
+			return physics.BoatUnderFlowingWaterVelocityMultiplier, physics.BoatUnderFlowingWaterGravity
+		}
+
+		// Check if boat is fully submerged
+		// A boat is considered underwater if there's water above it
+		blockAbove := int(math.Floor(boatY + 0.5))
+		blockX := int(math.Floor(boatX))
+		blockZ := int(math.Floor(boatZ))
+		blockAboveState, loaded := pe.world.GetBlockStatus(blockX, blockAbove, blockZ)
+		if loaded && pe.shapeProvider.IsWater(blockAboveState) {
+			// Fully submerged: much slower movement
+			return physics.BoatUnderWaterVelocityMultiplier, physics.BoatUnderWaterGravity
+		}
+
+		// Standard water (not flowing, not submerged)
+		return physics.BoatInWaterVelocityMultiplier, physics.BoatInWaterGravity
+	}
+
+	// Boat is on land - check block type for slipperiness
+	blockName := pe.shapeProvider.BlockName(blockBelowBoat)
+	switch blockName {
+	case "minecraft:blue_ice":
+		return physics.BoatOnLandBlueIceVelocityMultiplier, physics.BoatOnLandGravity
+	case "minecraft:ice", "minecraft:packed_ice":
+		return physics.BoatOnLandIceVelocityMultiplier, physics.BoatOnLandGravity
+	default:
+		// Standard land surface
+		return physics.BoatOnLandStandardVelocityMultiplier, physics.BoatOnLandGravity
+	}
+}
+
+// getBlockNameForBoat returns a human-readable name for the boat's surface for logging.
+func (pe *PhysicsMovementExecutor) getBlockNameForBoat(blockState uint32) string {
+	if pe.shapeProvider == nil {
+		return "unknown"
+	}
+
+	if pe.shapeProvider.IsWater(blockState) {
+		flowSpeed := pe.shapeProvider.GetWaterFlowSpeed(blockState)
+		if flowSpeed > 0.0 {
+			return fmt.Sprintf("flowing_water(%.2f)", flowSpeed)
+		}
+		return "water"
+	}
+
+	blockName := pe.shapeProvider.BlockName(blockState)
+	if blockName == "" {
+		return "air"
+	}
+	return blockName
 }
 
 // applyMovementState applies sprint/sneak state changes based on inputs.

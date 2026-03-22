@@ -4,17 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func init() {
 	// Create replays directory
-	_ = os.MkdirAll("./replays", 0755)
+	cacheDir, err := utils.FindOrCreateCacheDir()
+	if err != nil {
+		panic(fmt.Sprintf("find cache directory: %v", err))
+	}
+	_ = os.MkdirAll(filepath.Join(cacheDir, "replays"), 0755)
 }
 
 // TestNavigationSingleAgent tests that a single agent can navigate to a specified destination.

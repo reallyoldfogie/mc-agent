@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,7 +17,11 @@ import (
 )
 
 func init() {
-	_ = os.MkdirAll("./replays", 0755)
+	cacheDir, err := utils.FindOrCreateCacheDir()
+	if err != nil {
+		panic(fmt.Sprintf("find cache directory: %v", err))
+	}
+	_ = os.MkdirAll(filepath.Join(cacheDir, "replays"), 0755)
 }
 
 // TestPathfindingSingleAgent tests that a single agent can navigate to a destination using pathfinding.
