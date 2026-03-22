@@ -391,8 +391,9 @@ func TestPhysicsExecutor_Sprint(t *testing.T) {
 
 	// Note: We can't actually test StartSprinting/StopSprinting with nil client
 	// because it will panic trying to send packets. The state management
-	// is tested through baseExecutor tests in executor_test.go
+	// is tested through movementPacketSender tests in executor_test.go
 	// Just verify the IsSprinting method works
+	// TODO: Need to add validation that changing the Sprint value is reflected by IsSprinting
 }
 
 // TestPhysicsExecutor_Sneak tests sneak state management
@@ -406,8 +407,9 @@ func TestPhysicsExecutor_Sneak(t *testing.T) {
 
 	// Note: We can't actually test StartSneaking/StopSneaking with nil client
 	// because it will panic trying to send packets. The state management
-	// is tested through baseExecutor tests in executor_test.go
+	// is tested through movementPacketSender tests in executor_test.go
 	// Just verify the IsSneaking method works
+	// TODO: Need to add validation that changing the Sneak value is reflected by IsSneak
 }
 
 // TestPhysicsExecutor_GetCurrentPosition tests position query
@@ -443,8 +445,7 @@ func TestPhysicsExecutor_MoveTowards_NotSupported(t *testing.T) {
 func BenchmarkPhysicsExecutor_SyncWithServer(b *testing.B) {
 	exec := createTestPhysicsExecutor()
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for i := 0; b.Loop(); i++ {
 		exec.SyncWithServer(
 			float64(i%10),
 			64.0,

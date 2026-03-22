@@ -46,7 +46,7 @@ func TestMoveTowards_FlatGround(t *testing.T) {
 		yaw: 0, pitch: 0,
 	}
 
-	executor := newBaseMovementExecutor(
+	movementPacketSender := newMovementPacketSender(
 		nil, // client not needed for test
 		nil, // packetMgr not needed for test
 		tracker.GetPosition,
@@ -55,7 +55,7 @@ func TestMoveTowards_FlatGround(t *testing.T) {
 	)
 
 	// Test: Move 0.2 blocks towards (10, 65, 0)
-	newX, newY, newZ, err := executor.MoveTowards(10, 65, 0, 0.2, true)
+	newX, newY, newZ, err := movementPacketSender.MoveTowards(10, 65, 0, 0.2, true)
 
 	// Assert: No error
 	if err != nil {
@@ -84,7 +84,7 @@ func TestMoveTowards_UpwardMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := newBaseMovementExecutor(
+	exmovementPacketSendercutor := newMovementPacketSender(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -94,7 +94,7 @@ func TestMoveTowards_UpwardMovement(t *testing.T) {
 
 	// Test: Move towards higher position (stairs at Y=65.5)
 	targetY := 65.5
-	newX, newY, newZ, err := executor.MoveTowards(1, targetY, 0, 0.2, true)
+	newX, newY, newZ, err := exmovementPacketSendercutor.MoveTowards(1, targetY, 0, 0.2, true)
 
 	// Assert: No error
 	if err != nil {
@@ -117,7 +117,7 @@ func TestMoveTowards_DownwardMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := newBaseMovementExecutor(
+	movementPacketSender := newMovementPacketSender(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -127,7 +127,7 @@ func TestMoveTowards_DownwardMovement(t *testing.T) {
 
 	// Test: Move towards lower position (falling)
 	targetY := 64.0
-	newX, newY, newZ, err := executor.MoveTowards(1, targetY, 0, 0.2, true)
+	newX, newY, newZ, err := movementPacketSender.MoveTowards(1, targetY, 0, 0.2, true)
 
 	// Assert: No error
 	if err != nil {
@@ -154,7 +154,7 @@ func TestMoveTowards_LevelMovement(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := newBaseMovementExecutor(
+	movementPacketSender := newMovementPacketSender(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -164,7 +164,7 @@ func TestMoveTowards_LevelMovement(t *testing.T) {
 
 	// Test: Move towards position with tiny Y difference (< 0.1)
 	targetY := 65.05
-	newX, newY, newZ, err := executor.MoveTowards(1, targetY, 0, 0.2, true)
+	newX, newY, newZ, err := movementPacketSender.MoveTowards(1, targetY, 0, 0.2, true)
 
 	// Assert: No error
 	if err != nil {
@@ -187,7 +187,7 @@ func TestMoveTowards_MultipleSteps(t *testing.T) {
 		x: 0, y: 65, z: 0,
 	}
 
-	executor := newBaseMovementExecutor(
+	movementPacketSender := newMovementPacketSender(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -199,7 +199,7 @@ func TestMoveTowards_MultipleSteps(t *testing.T) {
 	target := struct{ x, y, z float64 }{10, 65, 0}
 
 	for i := range 5 {
-		_, _, _, err := executor.MoveTowards(target.x, target.y, target.z, 0.2, true)
+		_, _, _, err := movementPacketSender.MoveTowards(target.x, target.y, target.z, 0.2, true)
 		if err != nil {
 			t.Fatalf("Move %d failed: %v", i+1, err)
 		}
@@ -229,7 +229,7 @@ func TestMoveTowards_AlreadyAtTarget(t *testing.T) {
 		x: 10, y: 65, z: 10,
 	}
 
-	executor := newBaseMovementExecutor(
+	movementPacketSender := newMovementPacketSender(
 		nil,
 		nil,
 		tracker.GetPosition,
@@ -238,7 +238,7 @@ func TestMoveTowards_AlreadyAtTarget(t *testing.T) {
 	)
 
 	// Test: Try to move when already at horizontal target
-	newX, newY, newZ, err := executor.MoveTowards(10, 65, 10, 0.2, true)
+	newX, newY, newZ, err := movementPacketSender.MoveTowards(10, 65, 10, 0.2, true)
 
 	// Assert: No error
 	if err != nil {

@@ -58,7 +58,7 @@ type StuckRecoveryFn func(currentPos models.V3, goalPos models.V3) *pathfinding.
 // and sending position updates to the server.
 type PhysicsMovementExecutor struct {
 	// Base executor for packet sending
-	baseExecutor *baseMovementExecutor
+	movementPacketSender *movementPacketSender
 
 	// Physics simulation
 	physicsState  models.PhysicsState
@@ -133,8 +133,8 @@ func NewPhysicsMovementExecutor(
 	world physics.World,
 	shapeProvider physics.BlockShapeProvider,
 ) *PhysicsMovementExecutor {
-	// Create base executor for packet sending
-	baseExecutor := &baseMovementExecutor{
+	// Create movement packet sender
+	movementPacketSender := &movementPacketSender{
 		client:         client,
 		packetMgr:      packetMgr,
 		getBotPosition: getBotPos,
@@ -162,27 +162,27 @@ func NewPhysicsMovementExecutor(
 	childCtx, cancel := context.WithCancel(ctx)
 
 	return &PhysicsMovementExecutor{
-		baseExecutor:      baseExecutor,
-		physicsState:      physicsState,
-		inputGen:          pathfinding.NewInputGenerator(),
-		world:             world,
-		shapeProvider:     shapeProvider,
-		mode:              PhysicsModeIdle,
-		running:           false,
-		stopChan:          make(chan struct{}),
-		ctx:               childCtx,
-		cancel:            cancel,
-		currentPath:       nil,
-		currentStep:       0,
-		pathDone:          nil,
-		tickRate:          50 * time.Millisecond, // 20 TPS
-		predictionErrors:  make([]float64, 0, 100),
-		maxErrorHistory:   100,
-		clutchCooldown:    500 * time.Millisecond,
-		stuckThreshold:    3 * time.Second, // Default: stuck if no progress for 3 seconds
-		sidewaysTimeout:   2 * time.Second, // Try sideways recovery for 2 seconds before re-pathing
-		sidewaysDirection: 1,               // Start with right
-		mountedEntityID:   -1,              // Not mounted initially
+		movementPacketSender: movementPacketSender,
+		physicsState:         physicsState,
+		inputGen:             pathfinding.NewInputGenerator(),
+		world:                world,
+		shapeProvider:        shapeProvider,
+		mode:                 PhysicsModeIdle,
+		running:              false,
+		stopChan:             make(chan struct{}),
+		ctx:                  childCtx,
+		cancel:               cancel,
+		currentPath:          nil,
+		currentStep:          0,
+		pathDone:             nil,
+		tickRate:             50 * time.Millisecond, // 20 TPS
+		predictionErrors:     make([]float64, 0, 100),
+		maxErrorHistory:      100,
+		clutchCooldown:       500 * time.Millisecond,
+		stuckThreshold:       3 * time.Second, // Default: stuck if no progress for 3 seconds
+		sidewaysTimeout:      2 * time.Second, // Try sideways recovery for 2 seconds before re-pathing
+		sidewaysDirection:    1,               // Start with right
+		mountedEntityID:      -1,              // Not mounted initially
 	}
 }
 
@@ -216,13 +216,13 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 
 // SetPacketCallback sets an optional callback for packet interception.
 func (pe *PhysicsMovementExecutor) SetPacketCallback(callback func(pkt interface{})) {
-	pe.baseExecutor.SetPacketCallback(callback)
+	pe.movementPacketSender.SetPacketCallback(callback)
 }
 
 // SetMovementHandler sets an optional version-specific movement handler.
 // This forwards to the base executor for version-aware packet construction.
 func (pe *PhysicsMovementExecutor) SetMovementHandler(handler models.MovementHandler) {
-	pe.baseExecutor.SetMovementHandler(handler)
+	pe.movementPacketSender.SetMovementHandler(handler)
 }
 
 // SetVersionHandler sets the version handler for sending version-specific packets (used for riding).
@@ -273,7 +273,7 @@ func (pe *PhysicsMovementExecutor) SendPosition(x, y, z float64, onGround bool) 
 		currentPitch,
 		onGround,
 	)
-	return pe.baseExecutor.SendPosition(x, y, z, onGround)
+	return pe.movementPacketSender.SendPosition(x, y, z, onGround)
 }
 
 // SendPositionAndRotation sends a combined position and rotation update.
@@ -286,7 +286,7 @@ func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw,
 		float64(pitch),
 		onGround,
 	)
-	return pe.baseExecutor.SendPositionAndRotation(x, y, z, yaw, pitch, onGround)
+	return pe.movementPacketSender.SendPositionAndRotation(x, y, z, yaw, pitch, onGround)
 }
 
 // SendRotation sends a rotation update.
@@ -300,7 +300,7 @@ func (pe *PhysicsMovementExecutor) SendRotation(yaw, pitch float32, onGround boo
 		float64(pitch),
 		onGround,
 	)
-	return pe.baseExecutor.SendRotation(yaw, pitch, onGround)
+	return pe.movementPacketSender.SendRotation(yaw, pitch, onGround)
 }
 
 // MoveTowards is not used by physics executor (use ExecutePath instead).
@@ -310,37 +310,37 @@ func (pe *PhysicsMovementExecutor) MoveTowards(targetX, targetY, targetZ float64
 
 // LookAt rotates the bot to look at target coordinates.
 func (pe *PhysicsMovementExecutor) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
-	return pe.baseExecutor.LookAt(targetX, targetY, targetZ, onGround)
+	return pe.movementPacketSender.LookAt(targetX, targetY, targetZ, onGround)
 }
 
 // StartSprinting sends a command to start sprinting.
 func (pe *PhysicsMovementExecutor) StartSprinting() error {
-	return pe.baseExecutor.StartSprinting()
+	return pe.movementPacketSender.StartSprinting()
 }
 
 // StopSprinting sends a command to stop sprinting.
 func (pe *PhysicsMovementExecutor) StopSprinting() error {
-	return pe.baseExecutor.StopSprinting()
+	return pe.movementPacketSender.StopSprinting()
 }
 
 // IsSprinting returns true if the bot is currently sprinting.
 func (pe *PhysicsMovementExecutor) IsSprinting() bool {
-	return pe.baseExecutor.IsSprinting()
+	return pe.movementPacketSender.IsSprinting()
 }
 
 // StartSneaking sends a command to start sneaking.
 func (pe *PhysicsMovementExecutor) StartSneaking() error {
-	return pe.baseExecutor.StartSneaking()
+	return pe.movementPacketSender.StartSneaking()
 }
 
 // StopSneaking sends a command to stop sneaking.
 func (pe *PhysicsMovementExecutor) StopSneaking() error {
-	return pe.baseExecutor.StopSneaking()
+	return pe.movementPacketSender.StopSneaking()
 }
 
 // IsSneaking returns true if the bot is currently sneaking.
 func (pe *PhysicsMovementExecutor) IsSneaking() bool {
-	return pe.baseExecutor.IsSneaking()
+	return pe.movementPacketSender.IsSneaking()
 }
 
 // HandleServerCorrection updates physics state from server position correction.
@@ -525,7 +525,7 @@ func (pe *PhysicsMovementExecutor) EnterManualMode() error {
 	log.Printf("[PhysicsExecutor] Mode changed: %s → Manual", oldMode)
 
 	// Initialize manual inputs with current state
-	// Preserve sprint/sneak state from baseExecutor, get rotation from physics state
+	// Preserve sprint/sneak state from movementPacketSender, get rotation from physics state
 	_, yaw, pitch, _ := pe.physicsState.GetPosition()
 
 	pe.manualInputsMu.Lock()
@@ -535,8 +535,8 @@ func (pe *PhysicsMovementExecutor) EnterManualMode() error {
 		Yaw:            yaw,
 		Pitch:          pitch,
 		Jump:           false,
-		Sprint:         pe.baseExecutor.IsSprinting(),
-		Sneak:          pe.baseExecutor.IsSneaking(),
+		Sprint:         pe.movementPacketSender.IsSprinting(),
+		Sneak:          pe.movementPacketSender.IsSneaking(),
 		ClimbDirection: 0.0,
 	}
 	pe.manualInputsMu.Unlock()
@@ -559,29 +559,29 @@ func (pe *PhysicsMovementExecutor) ExitManualMode() error {
 	pe.mode = PhysicsModeIdle
 	log.Printf("[PhysicsExecutor] Mode changed: Manual → Idle")
 
-	// Apply final manual inputs state to baseExecutor to preserve sprint/sneak state
+	// Apply final manual inputs state to movementPacketSender to preserve sprint/sneak state
 	pe.manualInputsMu.RLock()
 	shouldSprint := pe.manualInputs.Sprint
 	shouldSneak := pe.manualInputs.Sneak
 	pe.manualInputsMu.RUnlock()
 
 	// Apply sprint state
-	if shouldSprint && !pe.baseExecutor.IsSprinting() {
+	if shouldSprint && !pe.movementPacketSender.IsSprinting() {
 		if err := pe.StartSprinting(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to start sprinting on exit: %v", err)
 		}
-	} else if !shouldSprint && pe.baseExecutor.IsSprinting() {
+	} else if !shouldSprint && pe.movementPacketSender.IsSprinting() {
 		if err := pe.StopSprinting(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to stop sprinting on exit: %v", err)
 		}
 	}
 
 	// Apply sneak state
-	if shouldSneak && !pe.baseExecutor.IsSneaking() {
+	if shouldSneak && !pe.movementPacketSender.IsSneaking() {
 		if err := pe.StartSneaking(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to start sneaking on exit: %v", err)
 		}
-	} else if !shouldSneak && pe.baseExecutor.IsSneaking() {
+	} else if !shouldSneak && pe.movementPacketSender.IsSneaking() {
 		if err := pe.StopSneaking(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to stop sneaking on exit: %v", err)
 		}
@@ -900,8 +900,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	if isComplete {
 		// Log step completion with agent name
 		agentName := "<unknown>"
-		if pe.baseExecutor != nil && pe.baseExecutor.client != nil {
-			agentName = pe.baseExecutor.client.Name()
+		if pe.movementPacketSender != nil && pe.movementPacketSender.client != nil {
+			agentName = pe.movementPacketSender.client.Name()
 		}
 		log.Printf("[PhysicsExecutor %s] Step %d/%d complete: %s to (%.0f, %.0f, %.0f)",
 			agentName, stepNum+1, totalSteps, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
@@ -927,8 +927,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 			pe.modeMu.Unlock()
 
 			agentName := "<unknown>"
-			if pe.baseExecutor != nil && pe.baseExecutor.client != nil {
-				agentName = pe.baseExecutor.client.Name()
+			if pe.movementPacketSender != nil && pe.movementPacketSender.client != nil {
+				agentName = pe.movementPacketSender.client.Name()
 			}
 			log.Printf("[PhysicsExecutor %s] Path complete!", agentName)
 
@@ -1347,7 +1347,7 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 			leftPaddle, rightPaddle, inputs.ThrottleX, inputs.ThrottleZ)
 
 		if err := versionHandler.Play().Movement().SendBoatPaddleState(
-			pe.baseExecutor.client.Conn(),
+			pe.movementPacketSender.client.Conn(),
 			leftPaddle, rightPaddle,
 		); err != nil {
 			log.Printf("[handleRidingMode] Failed to send boat paddle state packet: %v", err)
@@ -1356,7 +1356,7 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		// For other vehicles (horses, etc.): send player input
 		log.Printf("[handleRidingMode] SendVehicleInput(<conn>, %t, %t, %t, %t, %t, %t)", forward, backward, left, right, jump, sneak)
 		if err := versionHandler.Play().Movement().SendVehicleInput(
-			pe.baseExecutor.client.Conn(),
+			pe.movementPacketSender.client.Conn(),
 			forward, backward, left, right, jump, sneak,
 		); err != nil {
 			log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
@@ -1446,7 +1446,7 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	// 2. Calculate expected movement based on that input
 	// 3. Validate our position is within expected range
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
-		pe.baseExecutor.client.Conn(),
+		pe.movementPacketSender.client.Conn(),
 		newX, newY, newZ,
 		float32(yaw), float32(pitch),
 		onGround,
@@ -1626,7 +1626,7 @@ func (pe *PhysicsMovementExecutor) sendPositionUpdate() {
 	// IMPORTANT: Call base executor directly to avoid resetting velocity.
 	// The physics state was already updated by Tick(), so we just need to
 	// send the current state to the server without modifying it.
-	if err := pe.baseExecutor.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yawFloat32, pitchFloat32, onGround); err != nil {
+	if err := pe.movementPacketSender.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yawFloat32, pitchFloat32, onGround); err != nil {
 		// Don't spam logs on errors
 		// log.Printf("[PhysicsExecutor] Failed to send position: %v", err)
 	}
@@ -1673,8 +1673,8 @@ func (pe *PhysicsMovementExecutor) SetPath(path *pathfinding.Path) error {
 
 	// Get agent name from base executor client if available
 	agentName := "<unknown>"
-	if pe.baseExecutor != nil && pe.baseExecutor.client != nil {
-		agentName = pe.baseExecutor.client.Name()
+	if pe.movementPacketSender != nil && pe.movementPacketSender.client != nil {
+		agentName = pe.movementPacketSender.client.Name()
 	}
 
 	log.Printf("[PhysicsExecutor %s] Mode changed: %s → Navigating", agentName, oldMode)

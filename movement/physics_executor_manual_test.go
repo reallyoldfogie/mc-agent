@@ -511,7 +511,7 @@ func TestEnterManualModePreservesSprintState(t *testing.T) {
 	err := exec.EnterManualMode()
 	require.NoError(t, err)
 
-	// Manual inputs should reflect initial baseExecutor state (no sprint/sneak)
+	// Manual inputs should reflect initial movementPacketSender state (no sprint/sneak)
 	inputs := exec.GetManualInputs()
 	assert.False(t, inputs.Sprint)
 	assert.False(t, inputs.Sneak)
@@ -535,7 +535,7 @@ func TestExitManualModeAppliesSprintState(t *testing.T) {
 	inputs := exec.GetManualInputs()
 	assert.True(t, inputs.Sprint)
 
-	// Exit manual mode - baseExecutor.IsSprinting() checks manual inputs state
+	// Exit manual mode - movementPacketSender.IsSprinting() checks manual inputs state
 	// Since SetManualSprint set the flag without sending packets, exiting should see it
 	err = exec.ExitManualMode()
 	require.NoError(t, err)

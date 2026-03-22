@@ -13,9 +13,9 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// baseMovementExecutor implements a base MovementExecutor
+// movementPacketSender implements a base MovementExecutor
 // It does not implement a full MovementExecutor (some methods are no-ops)
-type baseMovementExecutor struct {
+type movementPacketSender struct {
 	client    bot.Client
 	packetMgr protocol_models.PacketMgr
 	// Reference to bot position tracking (will be passed from main)
@@ -34,14 +34,14 @@ type baseMovementExecutor struct {
 }
 
 // NewBaseMovementExecutor creates a new MovementExecutor
-func newBaseMovementExecutor(
+func newMovementPacketSender(
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
 	getBotPos func() (float64, float64, float64, float32, float32, bool),
 	setBotPos func(float64, float64, float64, float32, float32),
 	getBotEntityID func() int32,
-) *baseMovementExecutor {
-	return &baseMovementExecutor{
+) *movementPacketSender {
+	return &movementPacketSender{
 		client:         client,
 		packetMgr:      packetMgr,
 		getBotPosition: getBotPos,
@@ -55,27 +55,27 @@ func newBaseMovementExecutor(
 
 // SetPacketCallback sets an optional callback that will be invoked with each packet before it's sent.
 // This is useful for replay mirroring or packet logging.
-func (me *baseMovementExecutor) SetPacketCallback(callback func(pkt any)) {
+func (me *movementPacketSender) SetPacketCallback(callback func(pkt any)) {
 	me.onPacketSent = callback
 }
 
 // SetMovementHandler sets an optional version-specific movement handler.
 // When set, the executor will use version-aware packet construction instead of
 // the generic packets.go functions.
-func (me *baseMovementExecutor) SetMovementHandler(handler models.MovementHandler) {
+func (me *movementPacketSender) SetMovementHandler(handler models.MovementHandler) {
 	me.movementHandler = handler
 }
 
-func (me *baseMovementExecutor) IsSneaking() bool {
+func (me *movementPacketSender) IsSneaking() bool {
 	return me.isSneaking
 }
 
-func (me *baseMovementExecutor) IsSprinting() bool {
+func (me *movementPacketSender) IsSprinting() bool {
 	return me.isSprinting
 }
 
 // SendPosition sends a position update packet
-func (me *baseMovementExecutor) SendPosition(x, y, z float64, onGround bool) error {
+func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -103,7 +103,7 @@ func (me *baseMovementExecutor) SendPosition(x, y, z float64, onGround bool) err
 }
 
 // SendPositionAndRotation sends a combined position and rotation update packet
-func (me *baseMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -137,7 +137,7 @@ func (me *baseMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pi
 }
 
 // SendRotation sends a rotation update packet
-func (me *baseMovementExecutor) SendRotation(yaw, pitch float32, onGround bool) error {
+func (me *movementPacketSender) SendRotation(yaw, pitch float32, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -158,7 +158,7 @@ func (me *baseMovementExecutor) SendRotation(yaw, pitch float32, onGround bool) 
 }
 
 // MoveTowards moves the bot towards target coordinates by a given distance
-func (me *baseMovementExecutor) MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error) {
+func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error) {
 	// Get current position
 	botX, botY, botZ, yaw, pitch, initialized := me.getBotPosition()
 	if !initialized {
@@ -216,7 +216,7 @@ func (me *baseMovementExecutor) MoveTowards(targetX, targetY, targetZ float64, d
 }
 
 // LookAt rotates the bot to look at target coordinates
-func (me *baseMovementExecutor) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
+func (me *movementPacketSender) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
 	// Get current position
 	botX, botY, botZ, _, _, initialized := me.getBotPosition()
 	if !initialized {
@@ -260,7 +260,7 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 }
 
 // StartSprinting sends a command to start sprinting
-func (me *baseMovementExecutor) StartSprinting() error {
+func (me *movementPacketSender) StartSprinting() error {
 	if me.isSprinting {
 		return nil // Already sprinting, no need to send packet
 	}
@@ -284,7 +284,7 @@ func (me *baseMovementExecutor) StartSprinting() error {
 }
 
 // StopSprinting sends a command to stop sprinting
-func (me *baseMovementExecutor) StopSprinting() error {
+func (me *movementPacketSender) StopSprinting() error {
 	if !me.isSprinting {
 		return nil // Not sprinting, no need to send packet
 	}
@@ -308,7 +308,7 @@ func (me *baseMovementExecutor) StopSprinting() error {
 }
 
 // StartSneaking sends a command to start sneaking
-func (me *baseMovementExecutor) StartSneaking() error {
+func (me *movementPacketSender) StartSneaking() error {
 	if me.isSneaking {
 		return nil // Already sneaking, no need to send packet
 	}
@@ -332,7 +332,7 @@ func (me *baseMovementExecutor) StartSneaking() error {
 }
 
 // StopSneaking sends a command to stop sneaking
-func (me *baseMovementExecutor) StopSneaking() error {
+func (me *movementPacketSender) StopSneaking() error {
 	if !me.isSneaking {
 		return nil // Not sneaking, no need to send packet
 	}
