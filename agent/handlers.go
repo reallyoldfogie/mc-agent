@@ -1586,6 +1586,7 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 
 	vehicleID, passengerIDs, err := a.versionHandler.Play().Entities().ParseSetPassengers(p)
 	if err != nil {
+		log.Printf("[onSetPassengers] ERROR parsing packet: %v", err)
 		return err
 	}
 
@@ -1599,6 +1600,8 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 	}
 
 	currentMount := a.getMountedEntityID()
+	log.Printf("[onSetPassengers] RECEIVED: vehicleID=%d isPassenger=%v currentMount=%d passengerCount=%d", vehicleID, isPassenger, currentMount, len(passengerIDs))
+
 	if isPassenger && currentMount != vehicleID {
 		// Agent just mounted a vehicle
 		log.Printf("[onSetPassengers] Agent mounted entity %d (vehicle with %d passengers)", vehicleID, len(passengerIDs))
@@ -1617,6 +1620,8 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 				log.Printf("[onSetPassengers] Error setting movement executor dismounted state: %v", err)
 			}
 		}
+	} else {
+		log.Printf("[onSetPassengers] No mount state change (isPassenger=%v, currentMount=%d, vehicleID=%d)", isPassenger, currentMount, vehicleID)
 	}
 
 	return nil

@@ -95,8 +95,8 @@ func (f *fakeScreenManager) ForceCloseScreen(windowID int) error {
 func (f *fakeScreenManager) GetCursorSlot() mcscreen.Slot {
 	return f.cursor
 }
-func (f *fakeScreenManager) GetPlayerInventory() *mcscreen.Inventory {
-	return &f.inventory
+func (f *fakeScreenManager) GetPlayerInventory() mcscreen.Inventory {
+	return f.inventory
 }
 func (f *fakeScreenManager) GetScreenByID(windowID int) mcscreen.Container {
 	return f.screens[windowID]
@@ -540,14 +540,14 @@ func TestScreenManagerAdapterSlotAt(t *testing.T) {
 	// Create a fake screen implementation instead of using NewManager
 	fakeScreenMgr := &fakeScreenManager{
 		screens:   make(map[int]mcscreen.Container),
-		inventory: mcscreen.Inventory{},
+		inventory: mcscreen.NewInventory(),
 	}
 
 	chest := &mcscreen.Chest{Slots: make([]mcscreen.Slot, 9)}
 	chest.Slots[2] = *slotFromItemStack(models.ItemStack{ItemID: 3, Count: 1})
 	fakeScreenMgr.screens[1] = chest
 
-	fakeScreenMgr.inventory.Slots[4] = *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})
+	fakeScreenMgr.inventory.GetSlots()[4] = *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})
 
 	adapter := screenManagerAdapter{manager: fakeScreenMgr}
 	slot, ok := adapter.SlotAt(0, 4)

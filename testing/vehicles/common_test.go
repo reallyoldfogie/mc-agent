@@ -3,9 +3,13 @@ package vehicles
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
+	"sync"
 	"testing"
 	"time"
+
+	semver "github.com/aquasecurity/go-version/pkg/version"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	testingpkg "github.com/reallyoldfogie/mc-agent/testing"
@@ -16,15 +20,17 @@ type VehicleTestHelper struct {
 	Framework    *testingpkg.Framework
 	Instance     *testingpkg.TestInstance
 	ManagedAgent *testingpkg.ManagedAgent
+	AgentName    string
 	t            *testing.T
 }
 
 // NewVehicleTestHelper creates a new vehicle test helper with a running server and agent
-func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, context.Context, context.CancelFunc) {
+func NewVehicleTestHelper(t *testing.T, mcVersion, agentName string) (*VehicleTestHelper, context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 
 	framework, err := testingpkg.NewFramework()
 	if err != nil {
+		cancel()
 		t.Fatalf("create framework: %v", err)
 	}
 
@@ -43,10 +49,32 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 
 	inst, err := framework.StartServer(ctx, serverCfg)
 	if err != nil {
+		cancel()
 		t.Fatalf("start server: %v", err)
 	}
 
 	// Agent logging is setup automatically by framework
+
+	// Construct the helper early so t.Cleanup can reference it even if
+	// a t.Fatal call below prevents NewVehicleTestHelper from returning.
+	helper := &VehicleTestHelper{
+		Framework: framework,
+		Instance:  inst,
+		AgentName: agentName,
+		t:         t,
+	}
+
+	// Register cleanup via t.Cleanup so the server container is always
+	// stopped, even when t.Fatal is called before this function returns
+	// and the caller's defer cleanup() is never registered.
+	var cleanupOnce sync.Once
+	cleanup := func() {
+		cleanupOnce.Do(func() {
+			cancel()
+			helper.Cleanup()
+		})
+	}
+	t.Cleanup(cleanup)
 
 	addr := fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort)
 
@@ -55,7 +83,7 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 	// The FindOrCreateCacheDir utility can be used by other code that manages caches explicitly.
 
 	agentCfg := testingpkg.AgentConfig{
-		Name:           "VehicleBot",
+		Name:           agentName,
 		ServerAddress:  addr,
 		Version:        serverCfg.Version,
 		MCDataGenPath:  "", // Auto-detect: downloads to data/mc-data-gen-cache by default
@@ -66,26 +94,14 @@ func NewVehicleTestHelper(t *testing.T, mcVersion string) (*VehicleTestHelper, c
 	if err != nil {
 		t.Fatalf("spawn agent: %v", err)
 	}
+	helper.ManagedAgent = managedAgent
 
 	// Wait for agent to appear in player list
-	if !testingpkg.WaitForPlayerOnline(ctx, inst.RCON, "VehicleBot", 30*time.Second) {
+	if !testingpkg.WaitForPlayerOnline(ctx, inst.RCON, agentName, 30*time.Second) {
 		t.Fatal("agent never appeared in server player list")
 	}
 
-	helper := &VehicleTestHelper{
-		Framework:    framework,
-		Instance:     inst,
-		ManagedAgent: managedAgent,
-		t:            t,
-	}
-
-	// Return cancel wrapped so we clean up properly
-	wrappedCancel := func() {
-		cancel()
-		helper.Cleanup()
-	}
-
-	return helper, ctx, wrappedCancel
+	return helper, ctx, cleanup
 }
 
 // Cleanup stops the agent, server, and closes logging
@@ -157,6 +173,55 @@ func (vh *VehicleTestHelper) SummonBoat(ctx context.Context, x, y, z float64, va
 	return entityID, nil
 }
 
+// BuildHorseEnclosure creates a fence ring around the summon location to prevent wandering.
+// Builds a 5x5 fence perimeter at ground level (y), leaving the center 3x3 area open for the horse to stand.
+// This prevents the horse from wandering off while allowing normal mounting interaction.
+func (vh *VehicleTestHelper) BuildHorseEnclosure(ctx context.Context, x, y, z float64) error {
+	fenceY := int(y)
+	
+	// Build a 5x5 perimeter fence (only outer edge, not filled)
+	// Center is at (x, z), so perimeter extends from (x-2) to (x+2) and (z-2) to (z+2)
+	for dx := -2; dx <= 2; dx++ {
+		for dz := -2; dz <= 2; dz++ {
+			// Only place fence on the outer perimeter (edges)
+			if dx == -2 || dx == 2 || dz == -2 || dz == 2 {
+				fenceX := int(x) + dx
+				fenceZ := int(z) + dz
+				cmd := fmt.Sprintf("setblock %d %d %d oak_fence", fenceX, fenceY, fenceZ)
+				resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+				fmt.Printf("%s => %s\n",cmd, resp)
+				if err != nil {
+					return fmt.Errorf("build fence at (%d,%d,%d): %w", fenceX, fenceY, fenceZ, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// RemoveHorseEnclosure removes the fence ring around the summon location.
+func (vh *VehicleTestHelper) RemoveHorseEnclosure(ctx context.Context, x, y, z float64) error {
+	fenceY := int(y)
+	
+	// Remove the 5x5 perimeter fence
+	for dx := -2; dx <= 2; dx++ {
+		for dz := -2; dz <= 2; dz++ {
+			// Only remove fence from the outer perimeter (edges)
+			if dx == -2 || dx == 2 || dz == -2 || dz == 2 {
+				fenceX := int(x) + dx
+				fenceZ := int(z) + dz
+				cmd := fmt.Sprintf("setblock %d %d %d air", fenceX, fenceY, fenceZ)
+				resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+				fmt.Printf("%s => %s\n",cmd, resp)
+				if err != nil {
+					return fmt.Errorf("remove fence at (%d,%d,%d): %w", fenceX, fenceY, fenceZ, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // SummonHorse summons a tamed and saddled horse at the specified location and returns its entity ID
 func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (int32, error) {
 	// Summon command varies by version due to saddle NBT location change in 1.21.5
@@ -166,7 +231,10 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (
 	var cmd string
 	version := vh.Instance.Server.Version
 
-	if version < "1.21.5" {
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5")) // (">= 1.21.1, < 1.21.5") // 1.21.1 - 1.21.4 uses the old summon syntax
+
+	if c.Check(v) {
 		// Versions 1.21.1-1.21.4: Use SaddleItem tag
 		cmd = fmt.Sprintf(
 			`summon minecraft:horse %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0}`,
@@ -180,9 +248,19 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (
 		)
 	}
 
-	_, err := vh.Instance.RCON.Exec(ctx, cmd)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
 	if err != nil {
 		return 0, fmt.Errorf("summon horse: %w", err)
+	}
+
+	// Equip the saddle via item replace, which is more reliable than NBT in the
+	// summon command. The summon NBT sets initial state, but item replace is the
+	// authoritative way to put an item in a specific equipment slot.
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:horse,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip saddle: %w", err)
 	}
 
 	// Wait for entity to spawn and be tracked

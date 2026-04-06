@@ -38,7 +38,6 @@ type AgentConfig struct {
 	Chat Chat
 
 	// Optional: movement mode
-	DisablePhysicsMovement bool    // Set to true to disable physics-based movement executor (defaults to false = physics enabled when prerequisites available)
 	EnableClutchAssist     bool    // Enable clutch planning/actions during physics movement
 	PathfinderGoalRadius   float64 // Treat goals within this radius as reached (defaults to 0.5 when 0)
 

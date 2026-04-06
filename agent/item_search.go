@@ -32,9 +32,8 @@ func (a *agent) FindSlotWith(ctx context.Context, itemName string, windowID int)
 		if inv == nil {
 			return -1, false, fmt.Errorf("inventory not available")
 		}
-		if inventory, ok := inv.(*mcscreen.Inventory); ok {
-			screenSlots = inventory.Slots[:]
-		}
+		screenSlots = inv.GetSlots()[:]
+
 	case windowID >= 0:
 		screen := a.GetScreen(windowID)
 		if screen == nil {
@@ -47,8 +46,8 @@ func (a *agent) FindSlotWith(ctx context.Context, itemName string, windowID int)
 			screenSlots = s.Slots
 		case *mcscreen.HorseContainer:
 			screenSlots = s.Slots
-		case *mcscreen.Inventory:
-			screenSlots = s.Slots[:]
+		case mcscreen.Inventory:
+			screenSlots = s.GetSlots()[:]
 		}
 	default:
 		return -1, false, fmt.Errorf("unsupported windowID %d", windowID)

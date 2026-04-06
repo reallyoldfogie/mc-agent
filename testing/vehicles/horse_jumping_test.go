@@ -12,7 +12,7 @@ import (
 func TestHorseJumping(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "HorseJumpBot")
 			defer cleanup()
 
 			// Teleport agent to a location with solid ground
@@ -76,7 +76,7 @@ func TestHorseJumping(t *testing.T) {
 func TestJumpVehiclePowerRange(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "JumpVehicleBot")
 			defer cleanup()
 
 			// Setup location

@@ -298,8 +298,8 @@ func (ch *ContainerHelper) GetContainerSlotCount(windowID byte) int {
 	switch c := screen.(type) {
 	case *mcscreen.Chest:
 		return len(c.Slots)
-	case *mcscreen.Inventory:
-		return len(c.Slots)
+	case mcscreen.Inventory:
+		return len(c.GetSlots())
 	default:
 		return -1
 	}

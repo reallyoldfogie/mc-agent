@@ -14,6 +14,11 @@ import (
 )
 
 const (
+	minHotbarSlot = int16(0)
+	maxHotbarSlot = int16(8)
+)
+
+const (
 	FaceDown  BlockFace = 0 // -Y
 	FaceUp    BlockFace = 1 // +Y
 	FaceNorth BlockFace = 2 // -Z
@@ -193,8 +198,8 @@ func (iu *ItemUsage) AttackEntity(entityID int32, sneaking bool) error {
 
 // SwitchToSlot switches the active hotbar slot (0-8).
 // This sends a ServerboundSetCarriedItem packet.
-func (iu *ItemUsage) SwitchToSlot(slotIndex int) error {
-	if slotIndex < 0 || slotIndex > 8 {
+func (iu *ItemUsage) SwitchToSlot(slotIndex int16) error {
+	if slotIndex < minHotbarSlot || slotIndex > maxHotbarSlot {
 		return nil // Invalid slot, ignore
 	}
 
@@ -202,7 +207,7 @@ func (iu *ItemUsage) SwitchToSlot(slotIndex int) error {
 		return common.ErrHandlerNotSet{HandlerName: "ContainerHandler"}
 	}
 
-	return iu.containerHandler.SendSetCarriedItem(iu.client, int16(slotIndex))
+	return iu.containerHandler.SendSetCarriedItem(iu.client, slotIndex)
 }
 
 // GetSequence returns the current sequence number (for debugging/testing)

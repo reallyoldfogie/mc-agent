@@ -185,6 +185,11 @@ const (
 	BoatOnLandBlueIceVelocityMultiplier  = 0.989 // Blue ice (highest slipperiness)
 	BoatOnLandGravity                    = -0.04 // Standard gravity on land
 
+	// Boat horizontal acceleration constants (from AbstractBoatEntity.java).
+	// Forward and backward use different values; the server validates against these.
+	BoatForwardAcceleration  = 0.04  // speed += 0.04 when pressing forward
+	BoatBackwardAcceleration = 0.005 // speed -= 0.005 when pressing backward (much slower)
+
 	// Note: When on land with player controlling boat, slipperiness is halved (AbstractBoatEntity:565)
 	BoatOnLandPlayerControlHalving = 0.5 // Multiply slipperiness by this when player controls boat
 )

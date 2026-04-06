@@ -534,46 +534,6 @@ func (a *agent) visualizeActualEntityTrajectory(projType models.ProjectileType, 
 	log.Printf("[visualizeActualEntityTrajectory] %s trajectory visualization complete (%d actual points + 1 marker)", projType, len(trajectoryCommands))
 }
 
-// SwapInventoryWithHotbar swaps an inventory slot with a hotbar slot by clicking with hotbar mode
-// This is equivalent to pressing a number key while hovering over an inventory item
-func (a *agent) SwapInventoryWithHotbar(ctx context.Context, inventorySlot, hotbarSlot int) error {
-	if a.versionHandler == nil || a.client == nil {
-		return fmt.Errorf("version handler or client not available")
-	}
-
-	if hotbarSlot < 0 || hotbarSlot > 8 {
-		return fmt.Errorf("invalid hotbar slot %d (must be 0-8)", hotbarSlot)
-	}
-
-	// Send a container click packet with hotbar swap mode
-	// windowID 0 = player inventory
-	// mode 2 = hotbar swap
-	// button = hotbar slot number (0-8)
-	containerHandler := a.versionHandler.Play().Containers()
-	if containerHandler == nil {
-		return fmt.Errorf("container handler not available")
-	}
-
-	err := containerHandler.SendContainerClick(
-		a.client.Conn(),
-		0,                                    // windowID = player inventory
-		0,                                    // stateID
-		int32(inventorySlot),                 // slot to swap from
-		int8(hotbarSlot),                     // button = hotbar slot to swap to
-		2,                                    // mode = hotbar key press (swap mode)
-		make(map[int16]models.InventorySlot), // let server respond with changes
-		models.InventorySlot{},               // cursor item
-	)
-
-	if err != nil {
-		return fmt.Errorf("error performing hotbar swap: %w", err)
-	}
-
-	// Wait for the swap to complete
-	time.Sleep(100 * time.Millisecond)
-	return nil
-}
-
 // ThrowProjectileAt throws/fires a projectile at a target location.
 // Supports arrows (via bow), snowballs, eggs, ender pearls, and splash potions.
 // projectileType values: 0=Arrow, 1=Snowball, 2=Egg, 3=EnderPearl, 4=SplashPotion

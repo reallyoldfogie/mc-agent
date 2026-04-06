@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"log"
 	"strings"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -140,5 +141,9 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 	}
 
 	// Check if entity type name contains "boat" or "raft" (handles boat, oak_boat, chest_boat, bamboo_raft, etc.)
-	return strings.Contains(entityTypeName, "boat") || strings.Contains(entityTypeName, "raft")
+	rval := strings.Contains(entityTypeName, "boat") || strings.Contains(entityTypeName, "raft")
+
+	log.Printf("[IsMountedEntityBoat] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
 }

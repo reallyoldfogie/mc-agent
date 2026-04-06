@@ -25,8 +25,8 @@ type (
 	PacketManager  = models.PacketManager
 	PacketRecorder = models.PacketRecorder
 	// PlayerList       = models.PlayerList
-	Respawner        = models.Respawner
-	Screen           = models.Screen
+	Respawner = models.Respawner
+	// Screen           = models.Screen
 	ScreenAccess     = models.ScreenAccess
 	ScreenOperations = models.ScreenOperations
 	// ScreenSubsystem  = models.ScreenSubsystem

@@ -23,9 +23,9 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
 	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error
 	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
-	SelectHotbarSlot(ctx context.Context, slot int) error
+	SelectHotbarSlot(ctx context.Context, slot int16) error
 	FindSlotWith(ctx context.Context, itemName string, windowID int) (slot int, found bool, err error)
-	WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (slot int, err error)
+	WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (slot int16, err error)
 
 	// Bow firing actions
 	//Deprecated: Use FireBowAt for targeted firing

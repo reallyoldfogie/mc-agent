@@ -35,11 +35,14 @@ func TestHelpListsLegacyCommands(t *testing.T) {
 }
 
 type fakeSlotResolver struct {
-	id, idx, itemID, count int
-	ok                     bool
+	id, itemID, count int
+	idx               int16
+	ok                bool
 }
 
-func (f fakeSlotResolver) ResolveSlot(id, index int) (int, int, bool) { return f.itemID, f.count, f.ok }
+func (f fakeSlotResolver) ResolveSlot(id int, index int16) (int, int, bool) {
+	return f.itemID, f.count, f.ok
+}
 
 type fakeItemMgr struct{ name string }
 

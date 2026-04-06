@@ -33,7 +33,6 @@ var (
 	accessToken    = flag.String("token", "", "AccessToken - offline mode only")
 	mcDataPath     = flag.String("data-path", "", "Path to mc-data-gen data directory (empty=auto-detect; use 'build/cache/mc-data-gen' for centralized cache)")
 	protoGoPath    = flag.String("protocol-path", "", "Path to mc-protocol-go directory")
-	disablePhysics = flag.Bool("disable-physics", false, "Disable physics-based movement (defaults to physics enabled)")
 	enableClutch   = flag.Bool("clutch", false, "Enable clutch assist during physics movement")
 
 	// replay flags
@@ -129,7 +128,6 @@ func main() {
 		Auth:                   auth,
 		MCDataGenPath:          *mcDataPath,
 		MCProtocolGoPath:       *protoGoPath,
-		DisablePhysicsMovement: *disablePhysics,
 		EnableClutchAssist:     *enableClutch,
 		StopFilePath:           ".agentStop", // Enable graceful shutdown via stop file
 		EnableReplay:           *enableReplay,

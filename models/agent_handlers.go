@@ -17,5 +17,5 @@ type AgentHandlers interface {
 	OnSystemChat(message chat.Message, overlay bool) error
 	OnPlayerChat(playerlist.PlayerInfo, chat.Message, bool) error
 	OnDisguisedChat(chat.Message) error
-	OnScreenSlotChange(id, index int) error
+	OnScreenSlotChange(id int, index int16) error
 }

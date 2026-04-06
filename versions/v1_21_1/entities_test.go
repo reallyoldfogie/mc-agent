@@ -22,9 +22,9 @@ func TestEntityHandler_ParseAddEntity(t *testing.T) {
 	pkt.Pitch = pk.Byte(64) // ~90 degrees
 	pkt.HeadPitch = pk.Byte(-128)
 	pkt.ObjectData = pk.VarInt(1) // Creator player ID (for entities like arrows)
-	pkt.VelocityX = pk.Short(0)
-	pkt.VelocityY = pk.Short(0)
-	pkt.VelocityZ = pk.Short(0)
+	pkt.Velocity.X = pk.Short(0)
+	pkt.Velocity.Y = pk.Short(0)
+	pkt.Velocity.Z = pk.Short(0)
 
 	// Verify packet ID using PacketMgr
 	packetMgr := v1_21_1.NewPackets()

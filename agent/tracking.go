@@ -46,31 +46,14 @@ type trackedEntity struct {
 type TrackedEntityInfo = models.TrackedEntityInfo
 
 // GetPosition returns the current bot position and rotation.
-// If the bot is mounted on an entity, returns the entity's position with the bot's rotation.
+// When mounted, returns a.posX/Y/Z which is updated every tick by the physics
+// executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
+// while riding because the server typically does not echo the vehicle's position
+// back to the rider, making it stale within a tick or two.
 func (a *agent) GetPosition() (x, y, z float64, yaw, pitch float32, initialized bool) {
 	a.posMu.RLock()
-	posX, posY, posZ := a.posX, a.posY, a.posZ
-	posYaw, posPitch := a.posYaw, a.posPitch
-	posInitialized := a.posInitialized
-	a.posMu.RUnlock()
-
-	// Check if agent is mounted on an entity
-	a.mountedEntityMu.RLock()
-	mountedEntityID := a.mountedEntityID
-	a.mountedEntityMu.RUnlock()
-
-	if mountedEntityID != -1 {
-		// Get the mounted entity's position (agent's rotation stays the same)
-		a.entitiesMu.RLock()
-		if entity, exists := a.entities[mountedEntityID]; exists {
-			a.entitiesMu.RUnlock()
-			return entity.X, entity.Y, entity.Z, posYaw, posPitch, true
-		}
-		a.entitiesMu.RUnlock()
-		// If entity not found, fall through to agent position
-	}
-
-	return posX, posY, posZ, posYaw, posPitch, posInitialized
+	defer a.posMu.RUnlock()
+	return a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, a.posInitialized
 }
 
 // setPosition updates the bot position and rotation.
@@ -83,27 +66,13 @@ func (a *agent) setPosition(x, y, z float64, yaw, pitch float32) {
 }
 
 // GetPositionSimple returns bot position without rotation.
-// If the bot is mounted on an entity, returns the entity's position instead.
+// When mounted, returns a.posX/Y/Z which is updated every tick by the physics
+// executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
+// while riding because the server typically does not echo the vehicle's position
+// back to the rider, making it stale within a tick or two.
 func (a *agent) GetPositionSimple() (x, y, z float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-
-	// Check if agent is mounted on an entity
-	a.mountedEntityMu.RLock()
-	mountedEntityID := a.mountedEntityID
-	a.mountedEntityMu.RUnlock()
-
-	if mountedEntityID != -1 {
-		// Return the mounted entity's position
-		a.entitiesMu.RLock()
-		if entity, exists := a.entities[mountedEntityID]; exists {
-			a.entitiesMu.RUnlock()
-			return entity.X, entity.Y, entity.Z, true
-		}
-		a.entitiesMu.RUnlock()
-		// If entity not found, fall through to agent position
-	}
-
 	return a.posX, a.posY, a.posZ, a.posInitialized
 }
 

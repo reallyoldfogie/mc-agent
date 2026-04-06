@@ -74,11 +74,13 @@ func (c *containerHandler) SendSetCreativeModeSlot(conn models.PacketWriter, slo
 	pkt := sb.NewSetCreativeSlot()
 	pkt.Slot = pk.Short(slot)
 
-	// Set the untrusted slot data
 	if item.Present {
 		pkt.Item.ItemCount = pk.VarInt(item.Count)
-		// The UnnamedType0001 field handles the item ID and components
-		// This is complex and requires proper NBT encoding
+		pkt.Item.UnnamedType0001 = &basetypes.UntrustedSlotUnnamedType0001Default{
+			ItemId:                pk.VarInt(item.ItemID),
+			AddedComponentCount:   pk.VarInt(0),
+			RemovedComponentCount: pk.VarInt(0),
+		}
 	} else {
 		pkt.Item.ItemCount = pk.VarInt(0)
 	}
@@ -86,7 +88,7 @@ func (c *containerHandler) SendSetCreativeModeSlot(conn models.PacketWriter, slo
 	return conn.WritePacket(pkt.Marshal())
 }
 
-// SendPickItem sends a pick item packet (for creative mode).
+// SendPickItem
 // Note: In 1.21.6, the PickItem packet takes a block position, not a slot.
 // This implementation is a stub - the interface may need to be updated.
 func (c *containerHandler) SendPickItem(conn models.PacketWriter, slot int32) error {

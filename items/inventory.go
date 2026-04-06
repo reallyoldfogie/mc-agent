@@ -579,21 +579,21 @@ func (s screenManagerAdapter) SlotAt(windowID int, slot int) (mcscreen.Slot, boo
 		return mcscreen.Slot{}, false
 	}
 	if windowID == 0 {
-		if slot < 0 || slot >= len(s.manager.Inventory().Slots) {
+		if slot < 0 || slot >= len(s.manager.Inventory().GetSlots()) {
 			return mcscreen.Slot{}, false
 		}
-		return s.manager.Inventory().Slots[slot], true
+		return s.manager.Inventory().GetSlots()[slot], true
 	}
 	container, ok := s.manager.Screens()[windowID]
 	if !ok || slot < 0 {
 		return mcscreen.Slot{}, false
 	}
 	switch c := container.(type) {
-	case *mcscreen.Inventory:
-		if slot >= len(c.Slots) {
+	case mcscreen.Inventory:
+		if slot >= len(c.GetSlots()) {
 			return mcscreen.Slot{}, false
 		}
-		return c.Slots[slot], true
+		return c.GetSlots()[slot], true
 	case *mcscreen.Chest:
 		if slot >= len(c.Slots) {
 			return mcscreen.Slot{}, false
@@ -609,11 +609,11 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 		return false
 	}
 	if windowID == 0 {
-		if slot >= len(s.manager.Inventory().Slots) {
+		if slot >= len(s.manager.Inventory().GetSlots()) {
 			return false
 		}
 		inventory := s.manager.Inventory()
-		inventory.Slots[slot] = data
+		inventory.GetSlots()[slot] = data
 		s.manager.SetInventory(inventory)
 		return true
 	}
@@ -622,11 +622,11 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 		return false
 	}
 	switch c := container.(type) {
-	case *mcscreen.Inventory:
-		if slot >= len(c.Slots) {
+	case mcscreen.Inventory:
+		if slot >= len(c.GetSlots()) {
 			return false
 		}
-		c.Slots[slot] = data
+		c.GetSlots()[slot] = data
 		return true
 	case *mcscreen.Chest:
 		if slot >= len(c.Slots) {

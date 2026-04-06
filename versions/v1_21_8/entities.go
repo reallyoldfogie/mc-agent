@@ -38,9 +38,9 @@ func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType, objec
 	yaw = int8(pkt.Yaw)
 	pitch = int8(pkt.Pitch)
 	// Velocity is encoded as fixed-point and needs to be divided by 8000
-	velX = float64(pkt.VelocityX) / 8000.0
-	velY = float64(pkt.VelocityY) / 8000.0
-	velZ = float64(pkt.VelocityZ) / 8000.0
+	velX = float64(pkt.Velocity.X) / 8000.0
+	velY = float64(pkt.Velocity.Y) / 8000.0
+	velZ = float64(pkt.Velocity.Z) / 8000.0
 
 	log.Printf("[1.21.8][ParseAddEntity] returning %d %d %d %v %.2f %.2f %.2f %d %d vel=(%.4f,%.4f,%.4f) <nil>", entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ)
 
@@ -214,9 +214,9 @@ func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, 
 
 	entityID = int32(pkt.EntityId)
 	// Velocity is encoded as fixed-point divided by 8000
-	velX = float64(pkt.VelocityX) / 8000.0
-	velY = float64(pkt.VelocityY) / 8000.0
-	velZ = float64(pkt.VelocityZ) / 8000.0
+	velX = float64(pkt.Velocity.X) / 8000.0
+	velY = float64(pkt.Velocity.Y) / 8000.0
+	velZ = float64(pkt.Velocity.Z) / 8000.0
 
 	log.Printf("[1.21.8][ParseEntityVelocityUpdate] returning %d %.6f %.6f %.6f <nil>", entityID, velX, velY, velZ)
 
@@ -407,7 +407,6 @@ func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, 
 
 	return vehicleEntityID, passengerEntityIDs, nil
 }
-
 
 // ParseEntityUpdateAttributes parses an entity attributes update packet.
 func (e *entityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]float64, error) {

@@ -139,7 +139,6 @@ func (p *playHandler) Actions() models.ActionHandler {
 }
 
 // SendClientInformation sends client settings/information.
-// In 1.21.2, CommonSettings has 9 fields (including ParticleStatus).
 func (p *playHandler) SendClientInformation(conn models.PacketWriter, info models.ClientInfo) error {
 	pkt := basetypes.NewCommonSettings()
 	pkt.SetPacketID(int32(p.packetMgr.GetServerboundPacketID("ServerboundCommonSettings")))
@@ -151,7 +150,7 @@ func (p *playHandler) SendClientInformation(conn models.PacketWriter, info model
 	pkt.MainHand = pk.VarInt(info.MainHand)
 	pkt.EnableTextFiltering = pk.Boolean(info.EnableTextFiltering)
 	pkt.EnableServerListing = pk.Boolean(info.AllowServerListings)
-	pkt.ParticleStatus = basetypes.CommonSettingsParticleStatus{Value: "all"} // Default to "all"
+	// pkt.ParticleStatus = basetypes.CommonSettingsParticleStatus{Value: "all"} // Default to "all"
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "CommonSettings", Cause: err}
@@ -236,108 +235,133 @@ func (p *playHandler) ParseGameEvent(pkt pk.Packet) (eventType int, x, y, z, val
 	return int(gameStateChange.Reason), 0, 0, 0, float64(gameStateChange.GameMode), nil
 }
 
-// ParseUpdateRecipes parses a ClientboundDeclareRecipes packet for 1.21.2.
-// Uses protocol structs to parse property sets and stonecutter recipes.
+// ParseUpdateRecipes parses the ClientboundDeclareRecipes packet for 1.21.1.
+// 1.21.2 uses the legacy recipe format with many recipe types.
+// We extract stonecutter recipes and convert them to our SlotDisplay format.
 func (p *playHandler) ParseUpdateRecipes(pkt pk.Packet) (*agent_models.UpdateRecipesPayload, error) {
 	declareRecipes := cb.NewDeclareRecipes()
 	if err := declareRecipes.Scan(pkt); err != nil {
 		return nil, common.ErrPacketParse{PacketName: "DeclareRecipes", Cause: fmt.Errorf("failed to scan packet: %w", err)}
 	}
+
 	var payload agent_models.UpdateRecipesPayload
 
-	// Parse property sets (recipes)
+	// Get the recipes array
 	recipes := declareRecipes.Recipes.Get()
-	for _, recipe := range recipes {
-		items := recipe.Items.Get()
-		var itemList []int32
-		for _, itemID := range items {
-			itemList = append(itemList, int32(itemID))
-		}
-		payload.PropertySets = append(payload.PropertySets, agent_models.PropertySet{
-			ID:    string(recipe.Name),
-			Items: itemList,
-		})
+	if len(recipes) == 0 {
+		return &payload, nil
 	}
 
-	// Parse stonecutter entries
-	stonecutterRecipes := declareRecipes.StoneCutterRecipes.Get()
-	for _, recipe := range stonecutterRecipes {
-		// Convert IDSet to SlotDisplay
-		var input agent_models.SlotDisplay
-		if recipe.Input.IsTagList {
-			// Tag representation - not used in recipe inputs
-			input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-		} else {
-			// IDs list representation
-			idsAry := recipe.Input.IDs.Get()
-			if idsAry != nil {
-				idsLength := len(idsAry)
-				switch idsLength {
-				case 0:
-					input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-				case 1:
-					input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeItem, Item: &agent_models.SlotDisplayItem{ItemID: int32(idsAry[0])}}
-				default:
-					// Multiple items - create composite
-					options := make([]agent_models.SlotDisplay, idsLength)
-					for optIdx, itemID := range idsAry {
-						options[optIdx] = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeItem, Item: &agent_models.SlotDisplayItem{ItemID: int32(itemID)}}
-					}
-					input = agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeComposite, Composite: options}
-				}
+	// Process recipes from the recipes array
+	// In 1.21.1, stonecutter recipes are embedded with type="minecraft:stonecutting"
+	for _, recipe := range recipes {
+		// Check if this is a stonecutter recipe
+		if recipe.Type.Value == "minecraft:stonecutting" {
+			// Extract the stonecutter data
+			if stonecutterData, ok := recipe.Data.(*cb.DeclareRecipesRecipesArrayTypeDataMinecraftStonecutting); ok {
+				// Convert ingredient (Array[VarInt, Slot]) to SlotDisplay
+				inputDisplay := p.convertIngredientToSlotDisplay(&stonecutterData.Ingredient)
+
+				// Convert result Slot to SlotDisplay
+				resultDisplay := p.convertSlotToSlotDisplay(&stonecutterData.Result)
+
+				payload.StonecutterEntries = append(payload.StonecutterEntries, agent_models.StonecutterEntry{
+					Input:   inputDisplay,
+					Results: []agent_models.SlotDisplay{resultDisplay},
+				})
 			}
 		}
-
-		// Convert protocol SlotDisplay to agent model
-		result := p.convertProtocolSlotDisplay(recipe.SlotDisplay)
-
-		payload.StonecutterEntries = append(payload.StonecutterEntries, agent_models.StonecutterEntry{
-			Input:   input,
-			Results: []agent_models.SlotDisplay{result},
-		})
 	}
 
 	return &payload, nil
 }
 
-// convertProtocolSlotDisplay converts protocol SlotDisplay to agent model SlotDisplay.
-func (p *playHandler) convertProtocolSlotDisplay(slot cb.SlotDisplay) agent_models.SlotDisplay {
-	switch slot.Type.Value {
-	case "empty", "any_fuel":
-		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-	case "item":
-		if itemID, ok := slot.Data.(*pk.VarInt); ok && itemID != nil {
-			return agent_models.SlotDisplay{
-				Type: agent_models.SlotDisplayTypeItem,
-				Item: &agent_models.SlotDisplayItem{ItemID: int32(*itemID)},
-			}
-		}
-		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-	case "item_stack":
-		if slotData, ok := slot.Data.(*basetypes.Slot); ok && slotData != nil && slotData.ItemCount > 0 {
-			return agent_models.SlotDisplay{
-				Type: agent_models.SlotDisplayTypeItem,
-				Item: &agent_models.SlotDisplayItem{ItemID: int32(slotData.ItemCount)},
-			}
-		}
-		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-	case "with_remainder":
-		if wrData, ok := slot.Data.(*cb.SlotDisplayDataWithRemainder); ok && wrData != nil {
-			ingredient := p.convertProtocolSlotDisplay(wrData.Input)
-			remainder := p.convertProtocolSlotDisplay(wrData.Remainder)
-			return agent_models.SlotDisplay{
-				Type: agent_models.SlotDisplayTypeWithRemainder,
-				WithRemainder: &agent_models.SlotDisplayWithRemainder{
-					Ingredient: ingredient,
-					Remainder:  remainder,
-				},
-			}
-		}
-		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
-	default:
+// convertIngredientToSlotDisplay converts basetypes.Ingredient (Array[VarInt, Slot]) to SlotDisplay.
+func (p *playHandler) convertIngredientToSlotDisplay(ingredient *basetypes.Ingredient) agent_models.SlotDisplay {
+	if ingredient == nil {
 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
 	}
+
+	slots := ingredient.Get()
+
+	if len(slots) == 0 {
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
+
+	if len(slots) == 1 {
+		// Single item
+		return p.convertSlotToSlotDisplay(&(slots)[0])
+	}
+
+	// Multiple options - create composite
+	options := make([]agent_models.SlotDisplay, len(slots))
+	for i, slotItem := range slots {
+		options[i] = p.convertSlotToSlotDisplay(&slotItem)
+	}
+	return agent_models.SlotDisplay{
+		Type:      agent_models.SlotDisplayTypeComposite,
+		Composite: options,
+	}
 }
+
+// convertSlotToSlotDisplay converts basetypes.Slot to SlotDisplay.
+func (p *playHandler) convertSlotToSlotDisplay(slot *basetypes.Slot) agent_models.SlotDisplay {
+	if slot == nil || slot.ItemCount == 0 {
+		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+	}
+
+	// Extract ItemId from the switch field
+	var itemID int32
+	if unnamedField, ok := slot.UnnamedType0001.(*basetypes.SlotUnnamedType0001Default); ok {
+		itemID = int32(unnamedField.ItemId)
+	}
+
+	return agent_models.SlotDisplay{
+		Type: agent_models.SlotDisplayTypeItem,
+		Item: &agent_models.SlotDisplayItem{
+			ItemID: itemID,
+		},
+	}
+}
+
+// convertProtocolSlotDisplay converts protocol SlotDisplay to agent model SlotDisplay.
+// func (p *playHandler) convertProtocolSlotDisplay(slot cb.SlotDisplay) agent_models.SlotDisplay {
+// 	switch slot.Type.Value {
+// 	case "empty", "any_fuel":
+// 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+// 	case "item":
+// 		if itemID, ok := slot.Data.(*pk.VarInt); ok && itemID != nil {
+// 			return agent_models.SlotDisplay{
+// 				Type: agent_models.SlotDisplayTypeItem,
+// 				Item: &agent_models.SlotDisplayItem{ItemID: int32(*itemID)},
+// 			}
+// 		}
+// 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+// 	case "item_stack":
+// 		if slotData, ok := slot.Data.(*basetypes.Slot); ok && slotData != nil && slotData.ItemCount > 0 {
+// 			return agent_models.SlotDisplay{
+// 				Type: agent_models.SlotDisplayTypeItem,
+// 				Item: &agent_models.SlotDisplayItem{ItemID: int32(slotData.ItemCount)},
+// 			}
+// 		}
+// 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+// 	case "with_remainder":
+// 		if wrData, ok := slot.Data.(*cb.SlotDisplayDataWithRemainder); ok && wrData != nil {
+// 			ingredient := p.convertProtocolSlotDisplay(wrData.Input)
+// 			remainder := p.convertProtocolSlotDisplay(wrData.Remainder)
+// 			return agent_models.SlotDisplay{
+// 				Type: agent_models.SlotDisplayTypeWithRemainder,
+// 				WithRemainder: &agent_models.SlotDisplayWithRemainder{
+// 					Ingredient: ingredient,
+// 					Remainder:  remainder,
+// 				},
+// 			}
+// 		}
+// 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+// 	default:
+// 		return agent_models.SlotDisplay{Type: agent_models.SlotDisplayTypeEmpty}
+// 	}
+// }
 
 // BuildPlayerInfoPacket builds a PlayerInfo packet for replay recording (v1.21.2).
 func (p *playHandler) BuildPlayerInfoPacket(uuid [16]byte, name string, properties []models.ProfileProperty) (int32, []byte, error) {
@@ -413,9 +437,9 @@ func (p *playHandler) BuildSpawnEntityPacket(entityID int32, uuid [16]byte, enti
 	pkt.Yaw = pk.Byte(yaw)
 	pkt.HeadPitch = pk.Byte(yaw)
 	pkt.ObjectData = pk.VarInt(objectData)
-	pkt.VelocityX = pk.Short(int16(velX * 8000))
-	pkt.VelocityY = pk.Short(int16(velY * 8000))
-	pkt.VelocityZ = pk.Short(int16(velZ * 8000))
+	pkt.Velocity.X = pk.Short(int16(velX * 8000))
+	pkt.Velocity.Y = pk.Short(int16(velY * 8000))
+	pkt.Velocity.Z = pk.Short(int16(velZ * 8000))
 	packetID := int32(pkt.PacketID())
 	packetData := pkt.Marshal().Data
 	return packetID, packetData, nil

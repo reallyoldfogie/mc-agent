@@ -413,9 +413,9 @@ func (p *playHandler) BuildSpawnEntityPacket(entityID int32, uuid [16]byte, enti
 	pkt.Yaw = pk.Byte(yaw)
 	pkt.HeadPitch = pk.Byte(yaw)
 	pkt.ObjectData = pk.VarInt(objectData)
-	pkt.VelocityX = pk.Short(int16(velX * 8000))
-	pkt.VelocityY = pk.Short(int16(velY * 8000))
-	pkt.VelocityZ = pk.Short(int16(velZ * 8000))
+	pkt.Velocity.X = pk.Short(int16(velX * 8000))
+	pkt.Velocity.Y = pk.Short(int16(velY * 8000))
+	pkt.Velocity.Z = pk.Short(int16(velZ * 8000))
 	packetID := int32(pkt.PacketID())
 	packetData := pkt.Marshal().Data
 	return packetID, packetData, nil

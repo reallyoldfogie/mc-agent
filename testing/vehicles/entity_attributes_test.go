@@ -13,7 +13,7 @@ import (
 func TestEntityAttributeTracking(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "EntityAttrBot")
 			defer cleanup()
 
 			// Teleport agent to a location
@@ -54,7 +54,7 @@ func TestEntityAttributeTracking(t *testing.T) {
 func TestHorseAttributesAfterMounting(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "HrsAttrAftrMntBt")
 			defer cleanup()
 
 			// Setup location
@@ -109,7 +109,7 @@ func TestHorseAttributesAfterMounting(t *testing.T) {
 func TestMultipleEntityAttributes(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "MltplEntyAttrBot")
 			defer cleanup()
 
 			// Teleport to setup area

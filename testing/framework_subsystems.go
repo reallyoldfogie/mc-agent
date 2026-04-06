@@ -25,7 +25,7 @@ type slotResolverFromAgent struct {
 	agnt models.Agent
 }
 
-func (sr slotResolverFromAgent) ResolveSlot(id, index int) (itemID int, count int, ok bool) {
+func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int, count int, ok bool) {
 	// Get the screen/inventory from the agent
 	var screenContainer interface{}
 
@@ -47,9 +47,9 @@ func (sr slotResolverFromAgent) ResolveSlot(id, index int) (itemID int, count in
 	}
 
 	// Type assert to screen.Inventory to access slots
-	if inv, ok := screenContainer.(*screen.Inventory); ok {
-		if index >= 0 && index < len(inv.Slots) {
-			s := inv.Slots[index]
+	if inv, ok := screenContainer.(screen.Inventory); ok {
+		if index >= 0 && index < int16(len(inv.GetSlots())) {
+			s := inv.GetSlots()[index]
 			if s.ID >= 0 {
 				return int(s.ID), int(s.Count), true
 			}
@@ -62,7 +62,7 @@ func (sr slotResolverFromAgent) ResolveSlot(id, index int) (itemID int, count in
 		// Generic container access
 		if c, ok := screenContainer.(interface{ GetSlots() []screen.Slot }); ok {
 			slots := c.GetSlots()
-			if index >= 0 && index < len(slots) {
+			if index >= 0 && index < int16(len(slots)) {
 				s := slots[index]
 				if s.ID >= 0 {
 					return int(s.ID), int(s.Count), true

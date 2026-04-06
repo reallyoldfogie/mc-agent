@@ -1,6 +1,7 @@
 package vehicles
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 func TestBoatSteering(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "BoatSteerBot")
 			defer cleanup()
 
 			// Teleport agent to a location with water
@@ -21,7 +22,11 @@ func TestBoatSteering(t *testing.T) {
 			require.NoError(t, err, "fill water area")
 			t.Logf("%s => %s", cmd, resp)
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
+			// Teleport agent to (-1,0,1): outside the water fill region (X<0) so the
+			// agent stands on solid ground at Y=0. The boat is summoned at (1,1,1)
+			// and floats at approx (1,-0.5,1). Eye distance ≈ 2.65 blocks, well
+			// inside the 3-block entity-interaction range.
+			_, err = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s -1 0 1", helper.ManagedAgent.Name))
 			require.NoError(t, err, "teleport agent")
 
 			time.Sleep(500 * time.Millisecond) // Wait for position update
@@ -138,34 +143,45 @@ func TestBoatSteering(t *testing.T) {
 func TestHorseSteering(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "HorseSteerBot")
 			defer cleanup()
 
-			// Teleport agent to ground level (flat world ground is at y=0/1)
-			_, err := helper.Instance.RCON.Exec(ctx, "teleport VehicleBot 0 1 0")
-			require.NoError(t, err, "teleport agent")
+		// Teleport agent to ground level (Y=0 is the first air block above grass
+		// in this flat-world setup; teleporting here puts the agent at the same
+		// height as the horse and avoids a 1-block vertical offset that can cause
+		// the server to reject the mount interaction.)
+		_, err := helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s 0 0 0", helper.ManagedAgent.Name))
+		require.NoError(t, err, "teleport agent")
 
-			time.Sleep(500 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 
-			// Get agent's initial position
-			x1, y1, z1, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
-			require.True(t, initialized, "agent position should be initialized")
+		// Get agent's initial position
+		x1, y1, z1, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+		require.True(t, initialized, "agent position should be initialized")
 
-			// Summon a tamed and saddled horse
-			horseEntityID, err := helper.SummonHorse(ctx, x1+1, y1, z1)
-			require.NoError(t, err, "summon horse")
+		// Build a fence enclosure around the summon location to prevent the horse from wandering
+		err = helper.BuildHorseEnclosure(ctx, x1+1, y1, z1)
+		require.NoError(t, err, "build horse enclosure")
 
-			time.Sleep(500 * time.Millisecond)
+		// Summon a tamed and saddled horse
+		horseEntityID, err := helper.SummonHorse(ctx, x1+1, y1, z1)
+		require.NoError(t, err, "summon horse")
 
-			t.Logf("Mounting horse from %.2f %.2f %.2f", x1, y1, z1)
+		time.Sleep(500 * time.Millisecond)
 
-			// Mount the horse
-			err = helper.MountEntity(ctx, horseEntityID)
-			require.NoError(t, err, "mount horse")
+		t.Logf("Mounting horse from %.2f %.2f %.2f", x1, y1, z1)
 
-			// Wait for mount confirmation
-			err = helper.WaitForMounted(ctx, 25*time.Second)
-			require.NoError(t, err, "agent should be mounted")
+		// Mount the horse
+		err = helper.MountEntity(ctx, horseEntityID)
+		require.NoError(t, err, "mount horse")
+
+		// Wait for mount confirmation
+		err = helper.WaitForMounted(ctx, 25*time.Second)
+		require.NoError(t, err, "agent should be mounted")
+
+		// Remove the fence enclosure now that the horse is mounted
+		err = helper.RemoveHorseEnclosure(ctx, x1+1, y1, z1)
+		require.NoError(t, err, "remove horse enclosure")
 
 			t.Logf("agent mounted successfully")
 
@@ -259,7 +275,7 @@ func TestHorseSteering(t *testing.T) {
 func TestVehicleSteeringInputs(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "VehicleSteerBot")
 			defer cleanup()
 
 			// Teleport agent to a location with water
@@ -268,7 +284,7 @@ func TestVehicleSteeringInputs(t *testing.T) {
 			require.NoError(t, err, "fill water area")
 			t.Logf("%s => %s", cmd, resp)
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
+			_, err = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s -1 1 -1", helper.ManagedAgent.Name))
 			require.NoError(t, err, "teleport agent")
 
 			time.Sleep(500 * time.Millisecond) // Wait for position update

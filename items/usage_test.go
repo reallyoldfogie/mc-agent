@@ -358,7 +358,7 @@ func TestAttackEntity(t *testing.T) {
 func TestSwitchToSlot(t *testing.T) {
 	tests := []struct {
 		name        string
-		slotIndex   int
+		slotIndex   int16
 		shouldSend  bool
 		description string
 	}{

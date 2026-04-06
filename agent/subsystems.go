@@ -1,6 +1,9 @@
 package agent
 
-import "github.com/reallyoldfogie/mc-agent/models"
+import (
+	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
+)
 
 // ScreenOperations implementation
 
@@ -15,7 +18,7 @@ func (a *agent) GetScreenManager() models.ScreenSubsystem {
 // GetScreen returns the screen/container for a given window ID.
 // Returns nil if the window doesn't exist.
 // Implements ScreenOperations interface.
-func (a *agent) GetScreen(windowID int) Screen {
+func (a *agent) GetScreen(windowID int) models.Screen {
 	a.containerSubsystemMu.RLock()
 	sm := a.screenMgr
 	a.containerSubsystemMu.RUnlock()
@@ -30,7 +33,7 @@ func (a *agent) GetScreen(windowID int) Screen {
 
 // GetInventory returns the player's main inventory.
 // Implements ScreenOperations interface.
-func (a *agent) GetInventory() Screen {
+func (a *agent) GetInventory() screen.Inventory {
 	a.containerSubsystemMu.RLock()
 	sm := a.screenMgr
 	a.containerSubsystemMu.RUnlock()

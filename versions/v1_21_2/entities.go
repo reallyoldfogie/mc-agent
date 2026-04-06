@@ -1,7 +1,8 @@
-// Package v1_21_5 provides version-specific packet handling for Minecraft 1.21.4.
+// Package v1_21_2 provides version-specific packet handling for Minecraft 1.21.2.
 package v1_21_2
 
 import (
+	"fmt"
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -12,7 +13,7 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
-// entityHandler implements common.EntityHandler for 1.21.4.
+// entityHandler implements common.EntityHandler for 1.21.2.
 type entityHandler struct {
 	packetMgr protocol_models.PacketMgr
 }
@@ -37,9 +38,9 @@ func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType, objec
 	yaw = int8(pkt.Yaw)
 	pitch = int8(pkt.Pitch)
 	// Velocity is encoded as fixed-point and needs to be divided by 8000
-	velX = float64(pkt.VelocityX) / 8000.0
-	velY = float64(pkt.VelocityY) / 8000.0
-	velZ = float64(pkt.VelocityZ) / 8000.0
+	velX = float64(pkt.Velocity.X) / 8000.0
+	velY = float64(pkt.Velocity.Y) / 8000.0
+	velZ = float64(pkt.Velocity.Z) / 8000.0
 
 	return entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ, nil
 }
@@ -210,25 +211,33 @@ func (e *entityHandler) SendAttack(conn models.PacketWriter, entityID int32, sne
 
 // ParseSyncEntityPosition parses a SyncEntityPosition packet (clientbound ID 96).
 // Returns entity ID and absolute position values.
+// func (e *entityHandler) ParseSyncEntityPosition(p pk.Packet) (entityID int32, x, y, z float64, dx, dy, dz float64, yaw, pitch int8, onGround bool, err error) {
+// 	pkt := cb.NewSyncEntityPosition()
+// 	if err = pkt.Scan(p); err != nil {
+// 		return 0, 0, 0, 0, 0, 0, 0, 0, 0, false, common.ErrPacketParse{PacketName: "SyncEntityPosition", Cause: err}
+// 	}
+
+// 	entityID = int32(pkt.EntityId)
+// 	x = float64(pkt.X)
+// 	y = float64(pkt.Y)
+// 	z = float64(pkt.Z)
+// 	// Velocity deltas are encoded as doubles
+// 	dx = float64(pkt.Dx)
+// 	dy = float64(pkt.Dy)
+// 	dz = float64(pkt.Dz)
+// 	yaw = int8(pkt.Yaw)
+// 	pitch = int8(pkt.Pitch)
+// 	onGround = bool(pkt.OnGround)
+
+// 	return entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround, nil
+// }
+
+// ParseSyncEntityPosition is not available in 1.21.2 (packet was added in 1.21.3).
+// Returns an error indicating this packet type is not available.
 func (e *entityHandler) ParseSyncEntityPosition(p pk.Packet) (entityID int32, x, y, z float64, dx, dy, dz float64, yaw, pitch int8, onGround bool, err error) {
-	pkt := cb.NewSyncEntityPosition()
-	if err = pkt.Scan(p); err != nil {
-		return 0, 0, 0, 0, 0, 0, 0, 0, 0, false, common.ErrPacketParse{PacketName: "SyncEntityPosition", Cause: err}
-	}
-
-	entityID = int32(pkt.EntityId)
-	x = float64(pkt.X)
-	y = float64(pkt.Y)
-	z = float64(pkt.Z)
-	// Velocity deltas are encoded as doubles
-	dx = float64(pkt.Dx)
-	dy = float64(pkt.Dy)
-	dz = float64(pkt.Dz)
-	yaw = int8(pkt.Yaw)
-	pitch = int8(pkt.Pitch)
-	onGround = bool(pkt.OnGround)
-
-	return entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround, nil
+	// SyncEntityPosition packet was not available in 1.21.1
+	// This is a stub implementation; positions should be handled via MoveEntity packets
+	return 0, 0, 0, 0, 0, 0, 0, 0, 0, false, fmt.Errorf("SyncEntityPosition packet not available in Minecraft 1.21.1")
 }
 
 // ParseEntityVelocityUpdate parses an entity velocity update packet (EntityVelocity).
@@ -242,9 +251,9 @@ func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, 
 
 	entityID = int32(pkt.EntityId)
 	// Velocity is encoded as fixed-point divided by 8000
-	velX = float64(pkt.VelocityX) / 8000.0
-	velY = float64(pkt.VelocityY) / 8000.0
-	velZ = float64(pkt.VelocityZ) / 8000.0
+	velX = float64(pkt.Velocity.X) / 8000.0
+	velY = float64(pkt.Velocity.Y) / 8000.0
+	velZ = float64(pkt.Velocity.Z) / 8000.0
 
 	return entityID, velX, velY, velZ, nil
 }
@@ -366,7 +375,6 @@ func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, 
 
 	return vehicleEntityID, passengerEntityIDs, nil
 }
-
 
 // ParseEntityUpdateAttributes parses an entity attributes update packet.
 func (e *entityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]float64, error) {

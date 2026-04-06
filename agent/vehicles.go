@@ -9,7 +9,6 @@ import (
 )
 
 // MountEntity mounts the agent on a vehicle entity by its ID.
-// This is typically called in response to a /mount <entityID> command.
 // The mounting is initiated by sending a right-click interaction packet (UseItemOnEntity),
 // and the server will respond with ClientboundSetPassengers when the mount is successful.
 func (a *agent) MountEntity(ctx context.Context, entityID int32) error {

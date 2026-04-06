@@ -12,7 +12,7 @@ import (
 func TestBoatVariantTracking(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "BoatVariantBot")
 			defer cleanup()
 
 			// Teleport agent to water area
@@ -76,7 +76,7 @@ func TestBoatVariantTracking(t *testing.T) {
 func TestBoatPaddleTracking(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "BoatPaddleBot")
 			defer cleanup()
 
 			// Teleport agent to a location with water
@@ -150,7 +150,7 @@ func TestBoatPaddleTracking(t *testing.T) {
 func TestBoatMetadataConsistency(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "BoatMetaDataBot")
 			defer cleanup()
 
 			// Setup

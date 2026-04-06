@@ -7,6 +7,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 const (
@@ -46,7 +47,7 @@ func (a *agent) handleClutchPlan(usage *items.ItemUsage, plan physics.ClutchPlan
 	a.noteClutchAction(time.Now(), plan, itemName)
 }
 
-func (a *agent) findClutchItemSlot() (int, string) {
+func (a *agent) findClutchItemSlot() (int16, string) {
 	slot, name := a.findHotbarSlotByName("minecraft:water_bucket")
 	if slot >= 0 {
 		return slot, name
@@ -55,19 +56,19 @@ func (a *agent) findClutchItemSlot() (int, string) {
 	return slot, name
 }
 
-func (a *agent) findHotbarSlotByName(itemName string) (int, string) {
+func (a *agent) findHotbarSlotByName(itemName string) (int16, string) {
 	if a.slots == nil || a.itemMgr == nil {
 		return -1, ""
 	}
 
-	for i := 36; i <= 44; i++ {
+	for i := mcscreen.HotbarSlotStart; i <= mcscreen.HotbarSlotEnd; i++ {
 		itemID, _, ok := a.slots.ResolveSlot(-2, i)
 		if !ok {
 			continue
 		}
 		name := a.itemMgr.GetItemNameByID(itemID)
 		if name == itemName {
-			return i - 36, name
+			return i - mcscreen.HotbarSlotStart, name
 		}
 	}
 	return -1, ""

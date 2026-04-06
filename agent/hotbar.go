@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -9,17 +10,19 @@ import (
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
+
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 const (
-	minHotbarSlot = 0
-	maxHotbarSlot = 8
+	minHotbarSlot = int16(0)
+	maxHotbarSlot = int16(8)
 )
 
 // SelectHotbarSlot switches the active hotbar slot and waits for server ack.
-func (a *agent) SelectHotbarSlot(ctx context.Context, slot int) error {
+func (a *agent) SelectHotbarSlot(ctx context.Context, slot int16) error {
 	if slot < minHotbarSlot || slot > maxHotbarSlot {
 		return fmt.Errorf("invalid hotbar slot %d (expected %d-%d)", slot, minHotbarSlot, maxHotbarSlot)
 	}
@@ -73,27 +76,86 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int) error {
 	}
 }
 
-func (a *agent) logHotbarSelection(action string, targetSlot int, currentSlot int16) {
+func (a *agent) SelectEmptyHotbarSlot(ctx context.Context) error {
+	var emptySlot int16 = -1
+	inventory := a.GetInventory()
+	hotbarSlots := inventory.Hotbar()
+	// for slot := mcscreen.HotbarSlotStart; slot < mcscreen.HotbarSlotEnd; slot++ {
+	for idx, slot := range hotbarSlots {
+		if slot.Count == 0 {
+			emptySlot = int16(idx)
+			break
+		}
+	}
+
+	if emptySlot == -1 {
+		return errors.New("no empty slot in player inventory")
+	}
+
+	return a.SelectHotbarSlot(ctx, emptySlot)
+}
+
+// SwapInventoryWithHotbar swaps an inventory slot with a hotbar slot by clicking with hotbar mode
+// This is equivalent to pressing a number key while hovering over an inventory item
+func (a *agent) SwapInventoryWithHotbar(ctx context.Context, inventorySlot, hotbarSlot int) error {
+	if a.versionHandler == nil || a.client == nil {
+		return fmt.Errorf("version handler or client not available")
+	}
+
+	if hotbarSlot < 0 || hotbarSlot > 8 {
+		return fmt.Errorf("invalid hotbar slot %d (must be 0-8)", hotbarSlot)
+	}
+
+	// Send a container click packet with hotbar swap mode
+	// windowID 0 = player inventory
+	// mode 2 = hotbar swap
+	// button = hotbar slot number (0-8)
+	containerHandler := a.versionHandler.Play().Containers()
+	if containerHandler == nil {
+		return fmt.Errorf("container handler not available")
+	}
+
+	err := containerHandler.SendContainerClick(
+		a.client.Conn(),
+		0,                                    // windowID = player inventory
+		0,                                    // stateID
+		int32(inventorySlot),                 // slot to swap from
+		int8(hotbarSlot),                     // button = hotbar slot to swap to
+		2,                                    // mode = hotbar key press (swap mode)
+		make(map[int16]models.InventorySlot), // let server respond with changes
+		models.InventorySlot{},               // cursor item
+	)
+
+	if err != nil {
+		return fmt.Errorf("error performing hotbar swap: %w", err)
+	}
+
+	// Wait for the swap to complete
+	time.Sleep(100 * time.Millisecond)
+	return nil
+}
+
+func (a *agent) logHotbarSelection(action string, targetSlot int16, currentSlot int16) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
 		log.Printf("[Agent %s] Hotbar %s: target=%d current=%d", a.cfg.Name, action, targetSlot, currentSlot)
 		return
 	}
 
-	currentName, currentCount := a.resolveHotbarSlot(slots, itemMgr, int(currentSlot))
+	currentName, currentCount := a.resolveHotbarSlot(slots, itemMgr, currentSlot)
 	targetName, targetCount := a.resolveHotbarSlot(slots, itemMgr, targetSlot)
 	log.Printf("[Agent %s] Hotbar %s: target=%d (%s x%d) current=%d (%s x%d)",
 		a.cfg.Name, action, targetSlot, targetName, targetCount, currentSlot, currentName, currentCount)
 	a.logPlayerInventory(action)
 }
 
-func (a *agent) logHotbarAck(targetSlot int, ackSlot int16) {
+func (a *agent) logHotbarAck(targetSlot int16, ackSlot int16) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
 		log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d", a.cfg.Name, targetSlot, ackSlot)
 		return
 	}
-	ackName, ackCount := a.resolveHotbarSlot(slots, itemMgr, int(ackSlot))
+	ackName, ackCount := a.resolveHotbarSlot(slots, itemMgr, ackSlot)
 	log.Printf("[Agent %s] Hotbar ack: target=%d ack=%d (%s x%d)", a.cfg.Name, targetSlot, ackSlot, ackName, ackCount)
 }
 
@@ -110,7 +172,7 @@ func (a *agent) logPlayerInventory(context string) {
 	b.WriteString("] Inventory ")
 	b.WriteString(context)
 	b.WriteString(":")
-	for i := range 46 {
+	for i := range int16(46) {
 		name, count := a.resolveInventorySlot(slots, itemMgr, i)
 		fmt.Fprintf(&b, " %d=%s x%d", i, name, count)
 	}
@@ -123,12 +185,12 @@ func (a *agent) getSlotInfoDeps() (models.SlotResolver, models.ItemManager) {
 	return a.slots, a.itemMgr
 }
 
-func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.ItemManager, slot int) (string, int) {
+func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.ItemManager, slot int16) (string, int) {
 	if slot < minHotbarSlot || slot > maxHotbarSlot {
 		return "invalid", 0
 	}
 	// Player inventory hotbar slots are indexes 36-44.
-	itemID, count, ok := slots.ResolveSlot(-2, 36+slot)
+	itemID, count, ok := slots.ResolveSlot(-2, mcscreen.HotbarSlotStart+slot)
 	if !ok {
 		return "minecraft:air", 0
 	}
@@ -143,7 +205,7 @@ func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.Item
 	return name, count
 }
 
-func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.ItemManager, index int) (string, int) {
+func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.ItemManager, index int16) (string, int) {
 	itemID, count, ok := slots.ResolveSlot(-2, index)
 	if !ok {
 		return "minecraft:air", 0
@@ -157,7 +219,7 @@ func (a *agent) resolveInventorySlot(slots models.SlotResolver, itemMgr models.I
 
 // FindHotbarSlotWithItem finds a hotbar slot containing an item by name.
 // Returns the slot index (0-8) and true if found, or -1 and false if not found.
-func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (int, bool) {
+func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (int16, bool) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
 		log.Printf("[%s] FindHotbarSlotWithItem(%s): slots=%v, itemMgr=%v", a.cfg.Name, itemName, slots, itemMgr)
@@ -190,7 +252,7 @@ func (a *agent) EquipItemByName(ctx context.Context, itemName string) error {
 // WaitForHotbarItem waits for a specific item to appear in the hotbar.
 // This is useful after RCON commands that place items, as there may be inventory sync delays.
 // Returns the slot index when found, or error if timeout/context cancelled.
-func (a *agent) WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (int, error) {
+func (a *agent) WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (int16, error) {
 	// Use a shorter check interval (50ms) with longer total timeout
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()

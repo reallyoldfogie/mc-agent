@@ -6,6 +6,7 @@
 *.swo
 *~
 .DS_Store
+.code-workspace.code-workspace
 
 CLAUDE.md
 AGENTS.md

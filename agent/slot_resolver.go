@@ -20,7 +20,7 @@ type screenManagerSlotResolver struct {
 // windowID 0 also represents the player's inventory.
 // windowID > 0 represents an open container window.
 // Returns (itemID, count, ok).
-func (r *screenManagerSlotResolver) ResolveSlot(windowID, slotIndex int) (itemID int, count int, ok bool) {
+func (r *screenManagerSlotResolver) ResolveSlot(windowID int, slotIndex int16) (itemID int, count int, ok bool) {
 	if r.agent == nil {
 		return 0, 0, false
 	}
@@ -44,11 +44,11 @@ func (r *screenManagerSlotResolver) ResolveSlot(windowID, slotIndex int) (itemID
 		}()
 
 		inventory := screenMgr.GetPlayerInventory()
-		if inventory == nil || slotIndex < 0 || slotIndex >= len(inventory.Slots) {
+		if inventory == nil || slotIndex < 0 || slotIndex >= int16(len(inventory.GetSlots())) {
 			return 0, 0, false
 		}
 
-		slot := inventory.Slots[slotIndex]
+		slot := inventory.GetSlots()[slotIndex]
 		return int(slot.ID), int(slot.Count), true
 	}
 
@@ -70,7 +70,7 @@ func (r *screenManagerSlotResolver) ResolveSlot(windowID, slotIndex int) (itemID
 
 // getSlotFromContainer extracts a slot from any container type.
 // Containers have a Slots field that's accessible via type assertion.
-func getSlotFromContainer(container mcscreen.Container, slotIndex int) (itemID int, count int, ok bool) {
+func getSlotFromContainer(container mcscreen.Container, slotIndex int16) (itemID int, count int, ok bool) {
 	// Check bounds
 	if slotIndex < 0 {
 		return 0, 0, false
@@ -80,17 +80,18 @@ func getSlotFromContainer(container mcscreen.Container, slotIndex int) (itemID i
 	// This is safer than reflection and covers most use cases
 	switch c := container.(type) {
 	case *mcscreen.Chest:
-		if slotIndex >= len(c.Slots) {
+		if slotIndex >= int16(len(c.Slots)) {
 			return 0, 0, false
 		}
 		slot := c.Slots[slotIndex]
 		return int(slot.ID), int(slot.Count), true
 
-	case *mcscreen.Inventory:
-		if slotIndex >= len(c.Slots) {
+	case mcscreen.Inventory:
+		slots := c.GetSlots()
+		if slotIndex >= int16(len(slots)) {
 			return 0, 0, false
 		}
-		slot := c.Slots[slotIndex]
+		slot := slots[slotIndex]
 		return int(slot.ID), int(slot.Count), true
 
 	default:

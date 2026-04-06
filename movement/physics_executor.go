@@ -120,6 +120,12 @@ type PhysicsMovementExecutor struct {
 	// Manual input state (thread-safe)
 	manualInputsMu sync.RWMutex  // Protects manual inputs
 	manualInputs   models.Inputs // Current manual inputs for PhysicsModeManual
+
+	// Riding velocity state (horizontal only; reset on mount/dismount).
+	// Maintained across ticks so the server sees smooth acceleration rather
+	// than an immediate jump to full speed every tick.
+	ridingVelX float64
+	ridingVelZ float64
 }
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
@@ -198,6 +204,22 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 	pe.mountedEntityID = vehicleEntityID
+	pe.ridingVelX = 0
+	pe.ridingVelZ = 0
+
+	// Seed the physics state with the entity's current tracked position so that
+	// the very first handleRidingMode tick sends a VehicleMove that matches the
+	// vehicle's actual location. Without this, the first tick would use the
+	// agent's pre-mount walking position, which the server would reject by
+	// sending an empty SetPassengers (dismounting the agent).
+	if pe.entityPositionGetter != nil {
+		if entX, entY, entZ, found := pe.entityPositionGetter.GetMountedEntityPosition(vehicleEntityID); found {
+			_, yaw, pitch, _ := pe.physicsState.GetPosition()
+			pe.physicsState.SetPosition(models.V3{X: entX, Y: entY, Z: entZ}, yaw, pitch, false)
+			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f)", vehicleEntityID, entX, entY, entZ)
+		}
+	}
+
 	pe.SetMode(PhysicsModeRiding)
 	log.Printf("[SetMounted] Agent mounted on entity %d", vehicleEntityID)
 	return nil
@@ -209,6 +231,8 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 	pe.mountedEntityID = -1
+	pe.ridingVelX = 0
+	pe.ridingVelZ = 0
 	pe.SetMode(PhysicsModeIdle)
 	log.Printf("[SetDismounted] Agent dismounted from vehicle")
 	return nil
@@ -1289,8 +1313,9 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		return
 	}
 
-	// Get current vehicle position from server state
-	mountX, mountY, mountZ, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
+	// Verify the mounted entity is still tracked (position is no longer used as the
+	// physics base; pe.physicsState is the authoritative source instead).
+	_, _, _, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
 	if !found {
 		log.Printf("[handleRidingMode] Mounted entity %d not found", mountedEntityID)
 		return
@@ -1328,8 +1353,11 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		leftPaddle := false
 		rightPaddle := false
 
-		if forward || backward {
-			// Forward or backward motion: both paddles active
+		if forward {
+			// Forward: both paddles active.
+			// Backward uses no paddles (vanilla behaviour: paddles rest, boat coasts
+			// back). Sending both-paddles for backward causes the server to treat it
+			// as a forward input and override the negative VehicleMove positions.
 			leftPaddle = true
 			rightPaddle = true
 		} else {
@@ -1363,76 +1391,82 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		}
 	}
 
-	// STEP 2: Calculate new vehicle position locally with physics
-	// Apply input direction and physics (gravity, friction, etc.)
-	_, yaw, pitch, _ := pe.physicsState.GetPosition()
+	// STEP 2: Calculate new vehicle position.
+	//
+	// We use pe.physicsState as the position base rather than the entity-tracker
+	// position (mountX/Y/Z). The physics state is the client's authoritative view
+	// of where the vehicle is; the entity-tracker position can lag one tick behind
+	// because it is updated by server packets that arrive asynchronously.
+	//
+	// Velocity is stateful (pe.ridingVelX/Z) so the server sees smooth acceleration
+	// rather than an immediate full-speed jump on the first tick.
+	// Model: vel = vel * drag + throttle * accel  (per Minecraft AbstractBoatEntity / Horse).
+	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
 
-	// Boats in water should never have onGround=true
-	// Horses on land may have onGround=true
 	var onGround bool
+	var newX, newY, newZ float64
+
 	if isBoat {
-		// Boats are always in water (or should be), so onGround is always false
+		// Boats float; onGround is always false.
 		onGround = false
-	} else {
-		// Horses/other vehicles may be on ground
-		// For now assume they're on ground since we're in manual control
-		onGround = true
-	}
 
-	// Calculate velocity based on throttle and current state
-	// Boats in water accelerate based on paddle input
-	// Horses accelerate based on input direction
-	var velocityX, velocityY, velocityZ float64
+		blockBelowBoat := pe.getBlockBelowBoat(currentPos.X, currentPos.Y, currentPos.Z)
+		velMultiplier, gravityVal := pe.getBoatPhysicsValues(currentPos.X, currentPos.Y, currentPos.Z, blockBelowBoat)
 
-	if isBoat {
-		// Boat physics from Minecraft 1.21.10 source (AbstractBoatEntity)
-		// Apply throttle and then multiply by environment-specific multiplier each tick
+		// Boat horizontal acceleration per tick (from AbstractBoatEntity.java).
+		// Forward and backward use different constants: the server validates against
+		// the vanilla values and rejects positions that imply too-high backward speed.
+		var accelZ float64
+		if inputs.ThrottleZ >= 0 {
+			accelZ = inputs.ThrottleZ * physics.BoatForwardAcceleration
+		} else {
+			accelZ = inputs.ThrottleZ * physics.BoatBackwardAcceleration
+		}
+		pe.ridingVelX = pe.ridingVelX*velMultiplier + inputs.ThrottleX*physics.BoatForwardAcceleration
+		pe.ridingVelZ = pe.ridingVelZ*velMultiplier + accelZ
 
-		// Determine boat's surface condition
-		blockBelowBoat := pe.getBlockBelowBoat(mountX, mountY, mountZ)
-		velMultiplier, gravityVal := pe.getBoatPhysicsValues(mountX, mountY, mountZ, blockBelowBoat)
-
-		// Apply throttle input and velocity multiplier
-		velocityZ = inputs.ThrottleZ * velMultiplier
-		velocityX = inputs.ThrottleX * velMultiplier
-
-		// For boats in water: server controls vertical position to maintain floating.
-		// Don't apply gravity client-side; let the server handle buoyancy.
-		// Only apply gravity if boat is on land or in the air.
+		var velocityY float64
 		if pe.shapeProvider != nil && pe.shapeProvider.IsWater(blockBelowBoat) {
-			// Boat is in water - no gravity, server maintains floating
+			// Boat is in water: server maintains buoyancy, no client-side gravity.
 			velocityY = 0.0
 		} else {
-			// Boat is on land or in air - apply gravity
 			velocityY = gravityVal
 		}
 
-		log.Printf("[handleRidingMode] Boat physics: surface=%s multiplier=%.3f gravity=%.4f throttle=(%.2f,%.2f) velocity=(%.3f,%.3f,%.3f)",
-			pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, gravityVal, inputs.ThrottleX, inputs.ThrottleZ, velocityX, velocityY, velocityZ)
+		newX = currentPos.X + pe.ridingVelX
+		newY = currentPos.Y + velocityY
+		newZ = currentPos.Z + pe.ridingVelZ
+
+		log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f gravity=%.4f throttle=(%.2f,%.2f) vel=(%.4f,%.4f) newPos=(%.2f,%.2f,%.2f)",
+			pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, gravityVal,
+			inputs.ThrottleX, inputs.ThrottleZ, pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
 	} else {
-		// Horse physics: accelerate based on input
+		// Horse/land vehicle: yaw-based steering.
+		// ThrottleX turns the horse: positive = right = yaw decreases (Minecraft: yaw=0 south, yaw=-90 east/+X).
+		// ThrottleZ drives it forward/backward in the direction it faces.
+		onGround = true
+
+		const horseTurnDegsPerTick = 5.0
+		yaw -= inputs.ThrottleX * horseTurnDegsPerTick
+
 		const horseAcceleration = 0.1
 		const horseDrag = 0.9
+		pe.ridingVelZ = pe.ridingVelZ*horseDrag + inputs.ThrottleZ*horseAcceleration
 
-		velocityZ = inputs.ThrottleZ * horseAcceleration
-		velocityX = inputs.ThrottleX * horseAcceleration
+		// Convert yaw to a world-space movement direction.
+		// Minecraft: yaw=0 → facing south (+Z); yaw=-90 → facing east (+X).
+		yawRad := yaw * math.Pi / 180.0
+		newX = currentPos.X + (-math.Sin(yawRad) * pe.ridingVelZ)
+		newY = currentPos.Y
+		newZ = currentPos.Z + (math.Cos(yawRad) * pe.ridingVelZ)
 
-		velocityX *= horseDrag
-		velocityZ *= horseDrag
-
-		// Apply gravity
-		velocityY = -0.04
+		log.Printf("[handleRidingMode] Horse physics: yaw=%.1f throttle=(%.2f,%.2f) speed=%.4f newPos=(%.2f,%.2f,%.2f)",
+			yaw, inputs.ThrottleX, inputs.ThrottleZ, pe.ridingVelZ, newX, newY, newZ)
 	}
 
-	// Calculate new position
-	newX := mountX + velocityX
-	newY := mountY + velocityY
-	newZ := mountZ + velocityZ
+	log.Printf("[handleRidingMode] Calculated movement: newPos=(%.2f, %.2f, %.2f)", newX, newY, newZ)
 
-	log.Printf("[handleRidingMode] Calculated movement: vel=(%.3f, %.3f, %.3f) newPos=(%.2f, %.2f, %.2f)",
-		velocityX, velocityY, velocityZ, newX, newY, newZ)
-
-	// Update physics state with new calculated position
+	// Update physics state with new calculated position and (possibly updated) yaw.
 	pe.physicsState.SetPosition(
 		models.V3{X: newX, Y: newY, Z: newZ},
 		yaw,
@@ -1440,11 +1474,15 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		onGround,
 	)
 
-	// STEP 3: Send position update AFTER input (so server validates with input state)
-	// Server will:
-	// 1. Know what input we sent (from step 1)
-	// 2. Calculate expected movement based on that input
-	// 3. Validate our position is within expected range
+	// Keep a.posX/Y/Z in sync so GetPositionSimple/GetPosition return the current
+	// vehicle position while mounted. The Minecraft server typically does NOT echo
+	// entity-position packets back to the rider for their own vehicle, making the
+	// entity tracker unreliable during riding.
+	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))
+
+	// STEP 3: Send VehicleMove with the calculated position and updated yaw.
+	// The updated yaw matters for horses: the server moves the horse in the
+	// direction indicated by the yaw, so changing yaw here steers the horse.
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
 		pe.movementPacketSender.client.Conn(),
 		newX, newY, newZ,
@@ -1493,9 +1531,12 @@ func (pe *PhysicsMovementExecutor) getBoatPhysicsValues(boatX, boatY, boatZ floa
 			return physics.BoatUnderFlowingWaterVelocityMultiplier, physics.BoatUnderFlowingWaterGravity
 		}
 
-		// Check if boat is fully submerged
-		// A boat is considered underwater if there's water above it
-		blockAbove := int(math.Floor(boatY + 0.5))
+		// Check if boat is fully submerged.
+		// Look at the block strictly above the boat's integer Y coordinate.
+		// Using floor(boatY + 0.5) was wrong: for a surface-floating boat at
+		// Y=-0.89, that gives floor(-0.39) = -1, which is the water surface
+		// block itself, falsely classifying the boat as submerged.
+		blockAbove := int(math.Floor(boatY)) + 1
 		blockX := int(math.Floor(boatX))
 		blockZ := int(math.Floor(boatZ))
 		blockAboveState, loaded := pe.world.GetBlockStatus(blockX, blockAbove, blockZ)

@@ -172,7 +172,7 @@ func TestInventoryClickIntegration(t *testing.T) {
 func waitForInventorySlot(scr screen.Manager, match func(index int, s screen.Slot) bool, timeout time.Duration) (int, screen.Slot, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		for idx, slot := range scr.Inventory().Slots {
+		for idx, slot := range scr.Inventory().GetSlots() {
 			if match(idx, slot) {
 				return idx, slot, true
 			}
@@ -185,8 +185,8 @@ func waitForInventorySlot(scr screen.Manager, match func(index int, s screen.Slo
 func waitForSlotState(scr screen.Manager, slotIndex int, match func(screen.Slot) bool, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if slotIndex >= 0 && slotIndex < len(scr.Inventory().Slots) {
-			if match(scr.Inventory().Slots[slotIndex]) {
+		if slotIndex >= 0 && slotIndex < len(scr.Inventory().GetSlots()) {
+			if match(scr.Inventory().GetSlots()[slotIndex]) {
 				return true
 			}
 		}
