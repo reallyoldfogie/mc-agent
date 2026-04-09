@@ -20,8 +20,8 @@ type PlanAgent interface {
 
 	DumpRegistry(reg string)
 
-	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
+	OpenContainerAt(ctx context.Context, x, y, z float64, face BlockFace, timeout time.Duration) (byte, error)
 
-	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error
+	UseItemOnBlock(ctx context.Context, x, y, z float64, face BlockFace, hand Hand) error
 	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
 }

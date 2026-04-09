@@ -3,7 +3,7 @@ package testing
 import (
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
+	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
@@ -15,7 +15,7 @@ func (s *ContainerTestSuite) TestCraftingTable() {
 	pos := s.teleportToContainer("crafting_table")
 
 	// Open crafting table
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("crafting table opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 12)
@@ -51,7 +51,7 @@ func (s *ContainerTestSuite) TestCrafter() {
 	pos := s.teleportToContainer("crafter")
 
 	// Open crafter
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("crafter opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 7)
@@ -81,7 +81,7 @@ func (s *ContainerTestSuite) TestBrewingStand() {
 	pos := s.teleportToContainer("brewing_stand")
 
 	// Open brewing stand
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("brewing stand opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 11)

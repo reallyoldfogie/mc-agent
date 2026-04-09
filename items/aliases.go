@@ -7,5 +7,5 @@ type (
 	InventoryProvider = models.InventoryProvider
 	EntityIDProvider  = models.EntityIDProvider
 	WorldAccess       = models.World
-	BlockFace         = models.BlockFace
+	// BlockFace         = models.BlockFace
 )

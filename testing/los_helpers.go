@@ -7,7 +7,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -41,7 +40,7 @@ func LOSCursorForBlock(ctx context.Context, ag models.Agent, pos models.V3) (flo
 }
 
 // OpenContainerWithLOS opens a container using an LOS-derived cursor point.
-func OpenContainerWithLOS(ctx context.Context, ag models.Agent, pos models.V3, face items.BlockFace, timeout time.Duration) (byte, error) {
+func OpenContainerWithLOS(ctx context.Context, ag models.Agent, pos models.V3, face models.BlockFace, timeout time.Duration) (byte, error) {
 	cursorX, cursorY, cursorZ, err := LOSCursorForBlock(ctx, ag, pos)
 	if err != nil {
 		return 0, err

@@ -144,7 +144,7 @@ func TestChestInteraction(t *testing.T) {
 
 			// Open the chest (player is west of chest, so click on the east face which faces the player)
 			t.Log("opening chest")
-			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, chestPos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, chestPos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open chest")
 			t.Logf("chest opened with window ID: %d", windowID)
 
@@ -314,7 +314,7 @@ func TestChestWithItems(t *testing.T) {
 
 			// Open the chest (player is west of chest, so click on the east face which faces the player)
 			t.Log("opening chest")
-			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, chestPos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, chestPos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open chest")
 			t.Logf("chest opened with window ID: %d", windowID)
 

@@ -17,7 +17,13 @@ import (
 // handleChatCommand parses and executes simple chat commands.
 // This initial set is minimal and safe; expand as more subsystems migrate.
 func (a *agent) handleChatCommand(cmd string) {
-	a.handleChatCommandWithContext(context.Background(), cmd)
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.handleChatCommandWithContext(ctx, cmd)
 }
 
 // handleChatCommandWithContext parses and executes simple chat commands with context support.
@@ -101,7 +107,13 @@ func (a *agent) cmdLineTo(xs, ys, zs string) {
 	dx, dy, dz := tx-x, ty-y, tz-z
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	_ = a.SendChat(fmt.Sprintf("Moving direct from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
-	if err := a.LineTo(context.Background(), tx, ty, tz, true); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.LineTo(ctx, tx, ty, tz, true); err != nil {
 		_ = a.SendChat("Movement failed: " + err.Error())
 	}
 }
@@ -124,7 +136,13 @@ func (a *agent) cmdMoveTo(xs, ys, zs string) {
 		_ = a.SendChat("Invalid Z coordinate")
 		return
 	}
-	if err := a.MoveTo(context.Background(), tx, ty, tz, true); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.MoveTo(ctx, tx, ty, tz, true); err != nil {
 		_ = a.SendChat(fmt.Sprintf("MoveTo - Pathfinding failed: %v", err))
 	}
 }
@@ -219,7 +237,13 @@ func (a *agent) cmdMoveForward(ds string) {
 		return
 	}
 	_ = a.SendChat(fmt.Sprintf("Moving forward %.2f blocks", dist))
-	if err := a.MoveForward(context.Background(), dist); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.MoveForward(ctx, dist); err != nil {
 		_ = a.SendChat("Movement failed: " + err.Error())
 		return
 	}
@@ -232,7 +256,13 @@ func (a *agent) cmdMoveUp(ds string) {
 		_ = a.SendChat("Invalid distance")
 		return
 	}
-	if err := a.MoveUp(context.Background(), dist); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.MoveUp(ctx, dist); err != nil {
 		_ = a.SendChat("Movement failed: " + err.Error())
 		return
 	}
@@ -251,7 +281,13 @@ func (a *agent) cmdTestPath() {
 	}
 	start := models.V3{X: x, Y: y, Z: z}
 	goal := models.V3{X: x, Y: y, Z: z + 5}
-	if _, err := a.pathfind.FindPath(context.Background(), start, goal, 200); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := a.pathfind.FindPath(ctx, start, goal, 200); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
 	}
@@ -274,7 +310,13 @@ func (a *agent) cmdFindPath(xs, ys, zs string) {
 		_ = a.SendChat("Invalid Z coordinate")
 		return
 	}
-	if err := a.FindPath(context.Background(), tx, ty, tz); err != nil {
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := a.FindPath(ctx, tx, ty, tz); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
 	}

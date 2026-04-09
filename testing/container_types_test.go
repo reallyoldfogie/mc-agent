@@ -122,7 +122,7 @@ func TestFurnaceInteraction(t *testing.T) {
 
 			// Open the furnace
 			t.Log("opening furnace")
-			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, furnacePos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, furnacePos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open furnace")
 			t.Logf("furnace opened with window ID: %d", windowID)
 
@@ -245,7 +245,7 @@ func TestHopperInteraction(t *testing.T) {
 
 			// Open the hopper
 			t.Log("opening hopper")
-			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, hopperPos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, hopperPos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open hopper")
 			t.Logf("hopper opened with window ID: %d", windowID)
 

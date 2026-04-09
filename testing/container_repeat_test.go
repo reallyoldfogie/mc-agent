@@ -148,7 +148,7 @@ func TestRepeatedContainerOpen(t *testing.T) {
 				t.Logf("Screens before open: %d %v", screensBefore, getScreenIDs(screenMgr.Screens()))
 
 				// Open chest
-				windowID, err := OpenContainerWithLOS(ctx, agent.Agent, chestPos, items.FaceEast, 5*time.Second)
+				windowID, err := OpenContainerWithLOS(ctx, agent.Agent, chestPos, models.FaceEast, 5*time.Second)
 				if err != nil {
 					t.Logf("❌ Attempt %d FAILED to open: %v", i, err)
 					t.Logf("   Server stopped responding after %d successful opens", successCount)

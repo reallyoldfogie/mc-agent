@@ -5,7 +5,6 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/versions/common"
@@ -16,15 +15,6 @@ import (
 const (
 	minHotbarSlot = int16(0)
 	maxHotbarSlot = int16(8)
-)
-
-const (
-	FaceDown  BlockFace = 0 // -Y
-	FaceUp    BlockFace = 1 // +Y
-	FaceNorth BlockFace = 2 // -Z
-	FaceSouth BlockFace = 3 // +Z
-	FaceWest  BlockFace = 4 // -X
-	FaceEast  BlockFace = 5 // +X
 )
 
 // InteractionType for entity interactions
@@ -76,7 +66,7 @@ func (iu *ItemUsage) SetEntityHandler(handler models.EntityHandler) {
 // PlaceBlock places a block or uses an item on a block at the specified position.
 // This sends a ServerboundUseItemOn packet.
 // cursorX, cursorY, cursorZ are the click position on the block face (0.0-1.0)
-func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
+func (iu *ItemUsage) PlaceBlock(pos models.V3, face models.BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
 	if iu.containerHandler == nil {
 		return common.ErrHandlerNotSet{HandlerName: "ContainerHandler"}
 	}
@@ -104,9 +94,6 @@ func (iu *ItemUsage) PlaceBlock(pos models.V3, face BlockFace, hand models.Hand,
 // Returns values in range [0.2, 0.9] to avoid perfectly centered clicks.
 // This helps evade anti-bot detection in Minecraft 1.21.5+.
 func GetRealisticCursorPosition() (x, y, z float32) {
-	// Use current time as seed for randomization
-	rand.Seed(time.Now().UnixNano())
-
 	// Generate values in range 0.2 to 0.9 (avoid edges and perfect center)
 	x = 0.2 + rand.Float32()*0.7 // Range: [0.2, 0.9]
 	y = 0.2 + rand.Float32()*0.7
@@ -116,7 +103,7 @@ func GetRealisticCursorPosition() (x, y, z float32) {
 }
 
 // UseItemOnBlockWithCursor uses the held item on a block with an explicit cursor position.
-func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
+func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face models.BlockFace, hand models.Hand, cursorX, cursorY, cursorZ float32) error {
 	fmt.Printf("[UseItemOnBlock] → Interacting with block at pos=(%v) face=%d hand=%d\n", pos, face, hand)
 	fmt.Printf("[UseItemOnBlock] → Using cursor position (%.3f, %.3f, %.3f)\n", cursorX, cursorY, cursorZ)
 
@@ -145,7 +132,7 @@ func (iu *ItemUsage) UseItemOnBlockWithCursor(pos models.V3, face BlockFace, han
 // UseItemOnBlock uses the held item on a block (e.g., empty bucket on water source).
 // Uses randomized cursor position to avoid anti-bot detection (Minecraft 1.21.5+).
 // Sends use_item_on packet followed by swing packet to match vanilla client behavior.
-func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face BlockFace, hand models.Hand) error {
+func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face models.BlockFace, hand models.Hand) error {
 	cursorX, cursorY, cursorZ := GetRealisticCursorPosition()
 	return iu.UseItemOnBlockWithCursor(pos, face, hand, cursorX, cursorY, cursorZ)
 }
@@ -218,12 +205,12 @@ func (iu *ItemUsage) GetSequence() int32 {
 // Helper functions for common use cases
 
 // PlaceWaterBucket places water at a position (clutch mechanic)
-func (iu *ItemUsage) PlaceWaterBucket(pos models.V3, face BlockFace) error {
+func (iu *ItemUsage) PlaceWaterBucket(pos models.V3, face models.BlockFace) error {
 	return iu.UseItemOnBlock(pos, face, models.MainHand)
 }
 
 // CollectPowderSnow collects powder snow with an empty bucket
-func (iu *ItemUsage) CollectPowderSnow(pos models.V3, face BlockFace) error {
+func (iu *ItemUsage) CollectPowderSnow(pos models.V3, face models.BlockFace) error {
 	return iu.UseItemOnBlock(pos, face, models.MainHand)
 }
 

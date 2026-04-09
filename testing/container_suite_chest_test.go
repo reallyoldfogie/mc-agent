@@ -3,7 +3,7 @@ package testing
 import (
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
+	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
@@ -15,7 +15,7 @@ func (s *ContainerTestSuite) TestChest() {
 	pos := s.teleportToContainer("chest")
 
 	// Open chest
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("chest opened with window ID: %d", windowID)
 
 	// Verify it's a chest
@@ -41,7 +41,7 @@ func (s *ContainerTestSuite) TestBarrel() {
 	pos := s.teleportToContainer("barrel")
 
 	// Open barrel
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("barrel opened with window ID: %d", windowID)
 
 	// Verify it's a chest-type container (barrels use same type as chests)
@@ -83,7 +83,7 @@ func (s *ContainerTestSuite) TestChestWithItems() {
 	s.teleportToContainer("chest")
 
 	// Open chest
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 
 	// Verify client can see the items
 	screen, ok := s.screenMgr.Screens()[int(windowID)]
@@ -117,7 +117,7 @@ func (s *ContainerTestSuite) TestShulkerBox() {
 	pos := s.teleportToContainer("shulker_box")
 
 	// Open shulker box
-	windowID := s.openContainer(pos, items.FaceUp)
+	windowID := s.openContainer(pos, models.FaceUp)
 	s.T().Logf("shulker box opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 20)

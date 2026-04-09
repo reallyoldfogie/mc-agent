@@ -758,6 +758,11 @@ func (a *agent) Init(ctx context.Context) error {
 			if out == "" {
 				out = "session.mcpr"
 			}
+
+			ensureDirectory(out)
+
+			log.Printf("[Agent %s] Initializing replay recorder (output: %s)", a.cfg.Name, out)
+
 			fileFormatVersion := 13
 			if a.cfg.ProtocolVersion >= 764 { // 1.20.2+ needs login+config phases in replay
 				fileFormatVersion = mcpr.CurrentFileFormatVersion
@@ -782,7 +787,7 @@ func (a *agent) Init(ctx context.Context) error {
 						SetPacketCallback(func(interface{}))
 					}
 					if setter, ok := a.moveExec.(packetCallbackSetter); ok {
-						setter.SetPacketCallback(func(pkt interface{}) {
+						setter.SetPacketCallback(func(pkt any) {
 							if pkPkt, okPkt := pkt.(pk.Packet); okPkt {
 								a.moveMirror.HandleServerbound(pkPkt)
 							}
@@ -807,11 +812,21 @@ func (a *agent) Init(ctx context.Context) error {
 				// a.client.Events().AddGeneric(bot.PacketHandler{Priority: 0, F: adapters.PacketFunc(rec, bundleDelimiterID)})
 			} else {
 				// If recorder setup fails, continue without recording
+				log.Printf("[Agent %s][WARN] Failed to initialize replay recorder: %v (replay recording disabled)", a.cfg.Name, err)
 			}
+		} else {
+			log.Printf("[Agent %s] Replay recording disabled", a.cfg.Name)
 		}
 	}
 
 	return nil
+}
+
+func ensureDirectory(path string) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Printf("[Agent] Warning: failed to create directory for path %s: %v", path, err)
+	}
 }
 
 func (a *agent) BlockShapeManager() models.BlockShapeManager {

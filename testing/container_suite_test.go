@@ -593,7 +593,7 @@ func (s *ContainerTestSuite) teleportToContainer(name string) models.V3 {
 }
 
 // Helper method to open a container with retry logic
-func (s *ContainerTestSuite) openContainer(pos models.V3, face items.BlockFace) byte {
+func (s *ContainerTestSuite) openContainer(pos models.V3, face models.BlockFace) byte {
 	windowID, err := OpenContainerWithLOS(s.ctx, s.agent.Agent, pos, face, 5*time.Second)
 	s.Require().NoError(err, "open container at (%.0f, %.0f, %.0f)", pos.X, pos.Y, pos.Z)
 	return windowID

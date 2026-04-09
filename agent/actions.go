@@ -581,7 +581,7 @@ func (a *agent) blockInteractionSetup(ctx context.Context, x, y, z float64) (hit
 }
 
 // OpenContainerAt opens a container at the specified position.
-func (a *agent) OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error) {
+func (a *agent) OpenContainerAt(ctx context.Context, x, y, z float64, face models.BlockFace, timeout time.Duration) (byte, error) {
 	_, _, _, _, _, _, cursorX, cursorY, cursorZ, err := a.blockInteractionSetup(ctx, x, y, z)
 	if err != nil {
 		return 0, err
@@ -590,7 +590,7 @@ func (a *agent) OpenContainerAt(ctx context.Context, x, y, z float64, face int, 
 }
 
 // UseItemOnBlock uses the held item on a block.
-func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error {
+func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face models.BlockFace, hand models.Hand) error {
 	_, _, _, _, _, _, cursorX, cursorY, cursorZ, err := a.blockInteractionSetup(ctx, x, y, z)
 	if err != nil {
 		return err
@@ -599,7 +599,7 @@ func (a *agent) UseItemOnBlock(ctx context.Context, x, y, z float64, face int, h
 	if err != nil {
 		return err
 	}
-	return usage.UseItemOnBlockWithCursor(models.V3{X: x, Y: y, Z: z}, items.BlockFace(face), models.Hand(hand), cursorX, cursorY, cursorZ)
+	return usage.UseItemOnBlockWithCursor(models.V3{X: x, Y: y, Z: z}, face, hand, cursorX, cursorY, cursorZ)
 }
 
 // UseItemOnEntity uses the held item on an entity.
@@ -800,6 +800,14 @@ func (a *agent) FindLineOfSightAccessPoint(ctx context.Context, x, y, z float64)
 		return 0, 0, 0, false, nil
 	}
 	return hitX, hitY, hitZ, true, nil
+}
+
+func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, face models.BlockFace) error {
+	usage, err := a.itemUsageOrCreate()
+	if err != nil {
+		return err
+	}
+	return usage.UseItemOnBlock(blockPos, face, models.MainHand)
 }
 
 func (a *agent) itemUsageOrCreate() (*items.ItemUsage, error) {

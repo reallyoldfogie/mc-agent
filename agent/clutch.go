@@ -37,7 +37,7 @@ func (a *agent) handleClutchPlan(usage *items.ItemUsage, plan physics.ClutchPlan
 
 	err := usage.UseItemOnBlock(
 		models.V3{X: plan.PlacePos.X, Y: plan.PlacePos.Y, Z: plan.PlacePos.Z},
-		items.FaceUp,
+		models.FaceUp,
 		models.MainHand,
 	)
 	if err != nil {

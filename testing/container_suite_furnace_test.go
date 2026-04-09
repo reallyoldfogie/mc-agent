@@ -3,7 +3,7 @@ package testing
 import (
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
+	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
@@ -15,7 +15,7 @@ func (s *ContainerTestSuite) TestFurnace() {
 	pos := s.teleportToContainer("furnace")
 
 	// Open furnace
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("furnace opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 14)
@@ -51,7 +51,7 @@ func (s *ContainerTestSuite) TestBlastFurnace() {
 	pos := s.teleportToContainer("blast_furnace")
 
 	// Open blast furnace
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("blast furnace opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 10)
@@ -81,7 +81,7 @@ func (s *ContainerTestSuite) TestSmoker() {
 	pos := s.teleportToContainer("smoker")
 
 	// Open smoker
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("smoker opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 22)
@@ -111,7 +111,7 @@ func (s *ContainerTestSuite) TestHopper() {
 	pos := s.teleportToContainer("hopper")
 
 	// Open hopper
-	windowID := s.openContainer(pos, items.FaceUp)
+	windowID := s.openContainer(pos, models.FaceUp)
 	s.T().Logf("hopper opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 16)
@@ -141,7 +141,7 @@ func (s *ContainerTestSuite) TestDispenser() {
 	pos := s.teleportToContainer("dispenser")
 
 	// Open dispenser
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("dispenser opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 6)
@@ -171,7 +171,7 @@ func (s *ContainerTestSuite) TestDropper() {
 	pos := s.teleportToContainer("dropper")
 
 	// Open dropper
-	windowID := s.openContainer(pos, items.FaceEast)
+	windowID := s.openContainer(pos, models.FaceEast)
 	s.T().Logf("dropper opened with window ID: %d", windowID)
 
 	// Verify it's a GenericContainer (type 6) - same as dispenser

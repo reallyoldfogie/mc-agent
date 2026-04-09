@@ -80,7 +80,7 @@ func (MoveTo) Execute(ctx context.Context, agent CommandAgent, args []string) er
 		return nil
 	}
 	go func() {
-		if err := agent.MoveToWithChat(context.Background(), tx, ty, tz); err != nil {
+		if err := agent.MoveToWithChat(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat(fmt.Sprintf("MoveToWithChat - Pathfinding failed: %v", err))
 		}
 	}()
@@ -120,7 +120,7 @@ func (LineTo) Execute(ctx context.Context, agent CommandAgent, args []string) er
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	_ = agent.SendChat(fmt.Sprintf("Moving direct from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
 	go func() {
-		if err := agent.LineTo(context.Background(), tx, ty, tz, true); err != nil {
+		if err := agent.LineTo(ctx, tx, ty, tz, true); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 		}
 	}()
@@ -143,7 +143,7 @@ func (MoveForward) Execute(ctx context.Context, agent CommandAgent, args []strin
 	}
 	go func() {
 		_ = agent.SendChat(fmt.Sprintf("Moving forward %.2f blocks", dist))
-		if err := agent.MoveForward(context.Background(), dist); err != nil {
+		if err := agent.MoveForward(ctx, dist); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 			return
 		}
@@ -167,7 +167,7 @@ func (MoveUp) Execute(ctx context.Context, agent CommandAgent, args []string) er
 		return nil
 	}
 	go func() {
-		if err := agent.MoveUp(context.Background(), dist); err != nil {
+		if err := agent.MoveUp(ctx, dist); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 			return
 		}
@@ -191,7 +191,7 @@ func (MoveUpAndSneak) Execute(ctx context.Context, agent CommandAgent, args []st
 		return nil
 	}
 	go func() {
-		if err := agent.MoveUpAndSneak(context.Background(), dist); err != nil {
+		if err := agent.MoveUpAndSneak(ctx, dist); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 			return
 		}
@@ -225,7 +225,7 @@ func (MoveToAndSneak) Execute(ctx context.Context, agent CommandAgent, args []st
 		return nil
 	}
 	go func() {
-		if err := agent.MoveToAndSneak(context.Background(), tx, ty, tz); err != nil {
+		if err := agent.MoveToAndSneak(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 			return
 		}
@@ -259,7 +259,7 @@ func (LineToAndSneak) Execute(ctx context.Context, agent CommandAgent, args []st
 		return nil
 	}
 	go func() {
-		if err := agent.LineToAndSneak(context.Background(), tx, ty, tz); err != nil {
+		if err := agent.LineToAndSneak(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat("Movement failed: " + err.Error())
 			return
 		}
@@ -306,7 +306,7 @@ func (FindPath) Execute(ctx context.Context, agent CommandAgent, args []string) 
 		return nil
 	}
 	go func() {
-		if err := agent.FindPath(context.Background(), tx, ty, tz); err != nil {
+		if err := agent.FindPath(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat("Path find failed: " + err.Error())
 			return
 		}
@@ -343,7 +343,7 @@ func (Follow) Execute(ctx context.Context, agent CommandAgent, args []string) er
 		_ = agent.SendChat("Follow system not available")
 		return nil
 	}
-	if err := agent.Follow(context.Background(), args[0]); err != nil {
+	if err := agent.Follow(ctx, args[0]); err != nil {
 		_ = agent.SendChat("Follow error: " + err.Error())
 		return nil
 	}
@@ -364,7 +364,7 @@ func (StopFollow) Execute(ctx context.Context, agent CommandAgent, _ []string) e
 		_ = agent.SendChat("Not currently following anyone")
 		return nil
 	}
-	if err := agent.StopFollow(context.Background()); err != nil {
+	if err := agent.StopFollow(ctx); err != nil {
 		_ = agent.SendChat("Stop error: " + err.Error())
 		return nil
 	}

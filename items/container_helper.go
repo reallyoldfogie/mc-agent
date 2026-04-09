@@ -61,7 +61,7 @@ func (ch *ContainerHelper) SetEntityIDProvider(provider EntityIDProvider) {
 // OpenContainer opens a container at the specified position and waits for the server to respond.
 // Returns the window ID assigned by the server, or error if timeout/failure.
 // cursorX, cursorY, cursorZ are the click position on the block face (0.0-1.0).
-func (ch *ContainerHelper) OpenContainer(pos models.V3, face BlockFace, timeout time.Duration, cursorX, cursorY, cursorZ float32) (byte, error) {
+func (ch *ContainerHelper) OpenContainer(pos models.V3, face models.BlockFace, timeout time.Duration, cursorX, cursorY, cursorZ float32) (byte, error) {
 	screensBefore := len(ch.screenMgr.Screens())
 	screenIDsBefore := copyScreenIDs(ch.screenMgr.Screens())
 	faces := buildFaceFallbacks(face)
@@ -136,10 +136,10 @@ func findNewScreenID(screens map[int]mcscreen.Container, before map[int]struct{}
 	return 0, false
 }
 
-func buildFaceFallbacks(primary BlockFace) []BlockFace {
-	faces := []BlockFace{primary, FaceUp, FaceDown, FaceNorth, FaceSouth, FaceEast, FaceWest}
-	seen := make(map[BlockFace]struct{}, len(faces))
-	unique := make([]BlockFace, 0, len(faces))
+func buildFaceFallbacks(primary models.BlockFace) []models.BlockFace {
+	faces := []models.BlockFace{primary, models.FaceUp, models.FaceDown, models.FaceNorth, models.FaceSouth, models.FaceEast, models.FaceWest}
+	seen := make(map[models.BlockFace]struct{}, len(faces))
+	unique := make([]models.BlockFace, 0, len(faces))
 	for _, face := range faces {
 		if _, ok := seen[face]; ok {
 			continue

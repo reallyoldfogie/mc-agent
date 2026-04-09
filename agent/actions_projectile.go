@@ -227,7 +227,13 @@ func (a *agent) FireBow(ctx context.Context) error {
 
 // cmdFireBow via UseItem + PlayerAction (legacy chat command)
 func (a *agent) cmdFireBow() {
-	_ = a.FireBow(context.Background()) // Delegate to the main implementation
+	a.lifecycleMu.RLock()
+	ctx := a.ctx
+	a.lifecycleMu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_ = a.FireBow(ctx) // Delegate to the main implementation
 }
 
 // FireBowAt fires a bow at a specific target position using version-specific handlers

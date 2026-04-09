@@ -20,12 +20,17 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	HasLineOfSight(ctx context.Context, x, y, z float64) (bool, error)
 	FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
-	OpenContainerAt(ctx context.Context, x, y, z float64, face int, timeout time.Duration) (byte, error)
-	UseItemOnBlock(ctx context.Context, x, y, z float64, face int, hand int) error
+	OpenContainerAt(ctx context.Context, x, y, z float64, face BlockFace, timeout time.Duration) (byte, error)
+	UseItemOnBlock(ctx context.Context, x, y, z float64, face BlockFace, hand Hand) error
 	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
 	SelectHotbarSlot(ctx context.Context, slot int16) error
 	FindSlotWith(ctx context.Context, itemName string, windowID int) (slot int, found bool, err error)
 	WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (slot int16, err error)
+
+	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
+	// PlaceBlockAt(ctx context.Context, pos V3, blockName string) error
+	// AttackEntity(ctx context.Context, entityID int32) error
+	// InteractWithEntity(ctx context.Context, entityID int32) error
 
 	// Bow firing actions
 	//Deprecated: Use FireBowAt for targeted firing

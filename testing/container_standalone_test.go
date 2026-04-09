@@ -352,7 +352,7 @@ func TestChest_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Open chest using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open chest")
 			t.Logf("chest opened with window ID: %d", windowID)
 
@@ -387,7 +387,7 @@ func TestBarrel_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Open barrel using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceEast, 5*time.Second)
 			require.NoError(t, err, "open barrel")
 			t.Logf("barrel opened with window ID: %d", windowID)
 
@@ -422,7 +422,7 @@ func TestFurnace_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Open furnace using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 5*time.Second)
 			require.NoError(t, err, "open furnace")
 			t.Logf("furnace opened with window ID: %d", windowID)
 
@@ -463,7 +463,7 @@ func TestShulkerBox_Standalone(t *testing.T) {
 			t.Logf("shulker box block data: %s", resp)
 
 			// Open shulker box using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceUp, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceUp, 5*time.Second)
 			require.NoError(t, err, "open shulker box")
 			t.Logf("shulker box opened with window ID: %d", windowID)
 

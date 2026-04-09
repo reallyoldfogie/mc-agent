@@ -200,7 +200,7 @@ func (s LookAt) Run(ctx context.Context, agent models.Agent) (StepResult, error)
 type OpenContainer struct {
 	IDValue string
 	X, Y, Z float64
-	Face    int
+	Face    models.BlockFace
 	Timeout time.Duration
 }
 
@@ -331,8 +331,8 @@ func (s PutItemInChest) Run(ctx context.Context, agent models.Agent) (StepResult
 type UseItemOnBlock struct {
 	IDValue string
 	X, Y, Z float64
-	Face    int
-	Hand    int
+	Face    models.BlockFace
+	Hand    models.Hand
 	Timeout time.Duration
 }
 

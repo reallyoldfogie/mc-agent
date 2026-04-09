@@ -253,7 +253,7 @@ func TestFindAndOpenContainer(t *testing.T) {
 			managedAgent.Agent.SetContainerHelper(containerHelper)
 
 			t.Log("opening found chest")
-			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, nearest.Position, items.FaceNorth, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, nearest.Position, models.FaceNorth, 5*time.Second)
 			require.NoError(t, err)
 			t.Logf("chest opened with window ID: %d", windowID)
 

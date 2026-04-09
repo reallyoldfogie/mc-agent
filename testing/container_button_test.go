@@ -48,7 +48,7 @@ func TestStonecutter_Standalone(t *testing.T) {
 			t.Logf("Attempting to open stonecutter at exact pos: %+v", env.ContainerPos)
 
 			// Open stonecutter using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 5*time.Second)
 			require.NoError(t, err, "open stonecutter")
 			t.Logf("stonecutter opened with window ID: %d", windowID)
 
@@ -114,7 +114,7 @@ func TestLoom_Survival(t *testing.T) {
 	t.Logf("Attempting to open loom in SURVIVAL mode at pos: %+v ", env.ContainerPos)
 
 	// Open loom using agent (handles rotation and continuous position packets automatically)
-	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+	windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 5*time.Second)
 	require.NoError(t, err, "open loom")
 	t.Logf("loom opened with window ID: %d", windowID)
 
@@ -179,19 +179,19 @@ func TestLoom_Standalone(t *testing.T) {
 
 			// Try FaceUp (top of block) - agent handles rotation and continuous position packets
 			t.Log("Trying FaceUp...")
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceUp, 2*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceUp, 2*time.Second)
 			if err != nil {
 				t.Logf("FaceUp failed: %v", err)
 
 				// Try FaceEast
 				t.Log("Trying FaceEast...")
-				windowID, err = OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceEast, 2*time.Second)
+				windowID, err = OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceEast, 2*time.Second)
 				if err != nil {
 					t.Logf("FaceEast failed: %v", err)
 
 					// Try FaceNorth
 					t.Log("Trying FaceNorth...")
-					windowID, err = OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 2*time.Second)
+					windowID, err = OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 2*time.Second)
 					require.NoError(t, err, "open loom - all faces failed")
 				}
 			}
@@ -261,7 +261,7 @@ func TestEnchantingTable_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Open enchanting table using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 5*time.Second)
 			require.NoError(t, err, "open enchanting table")
 			t.Logf("enchanting table opened with window ID: %d", windowID)
 
@@ -349,7 +349,7 @@ func TestBeacon_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Open beacon using agent (handles rotation and continuous position packets automatically)
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, items.FaceNorth, 5*time.Second)
+			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceNorth, 5*time.Second)
 			require.NoError(t, err, "open beacon")
 			t.Logf("beacon opened with window ID: %d", windowID)
 
