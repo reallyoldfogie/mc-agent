@@ -9,10 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/agent/mining"
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/utils"
+	"github.com/reallyoldfogie/mc-agent/versions/common"
+
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 // MoveForward moves the bot forward based on current yaw using manual input control.
@@ -316,31 +320,39 @@ func (a *agent) StartSneaking() error {
 }
 
 // FindPath computes a path without moving.
-func (a *agent) FindPath(ctx context.Context, tx, ty, tz float64) error {
+func (a *agent) FindPath(ctx context.Context, tx, ty, tz float64) (*models.Path, error) {
 	if a.pathfind == nil {
-		return errors.New("pathfinding not available")
+		return nil, errors.New("pathfinding not available")
 	}
 	x, y, z, _, _, ok := a.GetPosition()
 	if !ok {
-		return errors.New("position not initialized")
+		return nil, errors.New("position not initialized")
 	}
 	start := models.V3{X: x, Y: y, Z: z}
 	goal := models.V3{X: tx, Y: ty, Z: tz}
-	maxSteps := int(start.DistanceTo(goal) * 150)
-	if maxSteps < 10000 {
-		maxSteps = 10000
-	}
+	maxSteps := max(int(start.DistanceTo(goal)*150), 10000)
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 	path, err := a.pathfind.FindPath(ctx, start, goal, maxSteps)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !path.Found {
-		return errors.New("no path found")
+		return nil, errors.New("no path found")
 	}
-	return nil
+	return path, nil
+}
+
+// ExecutePath executes a precomputed path.
+func (a *agent) ExecutePath(ctx context.Context, path *models.Path) error {
+	if a.moveExec == nil {
+		return errors.New("movement executor not available")
+	}
+	if path == nil || !path.Found {
+		return errors.New("no valid path to execute")
+	}
+	return a.followPath(ctx, path)
 }
 
 // LookAt rotates the bot's head to face a target position (head only, body stays in place).
@@ -787,6 +799,28 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 	return bestX, bestY, bestZ, true, nil
 }
 
+// FindAllVisibleBlocksInSphere returns all non-air blocks within the given radius that have line of sight.
+// Uses efficient surface-based raycasting: only ~6000 rays for radius=32 instead of 137K block checks.
+// Blocks are returned sorted by distance from the agent's eye position.
+func (a *agent) FindAllVisibleBlocksInSphere(ctx context.Context, radius int) ([]models.VisibleBlockInfo, error) {
+	x, y, z, _, _, ok := a.GetPosition()
+	if !ok {
+		return nil, errors.New("position not initialized")
+	}
+	if radius <= 0 {
+		return []models.VisibleBlockInfo{}, nil
+	}
+
+	// Convert agent position to block coordinates
+	blockPos := models.V3{
+		X: x,
+		Y: y,
+		Z: z,
+	}
+
+	return a.findAllVisibleSurfaceBlocks(ctx, blockPos, radius)
+}
+
 // FindLineOfSightAccessPoint returns a visible point on the target block for access interactions.
 func (a *agent) FindLineOfSightAccessPoint(ctx context.Context, x, y, z float64) (float64, float64, float64, bool, error) {
 	blockX := math.Floor(x)
@@ -802,12 +836,255 @@ func (a *agent) FindLineOfSightAccessPoint(ctx context.Context, x, y, z float64)
 	return hitX, hitY, hitZ, true, nil
 }
 
-func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, face models.BlockFace) error {
-	usage, err := a.itemUsageOrCreate()
-	if err != nil {
+// MineBlockAt mines (breaks) the block at the given position.
+// The agent looks at the block, sends a start-digging packet on the best face,
+// waits for the calculated break time based on block hardness and held tool,
+// then sends a finish-digging packet.
+func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.BlockFace) error {
+	if a.versionHandler == nil {
+		return errors.New("version handler not available")
+	}
+	actions := a.versionHandler.Play().Actions()
+	if actions == nil {
+		return errors.New("action handler not available")
+	}
+
+	// Get agent eye position
+	botX, botY, botZ, _, _, ok := a.GetPosition()
+	if !ok {
+		return errors.New("position not initialized")
+	}
+	eyeY := botY + a.getEyeHeight()
+
+	// Block integer coordinates
+	blockX := int(math.Floor(blockPos.X))
+	blockY := int(math.Floor(blockPos.Y))
+	blockZ := int(math.Floor(blockPos.Z))
+
+	log.Printf("[MineBlockAt] At (%.2f,%.2f,%.2f), attempting to mine block at (%d,%d,%d)", botX, botY, botZ, blockX, blockY, blockZ)
+
+	// Look at the block center
+	blockCenterX := float64(blockX) + 0.5
+	blockCenterY := float64(blockY) + 0.5
+	blockCenterZ := float64(blockZ) + 0.5
+	if err := a.LookAt(ctx, blockCenterX, blockCenterY, blockCenterZ); err != nil {
+		return fmt.Errorf("look at block: %w", err)
+	}
+	// Small delay so the server processes the rotation
+	if err := sleepWithContext(ctx, 100*time.Millisecond); err != nil {
 		return err
 	}
-	return usage.UseItemOnBlock(blockPos, face, models.MainHand)
+
+	// Determine the best face based on eye position relative to block
+	face := bestBlockFace(botX, eyeY, botZ, blockX, blockY, blockZ)
+
+	// Get block state to compute break time
+	world := a.GetWorld()
+	if world == nil {
+		return errors.New("world not available")
+	}
+	stateID, loaded := world.GetBlockAt(blockCenterX, blockCenterY, blockCenterZ)
+	if !loaded {
+		return errors.New("chunk not loaded at target block")
+	}
+	if stateID == 0 {
+		return nil // already air
+	}
+
+	// Get mining info from shape manager
+	var blockInfo mining.BlockMiningInfo
+	if a.shapeMgr != nil {
+		hardness, material, diggable := a.shapeMgr.GetMiningInfo(stateID)
+		blockInfo = mining.NewBlockMiningInfo(hardness, material, diggable)
+	} else {
+		// Fallback: assume generic breakable block
+		blockInfo = mining.NewBlockMiningInfo(1.0, nil, true)
+	}
+
+	// Select the best tool from inventory for this block's material.
+	// Falls back to bare hand if no matching tool is available.
+	toolInfo := a.selectBestToolForBlock(ctx, blockInfo.Material)
+
+	// Calculate break time (on ground, not underwater, no effects for now)
+	// TODO: factor in underwater, on ground, potion effects, beacon effects, enchantments, etc.
+	breakTime := mining.CalcBreakTime(blockInfo, toolInfo, 0, 0, false, true)
+
+	conn, err := a.getPacketWriter()
+	if err != nil {
+		return fmt.Errorf("get packet writer: %w", err)
+	}
+
+	blockName := "unknown"
+	if a.shapeMgr != nil {
+		blockName = a.shapeMgr.BlockName(stateID)
+	}
+	log.Printf("[MineBlockAt] Mining %s at (%d,%d,%d) face=%d breakTime=%.2fs",
+		blockName, blockX, blockY, blockZ, face, breakTime)
+
+	// Send start digging
+	sequence := a.getNextSequence()
+	if err := actions.SendPlayerAction(conn, int32(common.PlayerActionStartDigging), blockX, blockY, blockZ, int32(face), sequence); err != nil {
+		return fmt.Errorf("send start digging: %w", err)
+	}
+
+	// Swing arm for visual feedback
+	_ = actions.SendSwing(conn, models.MainHand)
+
+	// Instant break: hardness 0 or break time <= 1 tick
+	if breakTime <= 0.05 {
+		log.Printf("[MineBlockAt] Instant break for %s", blockName)
+		return nil
+	}
+
+	// Wait for the block to break, sending arm swings periodically
+	breakDuration := time.Duration(float64(time.Second) * breakTime)
+	swingInterval := 250 * time.Millisecond
+	elapsed := time.Duration(0)
+	for elapsed < breakDuration {
+		sleepTime := swingInterval
+		if elapsed+sleepTime > breakDuration {
+			sleepTime = breakDuration - elapsed
+		}
+		if err := sleepWithContext(ctx, sleepTime); err != nil {
+			// Cancelled — abort digging
+			_ = actions.SendPlayerAction(conn, int32(common.PlayerActionAbortDigging), blockX, blockY, blockZ, int32(face), a.getNextSequence())
+			return err
+		}
+		elapsed += sleepTime
+		_ = actions.SendSwing(conn, models.MainHand)
+	}
+
+	// Send finish digging
+	sequence = a.getNextSequence()
+	if err := actions.SendPlayerAction(conn, int32(common.PlayerActionFinishDigging), blockX, blockY, blockZ, int32(face), sequence); err != nil {
+		return fmt.Errorf("send finish digging: %w", err)
+	}
+
+	log.Printf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
+	return nil
+}
+
+// bestBlockFace determines which face of a block the agent is looking at,
+// based on the agent's eye position relative to the block center.
+func bestBlockFace(eyeX, eyeY, eyeZ float64, blockX, blockY, blockZ int) models.BlockFace {
+	centerX := float64(blockX) + 0.5
+	centerY := float64(blockY) + 0.5
+	centerZ := float64(blockZ) + 0.5
+
+	dx := eyeX - centerX
+	dy := eyeY - centerY
+	dz := eyeZ - centerZ
+
+	absX := math.Abs(dx)
+	absY := math.Abs(dy)
+	absZ := math.Abs(dz)
+
+	if absX >= absY && absX >= absZ {
+		if dx > 0 {
+			return models.FaceEast
+		}
+		return models.FaceWest
+	}
+	if absY >= absX && absY >= absZ {
+		if dy > 0 {
+			return models.FaceUp
+		}
+		return models.FaceDown
+	}
+	if dz > 0 {
+		return models.FaceSouth
+	}
+	return models.FaceNorth
+}
+
+// selectBestToolForBlock searches the agent's inventory for the best tool
+// matching the block's material tags, equips it, and returns its ToolInfo.
+// Searches hotbar first, then main inventory (swapping to hotbar if needed).
+// Returns HandTool() if no matching tool is found or inventory is unavailable.
+func (a *agent) selectBestToolForBlock(ctx context.Context, material []string) mining.ToolInfo {
+	if len(material) == 0 {
+		return mining.HandTool()
+	}
+
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		return mining.HandTool()
+	}
+
+	inventory := a.GetInventory()
+	if inventory == nil {
+		return mining.HandTool()
+	}
+
+	// Track the best matching tool found across all slots.
+	bestTool := mining.HandTool()
+	bestSpeed := 0.0
+	bestSlotIndex := int16(-1) // inventory-window slot index (36-44 for hotbar, 9-35 for main)
+	inHotbar := false          // whether bestSlotIndex is in the hotbar range
+
+	allSlots := inventory.GetSlots()
+
+	// Scan all inventory slots (hotbar 36-44 and main 9-35) for matching tools.
+	for idx, slot := range allSlots {
+		if slot.Count <= 0 {
+			continue
+		}
+		itemName := itemMgr.GetItemNameByID(int32(slot.ID))
+		if itemName == "" {
+			continue
+		}
+
+		toolCandidate := mining.NewToolInfoFromItemName(itemName)
+		if toolCandidate.Category == mining.ToolCategoryHand {
+			continue
+		}
+		if !mining.MatchesMaterial(toolCandidate, material) {
+			continue
+		}
+
+		speed := mining.ToolSpeed(toolCandidate.Tier)
+		if speed > bestSpeed {
+			bestTool = toolCandidate
+			bestSpeed = speed
+			bestSlotIndex = int16(idx)
+			inHotbar = idx >= int(mcscreen.HotbarSlotStart) && idx < int(mcscreen.HotbarSlotEnd)
+		}
+	}
+
+	if bestSlotIndex < 0 {
+		return mining.HandTool()
+	}
+
+	// Determine hotbar slot to select.
+	var hotbarSlot int16
+	if inHotbar {
+		hotbarSlot = bestSlotIndex - mcscreen.HotbarSlotStart
+	} else {
+		// Tool is in main inventory — swap it into a hotbar slot.
+		// Use the currently held slot to avoid disrupting other hotbar items.
+		a.heldSlotMu.RLock()
+		hotbarSlot = a.heldSlot
+		a.heldSlotMu.RUnlock()
+		if hotbarSlot < minHotbarSlot || hotbarSlot > maxHotbarSlot {
+			hotbarSlot = 0
+		}
+
+		log.Printf("[MineBlockAt] Swapping inventory slot %d to hotbar slot %d", bestSlotIndex, hotbarSlot)
+		if err := a.SwapInventoryWithHotbar(ctx, int(bestSlotIndex), int(hotbarSlot)); err != nil {
+			log.Printf("[MineBlockAt] Failed to swap tool to hotbar: %v", err)
+			return mining.HandTool()
+		}
+	}
+
+	// Select the hotbar slot.
+	log.Printf("[MineBlockAt] Selecting hotbar slot %d (tool=%s tier=%s speed=%.1f)",
+		hotbarSlot, bestTool.Category, bestTool.Tier, bestSpeed)
+	if err := a.SelectHotbarSlot(ctx, hotbarSlot); err != nil {
+		log.Printf("[MineBlockAt] Failed to select hotbar slot: %v", err)
+		return mining.HandTool()
+	}
+
+	return bestTool
 }
 
 func (a *agent) itemUsageOrCreate() (*items.ItemUsage, error) {

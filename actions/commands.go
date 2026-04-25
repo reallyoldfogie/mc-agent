@@ -306,7 +306,7 @@ func (FindPath) Execute(ctx context.Context, agent CommandAgent, args []string) 
 		return nil
 	}
 	go func() {
-		if err := agent.FindPath(ctx, tx, ty, tz); err != nil {
+		if _, err := agent.FindPath(ctx, tx, ty, tz); err != nil {
 			_ = agent.SendChat("Path find failed: " + err.Error())
 			return
 		}

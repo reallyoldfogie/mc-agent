@@ -1,0 +1,348 @@
+{
+  "interface": "AgentActions",
+  "tools": [
+    {
+      "name": "ChatEvents",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context"
+      },
+      "returns": {
+        "": "\u003c-chan string"
+      }
+    },
+    {
+      "name": "ExecutePath",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "path": "*models.Path"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FindAllVisibleBlocksInSphere",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "radius": "int"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FindPath",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FindSlotWith",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "itemName": "string",
+        "windowID": "int"
+      },
+      "returns": {
+        "err": "error",
+        "found": "bool",
+        "slot": "int"
+      }
+    },
+    {
+      "name": "FindVisibleBlock",
+      "description": "",
+      "parameters": {
+        "blockName": "string",
+        "ctx": "context.Context",
+        "maxDistance": "int"
+      },
+      "returns": {
+        "err": "error",
+        "found": "bool",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      }
+    },
+    {
+      "name": "FindVisibleEntity",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "entityTypeID": "int32",
+        "maxDistance": "float64"
+      },
+      "returns": {
+        "entityID": "int32",
+        "err": "error",
+        "found": "bool",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      }
+    },
+    {
+      "name": "FireBow",
+      "description": "Bow firing actions\nDeprecated: Use FireBowAt for targeted firing\n",
+      "parameters": {
+        "ctx": "context.Context"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FireBowAt",
+      "description": "",
+      "parameters": {
+        "callbacks": "[]models.ProjectileHitCallback",
+        "ctx": "context.Context",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FireBowWithPitch",
+      "description": "",
+      "parameters": {
+        "callbacks": "[]models.ProjectileHitCallback",
+        "ctx": "context.Context",
+        "pitch": "float64",
+        "yaw": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "Follow",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "target": "string"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "FollowStatus",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context"
+      },
+      "returns": {
+        "": "string"
+      }
+    },
+    {
+      "name": "HasLineOfSight",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "LineTo",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "notifyChat": "bool",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "LookAt",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "MineBlockAt",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "face": "models.BlockFace",
+        "pos": "models.V3"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "MoveForward",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "distance": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "MoveTo",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "notifyChat": "bool",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "MoveUp",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "distance": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "OpenContainerAt",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "face": "models.BlockFace",
+        "timeout": "time.Duration",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "SelectHotbarSlot",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "slot": "int16"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "StopFollow",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "ThrowProjectileAt",
+      "description": "Projectile actions\nprojectileType: models.ProjectileType value\n",
+      "parameters": {
+        "callbacks": "[]models.ProjectileHitCallback",
+        "ctx": "context.Context",
+        "projectileType": "models.ProjectileType",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "TurnTowards",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "UseItemOnBlock",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "face": "models.BlockFace",
+        "hand": "models.Hand",
+        "x": "float64",
+        "y": "float64",
+        "z": "float64"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "UseItemOnEntity",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "entityID": "int32",
+        "hand": "models.Hand",
+        "sneaking": "bool"
+      },
+      "returns": {
+        "": "error"
+      }
+    },
+    {
+      "name": "WaitForHotbarItem",
+      "description": "",
+      "parameters": {
+        "ctx": "context.Context",
+        "itemName": "string",
+        "maxWaitMS": "int"
+      },
+      "returns": {
+        "err": "error",
+        "slot": "int16"
+      }
+    }
+  ]
+}

@@ -48,8 +48,9 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int16) error {
 	if err != nil {
 		return fmt.Errorf("create held item slot packet: %w", err)
 	}
+	slotId := pk.Short(slot)
 	pkt.SetFields(map[string]pk.FieldEncoder{
-		"SlotId": pk.Short(slot),
+		"SlotId": &slotId,
 	})
 	if err := a.client.Conn().WritePacket(pkt.Marshal()); err != nil {
 		return fmt.Errorf("send held item slot packet: %w", err)
@@ -180,8 +181,10 @@ func (a *agent) logPlayerInventory(context string) {
 }
 
 func (a *agent) getSlotInfoDeps() (models.SlotResolver, models.ItemManager) {
-	a.inventoryMu.RLock()
-	defer a.inventoryMu.RUnlock()
+	a.slotsMu.RLock()
+	defer a.slotsMu.RUnlock()
+	a.itemMgrMu.RLock()
+	defer a.itemMgrMu.RUnlock()
 	return a.slots, a.itemMgr
 }
 

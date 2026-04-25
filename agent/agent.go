@@ -130,8 +130,10 @@ type agent struct {
 	followingMu sync.RWMutex
 	// movement subsystem: moveExec, pathfind, shapeMgr
 	movementMu sync.RWMutex
-	// inventory subsystem: itemMgr, slots
-	inventoryMu sync.RWMutex
+	// slots subsystem: slots
+	slotsMu sync.RWMutex
+	// itemMgr
+	itemMgrMu sync.RWMutex
 	// container subsystem: containerHelper, screenMgr, worldMgr
 	containerSubsystemMu sync.RWMutex
 
@@ -251,6 +253,10 @@ type agent struct {
 	// entity metadata handling
 	entityRegistry  *models.EntityRegistry
 	metadataHandler models.MetadataHandler
+
+	// critical error handling
+	criticalErrorMu sync.Mutex
+	criticalError   error
 }
 
 // New constructs an agent with the provided configuration.
@@ -271,7 +277,7 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 	}
 
 	// Ensure RegistriesPath is set and data is available
-	// If not set, defaults to ~/.cache/mc-agent/registries/{version}/
+	// If not set, defaults to ~/.agent/cache/mc-agent/registries/{version}/
 	// Downloads and generates registries.json if needed (thread-safe)
 	if cfg.RegistriesPath == "" {
 		resolvedPath, err := agentutils.EnsureRegistriesPath("", cfg.Version)
@@ -312,6 +318,11 @@ func (a *agent) Init(ctx context.Context) error {
 	}
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.lifecycleMu.Unlock()
+
+	// Setup agent logging (redirects log package to file + stdout)
+	if err := setupAgentLogging(); err != nil {
+		return fmt.Errorf("setup agent logging: %w", err)
+	}
 
 	// Resolve version and protocol (auto-detect from server if not specified)
 	_, err := a.resolveVersionAndManagers()
@@ -484,12 +495,23 @@ func (a *agent) Init(ctx context.Context) error {
 		a.slots = newScreenManagerSlotResolver(a)
 		log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.cfg.Name)
 
+		// Initialize item manager with a registry-backed default so item name
+		// lookups work out-of-the-box. Callers that need custom behavior can
+		// override this by injecting their own ItemManager via SetItemManager
+		// after Init.
+		a.itemMgrMu.Lock()
+		if a.itemMgr == nil {
+			a.itemMgr = registryItemManager{registryGetter: a.GetRegistry}
+			log.Printf("[Agent %s] Item manager initialized from registries", a.cfg.Name)
+		}
+		a.itemMgrMu.Unlock()
+
 		a.initHeldSlotTracking()
 		a.initClientInformationHandler(customSettings)
 
 		var shapeMgr models.BlockShapeManager
 		var stateProps *pathfinding.StatePropertyLoader
-		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, filepath.Join("data", "mc-data-gen-cache"), "")
+		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, filepath.Join(".agent", "cache", "mc-data-gen"), "")
 		if err == nil {
 			log.Printf("[Agent %s] Resolved data path: %s", a.cfg.Name, dataBasePath)
 			// Verify path exists and has version directory
@@ -1043,7 +1065,7 @@ func (a *agent) hasLoadedGround(x, y, z float64) bool {
 }
 
 func (a *agent) downloadJarsAndGenerateReports() error {
-	cacheDir := filepath.Join(".", "data", "download-cache")
+	cacheDir := filepath.Join(".", ".agent", "cache", "downloads")
 	versionCacheDir := filepath.Join(cacheDir, a.cfg.Version)
 	expectedReportsDir := filepath.Join(versionCacheDir, "data_generator")
 
@@ -1073,6 +1095,29 @@ func (a *agent) downloadJarsAndGenerateReports() error {
 	return nil
 }
 
+// SetCriticalError sets a critical error and cancels the agent's context.
+// Only the first error is retained; subsequent calls are ignored.
+func (a *agent) SetCriticalError(err error) {
+	a.criticalErrorMu.Lock()
+	defer a.criticalErrorMu.Unlock()
+	if a.criticalError == nil && err != nil {
+		a.criticalError = err
+		// Cancel the agent's context to signal shutdown
+		a.lifecycleMu.Lock()
+		if a.cancel != nil {
+			a.cancel()
+		}
+		a.lifecycleMu.Unlock()
+	}
+}
+
+// CriticalError returns any critical error that occurred during agent execution.
+func (a *agent) CriticalError() error {
+	a.criticalErrorMu.Lock()
+	defer a.criticalErrorMu.Unlock()
+	return a.criticalError
+}
+
 // Done returns a channel that's closed when the agent's internal context is cancelled.
 // It returns nil if Init hasn't been called yet.
 func (a *agent) Done() <-chan struct{} {
@@ -1085,7 +1130,9 @@ func (a *agent) Done() <-chan struct{} {
 }
 
 // Close gracefully shuts down the agent and its background tasks.
-func (a *agent) Close(context.Context) error {
+func (a *agent) Close(ctx context.Context) error {
+	defer closeAgentLog()
+
 	// Stop physics executor or position heartbeat before cancelling context
 	if physicsExec, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
 		log.Printf("[Agent %s] Stopping continuous physics executor", a.cfg.Name)
@@ -1105,12 +1152,28 @@ func (a *agent) Close(context.Context) error {
 	a.wg.Wait()
 	if a.rec != nil {
 		log.Printf("[Agent %s] [Replay] closing recorder", a.cfg.Name)
-		if err := a.rec.Close(); err != nil {
-			log.Printf("[agent.replay] ERROR closing recorder: %v", err)
-			return fmt.Errorf("close recorder: %w", err)
+		// Use a goroutine with timeout to prevent indefinite hang on slow recorder close
+		recCloseDone := make(chan error, 1)
+		go func() {
+			recCloseDone <- a.rec.Close()
+		}()
+
+		select {
+		case err := <-recCloseDone:
+			if err != nil {
+				log.Printf("[agent.replay] ERROR closing recorder: %v", err)
+				a.rec = nil
+				return fmt.Errorf("close recorder: %w", err)
+			}
+			log.Printf("[Agent %s] [Replay] closed recorder successfully", a.cfg.Name)
+			a.rec = nil
+		case <-ctx.Done():
+			// Timeout or cancellation while closing recorder
+			log.Printf("[Agent %s] [Replay] recorder close timeout/cancelled (context: %v), continuing shutdown", a.cfg.Name, ctx.Err())
+			// Note: recorder may still be open/writing, but we can't wait indefinitely
+			// The file descriptor will be closed when the process exits
+			a.rec = nil
 		}
-		log.Printf("[Agent %s] [Replay] closed recorder successfully", a.cfg.Name)
-		a.rec = nil
 	}
 	return nil
 }
@@ -1197,16 +1260,22 @@ func (a *agent) SetPlayerNameResolver(f func([16]byte) (string, bool)) {
 
 // SetItemManager injects an ItemManager for item name lookup.
 func (a *agent) SetItemManager(im ItemManager) {
-	a.inventoryMu.Lock()
+	a.itemMgrMu.Lock()
 	a.itemMgr = im
-	a.inventoryMu.Unlock()
+	a.itemMgrMu.Unlock()
+}
+
+func (a *agent) GetItemManager() ItemManager {
+	a.itemMgrMu.RLock()
+	defer a.itemMgrMu.RUnlock()
+	return a.itemMgr
 }
 
 // SetSlotResolver injects a SlotResolver to inspect current slot contents.
 func (a *agent) SetSlotResolver(sr SlotResolver) {
-	a.inventoryMu.Lock()
+	a.slotsMu.Lock()
 	a.slots = sr
-	a.inventoryMu.Unlock()
+	a.slotsMu.Unlock()
 }
 
 // Movement/pathfinding injection

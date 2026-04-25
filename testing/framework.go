@@ -426,7 +426,7 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		if err == nil {
 			// Use version-specific subdirectory - the container will use this as /data
 			// and will find any existing minecraft_server.{VERSION}.jar
-			cacheDir = filepath.Join(homeDir, ".cache", "mc-agent-test", cfg.Version)
+			cacheDir = filepath.Join(homeDir, ".agent", "cache", "mc-agent-test", cfg.Version)
 			// Create cache directory if it doesn't exist
 			if err := os.MkdirAll(cacheDir, 0755); err != nil {
 				// If we can't create cache, fall back to no caching
@@ -832,7 +832,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		// Fallback for tests that don't explicitly set RegistriesPath
 		cwd, err := os.Getwd()
 		if err == nil {
-			registriesPath = filepath.Join(cwd, "data", "download-cache", mcVersion)
+			registriesPath = filepath.Join(cwd, ".agent", "cache", "downloads", mcVersion)
 		}
 	}
 

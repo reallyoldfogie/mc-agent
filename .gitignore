@@ -33,6 +33,8 @@ testing/vehicles/data
 testing/vehicles/libraries
 testing/vehicles/versions
 .agent/
+ollama
+
 
 
 # Legacy implementations 
@@ -70,6 +72,8 @@ tmp/
 /testing/libraries/
 /libraries/
 *.test
+*.jar
+
 
 # Credential and authentication files
 *creds*

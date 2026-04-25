@@ -316,7 +316,7 @@ func (a *agent) cmdFindPath(xs, ys, zs string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := a.FindPath(ctx, tx, ty, tz); err != nil {
+	if _, err := a.FindPath(ctx, tx, ty, tz); err != nil {
 		_ = a.SendChat("Path find failed: " + err.Error())
 		return
 	}

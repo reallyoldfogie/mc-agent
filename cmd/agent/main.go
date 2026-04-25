@@ -142,14 +142,25 @@ func main() {
 		log.Fatalf("failed creating agent: %v", err)
 	}
 
+	exitCode := 0
+	defer func() {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+	}()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	if err := a.Init(ctx); err != nil {
-		log.Fatalf("init failed: %v", err)
+		log.Printf("init failed: %v", err)
+		exitCode = 1
+		return
 	}
 
 	if err := a.Start(ctx); err != nil {
-		log.Fatalf("start failed: %v", err)
+		log.Printf("start failed: %v", err)
+		exitCode = 1
+		return
 	}
 
 	agentDone := a.Done()
@@ -164,5 +175,11 @@ func main() {
 
 	if err := a.Close(context.Background()); err != nil {
 		log.Printf("close error: %v", err)
+		exitCode = 1
+	}
+
+	if critErr := a.CriticalError(); critErr != nil {
+		log.Printf("Critical error: %v", critErr)
+		exitCode = 1
 	}
 }

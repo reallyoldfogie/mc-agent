@@ -16,6 +16,9 @@ func (a *agent) FindSlotWith(ctx context.Context, itemName string, windowID int)
 	if ctx.Err() != nil {
 		return -1, false, ctx.Err()
 	}
+	a.itemMgrMu.RLock()
+	defer a.itemMgrMu.RUnlock()
+
 	if a.itemMgr == nil {
 		return -1, false, models.ErrInvalidConfig("item manager not initialized")
 	}
@@ -70,7 +73,7 @@ func (a *agent) FindSlotWith(ctx context.Context, itemName string, windowID int)
 			continue
 		}
 
-		itemNameForSlot := normalizeItemName(a.itemMgr.GetItemNameByID(int(slot.ID)))
+		itemNameForSlot := normalizeItemName(a.itemMgr.GetItemNameByID(int32(slot.ID)))
 		if itemNameForSlot == normalized {
 			return idx, true, nil
 		}

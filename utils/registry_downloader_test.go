@@ -102,7 +102,7 @@ func TestEnsureRegistriesPath_DefaultPath(t *testing.T) {
 
 	// But the path should still be set correctly
 	homeDir, _ := os.UserHomeDir()
-	expectedPath := filepath.Join(homeDir, ".cache", "mc-agent", "registries", testVersion)
+	expectedPath := filepath.Join(homeDir, ".agent", "cache", "registries", testVersion)
 
 	// The error message should contain information about the path
 	if path != "" && path != expectedPath {

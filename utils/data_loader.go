@@ -130,21 +130,89 @@ func getGitHubArchiveURL(repo *GitHubRepo) string {
 	// GitHub archive URL format: https://github.com/owner/repo/archive/refs/heads/branch.zip
 	// For tags: https://github.com/owner/repo/archive/refs/tags/tagname.zip
 	// Simpler format that works for both: https://github.com/owner/repo/archive/{ref}.zip
-	return fmt.Sprintf("https://github.com/%s/%s/archive/%s.zip", repo.Owner, repo.Repo, repo.Ref)
+
+	// return fmt.Sprintf("https://github.com/%s/%s/archive/%s.zip", repo.Owner, repo.Repo, repo.Ref)
+	return fmt.Sprintf("https://github.com/%s/%s/archive/refs/heads/%s.zip", repo.Owner, repo.Repo, repo.Ref)
 }
 
-// downloadAndCache downloads data from URL and caches it locally
+// getLatestCommitSHA queries the GitHub API for the latest commit SHA on a branch.
+// Returns the full 40-character SHA string.
+func getLatestCommitSHA(repo *GitHubRepo) (string, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/commits/%s", repo.Owner, repo.Repo, repo.Ref)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	request, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	request.Header.Set("Accept", "application/vnd.github.sha")
+
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned HTTP %d", response.StatusCode)
+	}
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	return strings.TrimSpace(string(body)), nil
+}
+
+// findExistingCache looks for any previously cached directory that matches the
+// given URL hash prefix. Returns the full path if found, or empty string.
+func findExistingCache(cacheDir string, urlHash string) string {
+	prefix := fmt.Sprintf("downloaded-%s-", urlHash)
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			return filepath.Join(cacheDir, entry.Name())
+		}
+	}
+	return ""
+}
+
+// cleanOldCache removes previously cached directories for the same URL hash,
+// keeping only the directory specified by keepDir.
+func cleanOldCache(cacheDir string, urlHash string, keepDir string) {
+	prefix := fmt.Sprintf("downloaded-%s-", urlHash)
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), prefix) {
+			fullPath := filepath.Join(cacheDir, entry.Name())
+			if fullPath != keepDir {
+				os.RemoveAll(fullPath)
+			}
+		}
+	}
+}
+
+// downloadAndCache downloads data from URL and caches it locally.
+// For GitHub URLs, the latest commit SHA is included in the cache directory
+// name so that upstream changes are detected on subsequent runs.
 func downloadAndCache(urlStr string, cacheDir string) (string, error) {
-	// Create cache directory if it doesn't exist
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	// Check if it's a GitHub URL and convert to archive download
 	downloadURL := urlStr
 	var githubSubPath string
+	var ghRepo *GitHubRepo
 
-	if ghRepo, err := parseGitHubURL(urlStr); err == nil {
+	if parsed, err := parseGitHubURL(urlStr); err == nil {
+		ghRepo = parsed
 		downloadURL = getGitHubArchiveURL(ghRepo)
 		githubSubPath = ghRepo.Path
 		fmt.Printf("Detected GitHub repository: %s/%s (ref: %s)\n", ghRepo.Owner, ghRepo.Repo, ghRepo.Ref)
@@ -153,17 +221,68 @@ func downloadAndCache(urlStr string, cacheDir string) (string, error) {
 		}
 	}
 
-	// Generate cache key from original URL hash
-	hash := sha256.Sum256([]byte(urlStr))
-	cacheKey := fmt.Sprintf("%x", hash[:8]) // Use first 8 bytes for readability
+	urlHashBytes := sha256.Sum256([]byte(urlStr))
+	urlHash := fmt.Sprintf("%x", urlHashBytes[:8])
 
-	targetDir := filepath.Join(cacheDir, fmt.Sprintf("downloaded-%s", cacheKey))
+	// For GitHub repos, include the commit SHA in the cache key to detect updates
+	if ghRepo != nil {
+		return downloadAndCacheGitHub(ghRepo, downloadURL, githubSubPath, cacheDir, urlHash)
+	}
 
-	// Check if already cached
+	// Non-GitHub URL: cache based on URL hash only (no update detection)
+	targetDir := filepath.Join(cacheDir, fmt.Sprintf("downloaded-%s", urlHash))
+
+	if _, err := os.Stat(targetDir); err == nil {
+		fmt.Printf("Using cached data from: %s\n", targetDir)
+		dataPath, err := findDataDirectory(targetDir, githubSubPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to locate data directory in cache: %w", err)
+		}
+		return dataPath, nil
+	}
+
+	fmt.Printf("Downloading data from: %s\n", downloadURL)
+
+	extractedDir, err := downloadAndExtractZip(downloadURL, targetDir)
+	if err != nil {
+		return "", err
+	}
+
+	dataPath, err := findDataDirectory(extractedDir, githubSubPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to locate data directory: %w", err)
+	}
+	return dataPath, nil
+}
+
+// downloadAndCacheGitHub handles caching for GitHub URLs by checking the
+// remote commit SHA. The cache directory name is: downloaded-{urlHash}-{shortSHA}
+func downloadAndCacheGitHub(ghRepo *GitHubRepo, downloadURL string, githubSubPath string, cacheDir string, urlHash string) (string, error) {
+	commitSHA, err := getLatestCommitSHA(ghRepo)
+	if err != nil {
+		fmt.Printf("Warning: failed to check for updates: %v\n", err)
+		// Fall back to any existing cache for this URL
+		if existingDir := findExistingCache(cacheDir, urlHash); existingDir != "" {
+			fmt.Printf("Using existing cached mc-data-gen from: %s\n", existingDir)
+			dataPath, err := findDataDirectory(existingDir, githubSubPath)
+			if err != nil {
+				return "", fmt.Errorf("failed to locate data directory in cache: %w", err)
+			}
+			return dataPath, nil
+		}
+		// No cache and can't reach API; attempt download with unknown SHA
+		commitSHA = "unknown"
+	}
+
+	shortSHA := commitSHA
+	if len(commitSHA) > 12 {
+		shortSHA = commitSHA[:12]
+	}
+
+	targetDir := filepath.Join(cacheDir, fmt.Sprintf("downloaded-%s-%s", urlHash, shortSHA))
+
 	if _, err := os.Stat(targetDir); err == nil {
 		fmt.Printf("Using cached mc-data-gen from: %s\n", targetDir)
-
-		// Find data directory
 		dataPath, err := findDataDirectory(targetDir, githubSubPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to locate data directory in cache: %w", err)
@@ -173,18 +292,17 @@ func downloadAndCache(urlStr string, cacheDir string) (string, error) {
 
 	fmt.Printf("Downloading mc-data-gen data from: %s\n", downloadURL)
 
-	// Download and extract (GitHub archives are always zip)
 	extractedDir, err := downloadAndExtractZip(downloadURL, targetDir)
 	if err != nil {
 		return "", err
 	}
 
-	// Find the actual data directory
+	cleanOldCache(cacheDir, urlHash, targetDir)
+
 	dataPath, err := findDataDirectory(extractedDir, githubSubPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to locate data directory: %w", err)
 	}
-
 	return dataPath, nil
 }
 

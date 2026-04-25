@@ -57,6 +57,11 @@ func (a *agent) findClutchItemSlot() (int16, string) {
 }
 
 func (a *agent) findHotbarSlotByName(itemName string) (int16, string) {
+	a.slotsMu.RLock()
+	defer a.slotsMu.RUnlock()
+	a.itemMgrMu.RLock()
+	defer a.itemMgrMu.RUnlock()
+
 	if a.slots == nil || a.itemMgr == nil {
 		return -1, ""
 	}

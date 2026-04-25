@@ -79,14 +79,14 @@ func NewVehicleTestHelper(t *testing.T, mcVersion, agentName string) (*VehicleTe
 	addr := fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort)
 
 	// Note: MCDataGenPath is left empty to use auto-detection.
-	// This allows the agent to download data to data/mc-data-gen-cache or find it automatically.
+	// This allows the agent to download data to .cache/mc-data-gen or find it automatically.
 	// The FindOrCreateCacheDir utility can be used by other code that manages caches explicitly.
 
 	agentCfg := testingpkg.AgentConfig{
 		Name:           agentName,
 		ServerAddress:  addr,
 		Version:        serverCfg.Version,
-		MCDataGenPath:  "", // Auto-detect: downloads to data/mc-data-gen-cache by default
+		MCDataGenPath:  "", // Auto-detect: downloads to .cache/mc-data-gen by default
 		EnableCamAgent: true,
 	}
 
@@ -178,7 +178,7 @@ func (vh *VehicleTestHelper) SummonBoat(ctx context.Context, x, y, z float64, va
 // This prevents the horse from wandering off while allowing normal mounting interaction.
 func (vh *VehicleTestHelper) BuildHorseEnclosure(ctx context.Context, x, y, z float64) error {
 	fenceY := int(y)
-	
+
 	// Build a 5x5 perimeter fence (only outer edge, not filled)
 	// Center is at (x, z), so perimeter extends from (x-2) to (x+2) and (z-2) to (z+2)
 	for dx := -2; dx <= 2; dx++ {
@@ -189,7 +189,7 @@ func (vh *VehicleTestHelper) BuildHorseEnclosure(ctx context.Context, x, y, z fl
 				fenceZ := int(z) + dz
 				cmd := fmt.Sprintf("setblock %d %d %d oak_fence", fenceX, fenceY, fenceZ)
 				resp, err := vh.Instance.RCON.Exec(ctx, cmd)
-				fmt.Printf("%s => %s\n",cmd, resp)
+				fmt.Printf("%s => %s\n", cmd, resp)
 				if err != nil {
 					return fmt.Errorf("build fence at (%d,%d,%d): %w", fenceX, fenceY, fenceZ, err)
 				}
@@ -202,7 +202,7 @@ func (vh *VehicleTestHelper) BuildHorseEnclosure(ctx context.Context, x, y, z fl
 // RemoveHorseEnclosure removes the fence ring around the summon location.
 func (vh *VehicleTestHelper) RemoveHorseEnclosure(ctx context.Context, x, y, z float64) error {
 	fenceY := int(y)
-	
+
 	// Remove the 5x5 perimeter fence
 	for dx := -2; dx <= 2; dx++ {
 		for dz := -2; dz <= 2; dz++ {
@@ -212,7 +212,7 @@ func (vh *VehicleTestHelper) RemoveHorseEnclosure(ctx context.Context, x, y, z f
 				fenceZ := int(z) + dz
 				cmd := fmt.Sprintf("setblock %d %d %d air", fenceX, fenceY, fenceZ)
 				resp, err := vh.Instance.RCON.Exec(ctx, cmd)
-				fmt.Printf("%s => %s\n",cmd, resp)
+				fmt.Printf("%s => %s\n", cmd, resp)
 				if err != nil {
 					return fmt.Errorf("remove fence at (%d,%d,%d): %w", fenceX, fenceY, fenceZ, err)
 				}

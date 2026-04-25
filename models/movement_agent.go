@@ -13,7 +13,8 @@ type MovementAgent interface {
 	LineToAndSneak(ctx context.Context, x, y, z float64) error
 	StartSneaking() error
 	StopSneaking() error
-	FindPath(ctx context.Context, x, y, z float64) error
+	FindPath(ctx context.Context, x, y, z float64) (*Path, error)
+	ExecutePath(ctx context.Context, path *Path) error
 	LookAt(ctx context.Context, x, y, z float64) error
 	Follow(ctx context.Context, target string) error
 	StopFollow(ctx context.Context) error

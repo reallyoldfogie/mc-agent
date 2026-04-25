@@ -199,6 +199,13 @@ func (m *mockShapeProvider) FullBlockName(blockStateID uint32) string {
 	return m.BlockName(blockStateID)
 }
 
+func (m *mockShapeProvider) GetMiningInfo(blockStateID uint32) (float64, []string, bool) {
+	if blockStateID == 0 {
+		return 0, nil, false
+	}
+	return 1.5, []string{"mineable/pickaxe"}, true
+}
+
 func (m *mockShapeProvider) GetCollisionBoxes(blockStateID uint32, x, y, z int) []AABB {
 	// Air (0) has no collision
 	if blockStateID == 0 {

@@ -297,6 +297,14 @@ func (msm *MockShapeManager) GetWaterFlowSpeed(blockStateID uint32) float64 {
 	return 0.0 // No flow in mock
 }
 
+// GetMiningInfo returns mining properties (stub for mock)
+func (msm *MockShapeManager) GetMiningInfo(blockStateID uint32) (float64, []string, bool) {
+	if blockStateID == 0 {
+		return 0, nil, false
+	}
+	return 1.5, []string{"mineable/pickaxe"}, true
+}
+
 // TestLogger provides logging for tests
 type TestLogger struct {
 	messages []string

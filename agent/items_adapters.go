@@ -196,7 +196,7 @@ type registryItemManager struct {
 	registryGetter func(string) models.CustomRegistry
 }
 
-func (m registryItemManager) GetItemNameByID(id int) string {
+func (m registryItemManager) GetItemNameByID(id int32) string {
 	if m.registryGetter == nil {
 		return ""
 	}
@@ -204,7 +204,7 @@ func (m registryItemManager) GetItemNameByID(id int) string {
 	if reg == nil || !reg.IsReady() {
 		return ""
 	}
-	if name, ok := reg.GetNameByID(int32(id)); ok {
+	if name, ok := reg.GetNameByID(id); ok {
 		return name
 	}
 	return ""

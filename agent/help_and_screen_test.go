@@ -35,18 +35,19 @@ func TestHelpListsLegacyCommands(t *testing.T) {
 }
 
 type fakeSlotResolver struct {
-	id, itemID, count int
-	idx               int16
-	ok                bool
+	id, count int
+	itemID    int32
+	idx       int16
+	ok        bool
 }
 
-func (f fakeSlotResolver) ResolveSlot(id int, index int16) (int, int, bool) {
+func (f fakeSlotResolver) ResolveSlot(id int, index int16) (int32, int, bool) {
 	return f.itemID, f.count, f.ok
 }
 
 type fakeItemMgr struct{ name string }
 
-func (f fakeItemMgr) GetItemNameByID(id int) string { return f.name }
+func (f fakeItemMgr) GetItemNameByID(id int32) string { return f.name }
 
 func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
 	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})

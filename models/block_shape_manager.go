@@ -37,6 +37,11 @@ type BlockShapeManager interface {
 	BlockName(blockStateID uint32) string
 	FullBlockName(blockStateID uint32) string
 
+	// GetMiningInfo returns the mining-relevant properties for a block state.
+	// Returns hardness (negative = unbreakable), material tags (e.g. ["mineable/pickaxe"]),
+	// and whether the block is diggable.
+	GetMiningInfo(blockStateID uint32) (hardness float64, material []string, diggable bool)
+
 	// GetWaterFlowDirection returns the direction water flows at the given block position.
 	// Returns a normalized V3 vector (0,0,0) if not flowing water.
 	// For flowing water (age 1-7), calculates flow direction toward lower age blocks.

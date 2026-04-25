@@ -22,6 +22,8 @@ type Agent interface {
 	Start(ctx context.Context) error
 	Close(ctx context.Context) error
 	Done() <-chan struct{}
+	SetCriticalError(err error)
+	CriticalError() error
 
 	// Recipes (Update Recipes packet)
 	LastUpdateRecipes() (UpdateRecipesPayload, bool)
@@ -34,6 +36,7 @@ type Agent interface {
 	SetPlayerUUIDResolver(f func(string) ([16]byte, error))
 	SetPlayerNameResolver(f func([16]byte) (string, bool))
 	SetItemManager(im ItemManager)
+	GetItemManager() ItemManager
 	SetSlotResolver(sr SlotResolver)
 
 	// Movement/pathfinding injection

@@ -4,7 +4,7 @@ package testing
 // These IDs are version-specific. For version-agnostic code, load from registries.json
 //
 // Note: These values are protocol IDs and may change between Minecraft versions.
-// They are extracted from data/download-cache/1.21.5/data_generator/reports/registries.json
+// They are extracted from .cache/downloads/1.21.5/data_generator/reports/registries.json
 const (
 	// Player entity (used for player tracking in following system)
 	EntityTypePlayer = 128 // minecraft:player

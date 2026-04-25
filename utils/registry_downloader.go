@@ -49,7 +49,7 @@ func ensureRegistriesPathLegacy(path, version string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to get home directory: %w", err)
 		}
-		path = filepath.Join(homeDir, ".cache", "mc-agent", "registries", version)
+		path = filepath.Join(homeDir, ".agent", "cache", "registries", version)
 	}
 
 	// Get or create semaphore for this version

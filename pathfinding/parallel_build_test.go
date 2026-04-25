@@ -154,6 +154,13 @@ func (m *testMockShapeManager) FullBlockName(stateID uint32) string {
 	return m.BlockName(stateID)
 }
 
+func (m *testMockShapeManager) GetMiningInfo(stateID uint32) (float64, []string, bool) {
+	if stateID == 0 {
+		return 0, nil, false
+	}
+	return 1.5, []string{"mineable/pickaxe"}, true
+}
+
 // TestParallelClusterBuilding tests that parallel cluster building works correctly
 // and provides a performance benefit over sequential building.
 func TestParallelClusterBuilding(t *testing.T) {

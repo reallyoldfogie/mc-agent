@@ -166,7 +166,7 @@ func (s FindPath) Describe() string {
 func (s FindPath) Run(ctx context.Context, agent models.Agent) (StepResult, error) {
 	ctx, cancel := withTimeout(ctx, s.Timeout)
 	defer cancel()
-	if err := agent.FindPath(ctx, s.X, s.Y, s.Z); err != nil {
+	if _, err := agent.FindPath(ctx, s.X, s.Y, s.Z); err != nil {
 		return StepResult{Status: StepFailed, Details: err.Error()}, err
 	}
 	return StepResult{Status: StepSuccess}, nil

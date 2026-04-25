@@ -48,7 +48,7 @@ func NewMinecraftDataCache(version string) *MinecraftDataCache {
 		// Fallback to current directory if home dir unavailable
 		homeDir = "."
 	}
-	basePath := filepath.Join(homeDir, ".cache", "mc-agent", "minecraft-data", version)
+	basePath := filepath.Join(homeDir, ".agent", "cache", "minecraft-data", version)
 
 	return &MinecraftDataCache{
 		basePath: basePath,

@@ -25,7 +25,7 @@ type slotResolverFromAgent struct {
 	agnt models.Agent
 }
 
-func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int, count int, ok bool) {
+func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int32, count int, ok bool) {
 	// Get the screen/inventory from the agent
 	var screenContainer interface{}
 
@@ -41,7 +41,7 @@ func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int, co
 		// Cursor slot
 		cursor := sr.agnt.GetCursor()
 		if cursor.ID >= 0 {
-			return int(cursor.ID), int(cursor.Count), true
+			return int32(cursor.ID), int(cursor.Count), true
 		}
 		return 0, 0, false
 	}
@@ -51,7 +51,7 @@ func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int, co
 		if index >= 0 && index < int16(len(inv.GetSlots())) {
 			s := inv.GetSlots()[index]
 			if s.ID >= 0 {
-				return int(s.ID), int(s.Count), true
+				return int32(s.ID), int(s.Count), true
 			}
 		}
 		return 0, 0, false
@@ -65,7 +65,7 @@ func (sr slotResolverFromAgent) ResolveSlot(id int, index int16) (itemID int, co
 			if index >= 0 && index < int16(len(slots)) {
 				s := slots[index]
 				if s.ID >= 0 {
-					return int(s.ID), int(s.Count), true
+					return int32(s.ID), int(s.Count), true
 				}
 			}
 		}
@@ -79,7 +79,7 @@ type registryItemMgrAdapter struct {
 	agnt models.Agent
 }
 
-func (m registryItemMgrAdapter) GetItemNameByID(id int) string {
+func (m registryItemMgrAdapter) GetItemNameByID(id int32) string {
 	if m.agnt == nil {
 		return ""
 	}
@@ -87,7 +87,7 @@ func (m registryItemMgrAdapter) GetItemNameByID(id int) string {
 	if reg == nil || !reg.IsReady() {
 		return ""
 	}
-	if name, ok := reg.GetNameByID(int32(id)); ok {
+	if name, ok := reg.GetNameByID(id); ok {
 		return name
 	}
 	return fmt.Sprintf("item_%d", id)

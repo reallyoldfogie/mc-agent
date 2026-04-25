@@ -10,7 +10,8 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	LineTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 	MoveForward(ctx context.Context, distance float64) error
 	MoveUp(ctx context.Context, distance float64) error
-	FindPath(ctx context.Context, x, y, z float64) error
+	FindPath(ctx context.Context, x, y, z float64) (*Path, error)
+	ExecutePath(ctx context.Context, path *Path) error
 	LookAt(ctx context.Context, x, y, z float64) error
 	TurnTowards(ctx context.Context, x, y, z float64) error
 	Follow(ctx context.Context, target string) error
@@ -20,6 +21,7 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	HasLineOfSight(ctx context.Context, x, y, z float64) (bool, error)
 	FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
+	FindAllVisibleBlocksInSphere(ctx context.Context, radius int) ([]VisibleBlockInfo, error)
 	OpenContainerAt(ctx context.Context, x, y, z float64, face BlockFace, timeout time.Duration) (byte, error)
 	UseItemOnBlock(ctx context.Context, x, y, z float64, face BlockFace, hand Hand) error
 	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error

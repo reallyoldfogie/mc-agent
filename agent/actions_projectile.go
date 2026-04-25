@@ -7,6 +7,8 @@ import (
 	"math"
 	"time"
 
+	pk "github.com/Tnze/go-mc/net/packet"
+
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
@@ -73,17 +75,46 @@ func (a *agent) setCallbackRegistrationTime(entityID int32) {
 
 // getPacketWriter returns a PacketWriter for sending packets.
 // In production, this uses the bot.Conn. In tests, it can be overridden.
+// When a movement mirror is active, the writer is wrapped so that every
+// serverbound packet it sends is also forwarded to the mirror. This lets the
+// mirror observe non-movement actions (e.g. arm swings) for replay recording
+// without requiring every action call site to notify the mirror explicitly.
 func (a *agent) getPacketWriter() (models.PacketWriter, error) {
+	var writer models.PacketWriter
+
 	// Try to use client directly if it implements PacketWriter (common in tests)
 	if pw, ok := a.client.(models.PacketWriter); ok {
-		return pw, nil
+		writer = pw
+	} else {
+		// Fall back to using Conn() for production
+		conn := a.client.Conn()
+		if conn == nil {
+			return nil, fmt.Errorf("connection not established")
+		}
+		writer = conn
 	}
-	// Fall back to using Conn() for production
-	conn := a.client.Conn()
-	if conn == nil {
-		return nil, fmt.Errorf("connection not established")
+
+	if a.moveMirror != nil {
+		writer = mirroringPacketWriter{inner: writer, mirror: a.moveMirror}
 	}
-	return conn, nil
+	return writer, nil
+}
+
+// mirroringPacketWriter forwards every packet written to an inner PacketWriter
+// while also handing it to a MovementMirror so the replay mirror can react to
+// outbound packets (e.g. arm swings) that don't flow through the movement
+// executor's packet-callback pipeline.
+type mirroringPacketWriter struct {
+	inner  models.PacketWriter
+	mirror models.MovementMirror
+}
+
+func (w mirroringPacketWriter) WritePacket(packet pk.Packet) error {
+	err := w.inner.WritePacket(packet)
+	if w.mirror != nil {
+		w.mirror.HandleServerbound(packet)
+	}
+	return err
 }
 
 // FireBowWithPitch fires an arrow with a specific pitch and yaw, using predicted trajectory calculation

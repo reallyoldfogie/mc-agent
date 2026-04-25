@@ -53,13 +53,21 @@ type replayMovementMirror struct {
 	sbidPosRot     int32
 	sbidRot        int32
 	sbidStatus     int32
+	sbidSwing      int32
 	cbidTeleport   int32 // cached clientbound id
 	cbidAddEnt     int32
 	cbidPlayerInfo int32
 	cbidMovePos    int32
 	cbidMovePosRot int32
 	cbidRotateHead int32
+	cbidAnimate    int32
 }
+
+// Clientbound animation codes used by the Entity Animation packet.
+const (
+	animationSwingMainArm byte = 0
+	animationSwingOffHand byte = 3
+)
 
 // NewReplayMovementMirror constructs a movement mirror if both recorder and
 // packet manager are provided. It returns nil when either dependency is nil.
@@ -75,12 +83,14 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		sbidPosRot:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
 		sbidRot:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
 		sbidStatus:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerStatusOnly")),
+		sbidSwing:      int32(pm.GetServerboundPacketID("ServerboundArmAnimation")),
 		cbidTeleport:   int32(pm.GetClientboundPacketID("ClientboundTeleportEntity")),
 		cbidAddEnt:     int32(pm.GetClientboundPacketID("ClientboundAddEntity")),
 		cbidPlayerInfo: int32(pm.GetClientboundPacketID("ClientboundPlayerInfo")),
 		cbidMovePos:    int32(pm.GetClientboundPacketID("ClientboundMoveEntityPos")),
 		cbidMovePosRot: int32(pm.GetClientboundPacketID("ClientboundMoveEntityPosRot")),
 		cbidRotateHead: int32(pm.GetClientboundPacketID("ClientboundRotateHead")),
+		cbidAnimate:    int32(pm.GetClientboundPacketID("ClientboundAnimation")),
 		skinProvider:   sp,
 	}
 }
@@ -143,6 +153,8 @@ func (m *replayMovementMirror) HandleServerbound(p pk.Packet) {
 		m.handleRot(p)
 	case m.sbidStatus:
 		m.handleStatus(p)
+	case m.sbidSwing:
+		m.handleSwing(p)
 	}
 }
 
@@ -305,6 +317,48 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 	}
 	log.Printf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
 	m.emitTeleport(m.lastX, m.lastY, m.lastZ, float32(yaw), float32(pitch), bool(onGround))
+}
+
+// handleSwing mirrors a serverbound arm-swing packet into a clientbound Entity
+// Animation packet so the replay viewer can see the bot swinging its arm.
+func (m *replayMovementMirror) handleSwing(p pk.Packet) {
+	var hand pk.VarInt
+	if err := p.Scan(&hand); err != nil {
+		log.Printf("[ReplayMirror] handleSwing: failed to parse hand: %v", err)
+		return
+	}
+	m.emitSwing(int32(hand))
+}
+
+// emitSwing records a ClientboundAnimation packet describing an arm swing for
+// the local bot's entity. It is a no-op when the entity has not been spawned
+// in the replay yet or when the recorder/animation packet id is unavailable.
+func (m *replayMovementMirror) emitSwing(hand int32) {
+	m.mu.Lock()
+	entityID := m.entityID
+	spawned := m.spawned
+	loginSeen := m.loginSeen
+	cbidAnimate := m.cbidAnimate
+	m.mu.Unlock()
+
+	if m.rec == nil || !loginSeen || !spawned || entityID == 0 || cbidAnimate == 0 {
+		return
+	}
+
+	animation := animationSwingMainArm
+	if hand == int32(1) {
+		animation = animationSwingOffHand
+	}
+
+	log.Printf("[ReplayMirror] emitSwing: entityID=%d hand=%d animation=%d", entityID, hand, animation)
+	packet := pk.Marshal(
+		cbidAnimate,
+		pk.VarInt(entityID),
+		pk.UnsignedByte(animation),
+	)
+	if err := m.rec.RecordNow(int32(packet.ID), packet.Data); err != nil {
+		log.Printf("[ReplayMirror] emitSwing: failed to record animation packet: %v", err)
+	}
 }
 
 func (m *replayMovementMirror) handleStatus(p pk.Packet) {

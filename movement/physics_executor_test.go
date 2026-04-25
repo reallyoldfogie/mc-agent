@@ -147,6 +147,13 @@ func (msp *MockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.Ph
 	return models.V3{} // No water flow in mock
 }
 
+func (msp *MockShapeProvider) GetMiningInfo(blockStateID uint32) (float64, []string, bool) {
+	if blockStateID == 0 {
+		return 0, nil, false
+	}
+	return 1.5, []string{"mineable/pickaxe"}, true
+}
+
 // Test helper: Create physics executor for testing
 func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 	// Mock position tracking

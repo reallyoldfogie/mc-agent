@@ -144,7 +144,7 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 
 	// Load container type registry from Minecraft data
 	// Must be done after agent is created, as the agent is what downloads the data
-	registryPath := filepath.Join(cwd, "data", "download-cache", serverCfg.Version)
+	registryPath := filepath.Join(cwd, ".agent", "cache", "downloads", serverCfg.Version)
 	if err := mcscreen.LoadContainerTypesFromRegistry(registryPath); err != nil {
 		t.Logf("Warning: failed to load container registry from %s: %v (using hardcoded values)", registryPath, err)
 	}

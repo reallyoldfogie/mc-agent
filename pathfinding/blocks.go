@@ -207,6 +207,12 @@ func (bsm *blockShapeManager) FullBlockName(blockStateID uint32) string {
 	return fmt.Sprintf("%s[%s]", blockName, strings.Join(propsParts, ","))
 }
 
+// GetMiningInfo returns the mining-relevant properties for a block state.
+func (bsm *blockShapeManager) GetMiningInfo(blockStateID uint32) (hardness float64, material []string, diggable bool) {
+	info := bsm.getInfoFromStateID(blockStateID)
+	return info.Hardness, info.Material, info.Diggable
+}
+
 // IsPassable checks if a block allows entity movement
 func (bsm *blockShapeManager) IsPassable(blockStateID uint32) bool {
 	info := bsm.getInfoFromStateID(blockStateID)
