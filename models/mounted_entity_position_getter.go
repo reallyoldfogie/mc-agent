@@ -7,6 +7,10 @@ type MountedEntityPositionGetter interface {
 	// Returns (x, y, z, found) - found is false if the entity is not tracked.
 	GetMountedEntityPosition(entityID int32) (x, y, z float64, found bool)
 
+	// GetMountedEntityYaw returns the yaw of the mounted entity in degrees.
+	// Returns (yaw, found) - found is false if the entity is not tracked.
+	GetMountedEntityYaw(entityID int32) (yaw float32, found bool)
+
 	GetMountedEntityType(entityID int32) (int32, bool)
 	IsMountedEntityBoat(int32) bool
 }

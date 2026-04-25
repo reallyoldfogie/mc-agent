@@ -207,16 +207,24 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 	pe.ridingVelX = 0
 	pe.ridingVelZ = 0
 
-	// Seed the physics state with the entity's current tracked position so that
-	// the very first handleRidingMode tick sends a VehicleMove that matches the
-	// vehicle's actual location. Without this, the first tick would use the
-	// agent's pre-mount walking position, which the server would reject by
-	// sending an empty SetPassengers (dismounting the agent).
+	// Seed the physics state with the entity's current tracked position (and yaw
+	// for boats) so that the very first handleRidingMode tick sends a VehicleMove
+	// that matches the vehicle's actual location. Without this, the first tick
+	// would use the agent's pre-mount walking position, which the server would
+	// reject by sending an empty SetPassengers (dismounting the agent).
+	// For boats specifically, vanilla also syncs the player's yaw to the boat's
+	// yaw on first mount so the initial VehicleMove carries the correct heading.
 	if pe.entityPositionGetter != nil {
 		if entX, entY, entZ, found := pe.entityPositionGetter.GetMountedEntityPosition(vehicleEntityID); found {
 			_, yaw, pitch, _ := pe.physicsState.GetPosition()
+			// Align yaw to the vehicle's facing direction on initial mount.
+			// This is especially important for boats: the server validates that
+			// the first VehicleMove heading matches the boat's orientation.
+			if entYaw, yawFound := pe.entityPositionGetter.GetMountedEntityYaw(vehicleEntityID); yawFound {
+				yaw = float64(entYaw)
+			}
 			pe.physicsState.SetPosition(models.V3{X: entX, Y: entY, Z: entZ}, yaw, pitch, false)
-			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f)", vehicleEntityID, entX, entY, entZ)
+			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f) yaw=%.2f", vehicleEntityID, entX, entY, entZ, yaw)
 		}
 	}
 
@@ -400,6 +408,35 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 // SyncWithServer is an alias for HandleServerCorrection for backward compatibility.
 func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool) {
 	pe.HandleServerCorrection(x, y, z, yaw, pitch, onGround)
+}
+
+// SyncRidingPosition applies a server-authoritative vehicle position correction
+// while the executor is in riding mode. Unlike SyncWithServer, this resets the
+// riding velocity state so the next VehicleMove is sent from the corrected
+// position rather than continuing from a stale prediction.
+// Should be called when a ClientboundMoveVehicle packet is received.
+func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitch float32) {
+	pe.mountedEntityMu.Lock()
+	pe.ridingVelX = 0
+	pe.ridingVelZ = 0
+	pe.mountedEntityMu.Unlock()
+
+	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+	// Use corrected yaw/pitch if non-zero, otherwise preserve current rotation
+	newYaw := currentYaw
+	newPitch := currentPitch
+	if yaw != 0 || pitch != 0 {
+		newYaw = float64(yaw)
+		newPitch = float64(pitch)
+	}
+	pe.physicsState.SetPosition(
+		models.V3{X: x, Y: y, Z: z},
+		newYaw,
+		newPitch,
+		false,
+	)
+	pe.movementPacketSender.setBotPosition(x, y, z, float32(newYaw), float32(newPitch))
+	log.Printf("[SyncRidingPosition] Vehicle position corrected by server to (%.2f, %.2f, %.2f) yaw=%.2f", x, y, z, newYaw)
 }
 
 // NotifyDead pauses position updates to the server.

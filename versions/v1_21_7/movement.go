@@ -354,6 +354,21 @@ func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, e
 	return nil
 }
 
+// ParseClientboundMoveVehicle parses a server-to-client vehicle position correction packet.
+func (m *movementHandler) ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float32, err error) {
+	pkt := cb.NewVehicleMove()
+	if scanErr := pkt.Scan(p); scanErr != nil {
+		err = common.ErrPacketParse{PacketName: "ClientboundMoveVehicle", Cause: scanErr}
+		return
+	}
+	x = float64(pkt.X)
+	y = float64(pkt.Y)
+	z = float64(pkt.Z)
+	yaw = float32(pkt.Yaw)
+	pitch = float32(pkt.Pitch)
+	return
+}
+
 // SendBoatPaddleState sends boat paddle state (which oars are paddling).
 // Uses the SteerBoat packet.
 func (m *movementHandler) SendBoatPaddleState(conn models.PacketWriter, leftPaddling, rightPaddling bool) error {

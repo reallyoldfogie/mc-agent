@@ -220,6 +220,11 @@ type MovementHandler interface {
 
 	// ParseServerboundStatus parses a serverbound status-only packet (for replay recording)
 	ParseServerboundStatus(p pk.Packet) (onGround bool, err error)
+
+	// ParseClientboundMoveVehicle parses a server-to-client vehicle position correction packet.
+	// Sent when the server rejects a client VehicleMove and needs to reset the vehicle's
+	// authoritative position. No onGround field; the packet carries x, y, z, yaw, pitch only.
+	ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float32, err error)
 }
 
 // ActionHandler handles player action packets (item usage, attacks, etc.).

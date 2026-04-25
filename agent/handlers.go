@@ -101,6 +101,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onSetPassengers,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundMoveVehicle"),
+			Name:     "ClientboundMoveVehicle",
+			Priority: 0,
+			F:        a.onClientboundMoveVehicle,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundGameEvent"),
 			Name:     "ClientboundGameEvent",
 			Priority: 0,
@@ -815,6 +821,28 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
+	// If the removed entity is the vehicle we are currently riding, trigger a
+	// clean dismount. This mirrors the vanilla client's removedPlayerVehicleId
+	// mechanism: the server may remove the vehicle entity and follow up with a
+	// SetPassengers or teleport. Without this, the agent stays in PhysicsModeRiding
+	// indefinitely for a vehicle that no longer exists.
+	currentMount := a.getMountedEntityID()
+	for _, id := range entityIDs {
+		if id == currentMount {
+			log.Printf("[onRemoveEntities] Mounted vehicle %d was removed; triggering clean dismount", id)
+			a.setMountedEntity(-1)
+			a.movementMu.RLock()
+			moveExec := a.moveExec
+			a.movementMu.RUnlock()
+			if moveExec != nil {
+				if err := moveExec.SetDismounted(); err != nil {
+					log.Printf("[onRemoveEntities] Error clearing mounted state: %v", err)
+				}
+			}
+			break
+		}
+	}
+
 	// Check if any removed entities are tracked projectiles and fire callbacks
 	a.activeProjectilesMu.Lock()
 	for _, id := range entityIDs {
@@ -1430,6 +1458,11 @@ func (a *agent) onLogin(p pk.Packet) error {
 }
 
 // onClientboundPosition updates absolute position and applies rotation flags.
+// While mounted on a vehicle, the vanilla client ignores the position part of
+// PlayerPositionLookS2CPacket (ServerPlayerEntity.startRiding always calls
+// requestTeleport, which the client must acknowledge to unblock VehicleMove
+// processing). We replicate that: skip the position/physics update but still
+// send TeleportConfirm so the server clears its pending-teleport gate.
 func (a *agent) onClientboundPosition(p pk.Packet) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
@@ -1453,6 +1486,27 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	a.fallbackHandlersMu.RLock()
 	teleport := a.teleport
 	a.fallbackHandlersMu.RUnlock()
+
+	// While mounted, ignore the position payload but still acknowledge the teleport.
+	// The server sends PlayerPositionLook immediately after startRiding() and waits
+	// for TeleportConfirm before accepting VehicleMove packets. Applying the position
+	// here would overwrite the vehicle-seeded physicsState with the player's passenger
+	// offset, causing every subsequent VehicleMove to carry the wrong Y coordinate.
+	if a.IsMounted() {
+		log.Printf("[onClientboundPosition] Mounted: skipping position update (%.2f,%.2f,%.2f), confirming teleportID=%d",
+			X, Y, Z, TeleportID)
+		t := a.player
+		if t == nil {
+			t = teleport
+		}
+		if t != nil {
+			_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
+		}
+		if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
+			notifier.NotifyRespawned()
+		}
+		return nil
+	}
 
 	// Apply position and rotation with respect to relative flags.
 	// Flag bits: 0x01=X relative, 0x02=Y relative, 0x04=Z relative, 0x08=Yaw relative, 0x10=Pitch relative
@@ -1519,6 +1573,44 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	}
 
 	a.posMu.Unlock()
+	return nil
+}
+
+// onClientboundMoveVehicle handles the server-to-client vehicle position correction.
+// When the server rejects a VehicleMove (e.g., because the position was wrong), it
+// sends this packet with the authoritative vehicle position. The agent must update
+// its physics state to the corrected position and reset riding velocity so the next
+// VehicleMove starts from the server-approved location.
+func (a *agent) onClientboundMoveVehicle(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	vx, vy, vz, vyaw, vpitch, err := a.versionHandler.Play().Movement().ParseClientboundMoveVehicle(p)
+	if err != nil {
+		log.Printf("[onClientboundMoveVehicle] ERROR parsing packet: %v", err)
+		return err
+	}
+
+	log.Printf("[onClientboundMoveVehicle] Server correction: pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f",
+		vx, vy, vz, vyaw, vpitch)
+
+	if !a.IsMounted() {
+		// Received while not mounted; could be a stale packet from a just-dismounted
+		// vehicle. Update the entity tracker position if we have it.
+		log.Printf("[onClientboundMoveVehicle] Not mounted, ignoring position correction")
+		return nil
+	}
+
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+
+	if syncer, ok := moveExec.(interface {
+		SyncRidingPosition(x, y, z float64, yaw, pitch float32)
+	}); ok {
+		syncer.SyncRidingPosition(vx, vy, vz, vyaw, vpitch)
+	}
 	return nil
 }
 
