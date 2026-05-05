@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	versions_common "github.com/reallyoldfogie/mc-agent/versions/common"
+	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 )
 
 // MountEntity mounts the agent on a vehicle entity by its ID.

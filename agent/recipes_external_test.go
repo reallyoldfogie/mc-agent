@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	agentpkg "github.com/reallyoldfogie/mc-agent/agent"
+	_ "github.com/reallyoldfogie/mc-agent/handler_versions"
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
-	_ "github.com/reallyoldfogie/mc-agent/versions"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/stretchr/testify/require"
 )
 

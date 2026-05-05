@@ -111,6 +111,30 @@ func (a *agent) IsMounted() bool {
 	return a.mountedEntityID != -1
 }
 
+// GetRidingVelocity returns the current horizontal riding velocity
+// (blocks/tick). Returns (0, 0) when not mounted or when the executor
+// does not support RidingPhysicsInspector.
+func (a *agent) GetRidingVelocity() (float64, float64) {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+	if inspector, ok := a.moveExec.(models.RidingPhysicsInspector); ok {
+		return inspector.GetRidingVelocity()
+	}
+	return 0, 0
+}
+
+// GetRidingDragMultiplier returns the per-tick velocity multiplier used on
+// the most recent riding tick. Returns 0 when the executor does not
+// support RidingPhysicsInspector.
+func (a *agent) GetRidingDragMultiplier() float64 {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+	if inspector, ok := a.moveExec.(models.RidingPhysicsInspector); ok {
+		return inspector.GetRidingDragMultiplier()
+	}
+	return 0
+}
+
 // snapshotEntities returns a shallow copy of tracked entities for external consumption/tests.
 func (a *agent) snapshotEntities() map[int32]trackedEntity {
 	a.entitiesMu.RLock()

@@ -1,8 +1,8 @@
 package items
 
 import (
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 

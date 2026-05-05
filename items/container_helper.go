@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 

@@ -160,17 +160,6 @@ func (a *agent) handlers() []bot.PacketHandler {
 			},
 		},
 		{
-			ID:       a.packetMgr.GetClientboundConfigPacketID("ClientboundConfigFinishConfiguration"),
-			Name:     "ClientboundConfigFinishConfiguration",
-			Priority: 95,
-			F: func(p pk.Packet) error {
-				if a.moveMirror != nil {
-					a.moveMirror.NotifyLoginSeen()
-				}
-				return nil
-			},
-		},
-		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetChunkCacheRadius"),
 			Name:     "ClientboundSetChunkCacheRadius",
 			Priority: 0,
@@ -213,8 +202,18 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onSetEquipment,
 		},
 	}
-	// Include config-phase registry capture
-	handlers = append(handlers, a.registryHandlers()...)
+	// NOTE: Config-phase handlers (registryHandlers, FinishConfiguration) must NOT
+	// be registered here. The event system dispatches by numeric packet ID with no
+	// phase awareness, and config-phase IDs collide with play-phase IDs (e.g.
+	// config RegistryData=7 vs play TileEntityData=7). This caused play-phase
+	// packets to be misinterpreted as registry data, overwriting loaded registries
+	// with empty/corrupt entries.
+	//
+	// Config-phase processing is handled during joinConfiguration:
+	//   - RegistryData → onRegistryDataCallback (populates a.registries)
+	//   - FinishConfiguration → ack sent by bot client
+	// NotifyLoginSeen is called from onClientboundPosition on the first play-phase
+	// position packet, which is the correct timing for replay mirror emissions.
 
 	// Include world packet handlers when using mc-agent world with version handler
 	handlers = append(handlers, a.worldPacketHandlers()...)
@@ -1457,6 +1456,33 @@ func (a *agent) onLogin(p pk.Packet) error {
 	return nil
 }
 
+// sendPlayerLoadedOnce sends ServerboundPlayerLoaded exactly once per connection
+// lifecycle. Required for 1.21.4+ where the server keeps a per-player
+// remainingLoadTicks=60 counter and silently drops interact/vehicle/use-entity
+// packets while !PlayerEntity.isLoaded(). Vanilla clients send this packet once
+// after finishing the world load. For 1.21.1–1.21.3 the version-specific
+// implementation is a no-op (the packet doesn't exist server-side).
+func (a *agent) sendPlayerLoadedOnce() {
+	if a.versionHandler == nil || a.client == nil {
+		log.Printf("[Agent %s][WARN] Version handler or client not available; cannot send PlayerLoaded", a.cfg.Name)
+		return
+	}
+
+	lifecycle := a.versionHandler.Play().Lifecycle()
+	if lifecycle == nil {
+		log.Printf("[Agent %s][WARN] Lifecycle handler not available; cannot send PlayerLoaded", a.cfg.Name)
+		return
+	}
+
+	a.playerLoadedSent.Do(func() {
+		if err := lifecycle.SendPlayerLoaded(a.client.Conn()); err != nil {
+			log.Printf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
+			return
+		}
+		log.Printf("[Agent %s] Sent ServerboundPlayerLoaded (post first-teleport-ack)", a.cfg.Name)
+	})
+}
+
 // onClientboundPosition updates absolute position and applies rotation flags.
 // While mounted on a vehicle, the vanilla client ignores the position part of
 // PlayerPositionLookS2CPacket (ServerPlayerEntity.startRiding always calls
@@ -1502,6 +1528,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		if t != nil {
 			_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
 		}
+		a.sendPlayerLoadedOnce()
 		if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
 			notifier.NotifyRespawned()
 		}
@@ -1568,6 +1595,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	if t != nil {
 		_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
 	}
+	a.sendPlayerLoadedOnce()
 	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
 		notifier.NotifyRespawned()
 	}

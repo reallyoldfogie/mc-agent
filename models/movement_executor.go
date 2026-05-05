@@ -53,6 +53,22 @@ type ManualMovementExecutor interface {
 	SetManualRotation(yaw, pitch float64) error
 }
 
+// RidingPhysicsInspector provides read-only access to the riding (mounted
+// vehicle) physics state for testing and diagnostics. Both the movement
+// executor and the agent implement this interface so tests can inspect the
+// actual simulation values rather than maintaining a parallel simulator.
+type RidingPhysicsInspector interface {
+	// GetRidingVelocity returns the current horizontal riding velocity
+	// (blocks/tick). Returns (0, 0) when not mounted.
+	GetRidingVelocity() (velX, velZ float64)
+
+	// GetRidingDragMultiplier returns the per-tick velocity multiplier
+	// used on the most recent riding tick. The value depends on the surface
+	// under the boat (water=0.9, land=0.6, ice=0.98, etc.) or the mount
+	// type (horse=0.9). Returns 0 before the first riding tick.
+	GetRidingDragMultiplier() float64
+}
+
 // ManualMovement provides passthrough access to manual movement control on the agent.
 // These methods delegate to the underlying movement executor if it supports ManualMovementExecutor.
 type ManualMovement interface {

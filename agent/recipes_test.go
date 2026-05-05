@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
-	_ "github.com/reallyoldfogie/mc-agent/versions"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
+	_ "github.com/reallyoldfogie/mc-agent/handler_versions"
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.5/play/clientbound"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/assert"

@@ -171,12 +171,12 @@ if [ ! -f "$INIT_FILE" ]; then
 fi
 
 # Check if import already exists
-if grep -q "_ \"github.com/reallyoldfogie/mc-agent/versions/$VERSION_PKG\"" "$INIT_FILE"; then
+if grep -q "_ \"github.com/reallyoldfogie/mc-agent/handler_versions/$VERSION_PKG\"" "$INIT_FILE"; then
     warn "Import for $VERSION_PKG already exists in versions/init.go"
 else
     # Add import before the closing parenthesis
     # Find the last import line and add after it
-    awk -v new_import="\t_ \"github.com/reallyoldfogie/mc-agent/versions/$VERSION_PKG\"" '
+    awk -v new_import="\t_ \"github.com/reallyoldfogie/mc-agent/handler_versions/$VERSION_PKG\"" '
         /^import \(/ { in_import=1 }
         in_import && /^\)/ { 
             print new_import

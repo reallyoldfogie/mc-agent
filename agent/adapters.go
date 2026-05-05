@@ -141,7 +141,14 @@ func (a *agent) GetMountedEntityType(entityID int32) (int32, bool) {
 }
 
 // IsMountedEntityBoat checks if a mounted entity is a boat or raft by type ID.
-// Returns true if the entity is a boat or raft variant (e.g., boat, oak_boat, chest_boat, bamboo_raft).
+// Returns true if the entity type's local name (after the namespace prefix)
+// ends with "_boat" or "_raft" — e.g. oak_boat, oak_chest_boat, bamboo_raft,
+// bamboo_chest_raft, pale_oak_boat, etc.
+//
+// The suffix is matched against the local part of the identifier rather than
+// the full string because the namespace "minecraft" itself contains the
+// substring "raft" (mineCRAFT), so a naive Contains check would classify every
+// minecraft-namespaced entity as a boat.
 func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 	a.regMu.RLock()
 	defer a.regMu.RUnlock()
@@ -156,8 +163,14 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 		return false
 	}
 
-	// Check if entity type name contains "boat" or "raft" (handles boat, oak_boat, chest_boat, bamboo_raft, etc.)
-	rval := strings.Contains(entityTypeName, "boat") || strings.Contains(entityTypeName, "raft")
+	// Strip the namespace prefix (e.g., "minecraft:") so the suffix check is
+	// applied to the local name only.
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := strings.HasSuffix(localName, "_boat") || strings.HasSuffix(localName, "_raft")
 
 	log.Printf("[IsMountedEntityBoat] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 

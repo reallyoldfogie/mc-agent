@@ -19,13 +19,13 @@ import (
 	"github.com/reallyoldfogie/mc-agent/agent/plan"
 
 	"github.com/reallyoldfogie/mc-agent/following"
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	agentutils "github.com/reallyoldfogie/mc-agent/utils"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 	mcworld "github.com/reallyoldfogie/mc-agent/world"
 
 	"github.com/reallyoldfogie/mc-bot-go/bot"
@@ -180,6 +180,12 @@ type agent struct {
 
 	// Chunk batching (1.20.2+): track number of batches received for acknowledgement
 	chunkBatchCount float32
+
+	// playerLoadedSent fires once-per-connection. The vanilla client sends
+	// ServerboundPlayerLoaded after the world finishes loading; without it the
+	// 1.21.4+ server silently drops interact/vehicle packets for the first 60
+	// server ticks (PlayerEntity.isLoaded gate).
+	playerLoadedSent sync.Once
 
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed

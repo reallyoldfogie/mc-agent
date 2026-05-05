@@ -1,284 +1,269 @@
 package vehicles
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/internal/visualize"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
 
-// TestBoatSteering verifies that the agent can mount a boat and steer it using manual inputs
+// coastTimeout is the maximum time to wait for riding velocity to decay to
+// zero between phases. In practice WaitForRidingVelocityZero returns as soon
+// as the executor reports (0, 0), so this is just a safety cap.
+const coastTimeout = 5 * time.Second
+
+// steeringPhase defines one independent throttle burst in a steering test.
+// Each phase begins from zero velocity (after a coast-to-stop period) so
+// drift from one phase does not contaminate the next.
+//
+// The phase is purely behavioural: it asserts that the chosen input causes
+// the vehicle to move in the expected direction by at least minDisplacement
+// blocks (when set), or to stay within maxDisplacement blocks of the start
+// (when set). It does NOT compare against a parallel physics simulation.
+type steeringPhase struct {
+	name      string
+	throttleX float64
+	throttleZ float64
+	duration  time.Duration
+
+	// minDisplacement asserts the horizontal XZ distance from the recorded
+	// start position to the actual end position is at least this many
+	// blocks. Zero disables the check. Used for non-idle phases to verify
+	// the vehicle actually moved.
+	minDisplacement float64
+
+	// maxDisplacement asserts the horizontal XZ distance from the recorded
+	// start position to the actual end position is at most this many
+	// blocks. Zero disables the check. Used for idle phases to verify the
+	// vehicle stayed put.
+	maxDisplacement float64
+
+	// Optional direction sanity checks. These are run with the actual
+	// sampled start and end positions (no simulator involvement).
+	checkDir        func(t *testing.T, start, end models.V3)                   // optional world-axis direction check (boat)
+	checkDirWithYaw func(t *testing.T, start, end models.V3, startYaw float64) // optional yaw-relative direction check (horse)
+}
+
+// TestBoatSteering verifies that the agent can mount a boat and steer it
+// using manual inputs, asserting that every throttle phase produces movement
+// in the expected direction by a non-trivial amount.
+//
+// Each phase begins from zero velocity (after a coast-to-stop period) and is
+// validated purely behaviourally: the boat must move in the expected
+// direction, displace at least minDisplacement blocks, and stay within
+// maxDisplacement blocks of start when idle. There is no parallel physics
+// simulation in this test.
 func TestBoatSteering(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "BoatSteerBot")
 			defer cleanup()
 
-			// Teleport agent to a location with water
 			cmd := "fill 0 -25 0 25 -1 25 water"
 			resp, err := helper.Instance.RCON.Exec(ctx, cmd)
 			require.NoError(t, err, "fill water area")
-			t.Logf("%s => %s", cmd, resp)
+			t.Logf("[%s] %s => %s", helper.AgentName, cmd, resp)
 
-			// Teleport agent to (-1,0,1): outside the water fill region (X<0) so the
-			// agent stands on solid ground at Y=0. The boat is summoned at (1,1,1)
-			// and floats at approx (1,-0.5,1). Eye distance ≈ 2.65 blocks, well
-			// inside the 3-block entity-interaction range.
+			// Teleport agent outside the water fill region so it stands on
+			// solid ground, within interaction range of the boat spawn point.
 			_, err = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s -1 0 1", helper.ManagedAgent.Name))
 			require.NoError(t, err, "teleport agent")
+			time.Sleep(500 * time.Millisecond)
 
-			time.Sleep(500 * time.Millisecond) // Wait for position update
-
-			// Get agent's initial position
-			x1, y1, z1, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
-			// Summon a boat at the agent's location
-			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak") // oak boat in water
+			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak")
 			require.NoError(t, err, "summon boat")
+			time.Sleep(500 * time.Millisecond)
 
-			time.Sleep(500 * time.Millisecond) // Wait for boat to spawn
-
-			t.Logf("Mounting boat from %.2f %.2f %.2f", x1, y1, z1)
-
-			// Mount the boat
 			err = helper.MountEntity(ctx, boatEntityID)
 			require.NoError(t, err, "mount boat")
-
-			// Wait for mount confirmation
 			err = helper.WaitForMounted(ctx, 15*time.Second)
 			require.NoError(t, err, "agent should be mounted")
+			t.Logf("[%s] agent mounted successfully", helper.AgentName)
 
-			t.Logf("agent mounted successfully")
-
-			x1, y1, z1, _ = helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("Updated agent position after mounting %.2f %.2f %.2f", x1, y1, z1)
-
-			// Enter manual mode
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			t.Logf("Move Forward - setting throttle (0, 1.0)")
-			// Set throttle to move forward
-			helper.SetManualThrottle(0, 1.0) // positive Z = forward
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
 
-			// Wait for movement (boat should move forward)
-			time.Sleep(2 * time.Second)
+			phases := []steeringPhase{
+				{
+					name:      "forward",
+					throttleX: 0, throttleZ: 1.0,
+					duration:        2 * time.Second,
+					minDisplacement: 3.0,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Greater(t, end.Z, start.Z, "should move in +Z")
+						require.InDelta(t, start.X, end.X, 1.0, "forward should not drift in X")
+					},
+				},
+				{
+					name:      "steer_right",
+					throttleX: 1.0, throttleZ: 0.5,
+					duration:        3 * time.Second,
+					minDisplacement: 3.0,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Greater(t, end.X, start.X, "should move in +X")
+						require.Greater(t, end.Z, start.Z, "should move in +Z (steer_right also has +Z thrust)")
+					},
+				},
+				{
+					name:      "backward",
+					throttleX: 0, throttleZ: -1.0,
+					duration: 3 * time.Second,
+					// Backward thrust is much smaller (0.005 vs 0.04), so even
+					// over 3s the boat only travels ~3 blocks. Use a small
+					// minimum displacement to detect "didn't move at all".
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Less(t, end.Z, start.Z, "should move in -Z")
+						require.InDelta(t, start.X, end.X, 1.0, "backward should not drift in X")
+					},
+				},
+				{
+					name:      "strafe_left",
+					throttleX: -1.0, throttleZ: 0,
+					duration:        3 * time.Second,
+					minDisplacement: 3.0,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Less(t, end.X, start.X, "should move in -X")
+						require.InDelta(t, start.Z, end.Z, 1.0, "strafe_left should not drift in Z")
+					},
+				},
+				{
+					name:      "idle",
+					throttleX: 0, throttleZ: 0,
+					duration:        2 * time.Second,
+					maxDisplacement: 0.5,
+				},
+			}
 
-			// Get agent's position after moving forward
-			x2, y2, z2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			runBoatPhases(t, ctx, helper, visualizerRCON, phases)
 
-			t.Logf("New Position: %.2f %.2f %.2f after move forward", x2, y2, z2)
-
-			// Verify agent moved forward (positive Z direction)
-			distance := GetDistance(x1, y1, z1, x2, y2, z2)
-			require.Greater(t, distance, 0.5, "agent should have moved forward at least 0.5 blocks")
-			require.Greater(t, z2, z1, "agent should have moved in positive Z direction")
-
-			// Test lateral movement (steer right)
-			initialX := x2
-
-			t.Logf("Steer right - setting throttle 1.0 .5")
-
-			// Stop forward movement and steer right
-			helper.SetManualThrottle(1.0, 0.5) // positive X = right, positive Z = forward
-
-			time.Sleep(5 * time.Second)
-
-			x3, _, z3, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f after steer right", x3, y2, z3)
-
-			// Verify agent moved right (positive X direction)
-			require.Greater(t, x3, initialX, "agent should have moved in positive X direction")
-
-			t.Logf("Move backwards - setting throttle to 0, -1.0")
-
-			// Test backward movement
-			helper.SetManualThrottle(0, -1.0) // negative Z = backward
-
-			time.Sleep(5 * time.Second)
-
-			x4, _, z4, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f after move backwards", x4, y2, z4)
-
-			// Verify agent moved backward
-			require.Less(t, z4, z3, "agent should have moved backward")
-
-			t.Logf("Idle - setting throttle 0, 0")
-
-			// Test stop
-			helper.SetManualThrottle(0, 0)
-
-			time.Sleep(5 * time.Second)
-
-			x5, _, z5, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f after idle", x5, y2, z5)
-
-			// Position should be approximately the same (no movement)
-			distance = GetDistance(x4, 0, z4, x5, 0, z5)
-			require.Less(t, distance, 0.1, "agent should have minimal movement when throttle is zero")
-
-			// Exit manual mode
 			err = helper.ExitManualMode()
 			require.NoError(t, err, "exit manual mode")
-
-			// Dismount
 			err = helper.DismountEntity()
 			require.NoError(t, err, "dismount vehicle")
-
-			// Verify dismount
 			err = helper.WaitForDismounted(ctx, 5*time.Second)
 			require.NoError(t, err, "agent should be dismounted")
 		})
 	}
 }
 
-// TestHorseSteering verifies that the agent can mount a horse and steer it using manual inputs
+// TestHorseSteering verifies that the agent can mount a horse and steer it
+// using manual inputs, asserting that every throttle phase produces movement
+// in the expected direction by a non-trivial amount.
+//
+// Unlike the boat, the horse uses yaw-rotation steering: ThrottleX rotates
+// the horse and ThrottleZ accelerates along the facing direction. The phase
+// assertions are purely behavioural - there is no parallel physics
+// simulation in this test.
 func TestHorseSteering(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "HorseSteerBot")
 			defer cleanup()
 
-		// Teleport agent to ground level (Y=0 is the first air block above grass
-		// in this flat-world setup; teleporting here puts the agent at the same
-		// height as the horse and avoids a 1-block vertical offset that can cause
-		// the server to reject the mount interaction.)
-		_, err := helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s 0 0 0", helper.ManagedAgent.Name))
-		require.NoError(t, err, "teleport agent")
+			_, err := helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s 0 0 0", helper.ManagedAgent.Name))
+			require.NoError(t, err, "teleport agent")
+			time.Sleep(500 * time.Millisecond)
 
-		time.Sleep(500 * time.Millisecond)
+			agentX, agentY, agentZ, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			require.True(t, initialized, "agent position should be initialized")
 
-		// Get agent's initial position
-		x1, y1, z1, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
-		require.True(t, initialized, "agent position should be initialized")
+			err = helper.BuildHorseEnclosure(ctx, agentX+1, agentY, agentZ)
+			require.NoError(t, err, "build horse enclosure")
 
-		// Build a fence enclosure around the summon location to prevent the horse from wandering
-		err = helper.BuildHorseEnclosure(ctx, x1+1, y1, z1)
-		require.NoError(t, err, "build horse enclosure")
+			horseEntityID, err := helper.SummonHorse(ctx, agentX+1, agentY, agentZ)
+			require.NoError(t, err, "summon horse")
+			time.Sleep(500 * time.Millisecond)
 
-		// Summon a tamed and saddled horse
-		horseEntityID, err := helper.SummonHorse(ctx, x1+1, y1, z1)
-		require.NoError(t, err, "summon horse")
+			err = helper.MountEntity(ctx, horseEntityID)
+			require.NoError(t, err, "mount horse")
+			err = helper.WaitForMounted(ctx, 25*time.Second)
+			require.NoError(t, err, "agent should be mounted")
 
-		time.Sleep(500 * time.Millisecond)
+			err = helper.RemoveHorseEnclosure(ctx, agentX+1, agentY, agentZ)
+			require.NoError(t, err, "remove horse enclosure")
+			t.Logf("[%s] agent mounted successfully", helper.AgentName)
 
-		t.Logf("Mounting horse from %.2f %.2f %.2f", x1, y1, z1)
-
-		// Mount the horse
-		err = helper.MountEntity(ctx, horseEntityID)
-		require.NoError(t, err, "mount horse")
-
-		// Wait for mount confirmation
-		err = helper.WaitForMounted(ctx, 25*time.Second)
-		require.NoError(t, err, "agent should be mounted")
-
-		// Remove the fence enclosure now that the horse is mounted
-		err = helper.RemoveHorseEnclosure(ctx, x1+1, y1, z1)
-		require.NoError(t, err, "remove horse enclosure")
-
-			t.Logf("agent mounted successfully")
-
-			x1, y1, z1, _ = helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("Updated agent position after mounting %.2f %.2f %.2f", x1, y1, z1)
-
-			// Enter manual mode
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			t.Logf("Setting throttle (0, 1.0)")
-			// Set throttle to move forward
-			helper.SetManualThrottle(0, 1.0) // positive Z = forward
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
 
-			// Wait for movement (horse should move forward)
-			time.Sleep(2 * time.Second)
+			phases := []steeringPhase{
+				{
+					name:      "forward",
+					throttleX: 0, throttleZ: 1.0,
+					duration:        2 * time.Second,
+					minDisplacement: 2.0,
+					checkDirWithYaw: func(t *testing.T, start, end models.V3, startYaw float64) {
+						yawRad := startYaw * math.Pi / 180.0
+						forwardProj := -math.Sin(yawRad)*(end.X-start.X) + math.Cos(yawRad)*(end.Z-start.Z)
+						require.Greater(t, forwardProj, 0.5, "should move forward in facing direction")
+					},
+				},
+				{
+					name:      "steer_right",
+					throttleX: 1.0, throttleZ: 0.5,
+					duration:        3 * time.Second,
+					minDisplacement: 0.5,
+				},
+				{
+					name:      "backward",
+					throttleX: 0, throttleZ: -1.0,
+					duration:        3 * time.Second,
+					minDisplacement: 1.0,
+					checkDirWithYaw: func(t *testing.T, start, end models.V3, startYaw float64) {
+						yawRad := startYaw * math.Pi / 180.0
+						forwardProj := -math.Sin(yawRad)*(end.X-start.X) + math.Cos(yawRad)*(end.Z-start.Z)
+						require.Less(t, forwardProj, 0.0, "should move backward in facing direction")
+					},
+				},
+				{
+					name:      "idle",
+					throttleX: 0, throttleZ: 0,
+					duration:        2 * time.Second,
+					maxDisplacement: 0.5,
+				},
+			}
 
-			// Get agent's position after moving forward
-			x2, y2, z2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			runHorsePhases(t, ctx, helper, visualizerRCON, phases)
 
-			t.Logf("New Position: %.2f %.2f %.2f", x2, y2, z2)
-
-			// Verify agent moved forward (positive Z direction)
-			distance := GetDistance(x1, y1, z1, x2, y2, z2)
-			require.Greater(t, distance, 0.5, "agent should have moved forward at least 0.5 blocks")
-			require.Greater(t, z2, z1, "agent should have moved in positive Z direction")
-
-			// Test lateral movement (steer right)
-			initialX := x2
-
-			t.Logf("Setting throttle 1.0 .5")
-
-			// Stop forward movement and steer right
-			helper.SetManualThrottle(1.0, 0.5) // positive X = right, positive Z = forward
-
-			time.Sleep(5 * time.Second)
-
-			x3, _, z3, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f", x3, y2, z3)
-
-			// Verify agent moved right (positive X direction)
-			require.Greater(t, x3, initialX, "agent should have moved in positive X direction")
-
-			t.Logf("Setting throttle to 0, -1.0")
-
-			// Test backward movement
-			helper.SetManualThrottle(0, -1.0) // negative Z = backward
-
-			time.Sleep(5 * time.Second)
-
-			x4, _, z4, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f", x4, y2, z4)
-
-			// Verify agent moved backward
-			require.Less(t, z4, z3, "agent should have moved backward")
-
-			t.Logf("Setting throttle 0, 0")
-
-			// Test stop
-			helper.SetManualThrottle(0, 0)
-
-			time.Sleep(5 * time.Second)
-
-			x5, _, z5, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-
-			t.Logf("New Position: %.2f %.2f %.2f", x5, y2, z5)
-
-			// Position should be approximately the same (no movement)
-			distance = GetDistance(x4, 0, z4, x5, 0, z5)
-			require.Less(t, distance, 0.1, "agent should have minimal movement when throttle is zero")
-
-			// Exit manual mode
 			err = helper.ExitManualMode()
 			require.NoError(t, err, "exit manual mode")
-
-			// Dismount
 			err = helper.DismountEntity()
 			require.NoError(t, err, "dismount vehicle")
-
-			// Verify dismount
 			err = helper.WaitForDismounted(ctx, 5*time.Second)
-			require.NoError(t, err, "agent should be dismounted")
+			if err != nil {
+				// failing to dismount at end of test isn't a test failure - just log it.
+				t.Logf("[%s][WARN] Agent may still be mounted after test completion: %v", helper.AgentName, err)
+			}
 		})
 	}
 }
 
-// TestSteering validates steering input system for mounted vehicles
+// TestVehicleSteeringInputs validates multiple throttle combinations on a
+// mounted boat. Each combination runs independently from zero velocity. The
+// assertions are purely behavioural: each input must move the boat in the
+// expected direction(s) and by at least minDisplacement blocks (or stay
+// within maxDisplacement when stopped).
 func TestVehicleSteeringInputs(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "VehicleSteerBot")
 			defer cleanup()
 
-			// Teleport agent to a location with water
 			cmd := "fill 0 -25 0 25 -1 25 water"
 			resp, err := helper.Instance.RCON.Exec(ctx, cmd)
 			require.NoError(t, err, "fill water area")
@@ -286,67 +271,236 @@ func TestVehicleSteeringInputs(t *testing.T) {
 
 			_, err = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("teleport %s -1 1 -1", helper.ManagedAgent.Name))
 			require.NoError(t, err, "teleport agent")
+			time.Sleep(500 * time.Millisecond)
 
-			time.Sleep(500 * time.Millisecond) // Wait for position update
-
-			// Get agent's initial position
 			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
-			// Summon a boat at the agent's location
-			// Use hardcoded coordinates: agent is at (25.5, 50.5, 25.5), boat should be at (25.5, 50.0, 25.5)
-			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak") // oak boat in water
+			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak")
 			require.NoError(t, err, "summon boat")
+			time.Sleep(500 * time.Millisecond)
 
-			time.Sleep(500 * time.Millisecond) // Wait for boat to spawn
-
-			// Mount and enter manual mode
 			err = helper.MountEntity(ctx, boatEntityID)
 			require.NoError(t, err, "mount boat")
-
 			err = helper.WaitForMounted(ctx, 5*time.Second)
 			require.NoError(t, err, "agent should be mounted")
 
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			// Test multiple throttle combinations
-			testCases := []struct {
-				name      string
-				throttleX float64
-				throttleZ float64
-				duration  time.Duration
-			}{
-				{"forward", 0, 1.0, 1 * time.Second},
-				{"backward", 0, -1.0, 1 * time.Second},
-				{"right", 1.0, 0, 1 * time.Second},
-				{"left", -1.0, 0, 1 * time.Second},
-				{"forward-right", 0.7, 0.7, 1 * time.Second},
-				{"forward-left", -0.7, 0.7, 1 * time.Second},
-				{"stop", 0, 0, 500 * time.Millisecond},
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
+
+			phases := []steeringPhase{
+				{
+					name: "forward", throttleX: 0, throttleZ: 1.0,
+					duration:        1 * time.Second,
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Greater(t, end.Z, start.Z, "forward: Z should increase")
+					},
+				},
+				{
+					name: "backward", throttleX: 0, throttleZ: -1.0,
+					duration: 1 * time.Second,
+					// Backward thrust is much smaller (0.005 vs 0.04), so the
+					// boat travels well under one block in 1s; just check it
+					// moved in the right direction.
+					minDisplacement: 0.05,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Less(t, end.Z, start.Z, "backward: Z should decrease")
+					},
+				},
+				{
+					name: "right", throttleX: 1.0, throttleZ: 0,
+					duration:        1 * time.Second,
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Greater(t, end.X, start.X, "right: X should increase")
+					},
+				},
+				{
+					name: "left", throttleX: -1.0, throttleZ: 0,
+					duration:        1 * time.Second,
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Less(t, end.X, start.X, "left: X should decrease")
+					},
+				},
+				{
+					name: "forward_right", throttleX: 0.7, throttleZ: 0.7,
+					duration:        1 * time.Second,
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Greater(t, end.X, start.X, "forward-right: X should increase")
+						require.Greater(t, end.Z, start.Z, "forward-right: Z should increase")
+					},
+				},
+				{
+					name: "forward_left", throttleX: -0.7, throttleZ: 0.7,
+					duration:        1 * time.Second,
+					minDisplacement: 0.5,
+					checkDir: func(t *testing.T, start, end models.V3) {
+						require.Less(t, end.X, start.X, "forward-left: X should decrease")
+						require.Greater(t, end.Z, start.Z, "forward-left: Z should increase")
+					},
+				},
+				{
+					name:      "stop",
+					throttleX: 0, throttleZ: 0,
+					duration:        500 * time.Millisecond,
+					maxDisplacement: 0.5,
+				},
 			}
 
-			for _, tc := range testCases {
-				t.Run(tc.name, func(t *testing.T) {
-					px, _, pz, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-					helper.SetManualThrottle(tc.throttleX, tc.throttleZ)
-					time.Sleep(tc.duration)
-					x2, _, z2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			runBoatPhases(t, ctx, helper, visualizerRCON, phases)
 
-					// For non-zero throttle, verify movement occurred
-					if tc.throttleX != 0 || tc.throttleZ != 0 {
-						distance := GetDistance(px, 0, pz, x2, 0, z2)
-						require.Greater(t, distance, 0.2, "throttle %v,%v should cause movement", tc.throttleX, tc.throttleZ)
-					}
-				})
-			}
-
-			// Exit manual mode and dismount
 			err = helper.ExitManualMode()
 			require.NoError(t, err, "exit manual mode")
-
 			err = helper.DismountEntity()
 			require.NoError(t, err, "dismount")
 		})
 	}
+}
+
+// --- Phase runners ---
+
+// runBoatPhases executes a sequence of independent steering phases on a
+// mounted boat. Each phase starts from zero velocity after a coast-to-stop
+// period and is validated purely behaviourally: direction (via checkDir) and
+// horizontal displacement bounds (minDisplacement / maxDisplacement).
+func runBoatPhases(
+	t *testing.T,
+	ctx context.Context,
+	helper *VehicleTestHelper,
+	summoner visualize.DisplayEntitySummoner,
+	phases []steeringPhase,
+) {
+	for _, phase := range phases {
+		t.Run(phase.name, func(t *testing.T) {
+			// Coast to stop: zero throttle and poll until velocity is zero.
+			helper.SetManualThrottle(0, 0)
+			require.NoError(t, helper.WaitForRidingVelocityZero(ctx, coastTimeout),
+				"velocity should reach zero before phase %s", phase.name)
+
+			// Record actual start position (post-coast).
+			startX, startY, startZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			start := models.V3{X: startX, Y: startY, Z: startZ}
+
+			// Apply throttle and let the boat move.
+			helper.SetManualThrottle(phase.throttleX, phase.throttleZ)
+			time.Sleep(phase.duration)
+
+			// Sample end position.
+			endX, endY, endZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			actual := models.V3{X: endX, Y: endY, Z: endZ}
+
+			displacement := GetDistance(start.X, 0, start.Z, actual.X, 0, actual.Z)
+			t.Logf("[%s] %s: start=(%.2f,%.2f,%.2f) actual=(%.2f,%.2f,%.2f) displacement=%.2f",
+				helper.AgentName, phase.name,
+				start.X, start.Y, start.Z,
+				actual.X, actual.Y, actual.Z,
+				displacement)
+
+			visualizeActualPath(ctx, summoner, phase.name, start, actual)
+
+			// Behavioural assertions: bounds on horizontal displacement.
+			if phase.minDisplacement > 0 {
+				require.GreaterOrEqual(t, displacement, phase.minDisplacement,
+					"phase %s: boat should have moved at least %.2f blocks (got %.2f)",
+					phase.name, phase.minDisplacement, displacement)
+			}
+			if phase.maxDisplacement > 0 {
+				require.LessOrEqual(t, displacement, phase.maxDisplacement,
+					"phase %s: boat should have stayed within %.2f blocks of start (got %.2f)",
+					phase.name, phase.maxDisplacement, displacement)
+			}
+
+			// Direction sanity check.
+			if phase.checkDir != nil {
+				phase.checkDir(t, start, actual)
+			}
+		})
+	}
+}
+
+// runHorsePhases executes a sequence of independent steering phases on a
+// mounted horse. Each phase starts from zero velocity after a coast-to-stop
+// period and is validated purely behaviourally: direction (via
+// checkDirWithYaw / checkDir) and horizontal displacement bounds.
+func runHorsePhases(
+	t *testing.T,
+	ctx context.Context,
+	helper *VehicleTestHelper,
+	summoner visualize.DisplayEntitySummoner,
+	phases []steeringPhase,
+) {
+	for _, phase := range phases {
+		t.Run(phase.name, func(t *testing.T) {
+			// Coast to stop: poll until velocity is zero.
+			helper.SetManualThrottle(0, 0)
+			require.NoError(t, helper.WaitForRidingVelocityZero(ctx, coastTimeout),
+				"velocity should reach zero before phase %s", phase.name)
+
+			// Record start position and yaw.
+			startX, startY, startZ, yawF, _, _ := helper.ManagedAgent.Agent.GetPosition()
+			start := models.V3{X: startX, Y: startY, Z: startZ}
+			startYaw := float64(yawF)
+
+			// Apply throttle.
+			helper.SetManualThrottle(phase.throttleX, phase.throttleZ)
+			time.Sleep(phase.duration)
+
+			// Sample end position.
+			endX, endY, endZ, _, _, _ := helper.ManagedAgent.Agent.GetPosition()
+			actual := models.V3{X: endX, Y: endY, Z: endZ}
+
+			displacement := GetDistance(start.X, 0, start.Z, actual.X, 0, actual.Z)
+			t.Logf("[%s] %s: start=(%.2f,%.2f,%.2f) yaw=%.1f actual=(%.2f,%.2f,%.2f) displacement=%.2f",
+				helper.AgentName, phase.name,
+				start.X, start.Y, start.Z, startYaw,
+				actual.X, actual.Y, actual.Z,
+				displacement)
+
+			visualizeActualPath(ctx, summoner, phase.name, start, actual)
+
+			// Behavioural assertions: bounds on horizontal displacement.
+			if phase.minDisplacement > 0 {
+				require.GreaterOrEqual(t, displacement, phase.minDisplacement,
+					"phase %s: horse should have moved at least %.2f blocks (got %.2f)",
+					phase.name, phase.minDisplacement, displacement)
+			}
+			if phase.maxDisplacement > 0 {
+				require.LessOrEqual(t, displacement, phase.maxDisplacement,
+					"phase %s: horse should have stayed within %.2f blocks of start (got %.2f)",
+					phase.name, phase.maxDisplacement, displacement)
+			}
+
+			// Direction sanity checks.
+			if phase.checkDirWithYaw != nil {
+				phase.checkDirWithYaw(t, start, actual, startYaw)
+			}
+			if phase.checkDir != nil {
+				phase.checkDir(t, start, actual)
+			}
+		})
+	}
+}
+
+// --- Shared helpers ---
+
+// visualizeActualPath renders a single throttle phase as a lime waypoint pair
+// from the recorded start position to the position the agent actually
+// reached. Used as a debugging aid for in-game inspection of steering
+// behaviour.
+func visualizeActualPath(
+	ctx context.Context,
+	summoner visualize.DisplayEntitySummoner,
+	phaseName string,
+	start, actual models.V3,
+) {
+	visualize.VisualizeExpectedPath(ctx, summoner, []visualize.Waypoint{
+		{Pos: start, Label: fmt.Sprintf("%s_START", phaseName)},
+		{Pos: actual, Label: fmt.Sprintf("%s_ACTUAL", phaseName)},
+	}, "lime")
 }

@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/agent/mining"
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 	"github.com/reallyoldfogie/mc-agent/utils"
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )

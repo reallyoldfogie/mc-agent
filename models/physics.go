@@ -41,6 +41,11 @@ func (v V3) ManhattanDistance(other V3) float64 {
 	return dx + dy + dz
 }
 
+// Within checks if this position is within a certain distance of another position
+func (v V3) Within(pt V3, tolerance float64) bool {
+	return v.DistanceTo(pt) <= tolerance
+}
+
 // ToFloat64 converts to float64 coordinates (for backward compatibility)
 func (v V3) ToFloat64() (x, y, z float64) {
 	return v.X, v.Y, v.Z

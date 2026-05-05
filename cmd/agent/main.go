@@ -17,23 +17,23 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/agent"
 	"github.com/reallyoldfogie/mc-agent/config"
+	_ "github.com/reallyoldfogie/mc-agent/handler_versions"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
-	_ "github.com/reallyoldfogie/mc-agent/versions"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
-	// _ "github.com/reallyoldfogie/mc-agent/versions/common"
+	// _ "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 )
 
 var (
-	address        = flag.String("address", "127.0.0.1:25565", "The server address")
-	name           = flag.String("name", "Daze", "The player's name")
-	playerID       = flag.String("uuid", "", "The player's UUID")
-	mcVersion      = flag.String("version", "", "target MC version (empty = auto-detect from server)")
-	offline        = flag.Bool("offline", false, "use offline mode")
-	accessToken    = flag.String("token", "", "AccessToken - offline mode only")
-	mcDataPath     = flag.String("data-path", "", "Path to mc-data-gen data directory (empty=auto-detect; use 'build/cache/mc-data-gen' for centralized cache)")
-	protoGoPath    = flag.String("protocol-path", "", "Path to mc-protocol-go directory")
-	enableClutch   = flag.Bool("clutch", false, "Enable clutch assist during physics movement")
+	address      = flag.String("address", "127.0.0.1:25565", "The server address")
+	name         = flag.String("name", "Daze", "The player's name")
+	playerID     = flag.String("uuid", "", "The player's UUID")
+	mcVersion    = flag.String("version", "", "target MC version (empty = auto-detect from server)")
+	offline      = flag.Bool("offline", false, "use offline mode")
+	accessToken  = flag.String("token", "", "AccessToken - offline mode only")
+	mcDataPath   = flag.String("data-path", "", "Path to mc-data-gen data directory (empty=auto-detect; use 'build/cache/mc-data-gen' for centralized cache)")
+	protoGoPath  = flag.String("protocol-path", "", "Path to mc-protocol-go directory")
+	enableClutch = flag.Bool("clutch", false, "Enable clutch assist during physics movement")
 
 	// replay flags
 	enableReplay    = flag.Bool("replay", false, "Enable ReplayMod recording (.mcpr)")
@@ -122,19 +122,19 @@ func main() {
 	// Build agent config - version detection, manager resolution, and client creation
 	// are now handled automatically by agent.Init() if not provided
 	cfg := models.AgentConfig{
-		Name:                   auth.Name, // Use authenticated name
-		Address:                *address,
-		Version:                *mcVersion, // Empty = auto-detect from server
-		Auth:                   auth,
-		MCDataGenPath:          *mcDataPath,
-		MCProtocolGoPath:       *protoGoPath,
-		EnableClutchAssist:     *enableClutch,
-		StopFilePath:           ".agentStop", // Enable graceful shutdown via stop file
-		EnableReplay:           *enableReplay,
-		ReplayOutput:           *replayOut,
-		ReplayGenerator:        *replayGenerator,
-		SkinProvider:           skinProvider,
-		LogWriter:              packetLogWriter,
+		Name:               auth.Name, // Use authenticated name
+		Address:            *address,
+		Version:            *mcVersion, // Empty = auto-detect from server
+		Auth:               auth,
+		MCDataGenPath:      *mcDataPath,
+		MCProtocolGoPath:   *protoGoPath,
+		EnableClutchAssist: *enableClutch,
+		StopFilePath:       ".agentStop", // Enable graceful shutdown via stop file
+		EnableReplay:       *enableReplay,
+		ReplayOutput:       *replayOut,
+		ReplayGenerator:    *replayGenerator,
+		SkinProvider:       skinProvider,
+		LogWriter:          packetLogWriter,
 	}
 
 	a, err := agent.New(cfg)

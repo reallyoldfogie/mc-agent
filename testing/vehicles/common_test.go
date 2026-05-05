@@ -101,6 +101,13 @@ func NewVehicleTestHelper(t *testing.T, mcVersion, agentName string) (*VehicleTe
 		t.Fatal("agent never appeared in server player list")
 	}
 
+	// Wait for essential registries to be populated before tests use them.
+	// Registries are loaded from file during Init and from server config packets
+	// during Start; this ensures they are available before test code runs.
+	if err := helper.WaitForRegistry(ctx, "minecraft:entity_type", 10*time.Second); err != nil {
+		t.Fatalf("entity_type registry not ready: %v", err)
+	}
+
 	return helper, ctx, cleanup
 }
 
@@ -114,6 +121,10 @@ func (vh *VehicleTestHelper) Cleanup() {
 			vh.t.Logf("WARNING: Agent stop returned error: %v", err)
 		}
 	}
+
+	// Allow camera agent to process final frames and close replay files cleanly
+	// This ensures the entire test sequence is captured in the replay
+	time.Sleep(2 * time.Second)
 
 	// Close agent logging
 	vh.Framework.CloseAgentLog()
@@ -304,6 +315,29 @@ func (vh *VehicleTestHelper) GetTrackedEntity(entityID int32) *models.TrackedEnt
 	return nil
 }
 
+// WaitForRegistry polls until the named registry is loaded and ready on the
+// main agent, returning an error if the timeout expires first.
+func (vh *VehicleTestHelper) WaitForRegistry(ctx context.Context, registryID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			reg := vh.ManagedAgent.Agent.GetRegistry(registryID)
+			if reg != nil && reg.IsReady() {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("registry %s not ready after %v", registryID, timeout)
+			}
+		}
+	}
+}
+
 // GetDistance calculates distance between two positions
 func GetDistance(x1, y1, z1, x2, y2, z2 float64) float64 {
 	dx := x2 - x1
@@ -417,4 +451,41 @@ func (vh *VehicleTestHelper) EnterManualMode() error {
 // ExitManualMode switches out of manual movement mode
 func (vh *VehicleTestHelper) ExitManualMode() error {
 	return vh.ManagedAgent.Agent.ExitManualMode()
+}
+
+// GetRidingPhysicsInspector returns the RidingPhysicsInspector if the agent
+// supports it, allowing tests to read actual executor physics state.
+func (vh *VehicleTestHelper) GetRidingPhysicsInspector() (models.RidingPhysicsInspector, bool) {
+	inspector, ok := vh.ManagedAgent.Agent.(models.RidingPhysicsInspector)
+	return inspector, ok
+}
+
+// WaitForRidingVelocityZero polls until the executor's riding velocity decays
+// to zero, replacing sleep-based coast-to-stop. Falls back to a fixed sleep
+// if the agent does not support RidingPhysicsInspector.
+func (vh *VehicleTestHelper) WaitForRidingVelocityZero(ctx context.Context, timeout time.Duration) error {
+	inspector, ok := vh.GetRidingPhysicsInspector()
+	if !ok {
+		time.Sleep(timeout)
+		return nil
+	}
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			velX, velZ := inspector.GetRidingVelocity()
+			if velX == 0 && velZ == 0 {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("riding velocity did not reach zero after %v (velX=%.6f, velZ=%.6f)", timeout, velX, velZ)
+			}
+		}
+	}
 }

@@ -77,7 +77,7 @@ for version_dir in $VERSION_DIRS; do
     fi
     
     # Check if version is registered in init.go
-    if grep -q "_ \"github.com/reallyoldfogie/mc-agent/versions/$VERSION_PKG\"" versions/init.go; then
+    if grep -q "_ \"github.com/reallyoldfogie/mc-agent/handler_versions/$VERSION_PKG\"" versions/init.go; then
         check_pass "$VERSION: Registered in versions/init.go"
     else
         check_fail "$VERSION: NOT registered in versions/init.go"

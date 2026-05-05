@@ -58,7 +58,7 @@ def add_import(content):
         import_pattern = r'(import \(\n[^)]+)'
         content = re.sub(
             import_pattern,
-            r'\1\t"github.com/reallyoldfogie/mc-agent/versions/common"\n',
+            r'\1\t"github.com/reallyoldfogie/mc-agent/handler_versions/common"\n',
             content
         )
     return content

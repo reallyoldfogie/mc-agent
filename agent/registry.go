@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"fmt"
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -40,9 +39,9 @@ func (r *customRegistry) IsReady() bool {
 }
 
 func (r *customRegistry) Dump() {
-	fmt.Printf("\n%s\n", r.id)
+	log.Printf("\n%s\n", r.id)
 	for k, v := range r.byName {
-		fmt.Printf("%s: %d\n", k, v)
+		log.Printf("\t%s: %d\n", k, v)
 	}
 }
 
@@ -142,11 +141,11 @@ func (a *agent) GetEntityTypeID(entityName string) (int32, bool) {
 func (a *agent) DumpRegistry(regName string) {
 	reg := a.GetRegistry(regName)
 	if reg == nil || !reg.IsReady() {
-		fmt.Printf("[DUMP] registry %s not loaded", regName)
+		log.Printf("[DUMP %s %s] registry %s not loaded", a.cfg.Name, a.cfg.Version, regName)
 		return
-	} else {
-		fmt.Printf("%#v\n", reg)
 	}
+
+	log.Printf("[DUMP %s %s] %s registry", a.cfg.Name, a.cfg.Version, regName)
 	reg.Dump()
 }
 

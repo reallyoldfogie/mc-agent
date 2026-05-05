@@ -32,6 +32,7 @@ func FindOrCreateCacheDir() (string, error) {
 	// Search up the directory tree for:
 	// 1. An existing build/cache directory
 	// 2. Repo markers (.git, go.mod) that indicate repo root
+	var repoRoot string
 	current := cwd
 	for {
 		// Check if build/cache exists at this level
@@ -45,13 +46,13 @@ func FindOrCreateCacheDir() (string, error) {
 		goModPath := filepath.Join(current, "go.mod")
 
 		if _, err := os.Stat(gitPath); err == nil {
-			// Found .git directory - this is repo root, build/cache would be here if it exists
-			// (already checked above, so if we're here it doesn't exist)
+			// Found .git directory - this is repo root
+			repoRoot = current
 			break
 		}
 		if _, err := os.Stat(goModPath); err == nil {
 			// Found go.mod - this is repo root
-			// (build/cache would be here if it exists, already checked above)
+			repoRoot = current
 			break
 		}
 
@@ -63,8 +64,12 @@ func FindOrCreateCacheDir() (string, error) {
 		current = parent
 	}
 
-	// No build/cache found anywhere, create one in current working directory
-	cachePath := filepath.Join(cwd, filepath.Join(baseCacheDir...))
+	// No build/cache found anywhere, create one at repo root if found, else in cwd
+	cacheLocation := cwd
+	if repoRoot != "" {
+		cacheLocation = repoRoot
+	}
+	cachePath := filepath.Join(cacheLocation, filepath.Join(baseCacheDir...))
 	if err := os.MkdirAll(cachePath, 0755); err != nil {
 		return "", fmt.Errorf("create cache directory %s: %w", cachePath, err)
 	}

@@ -22,10 +22,10 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
+	_ "github.com/reallyoldfogie/mc-agent/handler_versions" // Import to register version handlers
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 	agentutils "github.com/reallyoldfogie/mc-agent/utils"
-	_ "github.com/reallyoldfogie/mc-agent/versions" // Import to register version handlers
-	"github.com/reallyoldfogie/mc-agent/versions/common"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"

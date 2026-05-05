@@ -107,6 +107,11 @@ type PlayHandler interface {
 	// Actions returns the action handler for player actions (item usage, bow, etc.)
 	Actions() ActionHandler
 
+	// Lifecycle returns the lifecycle handler for play-phase lifecycle signals
+	// (e.g., player_loaded). For versions where a particular signal does not
+	// exist, the corresponding Send method is a no-op.
+	Lifecycle() LifecycleHandler
+
 	// SendClientInformation sends client settings/information during play phase
 	SendClientInformation(conn PacketWriter, info ClientInfo) error
 
@@ -162,6 +167,27 @@ type PlayHandler interface {
 	// packet: the raw ClientboundPlayerInfo packet to parse
 	// Returns the parsed update structure with all entry data.
 	ParsePlayerInfo(packet pk.Packet) (*PlayerInfoUpdate, error)
+}
+
+// LifecycleHandler handles play-phase lifecycle signal packets that the vanilla
+// client sends to indicate it has finished initializing/loading. Without these
+// signals, the server may silently ignore client actions for a fixed grace
+// period (e.g., 60 server ticks for 1.21.4+ where ServerboundPlayerLoaded was
+// introduced and PlayerEntity.isLoaded gates server processing of interact
+// packets, vehicle moves, etc.).
+//
+// Versions where a given signal packet does not exist must implement the
+// corresponding Send method as a no-op.
+type LifecycleHandler interface {
+	// SendPlayerLoaded sends ServerboundPlayerLoaded (no payload) to mark the
+	// player as loaded on the server. The vanilla client sends this once when
+	// the world has finished loading. Sending it removes the server-side
+	// 60-tick grace gate that silently drops interact/vehicle/etc. packets for
+	// freshly-joined players.
+	//
+	// On versions that don't include this packet (1.21.1–1.21.3), this is a
+	// no-op and returns nil.
+	SendPlayerLoaded(conn PacketWriter) error
 }
 
 // MovementHandler handles player movement packets.

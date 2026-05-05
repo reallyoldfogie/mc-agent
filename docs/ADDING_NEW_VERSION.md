@@ -99,7 +99,7 @@ This is the main entry point that implements `common.VersionHandler`:
 package v1_XX_X
 
 import (
-    "github.com/reallyoldfogie/mc-agent/versions/common"
+    "github.com/reallyoldfogie/mc-agent/handler_versions/common"
     protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -168,7 +168,7 @@ package v1_XX_X
 import (
     "log"
 
-    "github.com/reallyoldfogie/mc-agent/versions/common"
+    "github.com/reallyoldfogie/mc-agent/handler_versions/common"
     "github.com/reallyoldfogie/mc-protocol-go/loader"
 )
 
@@ -267,8 +267,8 @@ package versions
 
 import (
     // Import all version-specific packages to trigger their init() functions
-    _ "github.com/reallyoldfogie/mc-agent/versions/v1_21_5"
-    _ "github.com/reallyoldfogie/mc-agent/versions/v1_XX_X"  // Add new version
+    _ "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_5"
+    _ "github.com/reallyoldfogie/mc-agent/handler_versions/v1_XX_X"  // Add new version
 )
 ```
 
