@@ -121,6 +121,13 @@ type PhysicsMovementExecutor struct {
 	manualInputsMu sync.RWMutex  // Protects manual inputs
 	manualInputs   models.Inputs // Current manual inputs for PhysicsModeManual
 
+	// dismountRequested is set when the agent sends a dismount (PRESS_SHIFT_KEY)
+	// and cleared when the server acknowledges via SetPassengers (SetDismounted).
+	// While true, every SendVehicleInput forces sneak=true to prevent the
+	// server's tickRiding() from seeing isSneaking()=false due to a race
+	// with updateInput() clearing the sneaking flag.
+	dismountRequested bool
+
 	// Riding velocity state (horizontal only; reset on mount/dismount).
 	// Maintained across ticks so the server sees smooth acceleration rather
 	// than an immediate jump to full speed every tick.
@@ -253,9 +260,21 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.ridingVelX = 0
 	pe.ridingVelZ = 0
 	pe.boatYawVelocity = 0
+	pe.dismountRequested = false
 	pe.SetMode(PhysicsModeIdle)
 	log.Printf("[SetDismounted] Agent dismounted from vehicle")
 	return nil
+}
+
+// NotifyDismountRequested marks that a dismount has been requested but not yet
+// acknowledged by the server. While set, handleRidingMode forces sneak=true in
+// every SendVehicleInput to prevent the server's updateInput() from clearing
+// the sneaking flag before tickRiding() can process the dismount.
+func (pe *PhysicsMovementExecutor) NotifyDismountRequested() {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	pe.dismountRequested = true
+	log.Printf("[NotifyDismountRequested] Dismount flag set — sneak will be forced until server acknowledges")
 }
 
 // SetPacketCallback sets an optional callback for packet interception.
@@ -1366,12 +1385,12 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 // rider-state visibility on the server) and a paddle/sprint packet is sent
 // for animation/sound parity.
 //
-// We diverge from vanilla in one important detail: the manual-control API
-// (`SetManualThrottle`) treats `ThrottleX`/`ThrottleZ` as world-axis
-// throttles (positive X = east, positive Z = south), not camera-relative
-// strafes. Both helpers below preserve that semantics: the boat strafes in
-// world axes, and the horse turns its yaw to face the requested world
-// direction before thrusting forward.
+// For boats, left/right (ThrottleX) rotates the boat via angular velocity
+// matching vanilla AbstractBoatEntity.yawVelocity, and forward/backward
+// (ThrottleZ) thrusts along the boat's current heading.
+//
+// For horses, ThrottleX rotates the horse's yaw and ThrottleZ thrusts
+// forward along the facing direction.
 func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	// Get mounted entity ID and version handler
 	pe.mountedEntityMu.RLock()
@@ -1416,11 +1435,35 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	jump := inputs.Jump
 	sneak := inputs.Sneak
 
+	// If a dismount has been requested, force sneak=true in every packet
+	// until the server acknowledges. This prevents the race where
+	// SendVehicleInput(sneak=false) clears the sneaking flag on the server
+	// before tickRiding() checks shouldDismount().
+	pe.mountedEntityMu.RLock()
+	if pe.dismountRequested {
+		sneak = true
+	}
+	pe.mountedEntityMu.RUnlock()
+
 	log.Printf("[handleRidingMode] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
 		forward, backward, left, right, jump, sneak, inputs.ThrottleX, inputs.ThrottleZ)
 
+	// Vanilla ClientPlayerEntity.tick() always sends a LookAndOnGround packet
+	// before VehicleMove while riding (extractedSrc 1.21.1
+	// ClientPlayerEntity.java:209-211). Without this the server's
+	// ServerPlayerEntity retains stale yaw/pitch, which can cause position
+	// validation mismatches on 1.21.1.
+	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+	if err := versionHandler.Play().Movement().SendRotation(
+		pe.movementPacketSender.client.Conn(),
+		float32(currentYaw), float32(currentPitch),
+		false,
+	); err != nil {
+		log.Printf("[handleRidingMode] Failed to send player look packet: %v", err)
+	}
+
 	if isBoat {
-		pe.handleRidingModeBoat(versionHandler, inputs, forward, backward, left, right)
+		pe.handleRidingModeBoat(versionHandler, inputs, forward, backward, left, right, sneak)
 		return
 	}
 	pe.handleRidingModeNonBoat(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak)
@@ -1428,8 +1471,7 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 
 // handleRidingModeBoat runs one client-authoritative boat tick.
 //
-// The drag-and-thrust model and surface-dependent velocity multiplier follow
-// vanilla `AbstractBoatEntity.updateVelocity` / `updatePaddles` (extractedSrc
+// The physics model mirrors vanilla AbstractBoatEntity (extractedSrc
 // 1.21.10/net/minecraft/entity/vehicle/AbstractBoatEntity.java:534-608):
 //
 //	// updateVelocity (drag + gravity)
@@ -1440,26 +1482,27 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 //	 if (this.pressingRight) this.yawVelocity++;
 //	 if (this.pressingForward) f += 0.04F;
 //	 if (this.pressingBack)    f -= 0.005F;
+//	 this.setYaw(this.getYaw() + this.yawVelocity);
 //	 this.setVelocity(this.getVelocity().add(
 //	     MathHelper.sin(-this.getYaw()*π/180) * f, 0,
 //	     MathHelper.cos(this.getYaw()*π/180) * f));
 //
-// We deviate from vanilla in two ways:
-//
-//  1. ThrottleX (the agent's lateral throttle) is applied as a direct
-//     world-axis strafe instead of yaw rotation. The manual-control API
-//     defines ThrottleX as world-east throttle, and the integration tests
-//     verify world-axis behaviour; reproducing vanilla's yaw-rotation here
-//     would make the boat orbit instead of moving in +X.
-//  2. Velocities are clamped to zero below `physics.ResetVelocity` (matching
-//     vanilla `Entity.resetVelocityIfSmall`). Without this clamp, the
-//     exponential tail of the drag decay would produce ~0.5 blocks of
-//     residual coast after each backward burst, breaking the idle assertion.
+// Left/right rotate the boat via angular velocity (boatYawVelocity).
+// Forward/backward thrust is projected through the boat's current yaw.
+// The boat cannot strafe — it can only accelerate along its heading.
 func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	versionHandler models.VersionHandler,
 	inputs models.Inputs,
-	forward, backward, left, right bool,
+	forward, backward, left, right, sneak bool,
 ) {
+	// --- Send vehicle input packet (SteerVehicle on 1.21.1, PlayerInput on 1.21.2+) ---
+	if err := versionHandler.Play().Movement().SendVehicleInput(
+		pe.movementPacketSender.client.Conn(),
+		forward, backward, left, right, false, sneak,
+	); err != nil {
+		log.Printf("[handleRidingMode] Failed to send boat vehicle input packet: %v", err)
+	}
+
 	// --- Send paddle-state packet for animation/sound parity ---
 	leftPaddle := false
 	rightPaddle := false
@@ -1471,8 +1514,6 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	} else if left {
 		rightPaddle = true
 	}
-	log.Printf("[handleRidingMode] Boat paddle state: left=%v right=%v (throttle: X=%.2f Z=%.2f)",
-		leftPaddle, rightPaddle, inputs.ThrottleX, inputs.ThrottleZ)
 	if err := versionHandler.Play().Movement().SendBoatPaddleState(
 		pe.movementPacketSender.client.Conn(),
 		leftPaddle, rightPaddle,
@@ -1480,34 +1521,51 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		log.Printf("[handleRidingMode] Failed to send boat paddle state packet: %v", err)
 	}
 
-	// --- Boat physics ---
+	// --- Boat physics (vanilla tick order) ---
 	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
 	blockBelowBoat := pe.getBlockBelowBoat(currentPos.X, currentPos.Y, currentPos.Z)
 	velMultiplier, gravityVal := pe.getBoatPhysicsValues(currentPos.X, currentPos.Y, currentPos.Z, blockBelowBoat)
 	pe.lastVelMultiplier = velMultiplier
 
-	// Forward/back uses different acceleration constants
-	// the resulting position against these limits).
-	var accelZ float64
-	if inputs.ThrottleZ >= 0 {
-		accelZ = inputs.ThrottleZ * physics.BoatForwardAcceleration // +0.04
-	} else {
-		accelZ = inputs.ThrottleZ * physics.BoatBackwardAcceleration // -0.005
+	// (1) Drag: velocity *= multiplier, yawVelocity *= multiplier
+	pe.ridingVelX *= velMultiplier
+	pe.ridingVelZ *= velMultiplier
+	pe.boatYawVelocity *= velMultiplier
+
+	// (2) Input → angular acceleration: left/right modify yawVelocity ±1 deg/tick
+	if left {
+		pe.boatYawVelocity--
 	}
-	// World-axis lateral strafe (deviation from vanilla, see godoc).
-	accelX := inputs.ThrottleX * physics.BoatForwardAcceleration
+	if right {
+		pe.boatYawVelocity++
+	}
 
-	// vel = vel*drag + thrust  (vanilla updateVelocity + updatePaddles fused).
-	pe.ridingVelX = pe.ridingVelX*velMultiplier + accelX
-	pe.ridingVelZ = pe.ridingVelZ*velMultiplier + accelZ
+	// (3) Input → thrust magnitude along heading
+	var thrustSpeed float64
+	if forward {
+		thrustSpeed += physics.BoatForwardAcceleration // +0.04
+	}
+	if backward {
+		thrustSpeed -= physics.BoatBackwardAcceleration // -0.005
+	}
 
-	// Vanilla Entity.resetVelocityIfSmall: clamp tiny velocities to zero so the
-	// boat actually rests after the rider releases all inputs.
+	// (4) Apply rotation: yaw += yawVelocity
+	yaw += pe.boatYawVelocity
+
+	// (5) Project thrust through yaw into world-space velocity
+	yawRad := yaw * math.Pi / 180.0
+	pe.ridingVelX += math.Sin(-yawRad) * thrustSpeed
+	pe.ridingVelZ += math.Cos(yawRad) * thrustSpeed
+
+	// (6) Vanilla Entity.resetVelocityIfSmall: clamp tiny velocities to zero
 	if math.Abs(pe.ridingVelX) < physics.ResetVelocity {
 		pe.ridingVelX = 0
 	}
 	if math.Abs(pe.ridingVelZ) < physics.ResetVelocity {
 		pe.ridingVelZ = 0
+	}
+	if math.Abs(pe.boatYawVelocity) < physics.ResetVelocity {
+		pe.boatYawVelocity = 0
 	}
 
 	// Vertical: gravity unless floating in water (server maintains buoyancy).
@@ -1523,9 +1581,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	newZ := currentPos.Z + pe.ridingVelZ
 	onGround := false
 
-	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f gravity=%.4f throttle=(%.2f,%.2f) vel=(%.4f,%.4f) newPos=(%.2f,%.2f,%.2f)",
-		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, gravityVal,
-		inputs.ThrottleX, inputs.ThrottleZ, pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
+	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
+		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, pe.boatYawVelocity, thrustSpeed, pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
 
 	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, onGround)
 	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))

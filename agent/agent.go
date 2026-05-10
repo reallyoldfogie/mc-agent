@@ -517,7 +517,11 @@ func (a *agent) Init(ctx context.Context) error {
 
 		var shapeMgr models.BlockShapeManager
 		var stateProps *pathfinding.StatePropertyLoader
-		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, filepath.Join(".agent", "cache", "mc-data-gen"), "")
+		mcDataGenCacheDir := filepath.Join(".agent", "cache", "mc-data-gen")
+		if resolvedCacheDir, cacheErr := agentutils.FindOrCreateCacheDir(); cacheErr == nil {
+			mcDataGenCacheDir = filepath.Join(resolvedCacheDir, "mc-data-gen")
+		}
+		dataBasePath, err := agentutils.ResolveDataPath(a.cfg.MCDataGenPath, mcDataGenCacheDir, "")
 		if err == nil {
 			log.Printf("[Agent %s] Resolved data path: %s", a.cfg.Name, dataBasePath)
 			// Verify path exists and has version directory
@@ -1071,7 +1075,11 @@ func (a *agent) hasLoadedGround(x, y, z float64) bool {
 }
 
 func (a *agent) downloadJarsAndGenerateReports() error {
-	cacheDir := filepath.Join(".", ".agent", "cache", "downloads")
+	baseCacheDir, err := agentutils.FindOrCreateCacheDir()
+	if err != nil {
+		return fmt.Errorf("find cache directory: %w", err)
+	}
+	cacheDir := filepath.Join(baseCacheDir, "downloads")
 	versionCacheDir := filepath.Join(cacheDir, a.cfg.Version)
 	expectedReportsDir := filepath.Join(versionCacheDir, "data_generator")
 

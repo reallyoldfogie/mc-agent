@@ -170,7 +170,10 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 		localName = localName[idx+1:]
 	}
 
-	rval := strings.HasSuffix(localName, "_boat") || strings.HasSuffix(localName, "_raft")
+	// In 1.21.1, boats use a single entity type "boat" / "chest_boat".
+	// In 1.21.2+, boats are per-wood-type: "oak_boat", "birch_chest_boat", etc.
+	rval := localName == "boat" || localName == "chest_boat" ||
+		strings.HasSuffix(localName, "_boat") || strings.HasSuffix(localName, "_raft")
 
 	log.Printf("[IsMountedEntityBoat] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 

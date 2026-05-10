@@ -41,14 +41,14 @@ var (
 )
 
 // NewMinecraftDataCache creates a new data cache manager for a specific Minecraft version.
-// Uses default cache location: ~/.cache/mc-agent/minecraft-data/{version}
+// Uses FindOrCreateCacheDir to locate the centralized cache, then stores under minecraft-data/{version}.
 func NewMinecraftDataCache(version string) *MinecraftDataCache {
-	homeDir, err := os.UserHomeDir()
+	cacheDir, err := FindOrCreateCacheDir()
 	if err != nil {
-		// Fallback to current directory if home dir unavailable
-		homeDir = "."
+		// Fallback to current directory if cache dir unavailable
+		cacheDir = filepath.Join(".", ".agent", "cache")
 	}
-	basePath := filepath.Join(homeDir, ".agent", "cache", "minecraft-data", version)
+	basePath := filepath.Join(cacheDir, "minecraft-data", version)
 
 	return &MinecraftDataCache{
 		basePath: basePath,

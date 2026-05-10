@@ -45,11 +45,11 @@ func EnsureRegistriesPath(path, version string) (string, error) {
 func ensureRegistriesPathLegacy(path, version string) (string, error) {
 	// Set default path if not provided
 	if path == "" {
-		homeDir, err := os.UserHomeDir()
+		cacheDir, err := FindOrCreateCacheDir()
 		if err != nil {
-			return "", fmt.Errorf("failed to get home directory: %w", err)
+			return "", fmt.Errorf("failed to find cache directory: %w", err)
 		}
-		path = filepath.Join(homeDir, ".agent", "cache", "registries", version)
+		path = filepath.Join(cacheDir, "registries", version)
 	}
 
 	// Get or create semaphore for this version

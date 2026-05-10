@@ -6,6 +6,7 @@ import (
 	"log"
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
+	"github.com/reallyoldfogie/mc-agent/movement"
 )
 
 // MountEntity mounts the agent on a vehicle entity by its ID.
@@ -54,6 +55,16 @@ func (a *agent) DismountEntity() error {
 	if a.versionHandler == nil || a.client == nil {
 		return fmt.Errorf("version handler or client not initialized")
 	}
+
+	// Notify the physics executor that a dismount is pending. This forces
+	// sneak=true in every subsequent SendVehicleInput until the server
+	// acknowledges via SetPassengers, preventing the race where updateInput()
+	// clears the sneaking flag before tickRiding() can process the dismount.
+	a.movementMu.RLock()
+	if physicsExec, ok := a.moveExec.(*movement.PhysicsMovementExecutor); ok {
+		physicsExec.NotifyDismountRequested()
+	}
+	a.movementMu.RUnlock()
 
 	entityID := a.GetEntityID()
 	// Use ActionStartSneaking to initiate the dismount - the server will handle the actual dismount
