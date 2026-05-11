@@ -1466,7 +1466,7 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 		pe.handleRidingModeBoat(versionHandler, inputs, forward, backward, left, right, sneak)
 		return
 	}
-	pe.handleRidingModeNonBoat(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak)
+	pe.handleRidingModeNonBoat(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 }
 
 // handleRidingModeBoat runs one client-authoritative boat tick.
@@ -1622,6 +1622,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 	mountedEntityID int32,
 	inputs models.Inputs,
 	forward, backward, left, right, jump, sneak bool,
+	entityGetter models.MountedEntityPositionGetter,
 ) {
 	// (1) Send PlayerInput so the server sees the rider's input bitfield.
 	log.Printf("[handleRidingMode] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
@@ -1640,12 +1641,21 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 	const horseTurnDegsPerTick = 5.0
 	yaw -= inputs.ThrottleX * horseTurnDegsPerTick
 
-	// (3) Forward thrust with mob-style drag.
-	// Horse vanilla MOVEMENT_SPEED is 0.225 (AbstractHorseEntity:380), but the
-	// agent uses a normalised acceleration here so steady-state speed is
-	// independent of the entity's attribute.
-	const horseAcceleration = 0.1
-	const horseDrag = 0.9
+	// (3) Forward thrust with entity-specific movement speed.
+	// Retrieve the entity's movement speed attribute from the server.
+	// Fallback to default horse speed (0.225) if attribute is not available.
+	horseDrag := 0.9
+	horseAcceleration := 0.225 // Default: vanilla horse movement speed
+
+	if entityGetter != nil {
+		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
+			horseAcceleration = movementSpeed
+			log.Printf("[handleRidingMode] Using entity attribute movement speed: %.4f for entity %d", horseAcceleration, mountedEntityID)
+		} else {
+			log.Printf("[handleRidingMode] Entity attribute 'generic.movement_speed' not found for entity %d, using default: %.4f", mountedEntityID, horseAcceleration)
+		}
+	}
+
 	pe.lastVelMultiplier = horseDrag
 	pe.ridingVelZ = pe.ridingVelZ*horseDrag + inputs.ThrottleZ*horseAcceleration
 	pe.ridingVelX = 0 // horses don't strafe in this model; ThrottleX is steering
@@ -1662,8 +1672,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 	newZ := currentPos.Z + (math.Cos(yawRad) * pe.ridingVelZ)
 	onGround := true
 
-	log.Printf("[handleRidingMode] Horse physics: yaw=%.1f throttle=(%.2f,%.2f) speed=%.4f newPos=(%.2f,%.2f,%.2f)",
-		yaw, inputs.ThrottleX, inputs.ThrottleZ, pe.ridingVelZ, newX, newY, newZ)
+	log.Printf("[handleRidingMode] Horse physics: yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.2f speed=%.4f newPos=(%.2f,%.2f,%.2f)",
+		yaw, inputs.ThrottleX, inputs.ThrottleZ, horseAcceleration, horseDrag, pe.ridingVelZ, newX, newY, newZ)
 
 	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, onGround)
 	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))

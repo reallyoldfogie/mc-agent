@@ -179,3 +179,21 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 
 	return rval
 }
+
+// GetEntityAttribute retrieves an entity attribute value by name.
+// Returns the attribute value and a found flag. Common attributes include:
+// - "generic.movement_speed" (horse speed, etc.)
+// - "generic.max_health" (health cap)
+// - "generic.attack_damage" (etc.)
+func (a *agent) GetEntityAttribute(entityID int32, attributeName string) (float64, bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists || entity.Removed || entity.Attributes == nil {
+		return 0, false
+	}
+
+	value, ok := entity.Attributes[attributeName]
+	return value, ok
+}
