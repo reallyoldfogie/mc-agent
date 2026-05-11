@@ -139,6 +139,10 @@ func (msp *MockShapeProvider) FullBlockName(blockStateID uint32) string {
 	return msp.BlockName(blockStateID)
 }
 
+func (msp *MockShapeProvider) GetBlockProperties(blockStateID uint32) map[string]string {
+	return map[string]string{}
+}
+
 func (msp *MockShapeProvider) GetWaterFlowSpeed(blockStateID uint32) float64 {
 	return 0.0 // No water in mock
 }

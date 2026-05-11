@@ -287,6 +287,11 @@ func (msm *MockShapeManager) FullBlockName(blockStateID uint32) string {
 	return msm.blockName(blockStateID)
 }
 
+// GetBlockProperties returns block state properties (stub for mock - returns empty map)
+func (msm *MockShapeManager) GetBlockProperties(blockStateID uint32) map[string]string {
+	return map[string]string{}
+}
+
 // GetWaterFlowDirection returns the flow direction (stub for mock - returns zero vector)
 func (msm *MockShapeManager) GetWaterFlowDirection(x, y, z int, world agentmodels.PhysicsWorld) agentmodels.V3 {
 	return agentmodels.V3{} // No flow in mock

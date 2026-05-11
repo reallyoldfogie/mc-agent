@@ -13,9 +13,15 @@ type MountedEntityPositionGetter interface {
 
 	GetMountedEntityType(entityID int32) (int32, bool)
 	IsMountedEntityBoat(int32) bool
+	IsMountedEntityMinecart(int32) bool
 
 	// GetEntityAttribute retrieves an entity attribute value by name.
 	// Returns (value, found) - found is false if the entity or attribute is not tracked.
 	// Common attributes: "generic.movement_speed", "generic.max_health", etc.
 	GetEntityAttribute(entityID int32, attributeName string) (float64, bool)
+
+	// GetEntityVelocity returns the current velocity of an entity by ID.
+	// Returns (velX, velY, velZ, found) in Minecraft protocol units (×8000 blocks/tick).
+	// found is false if the entity is not tracked.
+	GetEntityVelocity(entityID int32) (velX, velY, velZ float64, found bool)
 }

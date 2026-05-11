@@ -180,6 +180,38 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 	return rval
 }
 
+// IsMountedEntityMinecart checks if a mounted entity is a minecart by type ID.
+// Returns true if the entity type's local name (after the namespace prefix)
+// is "minecart" or ends with "_minecart" — e.g., minecart, chest_minecart,
+// furnace_minecart, hopper_minecart, tnt_minecart, etc.
+func (a *agent) IsMountedEntityMinecart(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	// Strip the namespace prefix (e.g., "minecraft:") so the suffix check is
+	// applied to the local name only.
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "minecart" || strings.HasSuffix(localName, "_minecart")
+
+	log.Printf("[IsMountedEntityMinecart] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
 // GetEntityAttribute retrieves an entity attribute value by name.
 // Returns the attribute value and a found flag. Common attributes include:
 // - "generic.movement_speed" (horse speed, etc.)
@@ -196,4 +228,19 @@ func (a *agent) GetEntityAttribute(entityID int32, attributeName string) (float6
 
 	value, ok := entity.Attributes[attributeName]
 	return value, ok
+}
+
+// GetEntityVelocity returns the current velocity of an entity.
+// Returns (velX, velY, velZ, found) in Minecraft protocol units (×8000 blocks/tick).
+// found is false if the entity is not tracked.
+func (a *agent) GetEntityVelocity(entityID int32) (float64, float64, float64, bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists || entity.Removed {
+		return 0, 0, 0, false
+	}
+
+	return entity.VelX, entity.VelY, entity.VelZ, true
 }

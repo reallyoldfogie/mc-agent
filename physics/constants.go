@@ -204,3 +204,25 @@ const (
 	// input is held and the player is in water.
 	SwimDownVelocity = 0.04
 )
+
+// Minecart physics constants (from Minecraft AbstractMinecartEntity.java)
+const (
+	// MinecartRailDrag is the velocity drag per tick on rail (0.2% loss = very low friction)
+	MinecartRailDrag = 0.998
+
+	// MinecartOffRailDrag is the velocity drag per tick when not on rail (heavy damping)
+	MinecartOffRailDrag = 0.5
+
+	// MinecartSlopeGravity is the gravity per tick applied to speed when traversing a slope.
+	// Vanilla uses 0.0078125 (1/128). Uphill: subtract; downhill: add.
+	MinecartSlopeGravity = 0.0078125
+
+	// MinecartPoweredRailBoost is the speed added per tick when on a powered (and energized) rail.
+	MinecartPoweredRailBoost = 0.06
+
+	// MinecartMaxSpeed is the maximum horizontal speed (blocks/tick). Vanilla cap is 0.4 on flat rail.
+	MinecartMaxSpeed = 0.4
+
+	// MinecartFallGravity is the gravity (Y axis) when minecart is off rail (falling).
+	MinecartFallGravity = -0.04
+)

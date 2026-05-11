@@ -207,6 +207,12 @@ func (bsm *blockShapeManager) FullBlockName(blockStateID uint32) string {
 	return fmt.Sprintf("%s[%s]", blockName, strings.Join(propsParts, ","))
 }
 
+// GetBlockProperties returns the named block state properties for a given state ID.
+func (bsm *blockShapeManager) GetBlockProperties(blockStateID uint32) map[string]string {
+	_, props := bsm.blockInfoFromStateID(blockStateID)
+	return props
+}
+
 // GetMiningInfo returns the mining-relevant properties for a block state.
 func (bsm *blockShapeManager) GetMiningInfo(blockStateID uint32) (hardness float64, material []string, diggable bool) {
 	info := bsm.getInfoFromStateID(blockStateID)

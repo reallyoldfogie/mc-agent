@@ -199,6 +199,10 @@ func (m *mockShapeProvider) FullBlockName(blockStateID uint32) string {
 	return m.BlockName(blockStateID)
 }
 
+func (m *mockShapeProvider) GetBlockProperties(blockStateID uint32) map[string]string {
+	return map[string]string{}
+}
+
 func (m *mockShapeProvider) GetMiningInfo(blockStateID uint32) (float64, []string, bool) {
 	if blockStateID == 0 {
 		return 0, nil, false

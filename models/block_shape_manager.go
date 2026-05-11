@@ -37,6 +37,11 @@ type BlockShapeManager interface {
 	BlockName(blockStateID uint32) string
 	FullBlockName(blockStateID uint32) string
 
+	// GetBlockProperties returns the named block state properties for a given state ID.
+	// Returns {"shape": "north_south", "powered": "true", ...} for rail blocks.
+	// Returns an empty map for air or unknown state IDs.
+	GetBlockProperties(blockStateID uint32) map[string]string
+
 	// GetMiningInfo returns the mining-relevant properties for a block state.
 	// Returns hardness (negative = unbreakable), material tags (e.g. ["mineable/pickaxe"]),
 	// and whether the block is diggable.

@@ -243,6 +243,19 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 			}
 			pe.physicsState.SetPosition(models.V3{X: entX, Y: entY, Z: entZ}, yaw, pitch, false)
 			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f) yaw=%.2f", vehicleEntityID, entX, entY, entZ, yaw)
+
+			// For minecarts, initialize velocity from the server's entity velocity.
+			if et, typeFound := pe.entityPositionGetter.GetMountedEntityType(vehicleEntityID); typeFound {
+				if pe.entityPositionGetter.IsMountedEntityMinecart(et) {
+					// Get server velocity (encoded in protocol units, 1 unit = 1/8000 blocks/tick)
+					velX, _, velZ, velFound := pe.entityPositionGetter.GetEntityVelocity(vehicleEntityID)
+					if velFound {
+						pe.ridingVelX = velX / 8000.0
+						pe.ridingVelZ = velZ / 8000.0
+						log.Printf("[SetMounted] Minecart velocity initialized from server: (%.4f, %.4f) blocks/tick", pe.ridingVelX, pe.ridingVelZ)
+					}
+				}
+			}
 		}
 	}
 
@@ -1421,9 +1434,10 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	pe.manualInputsMu.RUnlock()
 
 	// Determine vehicle type to send appropriate control packet.
-	var isBoat bool
+	var isBoat, isMinecart bool
 	if et, found := pe.entityPositionGetter.GetMountedEntityType(mountedEntityID); found {
 		isBoat = pe.entityPositionGetter.IsMountedEntityBoat(et)
+		isMinecart = pe.entityPositionGetter.IsMountedEntityMinecart(et)
 	}
 
 	// Use any non-zero throttle to determine direction.
@@ -1463,7 +1477,11 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	}
 
 	if isBoat {
-		pe.handleRidingModeBoat(versionHandler, inputs, forward, backward, left, right, sneak)
+		pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
+		return
+	}
+	if isMinecart {
+		pe.handleRidingModeMinecart(versionHandler, forward, backward, sneak)
 		return
 	}
 	pe.handleRidingModeNonBoat(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
@@ -1492,7 +1510,6 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 // The boat cannot strafe — it can only accelerate along its heading.
 func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	versionHandler models.VersionHandler,
-	inputs models.Inputs,
 	forward, backward, left, right, sneak bool,
 ) {
 	// --- Send vehicle input packet (SteerVehicle on 1.21.1, PlayerInput on 1.21.2+) ---
@@ -1689,6 +1706,232 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 		onGround,
 	); err != nil {
 		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+	}
+}
+
+// minecartRailInfo holds information about a rail block beneath a minecart.
+type minecartRailInfo struct {
+	found       bool
+	shape       string
+	isPowered   bool   // block is a powered rail
+	isEnergized bool   // powered rail has redstone power
+	railBlockY  int    // integer Y of the rail block
+}
+
+// detectRailBelow checks for rail blocks beneath the minecart and returns rail info.
+func (pe *PhysicsMovementExecutor) detectRailBelow(x, y, z float64) minecartRailInfo {
+	if pe.world == nil || pe.shapeProvider == nil {
+		return minecartRailInfo{}
+	}
+	bx := int(math.Floor(x))
+	bz := int(math.Floor(z))
+	// Check current Y level and one below
+	for _, by := range []int{int(math.Floor(y)), int(math.Floor(y)) - 1} {
+		stateID, loaded := pe.world.GetBlockStatus(bx, by, bz)
+		if !loaded {
+			continue
+		}
+		name := pe.shapeProvider.BlockName(stateID)
+		switch name {
+		case "minecraft:rail",
+			"minecraft:powered_rail",
+			"minecraft:detector_rail",
+			"minecraft:activator_rail":
+			props := pe.shapeProvider.GetBlockProperties(stateID)
+			isPowered := name == "minecraft:powered_rail"
+			return minecartRailInfo{
+				found:       true,
+				shape:       props["shape"],
+				isPowered:   isPowered,
+				isEnergized: isPowered && props["powered"] == "true",
+				railBlockY:  by,
+			}
+		}
+	}
+	return minecartRailInfo{}
+}
+
+// railShapeDirection returns the horizontal direction (dx, dz) and vertical
+// slope flag for a given rail shape. The vector points in the "natural" forward
+// direction (positive axis) and is normalized for diagonal curves.
+func railShapeDirection(shape string) (dx, dz float64, isSlope bool) {
+	switch shape {
+	case "north_south":
+		return 0, 1, false
+	case "east_west":
+		return 1, 0, false
+	case "ascending_north":
+		return 0, -1, true   // forward = north
+	case "ascending_south":
+		return 0, 1, true    // forward = south
+	case "ascending_east":
+		return 1, 0, true    // forward = east
+	case "ascending_west":
+		return -1, 0, true   // forward = west
+	case "south_east":
+		inv := 1.0 / math.Sqrt2
+		return inv, inv, false
+	case "south_west":
+		inv := 1.0 / math.Sqrt2
+		return -inv, inv, false
+	case "north_east":
+		inv := 1.0 / math.Sqrt2
+		return inv, -inv, false
+	case "north_west":
+		inv := 1.0 / math.Sqrt2
+		return -inv, -inv, false
+	}
+	return 0, 0, false
+}
+
+// railYAtPosition returns the exact Y the minecart should be for a given
+// horizontal position within the rail block. For flat rails returns railBlockY.
+// For ascending rails interpolates between the low and high ends.
+func railYAtPosition(shape string, posX, posZ float64, railBlockX, railBlockY, railBlockZ int) float64 {
+	centerX := float64(railBlockX) + 0.5
+	centerZ := float64(railBlockZ) + 0.5
+	base := float64(railBlockY)
+	switch shape {
+	case "ascending_north":
+		// North end is higher; as posZ decreases (toward north), Y increases
+		t := (centerZ + 0.5 - posZ) // 0 at south end, 1 at north end
+		return base + clamp01(t)
+	case "ascending_south":
+		t := (posZ - (centerZ - 0.5))
+		return base + clamp01(t)
+	case "ascending_east":
+		t := (posX - (centerX - 0.5))
+		return base + clamp01(t)
+	case "ascending_west":
+		t := (centerX + 0.5 - posX)
+		return base + clamp01(t)
+	}
+	return base
+}
+
+// clamp01 clamps a value to [0, 1].
+func clamp01(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
+// isSlope returns true if the rail shape involves ascending/descending.
+func isSlope(shape string) bool {
+	switch shape {
+	case "ascending_north", "ascending_south", "ascending_east", "ascending_west":
+		return true
+	}
+	return false
+}
+
+// handleRidingModeMinecart runs one client-authoritative minecart tick.
+// Rails constrain the minecart's movement direction. The client computes position
+// locally and reports it to the server via SendMoveVehicle.
+func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
+	versionHandler models.VersionHandler,
+	forward, backward, sneak bool,
+) {
+	// (1) Send vehicle input (forward/backward affect momentum; left/right unused on rails)
+	if err := versionHandler.Play().Movement().SendVehicleInput(
+		pe.movementPacketSender.client.Conn(),
+		forward, backward, false, false, false, sneak,
+	); err != nil {
+		log.Printf("[handleRidingModeMinecart] SendVehicleInput error: %v", err)
+	}
+
+	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
+
+	// (2) Detect rail
+	rail := pe.detectRailBelow(currentPos.X, currentPos.Y, currentPos.Z)
+
+	var newX, newY, newZ float64
+
+	if !rail.found {
+		// Off-rail: apply gravity and high drag
+		pe.ridingVelX *= physics.MinecartOffRailDrag
+		pe.ridingVelZ *= physics.MinecartOffRailDrag
+		newX = currentPos.X + pe.ridingVelX
+		newY = currentPos.Y + physics.MinecartFallGravity
+		newZ = currentPos.Z + pe.ridingVelZ
+		pe.lastVelMultiplier = physics.MinecartOffRailDrag
+	} else {
+		// (3) Get rail direction
+		dirX, dirZ, isSloped := railShapeDirection(rail.shape)
+		railBlockX := int(math.Floor(currentPos.X))
+		railBlockZ := int(math.Floor(currentPos.Z))
+
+		// (4) Determine current horizontal speed along rail direction.
+		// If current velocity is opposite to rail direction, preserve sign.
+		dot := pe.ridingVelX*dirX + pe.ridingVelZ*dirZ
+		speed := math.Sqrt(pe.ridingVelX*pe.ridingVelX + pe.ridingVelZ*pe.ridingVelZ)
+		if dot < 0 {
+			speed = -speed // preserve backwards travel
+		}
+
+		// (5) Apply flat rail drag
+		speed *= physics.MinecartRailDrag
+		pe.lastVelMultiplier = physics.MinecartRailDrag
+
+		// (6) Apply slope gravity effect
+		if isSloped {
+			// Determine if we are going in the ascending direction
+			goingUp := dot > 0
+			if goingUp {
+				speed -= physics.MinecartSlopeGravity
+			} else {
+				speed += physics.MinecartSlopeGravity
+			}
+		}
+
+		// (7) Apply powered rail boost (only when energized)
+		if rail.isPowered && rail.isEnergized {
+			if speed > 0 {
+				speed += physics.MinecartPoweredRailBoost
+			} else if speed < 0 {
+				speed -= physics.MinecartPoweredRailBoost
+			} else {
+				// Stationary on powered rail: give a small nudge in the forward direction
+				speed = physics.MinecartPoweredRailBoost
+			}
+		}
+
+		// (8) Cap speed
+		if speed > physics.MinecartMaxSpeed {
+			speed = physics.MinecartMaxSpeed
+		} else if speed < -physics.MinecartMaxSpeed {
+			speed = -physics.MinecartMaxSpeed
+		}
+
+		// (9) Project speed back onto rail direction
+		pe.ridingVelX = dirX * speed
+		pe.ridingVelZ = dirZ * speed
+
+		// (10) Compute new horizontal position
+		newX = currentPos.X + pe.ridingVelX
+		newZ = currentPos.Z + pe.ridingVelZ
+
+		// (11) Compute Y from rail geometry
+		newY = railYAtPosition(rail.shape, newX, newZ, railBlockX, rail.railBlockY, railBlockZ)
+	}
+
+	log.Printf("[handleRidingModeMinecart] rail=%v shape=%s isSlope=%v vel=(%.4f,%.4f) pos=(%.3f,%.3f,%.3f)",
+		rail.found, rail.shape, rail.found && isSlope(rail.shape), pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
+
+	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, rail.found)
+	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))
+
+	if err := versionHandler.Play().Movement().SendMoveVehicle(
+		pe.movementPacketSender.client.Conn(),
+		newX, newY, newZ,
+		float32(yaw), float32(pitch),
+		rail.found,
+	); err != nil {
+		log.Printf("[handleRidingModeMinecart] SendMoveVehicle error: %v", err)
 	}
 }
 
