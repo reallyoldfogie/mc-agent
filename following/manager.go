@@ -85,7 +85,7 @@ type followManager struct {
 	pathFinder       models.PathFinder
 	movementExecutor movement.MovementExecutor
 	pathExecutor     pathExecutor
-	getBotPosition   func() (x, y, z float64, yaw, pitch float32, initialized bool)
+	getBotPosition   func() (x, y, z float64, yaw, pitch float64, initialized bool)
 	sendChatMessage  func(string) error
 }
 
@@ -94,7 +94,7 @@ func NewFollowManager(
 	targetSelector models.TargetSelector,
 	pathFinder models.PathFinder,
 	movementExecutor movement.MovementExecutor,
-	getBotPos func() (float64, float64, float64, float32, float32, bool),
+	getBotPos func() (float64, float64, float64, float64, float64, bool),
 	sendChat func(string) error,
 	config FollowConfig,
 	getFollowerName func() string,

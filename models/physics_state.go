@@ -28,6 +28,6 @@ type PhysicsState interface {
 	PredictPosition(vel V3, ticks int, w PhysicsWorld) V3
 	WillCollide(targetPos V3, w PhysicsWorld) bool
 	HasGroundSupportAt(pos V3, w PhysicsWorld) bool
-	AtLookTarget(targetYaw, targetPitch float64) bool
+	IsLookingAtTarget(targetYaw, targetPitch float64) bool
 	GetSurroundingBoxes(queryBB AABB, w PhysicsWorld) []AABB
 }

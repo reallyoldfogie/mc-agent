@@ -19,7 +19,7 @@ type actionHandler struct {
 
 // SendUseItem sends a use item packet (e.g., start drawing bow, use item in hand).
 // In 1.21.7, this packet includes rotation (yaw/pitch) via Vec2f.
-func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
+func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float64) error {
 	pkt := sb.NewUseItem()
 	pkt.Hand = pk.VarInt(hand)
 	pkt.Sequence = pk.VarInt(sequence)

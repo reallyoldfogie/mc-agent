@@ -59,9 +59,9 @@ func TestSetManualThrottle(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	require.NotNil(t, exec)
 
-	// Should fail when not in manual mode
+	// Can set throttle in idle mode (for mounted vehicle steering)
 	err := exec.SetManualThrottle(1.0, 0.0)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 
 	// Enter manual mode
 	err = exec.EnterManualMode()
@@ -139,9 +139,9 @@ func TestSetManualJump(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	require.NotNil(t, exec)
 
-	// Should fail when not in manual mode
+	// Can set jump in idle mode (for mounted vehicle steering)
 	err := exec.SetManualJump(true)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 
 	// Enter manual mode
 	err = exec.EnterManualMode()
@@ -259,10 +259,10 @@ func TestSetManualInputs(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	require.NotNil(t, exec)
 
-	// Should fail when not in manual mode
+	// Can set inputs in idle mode (for mounted vehicle steering)
 	inputs := models.Inputs{ThrottleX: 1.0, ThrottleZ: 0.5}
 	err := exec.SetManualInputs(inputs)
-	assert.Error(t, err)
+	assert.NoError(t, err)
 
 	// Enter manual mode
 	err = exec.EnterManualMode()
@@ -324,25 +324,26 @@ func TestResetManualInputs(t *testing.T) {
 	assert.False(t, math.IsNaN(inputs.Pitch))
 }
 
-// TestModeValidation tests that input setters reject operations when not in manual mode
+// TestModeValidation tests that input setters work in both idle and manual modes
+// (for mounted vehicle steering, inputs can be set without being in manual mode)
 func TestModeValidation(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	require.NotNil(t, exec)
 
-	// All setters should fail in idle mode
-	assert.Error(t, exec.SetManualInputs(models.Inputs{}))
-	assert.Error(t, exec.SetManualThrottle(1.0, 0.0))
-	assert.Error(t, exec.SetManualRotation(45.0, 0.0))
-	assert.Error(t, exec.SetManualJump(true))
-	assert.Error(t, exec.SetManualSprint(true))
-	assert.Error(t, exec.SetManualSneak(true))
-	assert.Error(t, exec.SetManualClimbDirection(1.0))
-	assert.Error(t, exec.ResetManualInputs())
+	// All setters should succeed in idle mode (for mounted vehicle steering)
+	assert.NoError(t, exec.SetManualInputs(models.Inputs{}))
+	assert.NoError(t, exec.SetManualThrottle(1.0, 0.0))
+	assert.NoError(t, exec.SetManualRotation(45.0, 0.0))
+	assert.NoError(t, exec.SetManualJump(true))
+	assert.NoError(t, exec.SetManualSprint(true))
+	assert.NoError(t, exec.SetManualSneak(true))
+	assert.NoError(t, exec.SetManualClimbDirection(1.0))
+	assert.NoError(t, exec.ResetManualInputs())
 
 	// Enter manual mode
 	exec.EnterManualMode()
 
-	// Now all setters should succeed
+	// All setters should still succeed in manual mode
 	assert.NoError(t, exec.SetManualInputs(models.Inputs{}))
 	assert.NoError(t, exec.SetManualThrottle(1.0, 0.0))
 	assert.NoError(t, exec.SetManualRotation(45.0, 0.0))

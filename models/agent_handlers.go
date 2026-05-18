@@ -11,7 +11,7 @@ type AgentHandlers interface {
 	HandleDisconnect(reason chat.Message) error
 	HandleHealthChange(health float32, food int32, saturation float32) error
 	HandleDeath() error
-	HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error
+	HandleTeleported(x, y, z float64, yaw, pitch float64, _ byte, teleportID int32) error
 	HandleChunkLoad(ChunkPos) error
 	HandleChunkUnload(ChunkPos) error
 	OnSystemChat(message chat.Message, overlay bool) error

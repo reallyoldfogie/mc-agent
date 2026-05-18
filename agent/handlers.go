@@ -404,6 +404,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
+		log.Printf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z)
 
 		// Update position history in active projectiles (for render loop interpolation)
 		// Update even for zero-delta packets - they still represent a server position confirmation
@@ -447,8 +448,45 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		if e.Removed {
 			e.Removed = false
 		}
+	} else {
+		log.Printf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
 	}
+
+	// Sync mounted entity position to physics executor if this is the mounted vehicle
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if moveExec != nil {
+		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
+			if isMountable.GetMountedEntityID() == entityID {
+				if e, ok := a.entities[entityID]; ok {
+	if syncer, ok := moveExec.(interface {
+		SyncMountedPositionWithRotation(float64, float64, float64, float64, float64)
+	}); ok {
+					// Convert yaw/pitch from int8 to float64 (Minecraft uses 1/256 rotation per byte)
+					yawDegrees := float64(e.Yaw) * 360.0 / 256.0
+					pitchDegrees := float64(e.Pitch) * 360.0 / 256.0
+						syncer.SyncMountedPositionWithRotation(e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
+						log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
+					}
+				}
+			}
+		}
+	}
+
+	// Capture position for callback while holding lock
+	var callbackPos *models.V3
+	if e, ok := a.entities[entityID]; ok {
+		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
+	}
+
 	a.entitiesMu.Unlock()
+
+	// Call position update callbacks (outside the lock)
+	if callbackPos != nil {
+		log.Printf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	}
 	return nil
 }
 
@@ -515,7 +553,39 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 		}
 		a.activeProjectilesMu.Unlock()
 	}
+
+	// Sync mounted entity position to physics executor if this is the mounted vehicle
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if moveExec != nil {
+		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
+			if isMountable.GetMountedEntityID() == entityID {
+				if e, ok := a.entities[entityID]; ok {
+					if syncer, ok := moveExec.(interface {
+						SyncMountedPosition(float64, float64, float64)
+					}); ok {
+						syncer.SyncMountedPosition(e.X, e.Y, e.Z)
+						log.Printf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, e.X, e.Y, e.Z)
+					}
+				}
+			}
+		}
+	}
+
+	// Capture position for callback while holding lock
+	var callbackPos *models.V3
+	if e, ok := a.entities[entityID]; ok {
+		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
+	}
+
 	a.entitiesMu.Unlock()
+
+	// Call position update callbacks (outside the lock)
+	if callbackPos != nil {
+		log.Printf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	}
 	return nil
 }
 
@@ -601,7 +671,19 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 			e.Removed = false
 		}
 	}
+
+	// Capture position for callback while holding lock
+	var callbackPos *models.V3
+	if e, ok := a.entities[entityID]; ok {
+		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
+	}
+
 	a.entitiesMu.Unlock()
+
+	// Call position update callbacks (outside the lock)
+	if callbackPos != nil {
+		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	}
 	return nil
 }
 
@@ -647,7 +729,19 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 			e.Removed = false
 		}
 	}
+
+	// Capture position for callback while holding lock
+	var callbackPos *models.V3
+	if e, ok := a.entities[entityID]; ok {
+		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
+	}
+
 	a.entitiesMu.Unlock()
+
+	// Call position update callbacks (outside the lock)
+	if callbackPos != nil {
+		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	}
 	return nil
 }
 
@@ -669,6 +763,23 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 			log.Printf("[onEntityVelocityUpdate] Error setting bot velocity: %v", err)
 		} else {
 			log.Printf("[onEntityVelocityUpdate] EntityID=%d velocity update applied to bot: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
+		}
+	}
+
+	// Check if this entity is the mounted vehicle
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if moveExec != nil {
+		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
+			if isMountable.GetMountedEntityID() == entityID {
+				if setter, ok := moveExec.(interface {
+					SetMountedVelocity(float64, float64, float64)
+				}); ok {
+					setter.SetMountedVelocity(velX, velY, velZ)
+					log.Printf("[onEntityVelocityUpdate] Mounted entity %d velocity synced: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
+				}
+			}
 		}
 	}
 
@@ -823,8 +934,8 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	// If the removed entity is the vehicle we are currently riding, trigger a
 	// clean dismount. This mirrors the vanilla client's removedPlayerVehicleId
 	// mechanism: the server may remove the vehicle entity and follow up with a
-	// SetPassengers or teleport. Without this, the agent stays in PhysicsModeRiding
-	// indefinitely for a vehicle that no longer exists.
+	// SetPassengers or teleport. Without this, the agent stays mounted
+	// indefinitely on a vehicle that no longer exists.
 	currentMount := a.getMountedEntityID()
 	for _, id := range entityIDs {
 		if id == currentMount {
@@ -1475,7 +1586,12 @@ func (a *agent) sendPlayerLoadedOnce() {
 	}
 
 	a.playerLoadedSent.Do(func() {
-		if err := lifecycle.SendPlayerLoaded(a.client.Conn()); err != nil {
+		conn := a.client.Conn()
+		if conn == nil {
+			log.Printf("[Agent %s][WARN] Client connection not available; skipping SendPlayerLoaded (likely in tests)", a.cfg.Name)
+			return
+		}
+		if err := lifecycle.SendPlayerLoaded(conn); err != nil {
 			log.Printf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
 			return
 		}
@@ -1581,7 +1697,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		a.moveMirror.HandleServerbound(syntheticPacket)
 	}
 	if syncer, ok := moveExec.(interface {
-		SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool)
+		SyncWithServer(x, y, z float64, yaw, pitch float64, onGround bool)
 	}); ok {
 		syncer.SyncWithServer(a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, true)
 	}
@@ -1593,7 +1709,17 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		t = teleport
 	}
 	if t != nil {
-		_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
+		// Check if player has a valid connection (may be nil in unit tests)
+		type playerConnProvider interface{ Conn() interface{} }
+		if pcp, ok := t.(playerConnProvider); ok {
+			if pcp.Conn() != nil {
+				_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
+			} else {
+				log.Printf("[onClientboundPosition] Warning: cannot send teleport confirmation (connection not available, likely in tests)")
+			}
+		} else {
+			log.Printf("[onClientboundPosition] Warning: player does not support Conn() method")
+		}
 	}
 	a.sendPlayerLoadedOnce()
 	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
@@ -1635,7 +1761,7 @@ func (a *agent) onClientboundMoveVehicle(p pk.Packet) error {
 	a.movementMu.RUnlock()
 
 	if syncer, ok := moveExec.(interface {
-		SyncRidingPosition(x, y, z float64, yaw, pitch float32)
+		SyncRidingPosition(x, y, z float64, yaw, pitch float64)
 	}); ok {
 		syncer.SyncRidingPosition(vx, vy, vz, vyaw, vpitch)
 	}

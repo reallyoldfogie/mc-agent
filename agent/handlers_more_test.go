@@ -27,6 +27,11 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err, "agent.Init failed")
 
+	// Inject mock player after Init to override the auto-created player
+	mockConn := &MockConn{}
+	mockPlayer := NewMockPlayer(mockConn)
+	agent.player = mockPlayer
+
 	var (
 		TeleportID pk.VarInt              = 5
 		X          pk.Double              = 1

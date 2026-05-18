@@ -56,6 +56,7 @@ type AgentConfig struct {
 	EnableReplay    bool   // when true, record clientbound packets to an .mcpr
 	ReplayOutput    string // output path, defaults to "session.mcpr" if empty
 	ReplayGenerator string // optional generator string; defaults to "mc-agent"
+	ReplayAutoCamera *bool // when non-nil, overrides default (true) for auto-camera timelines in replays
 
 	// Optional: skins provider for replay embedding (pass NewSkinFetcher result)
 	SkinProvider SkinProvider

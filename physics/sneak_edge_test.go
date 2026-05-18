@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestState_SneakEdgePrevention tests that sneaking prevents walking off block edges
@@ -39,25 +40,20 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 		}
 
 		// Run several ticks
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			state.Tick(input, world)
 		}
 
 		// Bot should stay on the platform, not fall off
 		// X coordinate should not exceed the platform edge at X=1.5 (block edge + 0.3 player halfwidth)
-		if state.Position().X > 1.3 {
-			t.Errorf("Bot walked off edge while sneaking: X=%.3f (should be <= 1.3)", state.Position().X)
-		}
+		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off edge while sneaking: X=%.3f (should be <= 1.3)", state.Position().X)
 
 		// Bot should still be on ground
-		if !state.OnGround() {
-			t.Error("Bot should still be on ground after edge prevention")
-		}
+		assert.True(t, state.OnGround(), "Bot should still be on ground after edge prevention")
 
 		// Y should still be at platform level
-		if state.Position().Y < 0.9 || state.Position().Y > 1.1 {
-			t.Errorf("Bot fell or jumped unexpectedly: Y=%.3f (should be ~1.0)", state.Position().Y)
-		}
+		assert.Greater(t, state.Position().Y, 0.9, "Bot fell too low: Y=%.3f (should be ~1.0)", state.Position().Y)
+		assert.Less(t, state.Position().Y, 1.1, "Bot jumped too high: Y=%.3f (should be ~1.0)", state.Position().Y)
 	})
 
 	t.Run("Prevents falling off diagonal edge", func(t *testing.T) {
@@ -95,14 +91,9 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 		}
 
 		// Bot should not exceed platform boundaries
-		if state.Position().X > 1.3 || state.Position().Z > 1.3 {
-			t.Errorf("Bot walked off diagonal edge: (%.3f, %.3f) - should stay within (1.3, 1.3)",
-				state.Position().X, state.Position().Z)
-		}
-
-		if !state.OnGround() {
-			t.Error("Bot should still be on ground")
-		}
+		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off diagonal edge X: %.3f - should stay within 1.3", state.Position().X)
+		assert.LessOrEqual(t, state.Position().Z, 1.3, "Bot walked off diagonal edge Z: %.3f - should stay within 1.3", state.Position().Z)
+		assert.True(t, state.OnGround(), "Bot should still be on ground")
 	})
 
 	t.Run("Allows normal movement when not at edge", func(t *testing.T) {
@@ -133,10 +124,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 		}
 
 		// Bot should have moved (not blocked by edge prevention)
-		if state.Position().X <= initialX+0.1 {
-			t.Errorf("Bot didn't move when not near edge: X=%.3f (started at %.3f)",
-				state.Position().X, initialX)
-		}
+		assert.Greater(t, state.Position().X, initialX+0.1, "Bot didn't move when not near edge: X=%.3f (started at %.3f)", state.Position().X, initialX)
 	})
 
 	t.Run("Does not prevent movement when not sneaking", func(t *testing.T) {
@@ -169,9 +157,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 
 		// Bot SHOULD walk off edge (edge prevention only works when sneaking)
 		// Bot should have moved past the initial position
-		if state.Position().X <= initialX+0.1 {
-			t.Errorf("Bot should be able to walk off edge when not sneaking")
-		}
+		assert.Greater(t, state.Position().X, initialX+0.1, "Bot should be able to walk off edge when not sneaking")
 
 		// Bot should have fallen (not on ground anymore)
 		// Note: This depends on gravity simulation - after a few ticks, bot should start falling
@@ -214,13 +200,8 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 
 		// Bot should stay on slab, not walk off
 		// Edge is at X=1.5 (block edge) + halfwidth tolerance
-		if state.Position().X > 1.3 {
-			t.Errorf("Bot walked off slab edge: X=%.3f (should be <= 1.3)", state.Position().X)
-		}
-
-		if !state.OnGround() {
-			t.Error("Bot should still be on ground (slab)")
-		}
+		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off slab edge: X=%.3f (should be <= 1.3)", state.Position().X)
+		assert.True(t, state.OnGround(), "Bot should still be on ground (slab)")
 	})
 }
 
@@ -233,9 +214,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		state := NewState(shapes)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
-		if !state.HasGroundSupportAt(pos, world) {
-			t.Error("Should detect ground directly below")
-		}
+		assert.True(t, state.HasGroundSupportAt(pos, world), "Should detect ground directly below")
 	})
 
 	t.Run("Detects no ground when over void", func(t *testing.T) {
@@ -251,9 +230,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		state := NewState(shapes)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
-		if state.HasGroundSupportAt(pos, world) {
-			t.Error("Should not detect ground when over void")
-		}
+		assert.False(t, state.HasGroundSupportAt(pos, world), "Should not detect ground when over void")
 	})
 
 	t.Run("Detects ground directly below (close distance)", func(t *testing.T) {
@@ -271,9 +248,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		// Position just above block (within 0.05 blocks)
 		pos := models.V3{X: 0.5, Y: 1.02, Z: 0.5}
 
-		if !state.HasGroundSupportAt(pos, world) {
-			t.Error("Should detect ground directly below at close distance")
-		}
+		assert.True(t, state.HasGroundSupportAt(pos, world), "Should detect ground directly below at close distance")
 	})
 
 	t.Run("Does not detect air as ground", func(t *testing.T) {
@@ -284,8 +259,6 @@ func TestHasGroundSupportAt(t *testing.T) {
 		state := NewState(shapes)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
-		if state.HasGroundSupportAt(pos, world) {
-			t.Error("Should not detect air as ground support")
-		}
+		assert.False(t, state.HasGroundSupportAt(pos, world), "Should not detect air as ground support")
 	})
 }

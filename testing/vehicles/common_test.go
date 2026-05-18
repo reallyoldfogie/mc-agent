@@ -13,6 +13,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	testingpkg "github.com/reallyoldfogie/mc-agent/testing"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // VehicleTestHelper encapsulates common vehicle test utilities
@@ -488,4 +489,145 @@ func (vh *VehicleTestHelper) WaitForRidingVelocityZero(ctx context.Context, time
 			}
 		}
 	}
+}
+
+// SummonMinecart summons a minecart at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonMinecart(ctx context.Context, x, y, z float64) (int32, error) {
+	cmd := fmt.Sprintf("summon minecraft:minecart %f %f %f", x, y, z)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon minecart: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Find the minecart entity
+	minecartTypeID, found := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:minecart")
+	if !found {
+		return 0, fmt.Errorf("minecart entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.Agent.FindNearestEntityByType(minecartTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("minecart entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// BuildRailTrack builds a straight horizontal rail track in the specified direction
+// direction: "north" | "south" | "east" | "west"
+// length: number of rail blocks to place
+func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int) error {
+	railY := int(startY)
+	var dx, dz int
+
+	switch direction {
+	case "north":
+		dx, dz = 0, -1
+	case "south":
+		dx, dz = 0, 1
+	case "east":
+		dx, dz = 1, 0
+	case "west":
+		dx, dz = -1, 0
+	default:
+		return fmt.Errorf("invalid direction: %s", direction)
+	}
+
+	startRailX := int(startX)
+	startRailZ := int(startZ)
+
+	for i := range length {
+		railX := startRailX + (dx * i)
+		railZ := startRailZ + (dz * i)
+		cmd := fmt.Sprintf("setblock %d %d %d minecraft:rail", railX, railY, railZ)
+		resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place rail at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+	}
+	return nil
+}
+
+// BuildAscendingRailTrack builds an ascending rail track at 45-degree angle
+// direction: "north" | "south" | "east" | "west" (the upward direction)
+// length: number of rail blocks to place
+func (vh *VehicleTestHelper) BuildAscendingRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
+	railStartY := int(startY)
+	var dx, dz int
+
+	switch direction {
+	case "north":
+		dx, dz = 0, -1
+	case "south":
+		dx, dz = 0, 1
+	case "east":
+		dx, dz = 1, 0
+	case "west":
+		dx, dz = -1, 0
+	default:
+		return fmt.Errorf("invalid direction: %s", direction)
+	}
+
+	startRailX := int(startX)
+	startRailZ := int(startZ)
+
+	railName := "minecraft:rail"
+	blockName := "minecraft:stone"
+	if powered {
+		blockName = "minecraft:redstone_block"
+		railName = "minecraft:powered_rail"
+	}
+
+	// Map direction to ascending rail type
+	var railType string
+	switch direction {
+	case "north":
+		railType = railName + "[shape=ascending_north]"
+	case "south":
+		railType = railName + "[shape=ascending_south]"
+	case "east":
+		railType = railName + "[shape=ascending_east]"
+	case "west":
+		railType = railName + "[shape=ascending_west]"
+	}
+
+	for i := range length {
+		railX := startRailX + (dx * i)
+		railY := railStartY + i
+		railZ := startRailZ + (dz * i)
+		cmd := fmt.Sprintf("setblock %d %d %d %s", railX, railY-1, railZ, blockName) // Place solid block under the rail for support
+		resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place ascending rail at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+
+		cmd = fmt.Sprintf("setblock %d %d %d %s", railX, railY, railZ, railType)
+		resp, err = vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place ascending rail at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+	}
+	return nil
+}
+
+// TrackEntityPosition creates an EntityPositionTracker for monitoring entity movement.
+// The tracker automatically registers itself with the agent and records peak/min coordinates.
+func (vh *VehicleTestHelper) TrackEntityPosition(entityID int32) *utils.EntityPositionTracker {
+	// Get initial position
+	x, y, z, _ := vh.ManagedAgent.Agent.GetPositionSimple()
+	initialPos := models.V3{X: x, Y: y, Z: z}
+
+	// Create tracker
+	tracker := utils.NewEntityPositionTracker(entityID, initialPos)
+
+	// Register with agent to receive position updates
+	tracker.RegisterCallback(vh.ManagedAgent.Agent)
+
+	return tracker
 }

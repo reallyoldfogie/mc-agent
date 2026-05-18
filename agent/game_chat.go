@@ -69,12 +69,12 @@ func (a *agent) onDeath() {
 }
 
 // onTeleported handles local player teleport events.
-func (a *agent) onTeleported(x, y, z float64, yaw, pitch float32) {
+func (a *agent) onTeleported(x, y, z float64, yaw, pitch float64) {
 	a.setPosition(x, y, z, yaw, pitch)
 }
 
 // HandleTeleported is a wrapper matching basic.EventsListener.Teleported signature.
-func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float32, _ byte, teleportID int32) error {
+func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float64, _ byte, teleportID int32) error {
 	a.setPosition(x, y, z, yaw, pitch)
 	// Prefer auto-created player, fall back to injected teleport
 	t := a.player

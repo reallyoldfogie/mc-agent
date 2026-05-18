@@ -35,7 +35,7 @@ func (m *movementHandler) SendPosition(conn models.PacketWriter, x, y, z float64
 
 // SendPositionAndRotation sends a combined position and rotation packet.
 // Uses the generated PositionLook packet struct from mc-protocol-go.
-func (m *movementHandler) SendPositionAndRotation(conn models.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (m *movementHandler) SendPositionAndRotation(conn models.PacketWriter, x, y, z float64, yaw, pitch float64, onGround bool) error {
 	pkt := sb.NewPositionLook()
 	pkt.X = pk.Double(x)
 	pkt.Y = pk.Double(y)
@@ -55,7 +55,7 @@ func (m *movementHandler) SendPositionAndRotation(conn models.PacketWriter, x, y
 
 // SendRotation sends a rotation update packet (rotation only, no position).
 // Uses the generated Look packet struct from mc-protocol-go.
-func (m *movementHandler) SendRotation(conn models.PacketWriter, yaw, pitch float32, onGround bool) error {
+func (m *movementHandler) SendRotation(conn models.PacketWriter, yaw, pitch float64, onGround bool) error {
 	pkt := sb.NewLook()
 	pkt.Yaw = pk.Float(yaw)
 	pkt.Pitch = pk.Float(pitch)
@@ -127,7 +127,7 @@ func (m *movementHandler) SendPlayerAbilities(conn models.PacketWriter, flags by
 
 // ParsePlayerPosition parses a clientbound player position packet.
 // Uses the generated Position packet struct from mc-protocol-go.
-func (m *movementHandler) ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float32, flags int32, err error) {
+func (m *movementHandler) ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float64, flags int32, err error) {
 	pkt := cb.NewPosition()
 	if scanErr := pkt.Scan(p); scanErr != nil {
 		err = common.ErrPacketParse{PacketName: "Position", Cause: scanErr}
@@ -138,8 +138,8 @@ func (m *movementHandler) ParsePlayerPosition(p pk.Packet) (teleportID int32, x,
 	x = float64(pkt.X)
 	y = float64(pkt.Y)
 	z = float64(pkt.Z)
-	yaw = float32(pkt.Yaw)
-	pitch = float32(pkt.Pitch)
+	yaw = float64(pkt.Yaw)
+	pitch = float64(pkt.Pitch)
 	flags = int32(pkt.Flags.UInt32)
 
 	return
@@ -161,7 +161,7 @@ func (m *movementHandler) ParseServerboundPos(p pk.Packet) (x, y, z float64, onG
 }
 
 // ParseServerboundPosRot parses a serverbound position+rotation packet.
-func (m *movementHandler) ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float32, onGround bool, err error) {
+func (m *movementHandler) ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float64, onGround bool, err error) {
 	var pktX, pktY, pktZ pk.Double
 	var pktYaw, pktPitch pk.Float
 	var pktOnGround pk.Boolean
@@ -172,22 +172,22 @@ func (m *movementHandler) ParseServerboundPosRot(p pk.Packet) (x, y, z float64, 
 	x = float64(pktX)
 	y = float64(pktY)
 	z = float64(pktZ)
-	yaw = float32(pktYaw)
-	pitch = float32(pktPitch)
+	yaw = float64(pktYaw)
+	pitch = float64(pktPitch)
 	onGround = bool(pktOnGround)
 	return
 }
 
 // ParseServerboundRot parses a serverbound rotation packet.
-func (m *movementHandler) ParseServerboundRot(p pk.Packet) (yaw, pitch float32, onGround bool, err error) {
+func (m *movementHandler) ParseServerboundRot(p pk.Packet) (yaw, pitch float64, onGround bool, err error) {
 	var pktYaw, pktPitch pk.Float
 	var pktOnGround pk.Boolean
 	if scanErr := p.Scan(&pktYaw, &pktPitch, &pktOnGround); scanErr != nil {
 		err = common.ErrPacketParse{PacketName: "ServerboundRot", Cause: scanErr}
 		return
 	}
-	yaw = float32(pktYaw)
-	pitch = float32(pktPitch)
+	yaw = float64(pktYaw)
+	pitch = float64(pktPitch)
 	onGround = bool(pktOnGround)
 	return
 }
@@ -227,7 +227,7 @@ func (m *movementHandler) SendStopSprinting(conn models.PacketWriter, entityID i
 
 // SendMoveVehicle sends a vehicle movement packet while the player is riding a vehicle/mount.
 // This is sent instead of player position packets when mounted.
-func (m *movementHandler) SendMoveVehicle(conn models.PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (m *movementHandler) SendMoveVehicle(conn models.PacketWriter, x, y, z float64, yaw, pitch float64, onGround bool) error {
 	pkt := sb.NewVehicleMove()
 	pkt.X = pk.Double(x)
 	pkt.Y = pk.Double(y)
@@ -281,7 +281,7 @@ func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, e
 }
 
 // ParseClientboundMoveVehicle parses a server-to-client vehicle position correction packet.
-func (m *movementHandler) ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float32, err error) {
+func (m *movementHandler) ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float64, err error) {
 	pkt := cb.NewVehicleMove()
 	if scanErr := pkt.Scan(p); scanErr != nil {
 		err = common.ErrPacketParse{PacketName: "ClientboundMoveVehicle", Cause: scanErr}
@@ -290,8 +290,8 @@ func (m *movementHandler) ParseClientboundMoveVehicle(p pk.Packet) (x, y, z floa
 	x = float64(pkt.X)
 	y = float64(pkt.Y)
 	z = float64(pkt.Z)
-	yaw = float32(pkt.Yaw)
-	pitch = float32(pkt.Pitch)
+	yaw = float64(pkt.Yaw)
+	pitch = float64(pkt.Pitch)
 	return
 }
 

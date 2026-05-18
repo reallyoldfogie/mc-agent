@@ -73,6 +73,19 @@ func (m *testMockShapeManager) IsLava(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) GetBlockProperties(stateID uint32) map[string]string {
+	if stateID == 0 {
+		return map[string]string{
+			"Passable": "true",
+			"Solid":    "false",
+		}
+	}
+	return map[string]string{
+		"Passable": "false",
+		"Solid":    "true",
+	}
+}
+
 func (m *testMockShapeManager) GetStandingSurfaceHeight(stateID uint32) float64 {
 	if stateID == 0 {
 		return 0 // Air - no standing surface

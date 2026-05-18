@@ -99,8 +99,8 @@ func TestMovementHandler_SendPlayerCommand_PacketStructure(t *testing.T) {
 	pkt.JumpBoost = pk.VarInt(0)
 
 	// Verify packet ID is correct for 1.21.2
-	if pkt.PacketID() != 40 {
-		t.Errorf("Expected packet ID 40, got %d", pkt.PacketID())
+	if pkt.PacketID() != 39 {
+		t.Errorf("Expected packet ID 39, got %d", pkt.PacketID())
 	}
 
 	// Verify fields are set correctly
@@ -137,8 +137,8 @@ func TestMovementHandler_SendPlayerAbilities_PacketStructure(t *testing.T) {
 	pkt.Flags = pk.Byte(0x02) // Flying flag
 
 	// Verify packet ID is correct for 1.21.2
-	if pkt.PacketID() != 38 {
-		t.Errorf("Expected packet ID 38, got %d", pkt.PacketID())
+	if pkt.PacketID() != 37 {
+		t.Errorf("Expected packet ID 37, got %d", pkt.PacketID())
 	}
 
 	// Verify fields are set correctly

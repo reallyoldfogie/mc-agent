@@ -10,6 +10,7 @@ import (
 	"github.com/Tnze/go-mc/chat"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -225,6 +226,7 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 	agent.SetChat(capture)
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
+
 	// Seed one player entity and name resolver
 	agent.entities = map[int32]*trackedEntity{1: {EntityID: 1, UUID: [16]byte{1}, X: 1, Y: 0, Z: 0}}
 	agent.SetPlayerNameResolver(func(u [16]byte) (string, bool) {
@@ -233,27 +235,28 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 		}
 		return "", false
 	})
+
 	// Speed up timers
 	trackingTickDur = 10 * time.Millisecond
 	trackingStatsDur = 20 * time.Millisecond
 	trackingNoPlayersInterval = 20 * time.Millisecond
+
 	agent.handleChatCommand("startTracking")
 	time.Sleep(50 * time.Millisecond)
 	agent.handleChatCommand("startTracking")
-	if !containsMsg(capture.GetMessages(), "Tracking is already active!") {
-		t.Fatalf("expected already active")
-	}
+
+	assert.True(t, containsMsg(capture.GetMessages(), "Tracking is already active!"), "expected already active")
+
 	agent.handleChatCommand("stopTracking") // now not active
 	before := len(capture.GetMessages())
 	agent.handleChatCommand("stopTracking")
-	if len(capture.GetMessages()) == before || capture.GetLastMessage() == "Tracking stopped" {
-		t.Fatalf("expected Not tracking message")
-	}
+
+	assert.False(t, len(capture.GetMessages()) == before || capture.GetLastMessage() == "Tracking stopped", "expected Not tracking message")
 }
 
 // OnPlayerChat routing
 func TestOnPlayerChat_Routing(t *testing.T) {
-	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x"})
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "x", Name: "BOT"})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -264,11 +267,11 @@ func TestOnPlayerChat_Routing(t *testing.T) {
 	capture := newCaptureChat()
 	agent.SetChat(capture)
 	agent.client = &fakeClientWriter{}
+
 	// command: pos should reply with not initialized
 	msg := chat.Message{With: []chat.Message{{Text: ">>>BOT<<< pos"}}}
 	var pi playerlist.PlayerInfo
 	_ = agent.OnPlayerChat(pi, msg, true)
-	if !containsMsg(capture.GetMessages(), "not initialized") {
-		t.Fatalf("expected pos error via chat routing; got %#v", capture.GetMessages())
-	}
+
+	assert.True(t, containsMsg(capture.GetMessages(), "not initialized"), "expected pos error via chat routing; got %#v", capture.GetMessages())
 }

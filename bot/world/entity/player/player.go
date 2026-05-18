@@ -4,7 +4,7 @@ import "github.com/reallyoldfogie/mc-agent/bot/world/entity"
 
 type Pos struct {
 	X, Y, Z    float64
-	Yaw, Pitch float32
+	Yaw, Pitch float64
 	OnGround   bool
 }
 

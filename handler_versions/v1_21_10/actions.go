@@ -16,7 +16,7 @@ type actionHandler struct {
 	packetMgr protocol_models.PacketMgr
 }
 
-func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float32) error {
+func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float64) error {
 	pkt := sb.NewUseItem()
 	pkt.Hand = pk.VarInt(hand)
 	pkt.Sequence = pk.VarInt(sequence)

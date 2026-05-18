@@ -620,7 +620,11 @@ func (s *state) tickPosition(w World) {
 	// Update collision flags BEFORE edge prevention (needed to determine onGround status)
 	s.collision.horizontal = newVel.X != s.Vel.X || newVel.Z != s.Vel.Z
 	s.collision.vertical = newVel.Y != s.Vel.Y
-	s.onGround = s.collision.vertical && s.Vel.Y < 0
+
+	// Bot is on ground if: (1) it hit the ground via collision, OR (2) it's standing on a block with non-positive vertical velocity
+	hasVerticalCollision := s.collision.vertical && s.Vel.Y < 0
+	hasGroundBelow := s.hasGroundSupportAt(newPlayerBB.Center(), w)
+	s.onGround = hasVerticalCollision || (hasGroundBelow && newVel.Y <= 0)
 
 	// Update fall distance: accumulate distance fallen, reset on landing
 	if s.onGround {
@@ -937,9 +941,9 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 	return boxes
 }
 
-// AtLookTarget returns true if the player's current look direction matches
+// IsLookingAtTarget returns true if the player's current look direction matches
 // the target yaw and pitch within a small tolerance.
-func (s *state) AtLookTarget(targetYaw, targetPitch float64) bool {
+func (s *state) IsLookingAtTarget(targetYaw, targetPitch float64) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	deltaYaw := math.Abs(NormalizeAngle(targetYaw - s.yaw))

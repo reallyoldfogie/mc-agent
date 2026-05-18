@@ -162,14 +162,14 @@ func (msp *MockShapeProvider) GetMiningInfo(blockStateID uint32) (float64, []str
 func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 	// Mock position tracking
 	currentX, currentY, currentZ := 0.0, 64.0, 0.0
-	var currentYaw, currentPitch float32 = 0.0, 0.0
+	var currentYaw, currentPitch float64 = 0.0, 0.0
 	var entityID int32 = 1
 
-	getBotPos := func() (float64, float64, float64, float32, float32, bool) {
+	getBotPos := func() (float64, float64, float64, float64, float64, bool) {
 		return currentX, currentY, currentZ, currentYaw, currentPitch, true
 	}
 
-	setBotPos := func(x, y, z float64, yaw, pitch float32) {
+	setBotPos := func(x, y, z float64, yaw, pitch float64) {
 		currentX, currentY, currentZ = x, y, z
 		currentYaw, currentPitch = yaw, pitch
 	}

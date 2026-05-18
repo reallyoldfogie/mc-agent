@@ -16,6 +16,7 @@ type Agent interface {
 	ScreenOperations
 	WorldOperations
 	ManualMovement
+	EntityCallbackRegistry
 
 	// Lifecycle
 	Init(ctx context.Context) error
@@ -45,8 +46,8 @@ type Agent interface {
 	SetTelemetryRecorder(recorder MovementTelemetryRecorder)
 
 	// Position update (for movement executor wiring)
-	UpdatePosition(x, y, z float64, yaw, pitch float32)
-	GetPosition() (x, y, z float64, yaw, pitch float32, initialized bool)
+	UpdatePosition(x, y, z float64, yaw, pitch float64)
+	GetPosition() (x, y, z float64, yaw, pitch float64, initialized bool)
 
 	GetEntityID() int32
 	GetTrackedEntitiesForFollowing() map[int32]*TrackedEntity

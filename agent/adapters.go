@@ -112,7 +112,7 @@ func (a *agent) GetMountedEntityPosition(entityID int32) (x, y, z float64, found
 
 // GetMountedEntityYaw returns the yaw of a mounted entity in degrees.
 // The entity tracker stores yaw as a packed int8 (0–255 covering 0–360 degrees).
-func (a *agent) GetMountedEntityYaw(entityID int32) (yaw float32, found bool) {
+func (a *agent) GetMountedEntityYaw(entityID int32) (yaw float64, found bool) {
 	a.entitiesMu.RLock()
 	defer a.entitiesMu.RUnlock()
 
@@ -122,7 +122,7 @@ func (a *agent) GetMountedEntityYaw(entityID int32) (yaw float32, found bool) {
 	}
 
 	// Convert packed angle (int8, 0–255 = 0°–360°) to degrees.
-	yaw = float32(entity.Yaw) * 360.0 / 256.0
+	yaw = float64(entity.Yaw) * 360.0 / 256.0
 	return yaw, true
 }
 

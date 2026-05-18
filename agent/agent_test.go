@@ -12,81 +12,9 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	"github.com/stretchr/testify/require"
 )
-
-type fakeCBPacketMgr struct {
-	ids map[string]protocol_models.ClientboundPacketID
-}
-
-func (f fakeCBPacketMgr) GetClientboundPacketID(name string) protocol_models.ClientboundPacketID {
-	return f.ids[name]
-}
-func (f fakeCBPacketMgr) GetClientboundConfigPacketID(name string) protocol_models.ClientboundPacketID {
-	return 0
-}
-func (f fakeCBPacketMgr) GetClientboundLoginPacketID(name string) protocol_models.ClientboundPacketID {
-	return 0
-}
-func (f fakeCBPacketMgr) Name() string            { return "test" }
-func (f fakeCBPacketMgr) VersionProtocol() uint64 { return 0 }
-func (f fakeCBPacketMgr) ClientboundToString(id protocol_models.ClientboundPacketID) string {
-	return ""
-}
-func (f fakeCBPacketMgr) ClientboundConfigToString(id protocol_models.ClientboundPacketID) string {
-	return ""
-}
-func (f fakeCBPacketMgr) ClientboundLoginToString(id protocol_models.ClientboundPacketID) string {
-	return ""
-}
-func (f fakeCBPacketMgr) GetServerboundPacketID(name string) protocol_models.ServerboundPacketID {
-	return 0
-}
-func (f fakeCBPacketMgr) GetServerboundConfigPacketID(name string) protocol_models.ServerboundPacketID {
-	return 0
-}
-func (f fakeCBPacketMgr) GetServerboundLoginPacketID(name string) protocol_models.ServerboundPacketID {
-	return 0
-}
-func (f fakeCBPacketMgr) ServerboundToString(id protocol_models.ServerboundPacketID) string {
-	return ""
-}
-func (f fakeCBPacketMgr) ServerboundConfigToString(id protocol_models.ServerboundPacketID) string {
-	return ""
-}
-func (f fakeCBPacketMgr) GetClientboundPacketByID(id protocol_models.ClientboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetClientboundConfigPacketByID(id protocol_models.ClientboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetClientboundLoginPacketByID(id protocol_models.ClientboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetClientboundHandshakingPacketByID(id protocol_models.ClientboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetClientboundStatusPacketByID(id protocol_models.ClientboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetServerboundPacketByID(id protocol_models.ServerboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetServerboundConfigPacketByID(id protocol_models.ServerboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetServerboundLoginPacketByID(id protocol_models.ServerboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetServerboundHandshakingPacketByID(id protocol_models.ServerboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetServerboundStatusPacketByID(id protocol_models.ServerboundPacketID) (protocol_models.PacketMarshaller, error) {
-	return nil, nil
-}
-func (f fakeCBPacketMgr) GetEntityTypeID(name string) int32 {
-	return 0
-}
 
 type fakeEventBus struct{ handlers []bot.PacketHandler }
 
@@ -131,35 +59,46 @@ func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack             
 func (f *fakeClient) SetVersionHandler(bot.VersionHandler)                            {}
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
-	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
-	require.NoError(t, err)
-
-	agent := agentInt.(*agent)
-
-	// Inject fakes into config so they persist through Init()
-	fakePM := fakeCBPacketMgr{ids: map[string]protocol_models.ClientboundPacketID{
-		"ClientboundAddEntity":        1,
-		"ClientboundMoveEntityPosRot": 2,
-		"ClientboundMoveEntityPos":    3,
-		"ClientboundTeleportEntity":   4,
-		"ClientboundRemoveEntities":   5,
-	}}
-	agent.cfg.PacketMgr = fakePM
-	bus := &fakeEventBus{}
-	agent.client = &fakeClient{bus: bus}
-
-	if err := agent.Init(context.Background()); err != nil {
-		t.Fatalf("Init failed: %v", err)
+	expectedPackets := []string{
+		"ClientboundAddEntity",
+		"ClientboundMoveEntityPosRot",
+		"ClientboundMoveEntityPos",
+		"ClientboundTeleportEntity",
+		"ClientboundRemoveEntities",
 	}
-	// We expect at least the core entity handlers to be registered (others may exist)
-	gotIDs := map[protocol_models.ClientboundPacketID]bool{}
-	for _, h := range bus.handlers {
-		gotIDs[protocol_models.ClientboundPacketID(h.ID)] = true
-	}
-	for _, id := range []int{1, 2, 3, 4, 5} {
-		if !gotIDs[protocol_models.ClientboundPacketID(id)] {
-			t.Errorf("missing handler id %d", id)
-		}
+
+	for _, versionTest := range models.StandardVersionTests {
+		t.Run(versionTest.Name, func(t *testing.T) {
+			agentInt, err := New(models.AgentConfig{Version: versionTest.MCVersion, Address: "127.0.0.1:25565"})
+			require.NoError(t, err)
+
+			agent := agentInt.(*agent)
+
+			// Use real packet manager for this version
+			pktMgr := protocol_versions.GetPacketMgrForVersion(versionTest.MCVersion)
+			require.NotNil(t, pktMgr, "packet manager for %s should not be nil", versionTest.MCVersion)
+			agent.cfg.PacketMgr = pktMgr
+
+			bus := &fakeEventBus{}
+			agent.client = &fakeClient{bus: bus}
+
+			if err := agent.Init(context.Background()); err != nil {
+				t.Fatalf("Init failed: %v", err)
+			}
+			// We expect at least the core entity handlers to be registered
+			require.NotEmpty(t, bus.handlers, "no handlers registered after Init")
+
+			// Verify key entity packet handlers were registered by checking handler IDs
+			gotIDs := map[protocol_models.ClientboundPacketID]bool{}
+			for _, h := range bus.handlers {
+				gotIDs[protocol_models.ClientboundPacketID(h.ID)] = true
+			}
+
+			for _, packetName := range expectedPackets {
+				expectedID := pktMgr.GetClientboundPacketID(packetName)
+				require.True(t, gotIDs[expectedID], "missing handler for packet %s (id %d)", packetName, expectedID)
+			}
+		})
 	}
 }
 

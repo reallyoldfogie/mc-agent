@@ -34,8 +34,8 @@ type ExecutorConfig struct {
 	// Required for all executor types
 	Client         bot.Client
 	PacketMgr      protocol_models.PacketMgr
-	GetBotPos      func() (float64, float64, float64, float32, float32, bool)
-	SetBotPos      func(float64, float64, float64, float32, float32)
+	GetBotPos      func() (float64, float64, float64, float64, float64, bool)
+	SetBotPos      func(float64, float64, float64, float64, float64)
 	GetBotEntityID func() int32
 	Ctx            context.Context
 

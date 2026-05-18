@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	gouuid "github.com/google/uuid"
@@ -18,6 +19,18 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/reallyoldfogie/mc-replay-go/mcpr/recorder"
 )
+
+// positionSnapshot records the agent's position at a point in time for
+// auto-camera timeline generation.
+type positionSnapshot struct {
+	CapturedAt time.Time
+	X, Y, Z    float64
+	Yaw, Pitch float64
+}
+
+// snapshotMinInterval is the minimum time between consecutive position
+// snapshots to avoid excessive keyframes from micro-movements.
+const snapshotMinInterval = 500 * time.Millisecond
 
 // replayMovementMirror converts select serverbound packets (movement) into
 // synthetic clientbound packets for replay visibility of the local player.
@@ -44,10 +57,15 @@ type replayMovementMirror struct {
 	skinProvider         models.SkinProvider
 
 	lastX, lastY, lastZ float64
-	lastYaw, lastPitch  float32
+	lastYaw, lastPitch  float64
 	onGround            bool
 	playerInfoSent      bool
 	positionInitialized bool
+
+	// Position snapshot collection for auto-camera timeline generation.
+	startTime        time.Time
+	lastSnapshotTime time.Time
+	snapshots        []positionSnapshot
 
 	sbidPos        int32 // cached serverbound ids
 	sbidPosRot     int32
@@ -79,6 +97,7 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		rec:            rec,
 		pm:             pm,
 		versionHandler: versionHandler,
+		startTime:      time.Now(),
 		sbidPos:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
 		sbidPosRot:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
 		sbidRot:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerRot")),
@@ -93,6 +112,43 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		cbidAnimate:    int32(pm.GetClientboundPacketID("ClientboundAnimation")),
 		skinProvider:   sp,
 	}
+}
+
+// RecordPositionSnapshot directly records a position snapshot for the auto-camera
+// timeline. This provides a reliable snapshot path that does not depend on the
+// serverbound packet interception chain (HandleServerbound → emitTeleport).
+// It uses the same throttling interval as emitTeleport.
+func (m *replayMovementMirror) RecordPositionSnapshot(x, y, z float64, yaw, pitch float64) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	if !m.lastSnapshotTime.IsZero() && now.Sub(m.lastSnapshotTime) < snapshotMinInterval {
+		return
+	}
+	m.snapshots = append(m.snapshots, positionSnapshot{
+		CapturedAt: now,
+		X:          x,
+		Y:          y,
+		Z:          z,
+		Yaw:        yaw,
+		Pitch:      pitch,
+	})
+	m.lastSnapshotTime = now
+}
+
+// PositionSnapshots returns a copy of the collected position snapshots and the
+// recording start time. The caller uses startTime to convert CapturedAt into
+// replay-relative millisecond timestamps.
+func (m *replayMovementMirror) PositionSnapshots() ([]positionSnapshot, time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]positionSnapshot, len(m.snapshots))
+	copy(out, m.snapshots)
+	return out, m.startTime
 }
 
 func (m *replayMovementMirror) SetEntityMeta(entityID int32, name string, uuid [16]byte) {
@@ -295,7 +351,7 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	}
 	log.Printf("[ReplayMirror] handlePosRot (fallback): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
 		float64(x), float64(y), float64(z), float32(yaw), float32(pitch))
-	m.emitTeleport(float64(x), float64(y), float64(z), float32(yaw), float32(pitch), bool(onGround))
+	m.emitTeleport(float64(x), float64(y), float64(z), float64(yaw), float64(pitch), bool(onGround))
 }
 
 func (m *replayMovementMirror) handleRot(p pk.Packet) {
@@ -316,7 +372,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 		return
 	}
 	log.Printf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
-	m.emitTeleport(m.lastX, m.lastY, m.lastZ, float32(yaw), float32(pitch), bool(onGround))
+	m.emitTeleport(m.lastX, m.lastY, m.lastZ, float64(yaw), float64(pitch), bool(onGround))
 }
 
 // handleSwing mirrors a serverbound arm-swing packet into a clientbound Entity
@@ -381,7 +437,7 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 	m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, bool(onGround))
 }
 
-func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32, onGround bool) {
+func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float64, onGround bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -427,9 +483,23 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float32,
 		}
 		m.positionInitialized = true
 	}
+
+	// Collect position snapshot for auto-camera timeline (throttled).
+	now := time.Now()
+	if m.lastSnapshotTime.IsZero() || now.Sub(m.lastSnapshotTime) >= snapshotMinInterval {
+		m.snapshots = append(m.snapshots, positionSnapshot{
+			CapturedAt: now,
+			X:          x,
+			Y:          y,
+			Z:          z,
+			Yaw:        yaw,
+			Pitch:      pitch,
+		})
+		m.lastSnapshotTime = now
+	}
 }
 
-func (m *replayMovementMirror) writeRelMove(dx, dy, dz int16, yaw, pitch float32, onGround bool) {
+func (m *replayMovementMirror) writeRelMove(dx, dy, dz int16, yaw, pitch float64, onGround bool) {
 	yawByte := angleToByte(yaw)
 	pitchByte := angleToByte(pitch)
 	log.Printf("[ReplayMirror] writeRelMove: delta=(%d, %d, %d) yaw=%.2f->%d pitch=%.2f->%d",
@@ -450,7 +520,7 @@ func (m *replayMovementMirror) writeRelMove(dx, dy, dz int16, yaw, pitch float32
 	m.writeRotateHead(yaw)
 }
 
-func (m *replayMovementMirror) writeRotateHead(yaw float32) {
+func (m *replayMovementMirror) writeRotateHead(yaw float64) {
 	yawByte := angleToByte(yaw)
 	rotate := pk.Marshal(
 		m.cbidRotateHead,
@@ -460,7 +530,7 @@ func (m *replayMovementMirror) writeRotateHead(yaw float32) {
 	_ = m.rec.RecordNow(int32(rotate.ID), rotate.Data)
 }
 
-func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z float64, yaw, pitch float32, onGround bool) {
+func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z float64, yaw, pitch float64, onGround bool) {
 	const maxDelta = 7.9 // slightly under 8 blocks to stay within int16 range
 	dx := x - prevX
 	dy := y - prevY
@@ -487,7 +557,7 @@ func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z flo
 	}
 }
 
-func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float32) {
+func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float64) {
 	// Build SpawnEntity packet using version-aware handler
 	// Converts float32 yaw/pitch to int8 angle bytes
 	yawByte := angleToByte(yaw)
@@ -498,7 +568,7 @@ func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float3
 		m.entityType,
 		x, y, z,
 		int8(yawByte), int8(pitchByte),
-		0,     // objectData
+		0,       // objectData
 		0, 0, 0, // velX, velY, velZ (zero velocity on spawn)
 	)
 	if err != nil {
@@ -508,9 +578,9 @@ func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float3
 	_ = m.rec.RecordNow(packetID, packetData)
 }
 
-func angleToByte(f float32) byte {
+func angleToByte(f float64) byte {
 	// Convert degrees to protocol angle byte
-	return byte(int(math.Round(float64(f*256/360))) & 0xFF)
+	return byte(int(math.Round(f*256/360)) & 0xFF)
 }
 
 func encodeRelMove(prevX, prevY, prevZ, x, y, z float64) (int16, int16, int16, bool) {

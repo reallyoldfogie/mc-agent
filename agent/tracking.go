@@ -42,27 +42,28 @@ type trackedEntity struct {
 	BoatPaddleRight bool               // Right paddle turning
 }
 
-// TrackedEntityInfo exposes entity tracking data for external use (tests, following, etc.)
-type TrackedEntityInfo = models.TrackedEntityInfo
-
 // GetPosition returns the current bot position and rotation.
 // When mounted, returns a.posX/Y/Z which is updated every tick by the physics
 // executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
 // while riding because the server typically does not echo the vehicle's position
 // back to the rider, making it stale within a tick or two.
-func (a *agent) GetPosition() (x, y, z float64, yaw, pitch float32, initialized bool) {
+func (a *agent) GetPosition() (x, y, z float64, yaw, pitch float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
+	log.Printf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch)
+
 	return a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, a.posInitialized
 }
 
 // setPosition updates the bot position and rotation.
-func (a *agent) setPosition(x, y, z float64, yaw, pitch float32) {
+func (a *agent) setPosition(x, y, z float64, yaw, pitch float64) {
 	a.posMu.Lock()
+	defer a.posMu.Unlock()
+
 	a.posX, a.posY, a.posZ = x, y, z
 	a.posYaw, a.posPitch = yaw, pitch
 	a.posInitialized = true
-	a.posMu.Unlock()
+	log.Printf("[setPosition %s] Updated bot position to (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, x, y, z, yaw, pitch)
 }
 
 // GetPositionSimple returns bot position without rotation.
@@ -73,6 +74,8 @@ func (a *agent) setPosition(x, y, z float64, yaw, pitch float32) {
 func (a *agent) GetPositionSimple() (x, y, z float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
+	log.Printf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, x, y, z)
+
 	return a.posX, a.posY, a.posZ, a.posInitialized
 }
 
@@ -314,12 +317,12 @@ func (e *trackedEntity) getInterpolatedPosition() (x, y, z float64) {
 }
 
 // GetTrackedEntities returns a snapshot of all tracked entities for external consumption (tests, debugging, etc.)
-func (a *agent) GetTrackedEntities() map[int32]TrackedEntityInfo {
+func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 	a.entitiesMu.RLock()
 	defer a.entitiesMu.RUnlock()
-	out := make(map[int32]TrackedEntityInfo, len(a.entities))
+	out := make(map[int32]models.TrackedEntityInfo, len(a.entities))
 	for id, e := range a.entities {
-		out[id] = TrackedEntityInfo{
+		out[id] = models.TrackedEntityInfo{
 			EntityID:   e.EntityID,
 			EntityType: e.EntityType,
 			UUID:       e.UUID,
@@ -406,7 +409,7 @@ func (a *agent) FaceEntity(entityID int32) error {
 	pitch := math.Atan2(-dy, horizontalDist) * 180 / math.Pi
 
 	// Send rotation packet
-	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), float32(yaw), float32(pitch), true)
+	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), yaw, pitch, true)
 }
 
 // FacePosition makes the bot look at a specific position.
@@ -439,5 +442,5 @@ func (a *agent) FacePosition(targetX, targetY, targetZ float64) error {
 	pitch := math.Atan2(-dy, horizontalDist) * 180 / math.Pi
 
 	// Send rotation packet
-	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), float32(yaw), float32(pitch), true)
+	return a.versionHandler.Play().Movement().SendRotation(a.client.Conn(), yaw, pitch, true)
 }

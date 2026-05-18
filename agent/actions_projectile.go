@@ -140,7 +140,7 @@ func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callba
 	}
 
 	// Set rotation to the specified pitch/yaw
-	a.setPosition(botX, botY, botZ, float32(yaw), float32(pitch))
+	a.setPosition(botX, botY, botZ, yaw, pitch)
 
 	// Arrow spawns at eye position minus 0.1 blocks (Minecraft PersistentProjectileEntity.java:113)
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
@@ -196,7 +196,7 @@ func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callba
 		return nil, err
 	}
 	sequence := a.getNextSequence()
-	if err := actions.SendUseItem(conn, 0, sequence, float32(yaw), float32(pitch)); err != nil {
+	if err := actions.SendUseItem(conn, 0, sequence, yaw, pitch); err != nil {
 		return nil, fmt.Errorf("send use item: %w", err)
 	}
 
@@ -331,25 +331,25 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	dz := targetPos.Z - botOrigin.Z
 	yaw := physics.YawForStartTarget(botOrigin, targetPos)
 
-	log.Printf("[Agent %s] FireBowAtDebug: Yaw BEFORE cast to float32: %.10f°, AFTER cast: %.2f°",
-		a.cfg.Name, yaw, float32(yaw))
+	log.Printf("[Agent %s] FireBowAtDebug: Yaw=%.10f°",
+		a.cfg.Name, yaw)
 	log.Printf("[Agent %s] FireBowAtDebug: Yaw calculation debug: dx=%.2f, dz=%.2f, atan2(dz,dx)_rad=%.4f, atan2(dz,dx)_deg=%.2f, yaw_final=%.2f°",
 		a.cfg.Name, dx, dz, math.Atan2(dz, dx), math.Atan2(dz, dx)*180/math.Pi, yaw)
 	log.Printf("[Agent %s] FireBowAtDebug: Trajectory validated for arrow: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), yaw=%.2f°, pitch=%.2f°, power=%.3f, blocked=%v",
 		a.cfg.Name, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, yaw, pitch, powerFactor, validSolution.IsBlocked)
-	log.Printf("[Agent %s] FireBowAtDebug: SendUseItem will send: yaw_float32=%.2f°, pitch_float32=%.2f°",
-		a.cfg.Name, float32(yaw), float32(pitch))
+	log.Printf("[Agent %s] FireBowAtDebug: SendUseItem will send: yaw=%.2f°, pitch=%.2f°",
+		a.cfg.Name, yaw, pitch)
 
 	// CRITICAL: Send position packet with trajectory-verified pitch BEFORE using bow
 	// This ensures server knows the correct player rotation matching the trajectory we calculated
 	log.Printf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.cfg.Name, pitch)
-	if err := a.moveExec.SendPositionAndRotation(botX, botY, botZ, float32(yaw), float32(pitch), true); err != nil {
+	if err := a.moveExec.SendPositionAndRotation(botX, botY, botZ, yaw, pitch, true); err != nil {
 		return nil, fmt.Errorf("send position for bow: %w", err)
 	}
 
 	time.Sleep(50 * time.Millisecond) // Small delay to ensure position packet is processed
 
-	a.setPosition(botX, botY, botZ, float32(yaw), float32(pitch))
+	a.setPosition(botX, botY, botZ, yaw, pitch)
 
 	// Visualize trajectory with display entities for debugging (uses RCON if available)
 	log.Printf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.cfg.Name, len(trajectory))
@@ -385,7 +385,7 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	// NOTE: UseItem yaw/pitch are not used by server for arrow direction.
 	// The server uses the player's last known rotation from position packets.
 	// TurnTowards now uses physics-consistent yaw calculation via YawForStartTarget.
-	if err := actions.SendUseItem(conn, 0, sequence, float32(yaw), float32(pitch)); err != nil {
+	if err := actions.SendUseItem(conn, 0, sequence, yaw, pitch); err != nil {
 		return nil, fmt.Errorf("send use item: %w", err)
 	}
 
@@ -671,7 +671,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 
 	log.Printf("[ThrowProjectileAt] Final aiming angles for %s: yaw=%.2f°, pitch=%.2f°", itemName, yaw, pitch)
 	// Turn to face the target
-	if err := a.moveExec.SendRotation(float32(yaw), float32(pitch), true); err != nil {
+	if err := a.moveExec.SendRotation(yaw, pitch, true); err != nil {
 		return nil, fmt.Errorf("error setting rotation: %w", err)
 	}
 
@@ -696,15 +696,12 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Register all callbacks before sending use item packet
 	a.setPendingProjectileCallback(projectileType, &targetPos, callbacks...)
 
-	// Debug: Log the actual float32 values before sending
-	yaw32 := float32(yaw)
-	pitch32 := float32(pitch)
-	log.Printf("[ThrowProjectileAt] Sending use item packet for %s with yaw=%.2f, pitch=%.2f (as float32: yaw=%f pitch=%f)", itemName, yaw, pitch, yaw32, pitch32)
+	log.Printf("[ThrowProjectileAt] Sending use item packet for %s with yaw=%.2f, pitch=%.2f", itemName, yaw, pitch)
 	conn, err := a.getPacketWriter()
 	if err != nil {
 		return nil, err
 	}
-	if err := actionHandler.SendUseItem(conn, hand, 0, yaw32, pitch32); err != nil {
+	if err := actionHandler.SendUseItem(conn, hand, 0, yaw, pitch); err != nil {
 		return nil, fmt.Errorf("error throwing projectile: %w", err)
 	}
 

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -49,52 +50,30 @@ func (c *captureChat) ContainsMessage(substring string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, msg := range c.msgs {
-		if contains(msg, substring) {
+		if containsCI(msg, substring) {
 			return true
 		}
 	}
 	return false
 }
 
-// contains checks if a substring is in a string (case-insensitive)
-func contains(s, substr string) bool {
-	return stringContains(s, substr)
-}
-
-// stringContains is a simple string containment check
-func stringContains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
+// containsCI checks if a substring is in a string (case-insensitive)
+func containsCI(s, substr string) bool {
+	sLower := strings.ToLower(s)
+	subLower := strings.ToLower(substr)
+	return strings.Contains(sLower, subLower)
 }
 
 // containsMsg checks if any message in a slice contains a substring (case-insensitive).
 // This is a helper for tests to check captured messages.
 func containsMsg(msgs []string, sub string) bool {
-	subLower := toLower(sub)
+	subLower := strings.ToLower(sub)
 	for _, m := range msgs {
-		if stringContains(toLower(m), subLower) {
+		if containsCI(strings.ToLower(m), subLower) {
 			return true
 		}
 	}
 	return false
-}
-
-// toLower converts a string to lowercase
-func toLower(s string) string {
-	result := make([]byte, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'A' && c <= 'Z' {
-			result[i] = c + 32
-		} else {
-			result[i] = c
-		}
-	}
-	return string(result)
 }
 
 // setupChatCapture is a simple helper to create an agent and return a captureChat for testing.

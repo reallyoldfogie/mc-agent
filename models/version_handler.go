@@ -196,10 +196,10 @@ type MovementHandler interface {
 	SendPosition(conn PacketWriter, x, y, z float64, onGround bool) error
 
 	// SendPositionAndRotation sends a combined position and rotation packet
-	SendPositionAndRotation(conn PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error
+	SendPositionAndRotation(conn PacketWriter, x, y, z float64, yaw, pitch float64, onGround bool) error
 
 	// SendRotation sends a rotation update packet (rotation only, no position)
-	SendRotation(conn PacketWriter, yaw, pitch float32, onGround bool) error
+	SendRotation(conn PacketWriter, yaw, pitch float64, onGround bool) error
 
 	// SendPlayerCommand sends a player command packet (sprint, sneak, etc.)
 	// actionID: 0=start sneak, 1=stop sneak, 2=leave bed, 3=start sprint, 4=stop sprint, etc.
@@ -213,7 +213,7 @@ type MovementHandler interface {
 
 	// SendMoveVehicle sends a vehicle movement packet while mounted.
 	// Sent instead of SendPosition when the player is riding a vehicle/mount.
-	SendMoveVehicle(conn PacketWriter, x, y, z float64, yaw, pitch float32, onGround bool) error
+	SendMoveVehicle(conn PacketWriter, x, y, z float64, yaw, pitch float64, onGround bool) error
 
 	// SendVehicleInput sends directional input for the currently mounted vehicle.
 	// For v1_21_1–3 translates to SteerVehicle (float-based);
@@ -233,16 +233,16 @@ type MovementHandler interface {
 	SendPlayerCommandWithParam(conn PacketWriter, entityID, actionID, jumpBoost int32) error
 
 	// ParsePlayerPosition parses a clientbound player position packet
-	ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float32, flags int32, err error)
+	ParsePlayerPosition(p pk.Packet) (teleportID int32, x, y, z float64, yaw, pitch float64, flags int32, err error)
 
 	// ParseServerboundPos parses a serverbound position packet (for replay recording)
 	ParseServerboundPos(p pk.Packet) (x, y, z float64, onGround bool, err error)
 
 	// ParseServerboundPosRot parses a serverbound position+rotation packet (for replay recording)
-	ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float32, onGround bool, err error)
+	ParseServerboundPosRot(p pk.Packet) (x, y, z float64, yaw, pitch float64, onGround bool, err error)
 
 	// ParseServerboundRot parses a serverbound rotation packet (for replay recording)
-	ParseServerboundRot(p pk.Packet) (yaw, pitch float32, onGround bool, err error)
+	ParseServerboundRot(p pk.Packet) (yaw, pitch float64, onGround bool, err error)
 
 	// ParseServerboundStatus parses a serverbound status-only packet (for replay recording)
 	ParseServerboundStatus(p pk.Packet) (onGround bool, err error)
@@ -250,7 +250,7 @@ type MovementHandler interface {
 	// ParseClientboundMoveVehicle parses a server-to-client vehicle position correction packet.
 	// Sent when the server rejects a client VehicleMove and needs to reset the vehicle's
 	// authoritative position. No onGround field; the packet carries x, y, z, yaw, pitch only.
-	ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float32, err error)
+	ParseClientboundMoveVehicle(p pk.Packet) (x, y, z float64, yaw, pitch float64, err error)
 }
 
 // ActionHandler handles player action packets (item usage, attacks, etc.).
@@ -259,7 +259,7 @@ type ActionHandler interface {
 	// hand: 0=main hand, 1=offhand
 	// sequence: anti-cheat sequence number
 	// yaw, pitch: player rotation at time of use
-	SendUseItem(conn PacketWriter, hand Hand, sequence int32, yaw, pitch float32) error
+	SendUseItem(conn PacketWriter, hand Hand, sequence int32, yaw, pitch float64) error
 
 	// SendPlayerAction sends a player action packet (dig, release bow, swap hands, etc.).
 	// status: action ID (see PlayerAction constants)

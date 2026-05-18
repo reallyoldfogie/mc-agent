@@ -298,10 +298,8 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 
 	case SwimDown:
 		// Swimming down in water
-		// Sneak button makes you swim down, but sneaking on land prevents the transition from solid to water.
-		if currentState.IsInWater() {
-			out.Sneak = true
-		}
+		// Sneak button makes you swim down
+		out.Sneak = true
 
 	case ExitWater:
 		// Exiting water onto adjacent solid ground

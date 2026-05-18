@@ -854,7 +854,7 @@ func TestState_CollisionDetection(t *testing.T) {
 	}
 }
 
-func TestState_AtLookTarget(t *testing.T) {
+func TestState_IsLookingAtTarget(t *testing.T) {
 	shapes := newMockShapeProvider()
 	state := NewState(shapes)
 
@@ -876,9 +876,9 @@ func TestState_AtLookTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := state.AtLookTarget(tt.targetYaw, tt.targetPitch)
+			result := state.IsLookingAtTarget(tt.targetYaw, tt.targetPitch)
 			if result != tt.expected {
-				t.Errorf("AtLookTarget(%0.1f, %0.1f) = %v, expected %v",
+				t.Errorf("IsLookingAtTarget(%0.1f, %0.1f) = %v, expected %v",
 					tt.targetYaw, tt.targetPitch, result, tt.expected)
 			}
 		})

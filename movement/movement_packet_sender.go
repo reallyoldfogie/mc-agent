@@ -19,8 +19,8 @@ type movementPacketSender struct {
 	client    bot.Client
 	packetMgr protocol_models.PacketMgr
 	// Reference to bot position tracking (will be passed from main)
-	getBotPosition func() (x, y, z float64, yaw, pitch float32, initialized bool)
-	setBotPosition func(x, y, z float64, yaw, pitch float32)
+	getBotPosition func() (x, y, z float64, yaw, pitch float64, initialized bool)
+	setBotPosition func(x, y, z float64, yaw, pitch float64)
 	// Reference to bot entity ID (needed for sprint/sneak commands)
 	getBotEntityID func() int32
 	// Track sprint/sneak state to avoid redundant packets
@@ -37,8 +37,8 @@ type movementPacketSender struct {
 func newMovementPacketSender(
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
-	getBotPos func() (float64, float64, float64, float32, float32, bool),
-	setBotPos func(float64, float64, float64, float32, float32),
+	getBotPos func() (float64, float64, float64, float64, float64, bool),
+	setBotPos func(float64, float64, float64, float64, float64),
 	getBotEntityID func() int32,
 ) *movementPacketSender {
 	return &movementPacketSender{
@@ -103,7 +103,7 @@ func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) err
 }
 
 // SendPositionAndRotation sends a combined position and rotation update packet
-func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pitch float64, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -137,7 +137,7 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 }
 
 // SendRotation sends a rotation update packet
-func (me *movementPacketSender) SendRotation(yaw, pitch float32, onGround bool) error {
+func (me *movementPacketSender) SendRotation(yaw, pitch float64, onGround bool) error {
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -238,7 +238,7 @@ func (me *movementPacketSender) LookAt(targetX, targetY, targetZ float64, onGrou
 }
 
 // calculateLookAngles calculates the yaw and pitch needed to look from one position to another
-func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch float32) {
+func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch float64) {
 	dx := toX - fromX
 	dy := toY - fromY
 	dz := toZ - fromZ
@@ -250,11 +250,11 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
 	// Yaw formula must convert from world delta to firing direction
 	// atan2(-dx, dz) accounts for the coordinate system rotation
-	yaw = float32(math.Atan2(-dx, dz) * 180 / math.Pi)
+	yaw = math.Atan2(-dx, dz) * 180 / math.Pi
 
 	// Calculate pitch (rotation around X axis)
 	// Pitch -90 is straight up, 0 is level, 90 is straight down
-	pitch = float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
+	pitch = -math.Atan2(dy, horizontalDist) * 180 / math.Pi
 
 	return yaw, pitch
 }

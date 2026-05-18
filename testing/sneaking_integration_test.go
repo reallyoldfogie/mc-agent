@@ -43,15 +43,18 @@ func TestSneaking_EdgePrevention(t *testing.T) {
 			// Enable/disable cam agent
 			// agCfg.EnableCamAgent = true
 			agCfg.EnableCamAgent = false
+			agCfg.EnableReplay = true
 
 			ag, err := fw.SpawnAgent(ctx, inst, agCfg)
 			require.NoError(t, err)
+
 			defer func() {
-				if ag != nil && ag.BotClient() != nil {
-					_ = ag.BotClient().Close()
+				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer stopCancel()
+				if ag != nil {
+					_ = ag.Stop(stopCtx) // Handles agent + cam agent cleanup
 				}
 			}()
-
 			time.Sleep(2 * time.Second)
 
 			// Get bot position
@@ -76,7 +79,7 @@ func TestSneaking_EdgePrevention(t *testing.T) {
 				}
 			}
 
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(3 * time.Second)
 
 			// Teleport bot to center of platform
 			tp := fmt.Sprintf(`teleport %s %.1f %.1f %.1f`, ag.Name, float64(platformX)+0.5, float64(platformY+1)+0.5, float64(platformZ)+0.5)

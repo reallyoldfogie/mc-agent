@@ -27,8 +27,6 @@ const (
 	PhysicsModeNavigating
 	// PhysicsModeManual - Agent is under external control (for special actions)
 	PhysicsModeManual
-	// PhysicsModeRiding - Agent is riding/mounted on a vehicle, server controls position
-	PhysicsModeRiding
 )
 
 // String returns the name of the physics mode.
@@ -40,8 +38,6 @@ func (pm PhysicsMode) String() string {
 		return "Navigating"
 	case PhysicsModeManual:
 		return "Manual"
-	case PhysicsModeRiding:
-		return "Riding"
 	default:
 		return "Unknown"
 	}
@@ -143,6 +139,11 @@ type PhysicsMovementExecutor struct {
 	// recent riding tick (boat or horse). Exposed via GetRidingDragMultiplier
 	// so tests can read the actual value instead of guessing.
 	lastVelMultiplier float64
+
+	// onPositionUpdate is an optional callback invoked after every position
+	// update sent to the server. Used by the replay mirror to record position
+	// snapshots for auto-camera timeline generation.
+	onPositionUpdate func(x, y, z float64, yaw, pitch float64)
 }
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
@@ -150,8 +151,8 @@ func NewPhysicsMovementExecutor(
 	ctx context.Context,
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
-	getBotPos func() (float64, float64, float64, float32, float32, bool),
-	setBotPos func(float64, float64, float64, float32, float32),
+	getBotPos func() (float64, float64, float64, float64, float64, bool),
+	setBotPos func(float64, float64, float64, float64, float64),
 	getBotEntityID func() int32,
 	world physics.World,
 	shapeProvider physics.BlockShapeProvider,
@@ -176,8 +177,8 @@ func NewPhysicsMovementExecutor(
 	if initialized {
 		physicsState.SetPosition(
 			models.V3{X: x, Y: y, Z: z},
-			float64(yaw),
-			float64(pitch),
+			yaw,
+			pitch,
 			true, // Assume on ground initially
 		)
 	}
@@ -239,7 +240,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 			// This is especially important for boats: the server validates that
 			// the first VehicleMove heading matches the boat's orientation.
 			if entYaw, yawFound := pe.entityPositionGetter.GetMountedEntityYaw(vehicleEntityID); yawFound {
-				yaw = float64(entYaw)
+	yaw = entYaw
 			}
 			pe.physicsState.SetPosition(models.V3{X: entX, Y: entY, Z: entZ}, yaw, pitch, false)
 			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f) yaw=%.2f", vehicleEntityID, entX, entY, entZ, yaw)
@@ -259,8 +260,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 		}
 	}
 
-	pe.SetMode(PhysicsModeRiding)
-	log.Printf("[SetMounted] Agent mounted on entity %d", vehicleEntityID)
+	log.Printf("[SetMounted] Agent mounted on entity %d (mode stays %s)", vehicleEntityID, pe.GetMode())
 	return nil
 }
 
@@ -274,8 +274,7 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.ridingVelZ = 0
 	pe.boatYawVelocity = 0
 	pe.dismountRequested = false
-	pe.SetMode(PhysicsModeIdle)
-	log.Printf("[SetDismounted] Agent dismounted from vehicle")
+	log.Printf("[SetDismounted] Agent dismounted from vehicle (mode stays %s)", pe.GetMode())
 	return nil
 }
 
@@ -313,6 +312,33 @@ func (pe *PhysicsMovementExecutor) SetMountedEntityPositionGetter(getter models.
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 	pe.entityPositionGetter = getter
+}
+
+// GetMountedEntityID returns the entity ID of the currently mounted vehicle, or -1 if not mounted.
+func (pe *PhysicsMovementExecutor) GetMountedEntityID() int32 {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+	return pe.mountedEntityID
+}
+
+// SetMountedVelocity updates the riding velocity from a server velocity packet.
+// Call when ClientboundEntityVelocity is received for the mounted entity.
+// velocity is in protocol units (1/8000 blocks per tick), and is converted to blocks/tick.
+func (pe *PhysicsMovementExecutor) SetMountedVelocity(velX, velY, velZ float64) {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
+	// Only update if mounted
+	if pe.mountedEntityID < 0 {
+		return
+	}
+
+	// Convert from protocol units (1/8000) to blocks/tick
+	pe.ridingVelX = velX / 8000.0
+	pe.ridingVelZ = velZ / 8000.0
+
+	log.Printf("[SetMountedVelocity] Server velocity for entity %d: (%.4f, %.4f) blocks/tick",
+		pe.mountedEntityID, pe.ridingVelX, pe.ridingVelZ)
 }
 
 // SetClutchCallback sets an optional callback for clutch planning signals.
@@ -354,12 +380,12 @@ func (pe *PhysicsMovementExecutor) SendPosition(x, y, z float64, onGround bool) 
 
 // SendPositionAndRotation sends a combined position and rotation update.
 // Also syncs the physics state to prevent the tick loop from sending stale positions.
-func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float64, onGround bool) error {
 	// Sync physics state FIRST so tick loop doesn't send stale position
 	pe.physicsState.SetPosition(
 		models.V3{X: x, Y: y, Z: z},
-		float64(yaw),
-		float64(pitch),
+		yaw,
+		pitch,
 		onGround,
 	)
 	return pe.movementPacketSender.SendPositionAndRotation(x, y, z, yaw, pitch, onGround)
@@ -367,13 +393,13 @@ func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw,
 
 // SendRotation sends a rotation update.
 // Also syncs the physics state to prevent the tick loop from sending stale rotation.
-func (pe *PhysicsMovementExecutor) SendRotation(yaw, pitch float32, onGround bool) error {
+func (pe *PhysicsMovementExecutor) SendRotation(yaw, pitch float64, onGround bool) error {
 	// Sync physics state FIRST so tick loop doesn't send stale rotation
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	pe.physicsState.SetPosition(
 		pos,
-		float64(yaw),
-		float64(pitch),
+		yaw,
+		pitch,
 		onGround,
 	)
 	return pe.movementPacketSender.SendRotation(yaw, pitch, onGround)
@@ -421,14 +447,14 @@ func (pe *PhysicsMovementExecutor) IsSneaking() bool {
 
 // HandleServerCorrection updates physics state from server position correction.
 // This should be called when receiving ClientboundPosition packets from the server.
-func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, pitch float32, onGround bool) {
+func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, pitch float64, onGround bool) {
 	// Calculate prediction error before syncing
 	currentPos, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
 	deltaX := x - currentPos.X
 	deltaY := y - currentPos.Y
 	deltaZ := z - currentPos.Z
-	deltaYaw := float64(yaw) - currentYaw
-	deltaPitch := float64(pitch) - currentPitch
+	deltaYaw := yaw - currentYaw
+	deltaPitch := pitch - currentPitch
 	predictionError := deltaX*deltaX + deltaY*deltaY + deltaZ*deltaZ
 
 	// Track prediction error
@@ -437,8 +463,8 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 	// Sync physics state with server
 	pe.physicsState.SetPosition(
 		models.V3{X: x, Y: y, Z: z},
-		float64(yaw),
-		float64(pitch),
+		yaw,
+		pitch,
 		onGround,
 	)
 
@@ -450,7 +476,7 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 }
 
 // SyncWithServer is an alias for HandleServerCorrection for backward compatibility.
-func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch float32, onGround bool) {
+func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch float64, onGround bool) {
 	pe.HandleServerCorrection(x, y, z, yaw, pitch, onGround)
 }
 
@@ -459,7 +485,7 @@ func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch fl
 // riding velocity state so the next VehicleMove is sent from the corrected
 // position rather than continuing from a stale prediction.
 // Should be called when a ClientboundMoveVehicle packet is received.
-func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitch float32) {
+func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitch float64) {
 	pe.mountedEntityMu.Lock()
 	pe.ridingVelX = 0
 	pe.ridingVelZ = 0
@@ -471,8 +497,8 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 	newYaw := currentYaw
 	newPitch := currentPitch
 	if yaw != 0 || pitch != 0 {
-		newYaw = float64(yaw)
-		newPitch = float64(pitch)
+		newYaw = yaw
+		newPitch = pitch
 	}
 	pe.physicsState.SetPosition(
 		models.V3{X: x, Y: y, Z: z},
@@ -480,8 +506,53 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 		newPitch,
 		false,
 	)
-	pe.movementPacketSender.setBotPosition(x, y, z, float32(newYaw), float32(newPitch))
+	pe.movementPacketSender.setBotPosition(x, y, z, newYaw, newPitch)
 	log.Printf("[SyncRidingPosition] Vehicle position corrected by server to (%.2f, %.2f, %.2f) yaw=%.2f", x, y, z, newYaw)
+}
+
+// SyncMountedPosition applies a server-authoritative mounted entity position correction.
+// Called when entity movement packets (RelEntityMove, MoveEntityPosRot) arrive for the mounted entity.
+// Unlike SyncRidingPosition, this preserves riding velocity (it's a passive sync, not a full reset).
+// The position comes from the entity tracker which aggregates server move packets.
+func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
+	// Only sync if mounted
+	if pe.mountedEntityID < 0 {
+		return
+	}
+
+	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+	pe.physicsState.SetPosition(
+		models.V3{X: x, Y: y, Z: z},
+		currentYaw,
+		currentPitch,
+		false,
+	)
+	pe.movementPacketSender.setBotPosition(x, y, z, currentYaw, currentPitch)
+	log.Printf("[SyncMountedPosition] Mounted entity %d position synced to (%.2f, %.2f, %.2f)", pe.mountedEntityID, x, y, z)
+}
+
+// SyncMountedPositionWithRotation applies a server-authoritative mounted entity position and rotation correction.
+// Called when entity movement packets with rotation (MoveEntityPosRot) arrive for the mounted entity.
+func (pe *PhysicsMovementExecutor) SyncMountedPositionWithRotation(x, y, z, yaw, pitch float64) {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
+	// Only sync if mounted
+	if pe.mountedEntityID < 0 {
+		return
+	}
+
+	pe.physicsState.SetPosition(
+		models.V3{X: x, Y: y, Z: z},
+		yaw,
+		pitch,
+		false,
+	)
+	pe.movementPacketSender.setBotPosition(x, y, z, yaw, pitch)
+	log.Printf("[SyncMountedPositionWithRotation] Mounted entity %d position synced to (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", pe.mountedEntityID, x, y, z, yaw, pitch)
 }
 
 // NotifyDead pauses position updates to the server.
@@ -858,24 +929,21 @@ func (pe *PhysicsMovementExecutor) continuousTickLoop() {
 }
 
 // tick performs one physics simulation tick.
+// Riding (mounted) state is orthogonal to mode: mode generates inputs, then
+// the mounted flag decides whether those inputs drive vehicle packets or
+// walking physics.
 func (pe *PhysicsMovementExecutor) tick() {
-	// Check if mounted (separate from mode)
+	// Check mounted state (orthogonal to mode)
 	pe.mountedEntityMu.RLock()
 	isMounted := pe.mountedEntityID >= 0
 	pe.mountedEntityMu.RUnlock()
-
-	// If mounted, handle riding instead of normal physics
-	if isMounted {
-		pe.handleRidingMode()
-		return
-	}
 
 	// Get current mode
 	pe.modeMu.RLock()
 	mode := pe.mode
 	pe.modeMu.RUnlock()
 
-	// Generate inputs based on mode
+	// (A) Generate inputs based on mode — identical whether mounted or not
 	var inputs physics.Inputs
 	switch mode {
 	case PhysicsModeIdle:
@@ -884,37 +952,31 @@ func (pe *PhysicsMovementExecutor) tick() {
 		inputs = pe.generateNavigationInputs()
 	case PhysicsModeManual:
 		inputs = pe.generateManualInputs()
-	case PhysicsModeRiding:
-		// This should only be reached if SetMounted was called but agent later dismounted
-		// Just switch to idle mode
-		pe.modeMu.Lock()
-		pe.mode = PhysicsModeIdle
-		pe.modeMu.Unlock()
-		inputs = pe.generateIdleInputs()
 	default:
 		inputs = physics.Inputs{} // Zero inputs
 	}
 
-	log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
-		mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+	if isMounted {
+		// (B) Riding: translate mode-generated inputs into vehicle packets
+		log.Printf("[PhysicsExecutor][tick] Tick inputs (mounted): mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sneak=%t",
+			mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sneak)
+		pe.handleRidingTick(inputs)
+	} else {
+		// (C) Walking: run physics sim + send player position
+		log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
+			mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
 
-	// Apply sprint/sneak state changes
-	pe.applyMovementState(inputs)
+		pe.applyMovementState(inputs)
 
-	// Tick physics simulation
-	if err := pe.physicsState.Tick(inputs, pe.world); err != nil {
-		log.Printf("[PhysicsExecutor] Physics tick error: %v", err)
-		return
+		if err := pe.physicsState.Tick(inputs, pe.world); err != nil {
+			log.Printf("[PhysicsExecutor] Physics tick error: %v", err)
+			return
+		}
+
+		pe.recordTelemetry(inputs)
+		pe.checkClutch()
+		pe.sendPositionUpdate()
 	}
-
-	// Record telemetry if enabled
-	pe.recordTelemetry(inputs)
-
-	// Check for clutch opportunities if enabled
-	pe.checkClutch()
-
-	// Send position update to server
-	pe.sendPositionUpdate()
 }
 
 // generateIdleInputs generates inputs for idle mode (just physics, no movement).
@@ -1366,6 +1428,17 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 		inputs.Pitch = pitch
 	}
 
+	// Sanitize NaN yaw/pitch that may have come from physics state
+	// This can happen in rare cases where physics state is corrupted or uninitialized
+	if math.IsNaN(inputs.Yaw) {
+		log.Printf("[PhysicsExecutor][generateManualInputs] WARNING: yaw is NaN, defaulting to 0. This may indicate a physics state initialization issue.")
+		inputs.Yaw = 0
+	}
+	if math.IsNaN(inputs.Pitch) {
+		log.Printf("[PhysicsExecutor][generateManualInputs] WARNING: pitch is NaN, defaulting to 0. This may indicate a physics state initialization issue.")
+		inputs.Pitch = 0
+	}
+
 	log.Printf("[PhysicsExecutor][generateManualInputs] Manual inputs: throttleX=%.2f throttleZ=%.2f yaw=%.2f pitch=%.2f jump=%v sprint=%v sneak=%v climbDir=%.2f",
 		inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch,
 		inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
@@ -1373,7 +1446,11 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 	return inputs
 }
 
-// handleRidingMode handles the riding/mounted mode tick.
+// handleRidingTick handles one tick while the agent is mounted on a vehicle.
+// It receives mode-generated inputs from tick() and translates them into
+// vehicle control packets. Riding is orthogonal to PhysicsMode — the mode
+// determines how inputs are generated (idle=zero, manual=user, navigating=path)
+// and this function consumes them to drive the vehicle.
 //
 // Vanilla protocol flow (per ClientPlayerEntity.tick in extractedSrc 1.21.10/
 // net/minecraft/client/network/ClientPlayerEntity.java:209-235):
@@ -1388,23 +1465,13 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 //	  }
 //	}
 //
-// In other words, the CLIENT is the position authority for ALL ridden vehicles
-// (boats AND horses): it runs the vehicle's physics locally and reports the
-// result via ServerboundVehicleMove. The server-side `ServerPlayerEntity` does
-// not derive `forwardSpeed`/`sidewaysSpeed` from PlayerInput — those are only
-// populated client-side by `ClientPlayerEntity.tickMovementInput` — so a
-// VehicleMove with a freshly-computed position is required for the server to
-// know where the vehicle has moved. PlayerInput is also sent (mainly for
-// rider-state visibility on the server) and a paddle/sprint packet is sent
-// for animation/sound parity.
-//
 // For boats, left/right (ThrottleX) rotates the boat via angular velocity
 // matching vanilla AbstractBoatEntity.yawVelocity, and forward/backward
 // (ThrottleZ) thrusts along the boat's current heading.
 //
 // For horses, ThrottleX rotates the horse's yaw and ThrottleZ thrusts
 // forward along the facing direction.
-func (pe *PhysicsMovementExecutor) handleRidingMode() {
+func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	// Get mounted entity ID and version handler
 	pe.mountedEntityMu.RLock()
 	mountedEntityID := pe.mountedEntityID
@@ -1412,26 +1479,21 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	pe.mountedEntityMu.RUnlock()
 
 	if versionHandler == nil {
-		log.Printf("[handleRidingMode] Version handler not set")
+		log.Printf("[handleRidingTick] Version handler not set")
 		return
 	}
 
 	if pe.entityPositionGetter == nil {
-		log.Printf("[handleRidingMode] Entity position getter not set, cannot send vehicle updates")
+		log.Printf("[handleRidingTick] Entity position getter not set, cannot send vehicle updates")
 		return
 	}
 
 	// Verify the mounted entity is still tracked.
 	_, _, _, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
 	if !found {
-		log.Printf("[handleRidingMode] Mounted entity %d not found", mountedEntityID)
+		log.Printf("[handleRidingTick] Mounted entity %d not found", mountedEntityID)
 		return
 	}
-
-	// Get throttle inputs
-	pe.manualInputsMu.RLock()
-	inputs := pe.manualInputs
-	pe.manualInputsMu.RUnlock()
 
 	// Determine vehicle type to send appropriate control packet.
 	var isBoat, isMinecart bool
@@ -1459,21 +1521,18 @@ func (pe *PhysicsMovementExecutor) handleRidingMode() {
 	}
 	pe.mountedEntityMu.RUnlock()
 
-	log.Printf("[handleRidingMode] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
+	log.Printf("[handleRidingTick] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
 		forward, backward, left, right, jump, sneak, inputs.ThrottleX, inputs.ThrottleZ)
 
 	// Vanilla ClientPlayerEntity.tick() always sends a LookAndOnGround packet
-	// before VehicleMove while riding (extractedSrc 1.21.1
-	// ClientPlayerEntity.java:209-211). Without this the server's
-	// ServerPlayerEntity retains stale yaw/pitch, which can cause position
-	// validation mismatches on 1.21.1.
+	// before VehicleMove while riding.
 	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
 	if err := versionHandler.Play().Movement().SendRotation(
 		pe.movementPacketSender.client.Conn(),
-		float32(currentYaw), float32(currentPitch),
+		currentYaw, currentPitch,
 		false,
 	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send player look packet: %v", err)
+		log.Printf("[handleRidingTick] Failed to send player look packet: %v", err)
 	}
 
 	if isBoat {
@@ -1538,23 +1597,31 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		log.Printf("[handleRidingMode] Failed to send boat paddle state packet: %v", err)
 	}
 
+	// Hold lock for entire read-compute-write cycle
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
 	// --- Boat physics (vanilla tick order) ---
 	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
 	blockBelowBoat := pe.getBlockBelowBoat(currentPos.X, currentPos.Y, currentPos.Z)
 	velMultiplier, gravityVal := pe.getBoatPhysicsValues(currentPos.X, currentPos.Y, currentPos.Z, blockBelowBoat)
-	pe.lastVelMultiplier = velMultiplier
+
+	// Read current velocity
+	ridingVelX := pe.ridingVelX
+	ridingVelZ := pe.ridingVelZ
+	boatYawVelocity := pe.boatYawVelocity
 
 	// (1) Drag: velocity *= multiplier, yawVelocity *= multiplier
-	pe.ridingVelX *= velMultiplier
-	pe.ridingVelZ *= velMultiplier
-	pe.boatYawVelocity *= velMultiplier
+	ridingVelX *= velMultiplier
+	ridingVelZ *= velMultiplier
+	boatYawVelocity *= velMultiplier
 
 	// (2) Input → angular acceleration: left/right modify yawVelocity ±1 deg/tick
 	if left {
-		pe.boatYawVelocity--
+		boatYawVelocity--
 	}
 	if right {
-		pe.boatYawVelocity++
+		boatYawVelocity++
 	}
 
 	// (3) Input → thrust magnitude along heading
@@ -1567,22 +1634,22 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	}
 
 	// (4) Apply rotation: yaw += yawVelocity
-	yaw += pe.boatYawVelocity
+	yaw += boatYawVelocity
 
 	// (5) Project thrust through yaw into world-space velocity
 	yawRad := yaw * math.Pi / 180.0
-	pe.ridingVelX += math.Sin(-yawRad) * thrustSpeed
-	pe.ridingVelZ += math.Cos(yawRad) * thrustSpeed
+	ridingVelX += math.Sin(-yawRad) * thrustSpeed
+	ridingVelZ += math.Cos(yawRad) * thrustSpeed
 
 	// (6) Vanilla Entity.resetVelocityIfSmall: clamp tiny velocities to zero
-	if math.Abs(pe.ridingVelX) < physics.ResetVelocity {
-		pe.ridingVelX = 0
+	if math.Abs(ridingVelX) < physics.ResetVelocity {
+		ridingVelX = 0
 	}
-	if math.Abs(pe.ridingVelZ) < physics.ResetVelocity {
-		pe.ridingVelZ = 0
+	if math.Abs(ridingVelZ) < physics.ResetVelocity {
+		ridingVelZ = 0
 	}
-	if math.Abs(pe.boatYawVelocity) < physics.ResetVelocity {
-		pe.boatYawVelocity = 0
+	if math.Abs(boatYawVelocity) < physics.ResetVelocity {
+		boatYawVelocity = 0
 	}
 
 	// Vertical: gravity unless floating in water (server maintains buoyancy).
@@ -1593,21 +1660,27 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		velocityY = gravityVal
 	}
 
-	newX := currentPos.X + pe.ridingVelX
+	newX := currentPos.X + ridingVelX
 	newY := currentPos.Y + velocityY
-	newZ := currentPos.Z + pe.ridingVelZ
+	newZ := currentPos.Z + ridingVelZ
 	onGround := false
 
+	// Update shared velocity state (still holding lock)
+	pe.ridingVelX = ridingVelX
+	pe.ridingVelZ = ridingVelZ
+	pe.boatYawVelocity = boatYawVelocity
+	pe.lastVelMultiplier = velMultiplier
+
 	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
-		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, pe.boatYawVelocity, thrustSpeed, pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
+		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, ridingVelX, ridingVelZ, newX, newY, newZ)
 
 	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, onGround)
-	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))
+	pe.movementPacketSender.setBotPosition(newX, newY, newZ, yaw, pitch)
 
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
 		pe.movementPacketSender.client.Conn(),
 		newX, newY, newZ,
-		float32(yaw), float32(pitch),
+		yaw, pitch,
 		onGround,
 	); err != nil {
 		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
@@ -1650,6 +1723,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 		log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
 	}
 
+	// Hold lock for entire read-compute-write cycle
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
 	// (2) Yaw-rotation steering: ThrottleX rotates the rider/horse so the
 	// manual-control API's world-axis convention is preserved. Positive
 	// ThrottleX ("east") => yaw decreases toward -90 (Minecraft convention:
@@ -1673,27 +1750,33 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 		}
 	}
 
-	pe.lastVelMultiplier = horseDrag
-	pe.ridingVelZ = pe.ridingVelZ*horseDrag + inputs.ThrottleZ*horseAcceleration
-	pe.ridingVelX = 0 // horses don't strafe in this model; ThrottleX is steering
+	// Read current velocity
+	ridingVelZ := pe.ridingVelZ
+	ridingVelZ = ridingVelZ*horseDrag + inputs.ThrottleZ*horseAcceleration
+	ridingVelX := 0.0 // horses don't strafe in this model; ThrottleX is steering
 
 	// (4) Vanilla small-velocity clamp.
-	if math.Abs(pe.ridingVelZ) < physics.ResetVelocity {
-		pe.ridingVelZ = 0
+	if math.Abs(ridingVelZ) < physics.ResetVelocity {
+		ridingVelZ = 0
 	}
 
 	// (5) Project forward velocity by yaw to get world-space displacement.
 	yawRad := yaw * math.Pi / 180.0
-	newX := currentPos.X + (-math.Sin(yawRad) * pe.ridingVelZ)
+	newX := currentPos.X + (-math.Sin(yawRad) * ridingVelZ)
 	newY := currentPos.Y
-	newZ := currentPos.Z + (math.Cos(yawRad) * pe.ridingVelZ)
+	newZ := currentPos.Z + (math.Cos(yawRad) * ridingVelZ)
 	onGround := true
 
+	// Update shared velocity state (still holding lock)
+	pe.ridingVelX = ridingVelX
+	pe.ridingVelZ = ridingVelZ
+	pe.lastVelMultiplier = horseDrag
+
 	log.Printf("[handleRidingMode] Horse physics: yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.2f speed=%.4f newPos=(%.2f,%.2f,%.2f)",
-		yaw, inputs.ThrottleX, inputs.ThrottleZ, horseAcceleration, horseDrag, pe.ridingVelZ, newX, newY, newZ)
+		yaw, inputs.ThrottleX, inputs.ThrottleZ, horseAcceleration, horseDrag, ridingVelZ, newX, newY, newZ)
 
 	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, onGround)
-	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))
+	pe.movementPacketSender.setBotPosition(newX, newY, newZ, yaw, pitch)
 
 	// (6) Send VehicleMove with the locally-predicted horse position. This is
 	// what vanilla ClientPlayerEntity does for any ridden vehicle whose
@@ -1702,7 +1785,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
 		pe.movementPacketSender.client.Conn(),
 		newX, newY, newZ,
-		float32(yaw), float32(pitch),
+		yaw, pitch,
 		onGround,
 	); err != nil {
 		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
@@ -1713,9 +1796,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNonBoat(
 type minecartRailInfo struct {
 	found       bool
 	shape       string
-	isPowered   bool   // block is a powered rail
-	isEnergized bool   // powered rail has redstone power
-	railBlockY  int    // integer Y of the rail block
+	isPowered   bool // block is a powered rail
+	isEnergized bool // powered rail has redstone power
+	railBlockY  int  // integer Y of the rail block
 }
 
 // detectRailBelow checks for rail blocks beneath the minecart and returns rail info.
@@ -1761,13 +1844,13 @@ func railShapeDirection(shape string) (dx, dz float64, isSlope bool) {
 	case "east_west":
 		return 1, 0, false
 	case "ascending_north":
-		return 0, -1, true   // forward = north
+		return 0, -1, true // forward = north
 	case "ascending_south":
-		return 0, 1, true    // forward = south
+		return 0, 1, true // forward = south
 	case "ascending_east":
-		return 1, 0, true    // forward = east
+		return 1, 0, true // forward = east
 	case "ascending_west":
-		return -1, 0, true   // forward = west
+		return -1, 0, true // forward = west
 	case "south_east":
 		inv := 1.0 / math.Sqrt2
 		return inv, inv, false
@@ -1844,21 +1927,43 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 		log.Printf("[handleRidingModeMinecart] SendVehicleInput error: %v", err)
 	}
 
+	// Hold lock for entire read-compute-write cycle
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
 	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
+
+	// Sanitize NaN yaw/pitch that may come from uninitialized physics state
+	// This can happen in rare cases (e.g., v1.21.10 mounting issue) where physics state
+	// hasn't been properly initialized with player rotation
+	if math.IsNaN(yaw) {
+		log.Printf("[handleRidingModeMinecart] WARNING: yaw is NaN, defaulting to 0. Physics state may not be properly initialized.")
+		yaw = 0
+	}
+	if math.IsNaN(pitch) {
+		log.Printf("[handleRidingModeMinecart] WARNING: pitch is NaN, defaulting to 0. Physics state may not be properly initialized.")
+		pitch = 0
+	}
 
 	// (2) Detect rail
 	rail := pe.detectRailBelow(currentPos.X, currentPos.Y, currentPos.Z)
 
+	// Read current velocity
+	ridingVelX := pe.ridingVelX
+	ridingVelZ := pe.ridingVelZ
+
 	var newX, newY, newZ float64
+	var newVelX, newVelZ float64
+	var newVelMultiplier float64
 
 	if !rail.found {
 		// Off-rail: apply gravity and high drag
-		pe.ridingVelX *= physics.MinecartOffRailDrag
-		pe.ridingVelZ *= physics.MinecartOffRailDrag
-		newX = currentPos.X + pe.ridingVelX
+		newVelX = ridingVelX * physics.MinecartOffRailDrag
+		newVelZ = ridingVelZ * physics.MinecartOffRailDrag
+		newX = currentPos.X + newVelX
 		newY = currentPos.Y + physics.MinecartFallGravity
-		newZ = currentPos.Z + pe.ridingVelZ
-		pe.lastVelMultiplier = physics.MinecartOffRailDrag
+		newZ = currentPos.Z + newVelZ
+		newVelMultiplier = physics.MinecartOffRailDrag
 	} else {
 		// (3) Get rail direction
 		dirX, dirZ, isSloped := railShapeDirection(rail.shape)
@@ -1867,19 +1972,48 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 
 		// (4) Determine current horizontal speed along rail direction.
 		// If current velocity is opposite to rail direction, preserve sign.
-		dot := pe.ridingVelX*dirX + pe.ridingVelZ*dirZ
-		speed := math.Sqrt(pe.ridingVelX*pe.ridingVelX + pe.ridingVelZ*pe.ridingVelZ)
+		dot := ridingVelX*dirX + ridingVelZ*dirZ
+		speed := math.Sqrt(ridingVelX*ridingVelX + ridingVelZ*ridingVelZ)
 		if dot < 0 {
 			speed = -speed // preserve backwards travel
 		}
 
-		// (5) Apply flat rail drag
-		speed *= physics.MinecartRailDrag
-		pe.lastVelMultiplier = physics.MinecartRailDrag
+		// (5) Player input: nudge to break static inertia.
+		// Java DefaultMinecartController.moveOnRail (1.21.2+):
+		//   Only fires when horizontalLengthSquared < 0.01, adding a 0.001 impulse
+		//   along the player's facing direction. This is NOT continuous thrust.
+		// Also determines whether unpowered-rail braking is active; the nudge
+		// cancels braking (Java: bl2 = false) when it fires.
+		unpoweredBraking := rail.isPowered && !rail.isEnergized
+		speedSq := ridingVelX*ridingVelX + ridingVelZ*ridingVelZ
+		if speedSq < physics.MinecartNudgeSpeedThreshold {
+			var inputDirX, inputDirZ float64
+			if forward {
+				inputDirX, inputDirZ = dirX, dirZ
+			} else if backward {
+				inputDirX, inputDirZ = -dirX, -dirZ
+			}
+			if inputDirX != 0 || inputDirZ != 0 {
+				ridingVelX += inputDirX * physics.MinecartNudgeImpulse
+				ridingVelZ += inputDirZ * physics.MinecartNudgeImpulse
+				// Nudge cancels unpowered-rail braking (Java: bl2 = false).
+				unpoweredBraking = false
+				// Recompute signed speed from the updated velocity.
+				speed = math.Sqrt(ridingVelX*ridingVelX + ridingVelZ*ridingVelZ)
+				newDot := ridingVelX*dirX + ridingVelZ*dirZ
+				if newDot < 0 {
+					speed = -speed
+				}
+			}
+		}
 
-		// (6) Apply slope gravity effect
+		// (6) Apply drag: 0.997 with passenger.
+		// Java DefaultMinecartController.getSpeedRetention() = 0.997 when hasPassengers().
+		speed *= physics.MinecartRailDrag
+		newVelMultiplier = physics.MinecartRailDrag
+
+		// (7) Apply slope gravity effect
 		if isSloped {
-			// Determine if we are going in the ascending direction
 			goingUp := dot > 0
 			if goingUp {
 				speed -= physics.MinecartSlopeGravity
@@ -1888,47 +2022,81 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 			}
 		}
 
-		// (7) Apply powered rail boost (only when energized)
+		// (8) Unpowered powered-rail braking.
+		// Java DefaultMinecartController.moveOnRail:
+		//   if (bl2) { if (n < 0.03) velocity = ZERO; else velocity *= 0.5; }
+		if unpoweredBraking {
+			absSpeed := math.Abs(speed)
+			if absSpeed < physics.MinecartUnpoweredBrakeThreshold {
+				speed = 0
+			} else {
+				speed *= 0.5
+			}
+		}
+
+		// (9) Apply powered rail boost (only when energized)
 		if rail.isPowered && rail.isEnergized {
 			if speed > 0 {
 				speed += physics.MinecartPoweredRailBoost
 			} else if speed < 0 {
 				speed -= physics.MinecartPoweredRailBoost
 			} else {
-				// Stationary on powered rail: give a small nudge in the forward direction
+				// Stationary on energized powered rail: launch in rail direction.
 				speed = physics.MinecartPoweredRailBoost
 			}
 		}
 
-		// (8) Cap speed
+		// (10) Cap speed
 		if speed > physics.MinecartMaxSpeed {
 			speed = physics.MinecartMaxSpeed
 		} else if speed < -physics.MinecartMaxSpeed {
 			speed = -physics.MinecartMaxSpeed
 		}
 
-		// (9) Project speed back onto rail direction
-		pe.ridingVelX = dirX * speed
-		pe.ridingVelZ = dirZ * speed
+		// (11) Project speed back onto rail direction
+		newVelX = dirX * speed
+		newVelZ = dirZ * speed
 
-		// (10) Compute new horizontal position
-		newX = currentPos.X + pe.ridingVelX
-		newZ = currentPos.Z + pe.ridingVelZ
+		// (12) Compute new horizontal position.
+		// Java applies a 0.75 displacement multiplier when a passenger is present:
+		//   double s = this.minecart.hasPassengers() ? 0.75 : 1.0;
+		//   move(SELF, clamp(s*vel.x, -maxSpeed, maxSpeed), 0, clamp(s*vel.z, ...))
+		// The stored velocity (ridingVelX/Z) retains its full value; only the
+		// position delta is scaled.
+		newX = currentPos.X + newVelX*physics.MinecartPassengerSpeedMultiplier
+		newZ = currentPos.Z + newVelZ*physics.MinecartPassengerSpeedMultiplier
 
-		// (11) Compute Y from rail geometry
+		// (12) Compute Y from rail geometry
 		newY = railYAtPosition(rail.shape, newX, newZ, railBlockX, rail.railBlockY, railBlockZ)
 	}
 
+	// Update shared velocity state (still holding lock)
+	pe.ridingVelX = newVelX
+	pe.ridingVelZ = newVelZ
+	pe.lastVelMultiplier = newVelMultiplier
+
 	log.Printf("[handleRidingModeMinecart] rail=%v shape=%s isSlope=%v vel=(%.4f,%.4f) pos=(%.3f,%.3f,%.3f)",
-		rail.found, rail.shape, rail.found && isSlope(rail.shape), pe.ridingVelX, pe.ridingVelZ, newX, newY, newZ)
+		rail.found, rail.shape, rail.found && isSlope(rail.shape), newVelX, newVelZ, newX, newY, newZ)
 
 	pe.physicsState.SetPosition(models.V3{X: newX, Y: newY, Z: newZ}, yaw, pitch, rail.found)
-	pe.movementPacketSender.setBotPosition(newX, newY, newZ, float32(yaw), float32(pitch))
+	pe.movementPacketSender.setBotPosition(newX, newY, newZ, yaw, pitch)
+
+	// Final safety check: ensure we never send NaN rotation values to the server
+	sendYaw := yaw
+	sendPitch := pitch
+	if math.IsNaN(sendYaw) {
+		log.Printf("[handleRidingModeMinecart] CRITICAL: yaw is still NaN before SendMoveVehicle, defaulting to 0")
+		sendYaw = 0
+	}
+	if math.IsNaN(sendPitch) {
+		log.Printf("[handleRidingModeMinecart] CRITICAL: pitch is still NaN before SendMoveVehicle, defaulting to 0")
+		sendPitch = 0
+	}
 
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
 		pe.movementPacketSender.client.Conn(),
 		newX, newY, newZ,
-		float32(yaw), float32(pitch),
+		sendYaw, sendPitch,
 		rail.found,
 	); err != nil {
 		log.Printf("[handleRidingModeMinecart] SendMoveVehicle error: %v", err)
@@ -2112,6 +2280,13 @@ func (pe *PhysicsMovementExecutor) checkClutch() {
 	}
 }
 
+// SetPositionUpdateCallback sets an optional callback invoked after every
+// position update is sent to the server. This is used to record position
+// snapshots for replay auto-camera timeline generation.
+func (pe *PhysicsMovementExecutor) SetPositionUpdateCallback(callback func(x, y, z float64, yaw, pitch float64)) {
+	pe.onPositionUpdate = callback
+}
+
 // sendPositionUpdate sends the current physics state position to the server.
 func (pe *PhysicsMovementExecutor) sendPositionUpdate() {
 	if pe.isDead.Load() {
@@ -2119,15 +2294,17 @@ func (pe *PhysicsMovementExecutor) sendPositionUpdate() {
 	}
 	pos, yaw, pitch, onGround := pe.physicsState.GetPosition()
 
-	yawFloat32 := float32(yaw)
-	pitchFloat32 := float32(pitch)
-
 	// IMPORTANT: Call base executor directly to avoid resetting velocity.
 	// The physics state was already updated by Tick(), so we just need to
 	// send the current state to the server without modifying it.
-	if err := pe.movementPacketSender.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yawFloat32, pitchFloat32, onGround); err != nil {
+	if err := pe.movementPacketSender.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yaw, pitch, onGround); err != nil {
 		// Don't spam logs on errors
 		// log.Printf("[PhysicsExecutor] Failed to send position: %v", err)
+	}
+
+	// Notify the position update callback (e.g., replay snapshot recorder).
+	if pe.onPositionUpdate != nil {
+		pe.onPositionUpdate(pos.X, pos.Y, pos.Z, yaw, pitch)
 	}
 }
 

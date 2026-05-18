@@ -151,7 +151,7 @@ type agent struct {
 	// tracking
 	posMu            sync.RWMutex
 	posX, posY, posZ float64
-	posYaw, posPitch float32
+	posYaw, posPitch float64
 	posInitialized   bool
 
 	entIDMu sync.RWMutex
@@ -208,6 +208,10 @@ type agent struct {
 	posHeartbeatMu     sync.Mutex
 	posHeartbeatActive bool
 	posHeartbeatStop   chan struct{}
+
+	// entity position update callbacks (for testing/monitoring)
+	entityPosCallbacksMu sync.RWMutex
+	entityPosCallbacks   []models.EntityPositionCallback
 
 	// helpers
 
@@ -825,6 +829,21 @@ func (a *agent) Init(ctx context.Context) error {
 							}
 						})
 					}
+					// Wire position snapshot recording directly from physics
+					// tick to the replay mirror, bypassing the serverbound
+					// packet interception chain for reliable auto-camera
+					// keyframe generation during normal movement.
+					type positionSnapshotRecorder interface {
+						RecordPositionSnapshot(x, y, z float64, yaw, pitch float64)
+					}
+					type positionUpdateCallbackSetter interface {
+						SetPositionUpdateCallback(func(x, y, z float64, yaw, pitch float64))
+					}
+					if recorder, ok := a.moveMirror.(positionSnapshotRecorder); ok {
+						if setter, ok := a.moveExec.(positionUpdateCallbackSetter); ok {
+							setter.SetPositionUpdateCallback(recorder.RecordPositionSnapshot)
+						}
+					}
 				}
 				// Pre-initialize entity type from protocol data (before login)
 				// In Minecraft 1.21+, entity_type registry is not sent during configuration phase
@@ -1165,6 +1184,12 @@ func (a *agent) Close(ctx context.Context) error {
 	a.lifecycleMu.Unlock()
 	a.wg.Wait()
 	if a.rec != nil {
+		// Generate auto-camera timeline before closing the recorder.
+		autoCamera := a.cfg.ReplayAutoCamera == nil || *a.cfg.ReplayAutoCamera
+		if autoCamera {
+			a.writeReplayTimeline()
+		}
+
 		log.Printf("[Agent %s] [Replay] closing recorder", a.cfg.Name)
 		// Use a goroutine with timeout to prevent indefinite hang on slow recorder close
 		recCloseDone := make(chan error, 1)
@@ -1190,6 +1215,37 @@ func (a *agent) Close(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// writeReplayTimeline generates and writes an auto-camera timelines.json into
+// the MCPR archive. It is called from Close() before the recorder is finalized.
+// Errors are logged but non-fatal — the replay is still valid without timelines.
+func (a *agent) writeReplayTimeline() {
+	type snapshotProvider interface {
+		PositionSnapshots() ([]positionSnapshot, time.Time)
+	}
+	provider, ok := a.moveMirror.(snapshotProvider)
+	if !ok || a.rec == nil {
+		return
+	}
+	snapshots, startTime := provider.PositionSnapshots()
+	if len(snapshots) < 2 {
+		log.Printf("[Agent %s] [Replay] skipping timeline generation (only %d snapshots)", a.cfg.Name, len(snapshots))
+		return
+	}
+	data, err := generateTimelinesJSON(snapshots, startTime)
+	if err != nil {
+		log.Printf("[Agent %s] [Replay] failed to generate timelines.json: %v", a.cfg.Name, err)
+		return
+	}
+	if data == nil {
+		return
+	}
+	if err := a.rec.WriteExtraEntry("timelines.json", data); err != nil {
+		log.Printf("[Agent %s] [Replay] failed to write timelines.json: %v", a.cfg.Name, err)
+		return
+	}
+	log.Printf("[Agent %s] [Replay] wrote auto-camera timelines.json (%d keyframes)", a.cfg.Name, len(snapshots))
 }
 
 // LastUpdateRecipes returns a copy of the most recently received Update Recipes payload.
@@ -1232,7 +1288,7 @@ func (a *agent) SetPlayerUUIDResolver(f func(string) ([16]byte, error)) {
 }
 
 // UpdatePosition sets internal position; intended for movement executor wiring.
-func (a *agent) UpdatePosition(x, y, z float64, yaw, pitch float32) {
+func (a *agent) UpdatePosition(x, y, z float64, yaw, pitch float64) {
 	a.setPosition(x, y, z, yaw, pitch)
 }
 
@@ -1614,7 +1670,7 @@ func (a *agent) getNextSequence() int32 {
 }
 
 // getRotation returns the player's current yaw and pitch
-func (a *agent) getRotation() (float32, float32) {
+func (a *agent) getRotation() (float64, float64) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
 	return a.posYaw, a.posPitch
@@ -1655,6 +1711,28 @@ func nextSequence() int32 {
 	result := sequenceCounter
 	sequenceCounter++
 	return result
+}
+
+// RegisterEntityPositionCallback registers a callback to be called when entity positions update.
+// Useful for testing and monitoring entity movement.
+func (a *agent) RegisterEntityPositionCallback(cb models.EntityPositionCallback) {
+	a.entityPosCallbacksMu.Lock()
+	defer a.entityPosCallbacksMu.Unlock()
+	a.entityPosCallbacks = append(a.entityPosCallbacks, cb)
+}
+
+// callEntityPositionCallbacks calls all registered entity position callbacks.
+func (a *agent) callEntityPositionCallbacks(entityID int32, x, y, z float64) {
+	a.entityPosCallbacksMu.RLock()
+	callbacks := a.entityPosCallbacks
+	a.entityPosCallbacksMu.RUnlock()
+
+	if len(callbacks) > 0 {
+		log.Printf("[callEntityPositionCallbacks] Calling %d callbacks for entity %d at (%.2f, %.2f, %.2f)", len(callbacks), entityID, x, y, z)
+	}
+	for _, cb := range callbacks {
+		cb(entityID, x, y, z)
+	}
 }
 
 // String returns a human-friendly description for logging.

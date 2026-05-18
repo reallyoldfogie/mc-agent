@@ -8,20 +8,20 @@ import (
 // MockPositionTracker tracks bot position for testing
 type MockPositionTracker struct {
 	x, y, z         float64
-	yaw, pitch      float32
+	yaw, pitch      float64
 	positionHistory []Position
 }
 
 type Position struct {
 	X, Y, Z    float64
-	Yaw, Pitch float32
+	Yaw, Pitch float64
 }
 
-func (mpt *MockPositionTracker) GetPosition() (float64, float64, float64, float32, float32, bool) {
+func (mpt *MockPositionTracker) GetPosition() (float64, float64, float64, float64, float64, bool) {
 	return mpt.x, mpt.y, mpt.z, mpt.yaw, mpt.pitch, true
 }
 
-func (mpt *MockPositionTracker) SetPosition(x, y, z float64, yaw, pitch float32) {
+func (mpt *MockPositionTracker) SetPosition(x, y, z float64, yaw, pitch float64) {
 	mpt.x = x
 	mpt.y = y
 	mpt.z = z

@@ -205,24 +205,56 @@ const (
 	SwimDownVelocity = 0.04
 )
 
-// Minecart physics constants (from Minecraft AbstractMinecartEntity.java)
+// Minecart physics constants
+// Source: net/minecraft/entity/vehicle/DefaultMinecartController.java (1.21.2+)
+//         net/minecraft/entity/vehicle/AbstractMinecartEntity.java (1.21.1)
 const (
-	// MinecartRailDrag is the velocity drag per tick on rail (0.2% loss = very low friction)
-	MinecartRailDrag = 0.998
+	// MinecartRailDrag is the per-tick velocity multiplier when on a rail with a passenger.
+	// Java DefaultMinecartController.getSpeedRetention(): 0.997 with passengers, 0.96 empty.
+	// This path is only reached while the agent is riding, so the passenger value is always used.
+	MinecartRailDrag = 0.997
 
-	// MinecartOffRailDrag is the velocity drag per tick when not on rail (heavy damping)
+	// MinecartRailDragEmpty is the per-tick velocity multiplier for an unoccupied minecart.
+	// Included for completeness; not used by the riding executor.
+	MinecartRailDragEmpty = 0.96
+
+	// MinecartOffRailDrag is the velocity drag per tick when not on rail (heavy damping).
 	MinecartOffRailDrag = 0.5
 
-	// MinecartSlopeGravity is the gravity per tick applied to speed when traversing a slope.
-	// Vanilla uses 0.0078125 (1/128). Uphill: subtract; downhill: add.
+	// MinecartNudgeImpulse is the tiny velocity added when the player presses forward/backward
+	// on a nearly-stopped minecart to break static inertia.
+	// Java: this.getVelocity().add(vec3d3.x * 0.001, 0.0, vec3d3.z * 0.001)
+	// This is NOT continuous thrust — it fires only once the cart is nearly stopped.
+	MinecartNudgeImpulse = 0.001
+
+	// MinecartNudgeSpeedThreshold is the horizontal speed-squared below which the nudge fires.
+	// Java: m < 0.01 where m = getVelocity().horizontalLengthSquared()
+	MinecartNudgeSpeedThreshold = 0.01
+
+	// MinecartPassengerSpeedMultiplier scales the per-tick displacement when a passenger is riding.
+	// Java DefaultMinecartController.moveOnRail:
+	//   double s = this.minecart.hasPassengers() ? 0.75 : 1.0;
+	//   move(SELF, clamp(s * vel.x, -maxSpeed, maxSpeed), 0, clamp(s * vel.z, ...))
+	// Only the position delta is scaled; the stored velocity is unaffected.
+	MinecartPassengerSpeedMultiplier = 0.75
+
+	// MinecartUnpoweredBrakeThreshold is the speed below which an unpowered powered rail
+	// brings the minecart to a full stop instead of halving its speed.
+	// Java: if (n < 0.03) { this.setVelocity(Vec3d.ZERO); } else { velocity *= 0.5; }
+	MinecartUnpoweredBrakeThreshold = 0.03
+
+	// MinecartSlopeGravity is the speed delta per tick when traversing a slope.
+	// Java uses 0.0078125 (1/128). Uphill: subtract; downhill: add.
 	MinecartSlopeGravity = 0.0078125
 
-	// MinecartPoweredRailBoost is the speed added per tick when on a powered (and energized) rail.
+	// MinecartPoweredRailBoost is the speed added per tick when on an energized powered rail.
+	// Java: vec3d6.add(vec3d6.x / v * 0.06, 0.0, vec3d6.z / v * 0.06)
 	MinecartPoweredRailBoost = 0.06
 
-	// MinecartMaxSpeed is the maximum horizontal speed (blocks/tick). Vanilla cap is 0.4 on flat rail.
+	// MinecartMaxSpeed is the maximum horizontal speed (blocks/tick).
+	// Java DefaultMinecartController.getMaxSpeed(): 0.4 on land, 0.2 in water.
 	MinecartMaxSpeed = 0.4
 
-	// MinecartFallGravity is the gravity (Y axis) when minecart is off rail (falling).
+	// MinecartFallGravity is the Y-axis gravity when the minecart is off rail (falling).
 	MinecartFallGravity = -0.04
 )

@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/bot/path"
 	"github.com/reallyoldfogie/mc-agent/bot/world/entity"
 	"github.com/reallyoldfogie/mc-agent/bot/world/entity/player"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // FindPlayer -
@@ -62,21 +64,14 @@ func DumpEntity(ent *entity.Entity) {
 }
 
 // GetYawAndPitch calculates yaw and pitch to look from src to dest.
-func GetYawAndPitch(src, dest player.Pos) (yaw, pitch float64) {
-	dx := dest.X - src.X
-	dy := dest.Y - src.Y
-	dz := dest.Z - src.Z
-	r := math.Sqrt(dx*dx + dy*dy + dz*dz)
-	// Calculate yaw for horizontal rotation
-	// NOTE: Trajectory is simulated in local space with Z=forward, X=0
-	// Yaw formula must convert from world delta to firing direction
-	// atan2(-dx, dz) accounts for the coordinate system rotation
-	yaw = -math.Atan2(dx, dz) / math.Pi * 180
-	if yaw < 0 {
-		yaw = 360 + yaw
-	}
-	pitch = -math.Asin(dy/r) / math.Pi * 180
+func GetYawAndPitch(src, dest models.V3) (yaw, pitch float64) {
+	delta := dest.Sub(src)
+	distanceFromSrcToDest := src.DistanceTo(dest)
 
+	yaw = -math.Atan2(delta.X, delta.Z) / math.Pi * 180
+	pitch = -math.Asin(delta.Y/distanceFromSrcToDest) / math.Pi * 180
+
+	log.Printf("GetYawAndPitch: src=%s, dest=%s, delta=%s, r=%.2f => yaw=%.2f, pitch=%.2f", src, dest, delta, distanceFromSrcToDest, yaw, pitch)
 	return
 }
 

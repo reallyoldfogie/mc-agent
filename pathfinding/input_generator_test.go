@@ -124,7 +124,7 @@ func (m *mockPhysicsState) HasGroundSupportAt(_ models.V3, _ models.PhysicsWorld
 	return false
 }
 
-func (m *mockPhysicsState) AtLookTarget(_, _ float64) bool {
+func (m *mockPhysicsState) IsLookingAtTarget(_, _ float64) bool {
 	return false
 }
 

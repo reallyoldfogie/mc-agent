@@ -85,7 +85,7 @@ func (ma *ManagedAgent) ScreenManager() screen.Manager {
 }
 
 // GetTrackedEntities returns all tracked entities from the agent
-func (ma *ManagedAgent) GetTrackedEntities() map[int32]agent.TrackedEntityInfo {
+func (ma *ManagedAgent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 	return ma.Agent.GetTrackedEntities()
 }
 
@@ -940,6 +940,11 @@ func (ma *ManagedAgent) Stop(ctx context.Context) error {
 	if err := ma.Agent.Close(closeCtx); err != nil {
 		fmt.Printf("WARNING: Agent %s failed to close cleanly: %v\n", ma.Name, err)
 		return err
+	}
+
+	// Close bot client
+	if ma.botClient != nil {
+		_ = ma.botClient.Close()
 	}
 
 	if ma.Cam != nil {

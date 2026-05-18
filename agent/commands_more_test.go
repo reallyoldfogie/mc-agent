@@ -13,6 +13,7 @@ import (
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,10 +41,10 @@ func (f *fakeMoveExec) SendPosition(x, y, z float64, onGround bool) error {
 	}
 	return nil
 }
-func (f *fakeMoveExec) SendPositionAndRotation(x, y, z float64, yaw, pitch float32, onGround bool) error {
+func (f *fakeMoveExec) SendPositionAndRotation(x, y, z float64, yaw, pitch float64, onGround bool) error {
 	return f.SendPosition(x, y, z, onGround)
 }
-func (f *fakeMoveExec) SendRotation(yaw, pitch float32, onGround bool) error { return nil }
+func (f *fakeMoveExec) SendRotation(yaw, pitch float64, onGround bool) error { return nil }
 func (f *fakeMoveExec) MoveTowards(tx, ty, tz float64, d float64, og bool) (float64, float64, float64, error) {
 	return 0, 0, 0, nil
 }
@@ -364,25 +365,40 @@ func TestCommand_StartStopTracking(t *testing.T) {
 	require.NoError(t, err)
 
 	agent.UpdatePosition(0, 0, 0, 0, 0)
-	// seed entities
+
+	// Create unique UUIDs for test entities
+	uuid1 := [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	uuid2 := [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Seed entities with proper UUIDs
 	agent.entities = map[int32]*trackedEntity{
-		1: {EntityID: 1, X: 0, Y: 0, Z: 1}, // near
-		2: {EntityID: 2, X: 0, Y: 0, Z: 10},
+		1: {EntityID: 1, UUID: uuid1, X: 0, Y: 0, Z: 1}, // near
+		2: {EntityID: 2, UUID: uuid2, X: 0, Y: 0, Z: 10},
 	}
+
+	// Set up player resolver to recognize test entity UUIDs as players
+	agent.SetPlayerNameResolver(func(u [16]byte) (string, bool) {
+		if u == uuid1 {
+			return "Player1", true
+		}
+		if u == uuid2 {
+			return "Player2", true
+		}
+		return "", false
+	})
+
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
 	agent.handleChatCommand("startTracking")
 	time.Sleep(250 * time.Millisecond)
-	if len(fm.lookCalls) == 0 {
-		t.Fatalf("expected at least one LookAt call")
-	}
+	assert.Greater(t, len(fm.lookCalls), 0, "expected at least one LookAt call")
+
 	agent.handleChatCommand("stopTracking")
 	n := len(fm.lookCalls)
+
 	// Allow for one more tick that may have been in flight
 	time.Sleep(250 * time.Millisecond)
-	if len(fm.lookCalls) > n+1 {
-		t.Fatalf("expected LookAt calls to stop after stopTracking, had %d, now have %d", n, len(fm.lookCalls))
-	}
+	assert.LessOrEqual(t, len(fm.lookCalls), n+1, "expected LookAt calls to stop after stopTracking, had %d, now have %d", n, len(fm.lookCalls))
 }
 
 // FireBow: immediately sends a UseItem packet

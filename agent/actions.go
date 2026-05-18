@@ -389,7 +389,7 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 
 	// Calculate yaw using physics formula: atan2(dZ, dX) - 90
 	// This matches YawForStartTarget and ensures consistency
-	yaw := float32(physics.YawForStartTarget(botOrigin, targetPos))
+	yaw := physics.YawForStartTarget(botOrigin, targetPos)
 
 	// Calculate pitch based on arrow spawn height (1.52, not 1.62)
 	// Arrow spawns at: eye - 0.1 = (standing height 1.62) - 0.1 = 1.52
@@ -397,7 +397,7 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 	dx := x - botX
 	dz := z - botZ
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
-	pitch := float32(-math.Atan2(dy, horizontalDist) * 180 / math.Pi)
+	pitch := -math.Atan2(dy, horizontalDist) * 180 / math.Pi
 
 	// Send position and rotation to update body orientation
 	return a.moveExec.SendPositionAndRotation(botX, botY, botZ, yaw, pitch, true)

@@ -382,12 +382,14 @@ func (a *agent) cmdStartTracking() {
 					log.Printf("No players nearby. %s", a.formatEntityStats(stats))
 					continue
 				}
+
 				// Look at nearest
 				_ = a.moveExec.LookAt(nearest.X, nearest.Y, nearest.Z, true)
 				bx, by, bz, okp := a.GetPositionSimple()
 				if !okp {
 					continue
 				}
+
 				pname := "Unknown"
 				a.playerResolversMu.RLock()
 				if a.playerNameByUUID != nil {
@@ -395,6 +397,7 @@ func (a *agent) cmdStartTracking() {
 						pname = n
 					}
 				}
+
 				a.playerResolversMu.RUnlock()
 				msg := fmt.Sprintf("My Pos: (%.1f, %.1f, %.1f) | Nearest: %s | Distance: %.2f blocks | Pos: (%.1f, %.1f, %.1f)", bx, by, bz, pname, nearest.Distance, nearest.X, nearest.Y, nearest.Z)
 				_ = a.SendChat(msg)
@@ -438,8 +441,8 @@ func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 	a.playerResolversMu.RUnlock()
 
 	var res nearestInfo
-	min := 0.0
-	first := true
+	min := math.MaxFloat64
+	found := false
 	for _, e := range ents {
 		// Only consider if in player list when resolver present; else consider all
 		if resolver != nil {
@@ -449,16 +452,13 @@ func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 		}
 		dx, dy, dz := e.X-bx, e.Y-by, e.Z-bz
 		d := math.Sqrt(dx*dx + dy*dy + dz*dz)
-		if first || d < min {
-			first = false
+		if d < min {
 			min = d
 			res = nearestInfo{EntityID: e.EntityID, UUID: e.UUID, Distance: d, X: e.X, Y: e.Y, Z: e.Z}
+			found = true
 		}
 	}
-	if first {
-		return nearestInfo{}, false
-	}
-	return res, true
+	return res, found
 }
 
 // Entity stats for chat/log

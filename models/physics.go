@@ -1,11 +1,18 @@
 package models
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // V3 represents a 3D position or vector with float64 coordinates.
 // This is a fundamental type used throughout the codebase for positions, velocities, etc.
 type V3 struct {
 	X, Y, Z float64
+}
+
+func (a V3) String() string {
+	return fmt.Sprintf("(%.2f, %.2f, %.2f)", a.X, a.Y, a.Z)
 }
 
 func (a V3) Add(b V3) V3      { return V3{a.X + b.X, a.Y + b.Y, a.Z + b.Z} }
