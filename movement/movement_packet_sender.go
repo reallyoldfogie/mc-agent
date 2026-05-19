@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sync"
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -24,6 +25,7 @@ type movementPacketSender struct {
 	// Reference to bot entity ID (needed for sprint/sneak commands)
 	getBotEntityID func() int32
 	// Track sprint/sneak state to avoid redundant packets
+	stateMu     sync.Mutex // Protects isSprinting and isSneaking
 	isSprinting bool
 	isSneaking  bool
 	// Optional callback for packet interception (e.g., replay mirror)
@@ -67,10 +69,14 @@ func (me *movementPacketSender) SetMovementHandler(handler models.MovementHandle
 }
 
 func (me *movementPacketSender) IsSneaking() bool {
+	me.stateMu.Lock()
+	defer me.stateMu.Unlock()
 	return me.isSneaking
 }
 
 func (me *movementPacketSender) IsSprinting() bool {
+	me.stateMu.Lock()
+	defer me.stateMu.Unlock()
 	return me.isSprinting
 }
 
@@ -84,7 +90,7 @@ func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) err
 			err = me.movementHandler.SendPosition(me.client.Conn(), x, y, z, onGround)
 
 			// If sneaking, also send the sneak command to maintain sneak state
-			if err == nil && me.isSneaking {
+			if err == nil && me.IsSneaking() {
 				entityID := me.getBotEntityID()
 				_ = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSneaking)
 
@@ -113,7 +119,7 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 			err = me.movementHandler.SendPositionAndRotation(me.client.Conn(), x, y, z, yaw, pitch, onGround)
 
 			// If sneaking, also send the sneak command to maintain sneak state
-			if me.isSneaking {
+			if me.IsSneaking() {
 				entityID := me.getBotEntityID()
 				_ = me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartSneaking)
 
@@ -226,7 +232,7 @@ func (me *movementPacketSender) LookAt(targetX, targetY, targetZ float64, onGrou
 	// Calculate look angles from bot's eyes to target
 	// Player eye height depends on sneak state
 	var eyeHeight float64
-	if me.isSneaking {
+	if me.IsSneaking() {
 		eyeHeight = models.PlayerEyeHeightSneaking // Sneaking eye height
 	} else {
 		eyeHeight = models.PlayerEyeHeight // Standing eye height
@@ -261,14 +267,17 @@ func calculateLookAngles(fromX, fromY, fromZ, toX, toY, toZ float64) (yaw, pitch
 
 // StartSprinting sends a command to start sprinting
 func (me *movementPacketSender) StartSprinting() error {
+	me.stateMu.Lock()
 	if me.isSprinting {
+		me.stateMu.Unlock()
 		return nil // Already sprinting, no need to send packet
 	}
-
 	if me.client == nil {
-		me.isSprinting = true // Mark as sprinting even in test mode
-		return nil            // No-op in test mode
+		me.isSprinting = true
+		me.stateMu.Unlock()
+		return nil
 	}
+	me.stateMu.Unlock()
 
 	entityID := me.getBotEntityID()
 	var err error
@@ -278,21 +287,26 @@ func (me *movementPacketSender) StartSprinting() error {
 		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
+		me.stateMu.Lock()
 		me.isSprinting = true
+		me.stateMu.Unlock()
 	}
 	return err
 }
 
 // StopSprinting sends a command to stop sprinting
 func (me *movementPacketSender) StopSprinting() error {
+	me.stateMu.Lock()
 	if !me.isSprinting {
+		me.stateMu.Unlock()
 		return nil // Not sprinting, no need to send packet
 	}
-
 	if me.client == nil {
-		me.isSprinting = false // Mark as not sprinting even in test mode
-		return nil             // No-op in test mode
+		me.isSprinting = false
+		me.stateMu.Unlock()
+		return nil
 	}
+	me.stateMu.Unlock()
 
 	entityID := me.getBotEntityID()
 	var err error
@@ -302,21 +316,26 @@ func (me *movementPacketSender) StopSprinting() error {
 		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
+		me.stateMu.Lock()
 		me.isSprinting = false
+		me.stateMu.Unlock()
 	}
 	return err
 }
 
 // StartSneaking sends a command to start sneaking
 func (me *movementPacketSender) StartSneaking() error {
+	me.stateMu.Lock()
 	if me.isSneaking {
+		me.stateMu.Unlock()
 		return nil // Already sneaking, no need to send packet
 	}
-
 	if me.client == nil {
-		me.isSneaking = true // Mark as sneaking even in test mode
-		return nil           // No-op in test mode
+		me.isSneaking = true
+		me.stateMu.Unlock()
+		return nil
 	}
+	me.stateMu.Unlock()
 
 	entityID := me.getBotEntityID()
 	var err error
@@ -326,21 +345,26 @@ func (me *movementPacketSender) StartSneaking() error {
 		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
+		me.stateMu.Lock()
 		me.isSneaking = true
+		me.stateMu.Unlock()
 	}
 	return err
 }
 
 // StopSneaking sends a command to stop sneaking
 func (me *movementPacketSender) StopSneaking() error {
+	me.stateMu.Lock()
 	if !me.isSneaking {
+		me.stateMu.Unlock()
 		return nil // Not sneaking, no need to send packet
 	}
-
 	if me.client == nil {
-		me.isSneaking = false // Mark as not sneaking even in test mode
-		return nil            // No-op in test mode
+		me.isSneaking = false
+		me.stateMu.Unlock()
+		return nil
 	}
+	me.stateMu.Unlock()
 
 	entityID := me.getBotEntityID()
 	var err error
@@ -350,7 +374,9 @@ func (me *movementPacketSender) StopSneaking() error {
 		return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
 	}
 	if err == nil {
+		me.stateMu.Lock()
 		me.isSneaking = false
+		me.stateMu.Unlock()
 	}
 	return err
 }

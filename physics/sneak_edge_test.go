@@ -39,14 +39,15 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			Sneak:     true,
 		}
 
-		// Run several ticks
-		for range 20 {
+		// Run enough ticks to reach the platform edge (sneaking speed ~0.066 blocks/tick)
+		for range 60 {
 			state.Tick(input, world)
 		}
 
-		// Bot should stay on the platform, not fall off
-		// X coordinate should not exceed the platform edge at X=1.5 (block edge + 0.3 player halfwidth)
-		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off edge while sneaking: X=%.3f (should be <= 1.3)", state.Position().X)
+		// Platform blocks at X={-1,0,1}, far edge at X=2.0.
+		// Vanilla sneak edge prevention allows overhang up to the player's halfwidth
+		// past the last support block. Max center position ≈ platformEdge + halfWidth = 2.3.
+		assert.LessOrEqual(t, state.Position().X, 2.35, "Bot walked off edge while sneaking: X=%.3f (should be <= 2.35)", state.Position().X)
 
 		// Bot should still be on ground
 		assert.True(t, state.OnGround(), "Bot should still be on ground after edge prevention")
@@ -85,14 +86,14 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			Sneak:     true,
 		}
 
-		// Run several ticks
-		for i := 0; i < 20; i++ {
+		// Run enough ticks for diagonal movement to reach edges
+		for range 60 {
 			state.Tick(input, world)
 		}
 
-		// Bot should not exceed platform boundaries
-		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off diagonal edge X: %.3f - should stay within 1.3", state.Position().X)
-		assert.LessOrEqual(t, state.Position().Z, 1.3, "Bot walked off diagonal edge Z: %.3f - should stay within 1.3", state.Position().Z)
+		// Platform far edge at X=2.0 and Z=2.0; player halfwidth=0.3 allows overhang
+		assert.LessOrEqual(t, state.Position().X, 2.35, "Bot walked off diagonal edge X: %.3f - should stay within 2.35", state.Position().X)
+		assert.LessOrEqual(t, state.Position().Z, 2.35, "Bot walked off diagonal edge Z: %.3f - should stay within 2.35", state.Position().Z)
 		assert.True(t, state.OnGround(), "Bot should still be on ground")
 	})
 
@@ -193,14 +194,14 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			Sneak:     true,
 		}
 
-		// Run several ticks
-		for i := 0; i < 20; i++ {
+		// Run enough ticks to reach the edge
+		for range 60 {
 			state.Tick(input, world)
 		}
 
 		// Bot should stay on slab, not walk off
-		// Edge is at X=1.5 (block edge) + halfwidth tolerance
-		assert.LessOrEqual(t, state.Position().X, 1.3, "Bot walked off slab edge: X=%.3f (should be <= 1.3)", state.Position().X)
+		// Platform far edge at X=2.0; player halfwidth=0.3 allows overhang
+		assert.LessOrEqual(t, state.Position().X, 2.35, "Bot walked off slab edge: X=%.3f (should be <= 2.35)", state.Position().X)
 		assert.True(t, state.OnGround(), "Bot should still be on ground (slab)")
 	})
 }

@@ -1703,22 +1703,15 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	}
 
 	// Send teleport confirmation before resuming physics to prevent out-of-order packets.
-	// Prefer auto-created player, fall back to injected teleport
+	// Prefer auto-created player, fall back to injected teleport.
+	// AcceptTeleportation handles its own connection internally (basic.Player uses p.c.Conn).
 	t := a.player
 	if t == nil {
 		t = teleport
 	}
 	if t != nil {
-		// Check if player has a valid connection (may be nil in unit tests)
-		type playerConnProvider interface{ Conn() interface{} }
-		if pcp, ok := t.(playerConnProvider); ok {
-			if pcp.Conn() != nil {
-				_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
-			} else {
-				log.Printf("[onClientboundPosition] Warning: cannot send teleport confirmation (connection not available, likely in tests)")
-			}
-		} else {
-			log.Printf("[onClientboundPosition] Warning: player does not support Conn() method")
+		if err := t.AcceptTeleportation(pk.VarInt(TeleportID)); err != nil {
+			log.Printf("[onClientboundPosition] Warning: failed to send teleport confirmation: %v", err)
 		}
 	}
 	a.sendPlayerLoadedOnce()

@@ -565,9 +565,11 @@ func (s *state) tickPosition(w World) {
 	// Edge prevention when sneaking happens BEFORE collision detection
 	// Implements Minecraft's adjustMovementForSneaking() algorithm
 	// This reduces movement in 0.05 block increments when at edges
+	// Guard matches Java Entity.move() → PlayerEntity.adjustMovementForSneaking():
+	//   !flying && !(movement.y > 0) && clipAtLedge() && isStandingOnSurface(stepHeight)
+	// The isSneaking and velY checks are here; isStandingOnSurface is inside the method.
 	adjustedVel := s.Vel
-	if s.isSneaking && s.onGround && !(s.Vel.Y > 0) {
-		// Apply the three-phase algorithm using the current bounding box state
+	if s.isSneaking && !(s.Vel.Y > 0) {
 		adjustedVel.X, adjustedVel.Z = s.adjustMovementForSneaking(playerBB, s.Vel.X, s.Vel.Z, w)
 	}
 
@@ -651,73 +653,79 @@ func (s *state) tickPosition(w World) {
 	s.Vel = newVel
 }
 
-func (s *state) canSneak(playerBB AABB, stepIncrement float64, w World) bool {
-	return s.onGround || s.fallDistance < stepIncrement && !s.isSpaceAroundPlayerEmpty(playerBB, 0.0, 0.0, stepIncrement-s.fallDistance, w)
+// isStandingOnSurface matches Java's PlayerEntity.isStandingOnSurface(float stepHeight).
+// Returns true when the player is on ground, or has fallen less than stepHeight
+// and still has block support below.
+func (s *state) isStandingOnSurface(playerBB AABB, stepHeight float64, w World) bool {
+	return s.onGround || (s.fallDistance < stepHeight && !s.isSpaceAroundPlayerEmpty(playerBB, 0.0, 0.0, stepHeight-s.fallDistance, w))
 }
 
 // adjustMovementForSneaking implements Minecraft's three-phase sneaking edge prevention algorithm.
 // Reduces movement in 0.05 block increments when approaching edges.
-// Based on PlayerEntity.adjustMovementForSneaking() from Minecraft 1.21.8.
+// Based on PlayerEntity.adjustMovementForSneaking() from Minecraft 1.21.10.
 func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) (float64, float64) {
 	const stepIncrement = 0.05
+	stepHeight := StepHeight
 	dX := x
 	dZ := z
 
-	if s.canSneak(playerBB, stepIncrement, w) {
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[SneakEdge] Starting adjustment: dX=%.3f, dZ=%.3f\n", dX, dZ)
-		}
+	// Matches Java guard: isStandingOnSurface(stepHeight)
+	if !s.isStandingOnSurface(playerBB, stepHeight, w) {
+		return dX, dZ
+	}
 
-		// Phase 1: Reduce X-axis movement until space is clear
-		// Loop continues WHILE space is empty (collision-free)
-		// Loop stops WHEN space is NOT empty (collision detected)
-		hX := math.Copysign(stepIncrement, dX)
-		for ; dX != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, 0, 0, w); dX -= hX {
-			// Space is empty for this dX value
-			if math.Abs(dX) <= stepIncrement {
-				// Movement is now small enough - clamp to 0 and stop
-				dX = 0
-				break
-			}
-		}
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SneakEdge] Starting adjustment: dX=%.3f, dZ=%.3f\n", dX, dZ)
+	}
 
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[SneakEdge] After X phase: dX=%.3f\n", dX)
-		}
-
-		// Phase 2: Reduce Z-axis movement until space is clear
-		hZ := math.Copysign(stepIncrement, dZ)
-		for dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, 0, dZ, 0, w) {
-			if math.Abs(dZ) <= stepIncrement {
-				dZ = 0
-				break
-			}
-			dZ -= hZ
-		}
-
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[SneakEdge] After Z phase: dZ=%.3f\n", dZ)
-		}
-
-		// Phase 3: Reduce diagonal movement (both axes) until space is clear
-		for dX != 0 && dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, dZ, 0, w) {
-			if math.Abs(dX) <= stepIncrement {
-				dX = 0
-			} else {
-				dX -= hX
-			}
-
-			if math.Abs(dZ) <= stepIncrement {
-				dZ = 0
-			} else {
-				dZ -= hZ
-			}
-		}
-
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[SneakEdge] Final result: dX=%.3f, dZ=%.3f\n", dX, dZ)
+	// Phase 1: Reduce X-axis movement until space is clear
+	// Loop continues WHILE space is empty (no support below)
+	// Loop stops WHEN space is NOT empty (support detected)
+	hX := math.Copysign(stepIncrement, dX)
+	for ; dX != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, 0, stepHeight, w); dX -= hX {
+		if math.Abs(dX) <= stepIncrement {
+			dX = 0
+			break
 		}
 	}
+
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SneakEdge] After X phase: dX=%.3f\n", dX)
+	}
+
+	// Phase 2: Reduce Z-axis movement until space is clear
+	hZ := math.Copysign(stepIncrement, dZ)
+	for dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, 0, dZ, stepHeight, w) {
+		if math.Abs(dZ) <= stepIncrement {
+			dZ = 0
+			break
+		}
+		dZ -= hZ
+	}
+
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SneakEdge] After Z phase: dZ=%.3f\n", dZ)
+	}
+
+	// Phase 3: Reduce diagonal movement (both axes) until space is clear
+	for dX != 0 && dZ != 0 && s.isSpaceAroundPlayerEmpty(playerBB, dX, dZ, stepHeight, w) {
+		if math.Abs(dX) <= stepIncrement {
+			dX = 0
+		} else {
+			dX -= hX
+		}
+
+		if math.Abs(dZ) <= stepIncrement {
+			dZ = 0
+		} else {
+			dZ -= hZ
+		}
+	}
+
+	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
+		log.Printf("[SneakEdge] Final result: dX=%.3f, dZ=%.3f\n", dX, dZ)
+	}
+
 	return dX, dZ
 }
 
