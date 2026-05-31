@@ -28,8 +28,8 @@ func LOSCursorForBlock(ctx context.Context, ag models.Agent, pos models.V3) (flo
 		return 0, 0, 0, err
 	}
 	if !visible {
-		agX, agY, agZ, _ := ag.GetPositionSimple()
-		return 0, 0, 0, fmt.Errorf("no line of sight from agent (%.1f, %.1f, %.1f) to block at (%.1f, %.1f, %.1f)", agX, agY, agZ, pos.X, pos.Y, pos.Z)
+		agPos, _ := ag.GetPositionSimple()
+		return 0, 0, 0, fmt.Errorf("no line of sight from agent (%.1f, %.1f, %.1f) to block at (%.1f, %.1f, %.1f)", agPos.X, agPos.Y, agPos.Z, pos.X, pos.Y, pos.Z)
 	}
 	cursorX := float32(clampFloat64(hitX-blockX, 0, 1))
 	cursorY := float32(clampFloat64(hitY-blockY, 0, 1))

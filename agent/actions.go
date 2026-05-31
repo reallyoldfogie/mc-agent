@@ -34,10 +34,11 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 		return fmt.Errorf("movement executor doesn't support manual mode (required for MoveForward)")
 	}
 
-	x, y, z, yaw, _, ok := a.GetPosition()
+	pos, yaw, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 
 	// Calculate throttle as world-space direction vector based on current yaw
 	// Throttle represents absolute world direction, not player-relative WASD
@@ -103,11 +104,11 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 		elapsed := time.Since(startTime)
 
 		// Check if we've reached the target distance
-		currentX, _, currentZ, _, _, ok := a.GetPosition()
+		pos, _, _, ok := a.GetPosition()
 		if ok {
-			currentPos := models.V3{X: currentX, Y: 0, Z: currentZ}
-			distMoved := math.Sqrt((currentX-startPos.X)*(currentX-startPos.X) +
-				(currentZ-startPos.Z)*(currentZ-startPos.Z))
+			currentPos := models.V3{X: pos.X, Y: 0, Z: pos.Z}
+			distMoved := math.Sqrt((pos.X-startPos.X)*(pos.X-startPos.X) +
+				(pos.Z-startPos.Z)*(pos.Z-startPos.Z))
 
 			// Check for progress
 			progress := currentPos.DistanceTo(lastProgressPos)
@@ -139,9 +140,9 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 		// Timeout: exceeded reasonable movement time
 		if elapsed > targetDuration+10*time.Second {
 			if ok {
-				currentX, _, currentZ, _, _, _ := a.GetPosition()
-				distMoved := math.Sqrt((currentX-startPos.X)*(currentX-startPos.X) +
-					(currentZ-startPos.Z)*(currentZ-startPos.Z))
+				pos, _, _, _ := a.GetPosition()
+				distMoved := math.Sqrt((pos.X-startPos.X)*(pos.X-startPos.X) +
+					(pos.Z-startPos.Z)*(pos.Z-startPos.Z))
 				log.Printf("[MoveForward] Movement timeout after %.2f/%.2f blocks", distMoved, dist)
 			}
 			return errors.New("movement timed out")
@@ -159,10 +160,11 @@ func (a *agent) MoveUp(ctx context.Context, dist float64) error {
 	if a.moveExec == nil {
 		return errors.New("movement executor not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	const stepSize = 0.2
 	const stepDelay = 50 * time.Millisecond
 	steps := int(math.Ceil(math.Abs(dist) / stepSize))
@@ -198,10 +200,11 @@ func (a *agent) stabilizeSneaking(ctx context.Context) error {
 	}
 
 	// Get current position
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return nil // Position not available, but sneak is started
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 
 	// Continue sending position updates while sneaking to stabilize
 	const stepDelay = 50 * time.Millisecond
@@ -247,10 +250,11 @@ func (a *agent) MoveUpAndSneak(ctx context.Context, dist float64) error {
 	if a.moveExec == nil {
 		return errors.New("movement executor not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 
 	const stepSize = 0.2
 	const stepDelay = 50 * time.Millisecond
@@ -324,11 +328,11 @@ func (a *agent) FindPath(ctx context.Context, tx, ty, tz float64) (*models.Path,
 	if a.pathfind == nil {
 		return nil, errors.New("pathfinding not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return nil, errors.New("position not initialized")
 	}
-	start := models.V3{X: x, Y: y, Z: z}
+	start := models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
 	goal := models.V3{X: tx, Y: ty, Z: tz}
 	maxSteps := max(int(start.DistanceTo(goal)*150), 10000)
 	if ctx.Err() != nil {
@@ -376,10 +380,11 @@ func (a *agent) TurnTowards(ctx context.Context, x, y, z float64) error {
 	}
 
 	// Get current position
-	botX, botY, botZ, _, _, initialized := a.GetPosition()
+	pos, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return errors.New("bot position not initialized")
 	}
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 
 	// Use physics package to calculate yaw consistently with arrow firing
 	// CRITICAL: Use arrow spawn height (1.52), not eye height (1.62)
@@ -464,10 +469,11 @@ func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 		return errors.New("movement executor not available")
 	}
 
-	x, y, z, ok := a.GetPositionSimple()
+	pos, ok := a.GetPositionSimple()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 
 	finalGoal := models.V3{
 		X: math.Floor(tx),
@@ -516,10 +522,11 @@ func (a *agent) LineTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 		return errors.New("movement executor not available")
 	}
 
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	dx, dy, dz := tx-x, ty-y, tz-z
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	if total == 0 {
@@ -635,10 +642,11 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 	if a.blockMgr == nil {
 		return false, errors.New("block manager not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return false, errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	ox := x
 	oy := y + a.getEyeHeight()
 	oz := z
@@ -701,10 +709,11 @@ func (a *agent) FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDi
 	if len(entities) == 0 {
 		return 0, 0, 0, 0, false, nil
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return 0, 0, 0, 0, false, errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	bestDist := math.MaxFloat64
 	var bestID int32
 	var bestX, bestY, bestZ float64
@@ -744,10 +753,11 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 	if a.blockMgr == nil {
 		return 0, 0, 0, false, errors.New("block manager not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return 0, 0, 0, false, errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	if maxDistance <= 0 {
 		maxDistance = 8
 	}
@@ -803,7 +813,7 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 // Uses efficient surface-based raycasting: only ~6000 rays for radius=32 instead of 137K block checks.
 // Blocks are returned sorted by distance from the agent's eye position.
 func (a *agent) FindAllVisibleBlocksInSphere(ctx context.Context, radius int) ([]models.VisibleBlockInfo, error) {
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return nil, errors.New("position not initialized")
 	}
@@ -813,9 +823,9 @@ func (a *agent) FindAllVisibleBlocksInSphere(ctx context.Context, radius int) ([
 
 	// Convert agent position to block coordinates
 	blockPos := models.V3{
-		X: x,
-		Y: y,
-		Z: z,
+		X: pos.X,
+		Y: pos.Y,
+		Z: pos.Z,
 	}
 
 	return a.findAllVisibleSurfaceBlocks(ctx, blockPos, radius)
@@ -850,10 +860,11 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	}
 
 	// Get agent eye position
-	botX, botY, botZ, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return errors.New("position not initialized")
 	}
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 	eyeY := botY + a.getEyeHeight()
 
 	// Block integer coordinates
@@ -1180,10 +1191,11 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 	if a.blockMgr == nil {
 		return false, 0, 0, 0, errors.New("block manager not available")
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return false, 0, 0, 0, errors.New("position not initialized")
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	ox := x
 	oy := y + a.getEyeHeight()
 	oz := z

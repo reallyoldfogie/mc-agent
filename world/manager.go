@@ -44,6 +44,17 @@ type Manager struct {
 
 	overridesMu    sync.RWMutex
 	blockOverrides map[blockPos]uint32
+
+	// worldTimeMu protects worldAge and timeOfDay
+	worldTimeMu sync.RWMutex
+	// worldAge is the current server world age in ticks.
+	// Updated from ClientboundUpdateTime packets.
+	// -1 indicates not yet initialized (no Update Time packet received).
+	worldAge int64
+	// timeOfDay is the current time of day in ticks (0-23999 per day).
+	// Updated from ClientboundUpdateTime packets.
+	// -1 indicates not yet initialized (no Update Time packet received).
+	timeOfDay int64
 }
 
 // NewManager creates a new world manager.
@@ -61,6 +72,8 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener) *Ma
 		useCalculatedDataLen: useCalculatedLen,
 		Columns:              make(map[ChunkPos]*ChunkData),
 		blockOverrides:       make(map[blockPos]uint32),
+		worldAge:             -1, // Sentinel: not yet initialized
+		timeOfDay:            -1, // Sentinel: not yet initialized
 	}
 }
 
@@ -135,6 +148,40 @@ func (m *Manager) GetBlockAt(x, y, z float64) (uint32, bool) {
 
 	// Use ChunkData's GetBlockAt method
 	return chunk.GetBlockAt(relX, int(by), relZ), true
+}
+
+// GetWorldAge returns the current server world age in ticks and whether it's been initialized.
+// Returns (0, false) if no Update Time packet has been received yet.
+// Returns (worldAge, true) when the value is valid from the server.
+func (m *Manager) GetWorldAge() (int64, bool) {
+	m.worldTimeMu.RLock()
+	defer m.worldTimeMu.RUnlock()
+	if m.worldAge < 0 {
+		return 0, false
+	}
+	return m.worldAge, true
+}
+
+// GetTimeOfDay returns the current time of day in ticks and whether it's been initialized.
+// Time of day ranges from 0-23999 ticks per day.
+// Returns (0, false) if no Update Time packet has been received yet.
+// Returns (timeOfDay, true) when the value is valid from the server.
+func (m *Manager) GetTimeOfDay() (int64, bool) {
+	m.worldTimeMu.RLock()
+	defer m.worldTimeMu.RUnlock()
+	if m.timeOfDay < 0 {
+		return 0, false
+	}
+	return m.timeOfDay, true
+}
+
+// SetWorldTime updates both world age and time of day from the server's Update Time packet.
+// This should be called whenever a ClientboundUpdateTime packet is received.
+func (m *Manager) SetWorldTime(worldAge, timeOfDay int64) {
+	m.worldTimeMu.Lock()
+	defer m.worldTimeMu.Unlock()
+	m.worldAge = worldAge
+	m.timeOfDay = timeOfDay
 }
 
 // HandleChunkLoad processes a chunk data packet and stores the chunk.

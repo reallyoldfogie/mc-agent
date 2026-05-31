@@ -62,12 +62,12 @@ func TestOnClientboundPosition_Absolute(t *testing.T) {
 	if err := agent.onClientboundPosition(p); err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	x, y, z, yaw, pitch, ok := agent.GetPosition()
+	pos, yaw, pitch, ok := agent.GetPosition()
 	if !ok {
 		t.Fatalf("position not initialized")
 	}
-	if x != 1 || y != 2 || z != 3 {
-		t.Fatalf("unexpected pos: %v %v %v", x, y, z)
+	if pos.X != 1 || pos.Y != 2 || pos.Z != 3 {
+		t.Fatalf("unexpected pos: %v %v %v", pos.X, pos.Y, pos.Z)
 	}
 	if yaw != 10 || pitch != 20 {
 		t.Fatalf("unexpected rot: %v %v", yaw, pitch)

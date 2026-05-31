@@ -37,7 +37,7 @@ func (f *fakeMoveExec) SendPosition(x, y, z float64, onGround bool) error {
 	f.currentPos = [3]float64{x, y, z}
 	// Update agent position for manual mode testing
 	if f.manualMode && f.agent != nil {
-		f.agent.UpdatePosition(x, y, z, 0, 0)
+		f.agent.UpdatePosition(models.V3{X: x, Y: y, Z: z}, 0, 0)
 	}
 	return nil
 }
@@ -297,7 +297,7 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
 	agent.handleChatCommand("moveForward 0.1")
@@ -317,7 +317,7 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 func TestCommand_MoveTo_SmallDelta(t *testing.T) {
 	agent, capture := setupChatCapture(t, "1.21.5")
 
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
@@ -341,7 +341,7 @@ func TestCommand_FindPath(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 	pf := &fakePF{}
 	agent.SetPathFinder(pf)
 	agent.handleChatCommand("findPath 1 0 0")
@@ -364,7 +364,7 @@ func TestCommand_StartStopTracking(t *testing.T) {
 	err = agent.Init(context.Background())
 	require.NoError(t, err)
 
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 
 	// Create unique UUIDs for test entities
 	uuid1 := [16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}

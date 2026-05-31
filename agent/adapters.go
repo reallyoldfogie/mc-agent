@@ -180,6 +180,86 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 	return rval
 }
 
+// IsMountedEntityCamel checks if a mounted entity is a camel (or camel_husk) by type ID.
+// Returns true if the entity type's local name (after the namespace prefix)
+// is "camel" or "camel_husk".
+func (a *agent) IsMountedEntityCamel(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "camel" || localName == "camel_husk"
+
+	log.Printf("[IsMountedEntityCamel] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
+// IsMountedEntityCamelHusk checks if a mounted entity is specifically a camel_husk (1.21.11+).
+func (a *agent) IsMountedEntityCamelHusk(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	return localName == "camel_husk"
+}
+
+// IsMountedEntityNautilus checks if a mounted entity is a nautilus (or zombie_nautilus) by type ID.
+// Nautilus is a 1.21.11+ rideable underwater mob.
+func (a *agent) IsMountedEntityNautilus(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "nautilus" || localName == "zombie_nautilus"
+
+	log.Printf("[IsMountedEntityNautilus] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
 // IsMountedEntityMinecart checks if a mounted entity is a minecart by type ID.
 // Returns true if the entity type's local name (after the namespace prefix)
 // is "minecart" or ends with "_minecart" — e.g., minecart, chest_minecart,

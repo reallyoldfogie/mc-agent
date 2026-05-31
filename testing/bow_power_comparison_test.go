@@ -85,8 +85,9 @@ func TestBowPowerComparison(t *testing.T) {
 
 			for _, tc := range testCases {
 				t.Run(tc.label, func(t *testing.T) {
-					botX, botY, botZ, ok := ag.Agent.GetPositionSimple()
+					botPos, ok := ag.Agent.GetPositionSimple()
 					require.True(t, ok, "bot position initialized")
+					botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
 
 					targetX := botX + tc.distance
 					targetY := botY

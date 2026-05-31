@@ -82,7 +82,8 @@ func TestHorse_Standalone(t *testing.T) {
 			}
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 
@@ -160,7 +161,8 @@ func TestChestBoat_Standalone(t *testing.T) {
 			}
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 
@@ -234,7 +236,8 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			}
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 

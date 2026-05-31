@@ -57,11 +57,12 @@ func (a *agent) cmdTestMove() {
 		_ = a.SendChat("Movement not available")
 		return
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		_ = a.SendChat("Bot position not initialized")
 		return
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	_ = a.SendChat(fmt.Sprintf("Current position: %.2f, %.2f, %.2f", x, y, z))
 	targetX := x + 1.0
 	const stepSize = 0.2
@@ -99,11 +100,12 @@ func (a *agent) cmdLineTo(xs, ys, zs string) {
 		_ = a.SendChat("Invalid Z coordinate")
 		return
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		_ = a.SendChat("Bot position not initialized")
 		return
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	dx, dy, dz := tx-x, ty-y, tz-z
 	total := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	_ = a.SendChat(fmt.Sprintf("Moving direct from (%.2f, %.2f, %.2f) to (%.2f, %.2f, %.2f) [%.2f blocks]", x, y, z, tx, ty, tz, total))
@@ -274,11 +276,12 @@ func (a *agent) cmdTestPath() {
 		_ = a.SendChat("Pathfinder not available")
 		return
 	}
-	x, y, z, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		_ = a.SendChat("Bot position not initialized")
 		return
 	}
+	x, y, z := pos.X, pos.Y, pos.Z
 	start := models.V3{X: x, Y: y, Z: z}
 	goal := models.V3{X: x, Y: y, Z: z + 5}
 	a.lifecycleMu.RLock()
@@ -385,10 +388,11 @@ func (a *agent) cmdStartTracking() {
 
 				// Look at nearest
 				_ = a.moveExec.LookAt(nearest.X, nearest.Y, nearest.Z, true)
-				bx, by, bz, okp := a.GetPositionSimple()
+				pos, okp := a.GetPositionSimple()
 				if !okp {
 					continue
 				}
+				bx, by, bz := pos.X, pos.Y, pos.Z
 
 				pname := "Unknown"
 				a.playerResolversMu.RLock()
@@ -429,10 +433,11 @@ type nearestInfo struct {
 }
 
 func (a *agent) findNearestPlayer() (nearestInfo, bool) {
-	bx, by, bz, ok := a.GetPositionSimple()
+	pos, ok := a.GetPositionSimple()
 	if !ok {
 		return nearestInfo{}, false
 	}
+	bx, by, bz := pos.X, pos.Y, pos.Z
 	ents := a.snapshotEntities()
 
 	// Snapshot the resolver to avoid repeated lock acquisitions

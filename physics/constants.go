@@ -218,8 +218,13 @@ const (
 	// Included for completeness; not used by the riding executor.
 	MinecartRailDragEmpty = 0.96
 
-	// MinecartOffRailDrag is the velocity drag per tick when not on rail (heavy damping).
+	// MinecartOffRailDrag is the velocity drag per tick when not on rail and on ground.
+	// Java AbstractMinecartEntity.moveOffRail: velocity *= 0.5 when isOnGround().
 	MinecartOffRailDrag = 0.5
+
+	// MinecartOffRailAirDrag is the velocity drag per tick when not on rail and airborne.
+	// Java AbstractMinecartEntity.moveOffRail: velocity *= 0.95 when !isOnGround().
+	MinecartOffRailAirDrag = 0.95
 
 	// MinecartNudgeImpulse is the tiny velocity added when the player presses forward/backward
 	// on a nearly-stopped minecart to break static inertia.
@@ -244,7 +249,8 @@ const (
 	MinecartUnpoweredBrakeThreshold = 0.03
 
 	// MinecartSlopeGravity is the speed delta per tick when traversing a slope.
-	// Java uses 0.0078125 (1/128). Uphill: subtract; downhill: add.
+	// Java uses 0.0078125 (1/128). Applied as a constant downhill force; in the
+	// signed-speed model this is always subtracted from speed.
 	MinecartSlopeGravity = 0.0078125
 
 	// MinecartPoweredRailBoost is the speed added per tick when on an energized powered rail.
@@ -255,6 +261,52 @@ const (
 	// Java DefaultMinecartController.getMaxSpeed(): 0.4 on land, 0.2 in water.
 	MinecartMaxSpeed = 0.4
 
-	// MinecartFallGravity is the Y-axis gravity when the minecart is off rail (falling).
+	// MinecartWaterMaxSpeed is the maximum horizontal speed in water.
+	// Java DefaultMinecartController.getMaxSpeed(): 0.2 when isTouchingWater().
+	MinecartWaterMaxSpeed = 0.2
+
+	// MinecartWaterSlopeGravityFactor scales slope gravity when in water.
+	// Java DefaultMinecartController.moveOnRail: g *= 0.2 when isTouchingWater().
+	MinecartWaterSlopeGravityFactor = 0.2
+
+	// MinecartWaterDragMultiplier is additional drag applied after normal drag in water.
+	// Java AbstractMinecartEntity.applySlowdown: velocity *= 0.95 when isTouchingWater().
+	MinecartWaterDragMultiplier = 0.95
+
+	// MinecartFallGravity is the Y-axis gravity per tick when the minecart is off rail.
+	// Java AbstractMinecartEntity.getGravity(): 0.04 on land, accumulated in Y velocity.
 	MinecartFallGravity = -0.04
+
+	// MinecartWaterGravity is the Y-axis gravity per tick when in water.
+	// Java AbstractMinecartEntity.getGravity(): 0.005 when isTouchingWater().
+	MinecartWaterGravity = -0.005
+
+	// MinecartRailYOffset is the Y offset for rail anchor positions.
+	// Java snapPositionToRail uses j + 0.0625 as the base Y for rail anchors.
+	MinecartRailYOffset = 0.0625
 )
+
+// Rideable entity (camel, horse, etc.) water physics constants
+const (
+	// When a rideable entity (camel, horse, donkey, llama) is in water with a rider,
+	// it sinks instead of floating. These values control the sinking rate and drag.
+
+	// RideableInWaterGravity is the downward acceleration when a ridden entity is in water.
+	// Vanilla behavior: ridden entities sink with full gravity applied.
+	RideableInWaterGravity = 0.08 // Full gravity - entities sink when ridden in water
+
+	// RideableInWaterDragMultiplier reduces horizontal velocity when ridden in water.
+	// Matches player swimming drag behavior.
+	RideableInWaterDragMultiplier = 0.8 // Significant drag in water
+)
+
+// HorseLandFriction computes the per-tick velocity multiplier for a ridden entity
+// on land, based on the block's slipperiness. Mirrors the vanilla formula from
+// LivingEntity.travelControlled → Entity.applyMovementInput → friction path:
+//
+//	friction = Inertia * slipperiness  (0.91 * 0.6 = 0.546 for most blocks)
+//
+// The result is the fraction of horizontal velocity retained each tick.
+func HorseLandFriction(slipperiness float64) float64 {
+	return Inertia * slipperiness
+}

@@ -14,6 +14,8 @@ type MountedEntityPositionGetter interface {
 	GetMountedEntityType(entityID int32) (int32, bool)
 	IsMountedEntityBoat(int32) bool
 	IsMountedEntityMinecart(int32) bool
+	IsMountedEntityCamel(int32) bool
+	IsMountedEntityNautilus(int32) bool
 
 	// GetEntityAttribute retrieves an entity attribute value by name.
 	// Returns (value, found) - found is false if the entity or attribute is not tracked.

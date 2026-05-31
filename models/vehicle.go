@@ -14,6 +14,9 @@ const (
 	VehicleTypeDonkey
 	VehicleTypeMule
 	VehicleTypeChestBoat
+	VehicleTypeCamelHusk
+	VehicleTypeNautilus
+	VehicleTypeZombieNautilus
 )
 
 // GetVehicleType returns what kind of vehicle an entity type represents.
@@ -28,8 +31,14 @@ func GetVehicleType(entityType EntityType) VehicleType {
 		return VehicleTypeChestBoat
 	case EntityTypeMinecart:
 		return VehicleTypeMinecart
-	case EntityTypeCaravanLlama:
+	case EntityTypeCamel:
 		return VehicleTypeCamel
+	case EntityTypeCamelHusk:
+		return VehicleTypeCamelHusk
+	case EntityTypeNautilus:
+		return VehicleTypeNautilus
+	case EntityTypeZombieNautilus:
+		return VehicleTypeZombieNautilus
 	case EntityTypePig:
 		return VehicleTypePig
 	case EntityTypeStrider:
@@ -66,6 +75,12 @@ func (v VehicleType) String() string {
 		return "donkey"
 	case VehicleTypeMule:
 		return "mule"
+	case VehicleTypeCamelHusk:
+		return "camel_husk"
+	case VehicleTypeNautilus:
+		return "nautilus"
+	case VehicleTypeZombieNautilus:
+		return "zombie_nautilus"
 	default:
 		return "unknown"
 	}

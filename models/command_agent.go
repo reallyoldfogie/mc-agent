@@ -5,8 +5,7 @@ import "context"
 // CommandAgent is the minimal surface required by command actions.
 type CommandAgent interface {
 	MovementAgent
-
-	GetPositionSimple() (x, y, z float64, initialized bool)
+	ChatOperations
 
 	MoveToWithChat(ctx context.Context, x, y, z float64) error
 	LineTo(ctx context.Context, x, y, z float64, notifyChat bool) error

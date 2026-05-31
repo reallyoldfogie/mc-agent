@@ -51,6 +51,10 @@ type ManualMovementExecutor interface {
 	// SetManualRotation sets the yaw and pitch for the current and next frames.
 	// Use math.NaN() to maintain the current rotation value without changing it.
 	SetManualRotation(yaw, pitch float64) error
+
+	// SetManualJump sets whether the jump button is pressed.
+	// For camels, holding jump charges the dash; releasing fires the impulse.
+	SetManualJump(enabled bool) error
 }
 
 // RidingPhysicsInspector provides read-only access to the riding (mounted
@@ -67,6 +71,10 @@ type RidingPhysicsInspector interface {
 	// under the boat (water=0.9, land=0.6, ice=0.98, etc.) or the mount
 	// type (horse=0.9). Returns 0 before the first riding tick.
 	GetRidingDragMultiplier() float64
+
+	// GetCamelState returns the current camel state if mounted on a camel,
+	// or (nil, false) if not mounted or mounted on a different vehicle type.
+	GetCamelState() (*CamelState, bool)
 }
 
 // ManualMovement provides passthrough access to manual movement control on the agent.
@@ -83,4 +91,7 @@ type ManualMovement interface {
 
 	// SetManualRotation sets rotation input (yaw/pitch).
 	SetManualRotation(yaw, pitch float64) error
+
+	// SetManualJump sets whether the jump button is pressed.
+	SetManualJump(enabled bool) error
 }

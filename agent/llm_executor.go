@@ -100,11 +100,10 @@ func (e *AgentExecutor) executeMineBlockAt(ctx context.Context, args map[string]
 	target := models.V3{X: x, Y: y, Z: z}
 
 	// Check mining range
-	agentX, agentY, agentZ, initialized := e.agent.GetPositionSimple()
+	agentPos, initialized := e.agent.GetPositionSimple()
 	if !initialized {
 		return nil, fmt.Errorf("agent position not initialized")
 	}
-	agentPos := models.V3{X: agentX, Y: agentY, Z: agentZ}
 
 	if agentPos.DistanceTo(target) > 3.0 {
 		return fmt.Sprintf("Target block at (%.2f, %.2f, %.2f) is out of mining range", x, y, z), nil
@@ -151,15 +150,15 @@ func (e *AgentExecutor) executeMineBlockAt(ctx context.Context, args map[string]
 					log.Printf("Found item entity at (%.2f, %.2f, %.2f), distance: %.2f", entityInfo.X, entityInfo.Y, entityInfo.Z, dist)
 
 					if dist > itemPickupRange {
-						agentX, agentY, agentZ, _ := e.agent.GetPositionSimple()
-						dx := entityInfo.X - agentX
-						dz := entityInfo.Z - agentZ
+						agentPos, _ := e.agent.GetPositionSimple()
+						dx := entityInfo.X - agentPos.X
+						dz := entityInfo.Z - agentPos.Z
 						// Normalize direction vector and move 0.5 blocks closer
 						length := math.Sqrt(dx*dx + dz*dz)
 						if length > 0 {
 							dx /= length
 							dz /= length
-							targetPos := models.V3{X: agentX + dx*0.5, Y: agentY, Z: agentZ + dz*0.5}
+							targetPos := models.V3{X: agentPos.X + dx*0.5, Y: agentPos.Y, Z: agentPos.Z + dz*0.5}
 							path, err := e.agent.FindPath(ctx, targetPos.X, targetPos.Y, targetPos.Z)
 							if err == nil {
 								e.agent.ExecutePath(ctx, path)

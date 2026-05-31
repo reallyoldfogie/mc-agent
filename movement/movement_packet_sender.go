@@ -19,17 +19,22 @@ import (
 type movementPacketSender struct {
 	client    bot.Client
 	packetMgr protocol_models.PacketMgr
+
 	// Reference to bot position tracking (will be passed from main)
-	getBotPosition func() (x, y, z float64, yaw, pitch float64, initialized bool)
-	setBotPosition func(x, y, z float64, yaw, pitch float64)
+	getBotPosition func() (pos models.V3, yaw, pitch float64, initialized bool)
+	setBotPosition func(pos models.V3, yaw, pitch float64)
+
 	// Reference to bot entity ID (needed for sprint/sneak commands)
 	getBotEntityID func() int32
+
 	// Track sprint/sneak state to avoid redundant packets
 	stateMu     sync.Mutex // Protects isSprinting and isSneaking
 	isSprinting bool
 	isSneaking  bool
+
 	// Optional callback for packet interception (e.g., replay mirror)
 	onPacketSent func(pkt any)
+
 	// Optional version-specific movement handler. When set, uses version-aware packet
 	// construction instead of the generic packets.go functions.
 	movementHandler models.MovementHandler
@@ -39,8 +44,8 @@ type movementPacketSender struct {
 func newMovementPacketSender(
 	client bot.Client,
 	packetMgr protocol_models.PacketMgr,
-	getBotPos func() (float64, float64, float64, float64, float64, bool),
-	setBotPos func(float64, float64, float64, float64, float64),
+	getBotPos func() (models.V3, float64, float64, bool),
+	setBotPos func(models.V3, float64, float64),
 	getBotEntityID func() int32,
 ) *movementPacketSender {
 	return &movementPacketSender{
@@ -102,8 +107,8 @@ func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) err
 
 	if err == nil {
 		// Update tracked position (keep existing rotation)
-		_, _, _, yaw, pitch, _ := me.getBotPosition()
-		me.setBotPosition(x, y, z, yaw, pitch)
+		_, yaw, pitch, _ := me.getBotPosition()
+		me.setBotPosition(models.V3{X: x, Y: y, Z: z}, yaw, pitch)
 	}
 	return err
 }
@@ -134,7 +139,7 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 		if me.client != nil {
 			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation calling setBotPosition: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
 		}
-		me.setBotPosition(x, y, z, yaw, pitch)
+		me.setBotPosition(models.V3{X: x, Y: y, Z: z}, yaw, pitch)
 		if me.client != nil {
 			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation setBotPosition done", me.client.Name())
 		}
@@ -157,8 +162,8 @@ func (me *movementPacketSender) SendRotation(yaw, pitch float64, onGround bool) 
 
 	if err == nil {
 		// Update tracked rotation (keep existing position)
-		x, y, z, _, _, _ := me.getBotPosition()
-		me.setBotPosition(x, y, z, yaw, pitch)
+		pos, _, _, _ := me.getBotPosition()
+		me.setBotPosition(pos, yaw, pitch)
 	}
 	return err
 }
@@ -166,15 +171,15 @@ func (me *movementPacketSender) SendRotation(yaw, pitch float64, onGround bool) 
 // MoveTowards moves the bot towards target coordinates by a given distance
 func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, distance float64, onGround bool) (newX, newY, newZ float64, err error) {
 	// Get current position
-	botX, botY, botZ, yaw, pitch, initialized := me.getBotPosition()
+	botPos, yaw, pitch, initialized := me.getBotPosition()
 	if !initialized {
 		return 0, 0, 0, fmt.Errorf("bot position not initialized")
 	}
 
 	// Calculate direction vector (horizontal only to prevent walking on air)
-	dx := targetX - botX
-	dy := targetY - botY
-	dz := targetZ - botZ
+	dx := targetX - botPos.X
+	dy := targetY - botPos.Y
+	dz := targetZ - botPos.Z
 
 	// Calculate horizontal distance (X-Z plane only)
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
@@ -183,10 +188,10 @@ func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, d
 	if horizontalDist <= 0.01 {
 		if math.Abs(dy) > 0.01 {
 			// Move vertically to match path step (world integration complete)
-			err = me.SendPositionAndRotation(botX, targetY, botZ, yaw, pitch, onGround)
-			return botX, targetY, botZ, err
+			err = me.SendPositionAndRotation(botPos.X, targetY, botPos.Z, yaw, pitch, onGround)
+			return botPos.X, targetY, botPos.Z, err
 		}
-		return botX, botY, botZ, nil
+		return botPos.X, botPos.Y, botPos.Z, nil
 	}
 
 	// Normalize horizontal direction vector
@@ -197,7 +202,7 @@ func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, d
 	moveDistance := math.Min(distance, horizontalDist)
 
 	// Calculate new position (include vertical movement from pathfinding)
-	newX = botX + dxNorm*moveDistance
+	newX = botPos.X + dxNorm*moveDistance
 
 	// Smart physics for Y movement:
 	// - Upward or nearly level: move to target Y immediately
@@ -208,10 +213,10 @@ func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, d
 	} else {
 		// Going down - apply controlled descent (max 0.5 blocks per movement tick)
 		fallAmount := min(-dy, 0.5)
-		newY = max(targetY, botY-fallAmount)
+		newY = max(targetY, botPos.Y-fallAmount)
 	}
 
-	newZ = botZ + dzNorm*moveDistance
+	newZ = botPos.Z + dzNorm*moveDistance
 
 	// Keep existing rotation (yaw and pitch) - caller should set rotation via LookAt if needed
 	// This allows the bot to look at target while walking towards a different position
@@ -224,7 +229,7 @@ func (me *movementPacketSender) MoveTowards(targetX, targetY, targetZ float64, d
 // LookAt rotates the bot to look at target coordinates
 func (me *movementPacketSender) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
 	// Get current position
-	botX, botY, botZ, _, _, initialized := me.getBotPosition()
+	botPos, _, _, initialized := me.getBotPosition()
 	if !initialized {
 		return fmt.Errorf("bot position not initialized")
 	}
@@ -237,7 +242,7 @@ func (me *movementPacketSender) LookAt(targetX, targetY, targetZ float64, onGrou
 	} else {
 		eyeHeight = models.PlayerEyeHeight // Standing eye height
 	}
-	yaw, pitch := calculateLookAngles(botX, botY+eyeHeight, botZ, targetX, targetY+eyeHeight, targetZ)
+	yaw, pitch := calculateLookAngles(botPos.X, botPos.Y+eyeHeight, botPos.Z, targetX, targetY+eyeHeight, targetZ)
 
 	// Send rotation update
 	return me.SendRotation(yaw, pitch, onGround)

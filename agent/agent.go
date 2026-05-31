@@ -240,7 +240,7 @@ type agent struct {
 	planRunner *plan.Runner
 
 	// command registry
-	commandRegistry models.ActionRegistry[actions.CommandAgent]
+	commandRegistry models.ActionRegistry[models.CommandAgent]
 
 	// chat events
 	chatEvents chan string
@@ -263,6 +263,7 @@ type agent struct {
 	// entity metadata handling
 	entityRegistry  *models.EntityRegistry
 	metadataHandler models.MetadataHandler
+	poseRegistry    *models.EntityPoseRegistry
 
 	// critical error handling
 	criticalErrorMu sync.Mutex
@@ -402,7 +403,9 @@ func (a *agent) Init(ctx context.Context) error {
 	}
 	a.entitiesMu.Unlock()
 
-	// Initialize entity metadata handler with entity registry
+	// Initialize entity metadata handler with entity registry.
+	// Pose registry is injected later (after data path is resolved) via
+	// the BasicMetadataProcessor.SetPoseRegistry hook below.
 	if a.entityRegistry != nil {
 		a.metadataHandler = models.NewBasicMetadataProcessor(a.entityRegistry)
 		log.Printf("[Agent] Entity metadata handler initialized")
@@ -559,6 +562,21 @@ func (a *agent) Init(ctx context.Context) error {
 			} else {
 				log.Printf("[Agent %s] Successfully created block shape manager", a.cfg.Name)
 			}
+
+			if poses, perr := models.LoadEntityPoseRegistry(dataBasePath, a.cfg.Version); perr == nil {
+				a.poseRegistry = poses
+				if poses.UsedFallback() {
+					log.Printf("[Agent %s] poses.json missing for %s, using built-in EntityPose fallback (%d entries)", a.cfg.Name, a.cfg.Version, poses.Count())
+				} else {
+					log.Printf("[Agent %s] Loaded EntityPose registry: %d entries", a.cfg.Name, poses.Count())
+				}
+			} else {
+				a.poseRegistry = models.NewEntityPoseRegistryFromFallback()
+				log.Printf("[Agent %s] Warning: failed to load poses.json (%v); using fallback EntityPose table", a.cfg.Name, perr)
+			}
+			if bmp, ok := a.metadataHandler.(*models.BasicMetadataProcessor); ok && a.poseRegistry != nil {
+				bmp.SetPoseRegistry(a.poseRegistry)
+			}
 		} else {
 			log.Printf("[Agent %s] Warning: failed to resolve data path: %v", a.cfg.Name, err)
 		}
@@ -569,10 +587,11 @@ func (a *agent) Init(ctx context.Context) error {
 		execConfig := movement.ExecutorConfig{
 			Client:         botClient,
 			PacketMgr:      a.packetMgr,
-			GetBotPos:      a.GetPosition,
+			GetBotPos:      a.getBotPositionLegacy,
 			SetBotPos:      a.UpdatePosition,
 			GetBotEntityID: a.GetEntityID,
 			Ctx:            a.ctx,
+			WorldManager:   a.worldMgr,
 		}
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
@@ -767,7 +786,7 @@ func (a *agent) Init(ctx context.Context) error {
 					a.targetSelector,
 					followPathfinder,
 					a.moveExec,
-					a.GetPosition,
+					a.getFollowBotPosition,
 					a.SendChat,
 					followCfg,
 					func() string { return a.cfg.Name },
@@ -1044,10 +1063,11 @@ func (a *agent) waitForGroundData(ctx context.Context, timeout time.Duration) {
 			log.Printf("[Agent %s] Ground check timed out after %s; starting physics anyway", a.cfg.Name, timeout)
 			return
 		case <-ticker.C:
-			x, y, z, _, _, ok := a.GetPosition()
+			pos, _, _, ok := a.GetPosition()
 			if !ok {
 				continue
 			}
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Log progress every second
 			if time.Since(lastLogTime) >= 1*time.Second {
@@ -1288,8 +1308,8 @@ func (a *agent) SetPlayerUUIDResolver(f func(string) ([16]byte, error)) {
 }
 
 // UpdatePosition sets internal position; intended for movement executor wiring.
-func (a *agent) UpdatePosition(x, y, z float64, yaw, pitch float64) {
-	a.setPosition(x, y, z, yaw, pitch)
+func (a *agent) UpdatePosition(pos models.V3, yaw, pitch float64) {
+	a.setPosition(pos, yaw, pitch)
 }
 
 // SetFollowManager injects a follow manager implementation.
@@ -1472,6 +1492,24 @@ func (a *agent) SetManualRotation(yaw, pitch float64) error {
 	}
 
 	return manual.SetManualRotation(yaw, pitch)
+}
+
+// SetManualJump sets whether the jump button is pressed for manual control.
+// For camels, holding jump charges the dash; releasing fires the impulse.
+func (a *agent) SetManualJump(enabled bool) error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.SetManualJump(enabled)
 }
 
 // errors
@@ -1733,6 +1771,17 @@ func (a *agent) callEntityPositionCallbacks(entityID int32, x, y, z float64) {
 	for _, cb := range callbacks {
 		cb(entityID, x, y, z)
 	}
+}
+
+// getBotPositionLegacy returns bot position in legacy format for movement executor compatibility
+func (a *agent) getBotPositionLegacy() (models.V3, float64, float64, bool) {
+	return a.GetPosition()
+}
+
+// getFollowBotPosition returns bot position for follow manager
+func (a *agent) getFollowBotPosition() (models.V3, float64, float64, bool) {
+	pos, yaw, pitch, initialized := a.GetPosition()
+	return pos, yaw, pitch, initialized
 }
 
 // String returns a human-friendly description for logging.

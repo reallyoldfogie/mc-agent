@@ -108,14 +108,14 @@ The physics executor calculates position and sends it, but the **test checks age
 When the agent is mounted:
 ```go
 // From agent/tracking.go:87
-func (a *agent) GetPositionSimple() (x, y, z float64, initialized bool) {
+func (a *agent) GetPositionSimple() (pos models.V3, initialized bool) {
     if mountedEntityID != -1 {
         // Return the mounted entity's position
         if entity, exists := a.entities[mountedEntityID]; exists {
-            return entity.X, entity.Y, entity.Z, true
+            return models.V3{X:entity.X, Y:entity.Y, Z:entity.Z}, true
         }
     }
-    return a.posX, a.posY, a.posZ, a.posInitialized
+    return models.V3{X:a.posX, Y:a.posY, Z:a.posZ}, a.posInitialized
 }
 ```
 

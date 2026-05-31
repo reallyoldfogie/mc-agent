@@ -32,7 +32,10 @@ const (
 	EntityTypeSkeleton       EntityType = "skeleton"
 	EntityTypeDonkey         EntityType = "donkey"
 	EntityTypeMule           EntityType = "mule"
-	EntityTypeCaravanLlama   EntityType = "camel"
+	EntityTypeCamel          EntityType = "camel"
+	EntityTypeCamelHusk      EntityType = "camel_husk"
+	EntityTypeNautilus       EntityType = "nautilus"
+	EntityTypeZombieNautilus EntityType = "zombie_nautilus"
 	EntityTypeBoat           EntityType = "boat"
 	EntityTypeChestBoat      EntityType = "chest_boat"
 	EntityTypePig            EntityType = "pig"
@@ -155,7 +158,8 @@ func (t EntityType) IsLivingEntity() bool {
 		EntityTypeSpider, EntityTypeGiant, EntityTypeEnderman, EntityTypeEndermite,
 		EntityTypeWither, EntityTypeBat, EntityTypeWitch, EntityTypeZombieVillager,
 		EntityTypeVillager, EntityTypeIronGolem, EntityTypeSnowGolem, EntityTypeArmorStand,
-		EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeCaravanLlama:
+		EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeCamel, EntityTypeCamelHusk,
+		EntityTypeNautilus, EntityTypeZombieNautilus:
 		return true
 	default:
 		return false
@@ -188,7 +192,8 @@ func (t EntityType) IsDisplayEntity() bool {
 func (t EntityType) IsRideable() bool {
 	switch t {
 	case EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
-		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCaravanLlama:
+		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCamel, EntityTypeCamelHusk,
+		EntityTypeNautilus, EntityTypeZombieNautilus:
 		return true
 	default:
 		return false

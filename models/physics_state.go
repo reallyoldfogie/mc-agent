@@ -2,6 +2,8 @@ package models
 
 // PhysicsState is an interface for physics state needed by input generators and movement executors.
 type PhysicsState interface {
+	Position
+
 	Position() V3
 	Velocity() V3
 	Yaw() float64
@@ -21,7 +23,6 @@ type PhysicsState interface {
 	SetOnGround(onGround bool)
 	SetSneaking(sneaking bool)
 	SetFallDistance(distance float64)
-	GetPosition() (pos V3, yaw, pitch float64, onGround bool)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

@@ -22,7 +22,8 @@ func TestEntityAttributeTracking(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon a horse (will have entity attributes like movement speed, max health)
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
@@ -63,7 +64,8 @@ func TestHorseAttributesAfterMounting(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon horse
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
@@ -118,7 +120,8 @@ func TestMultipleEntityAttributes(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon multiple entity types
 			entityTests := []struct {

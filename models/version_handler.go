@@ -447,6 +447,10 @@ type WorldHandler interface {
 	// ParseUnloadChunk parses a chunk unload packet
 	ParseUnloadChunk(p pk.Packet) (chunkX, chunkZ int32, err error)
 
+	// ParseUpdateTime parses the ClientboundUpdateTime packet.
+	// Returns the world age (ticks since world creation) and time of day (ticks in current day).
+	ParseUpdateTime(p pk.Packet) (worldAge, timeOfDay int64, err error)
+
 	// SendChunkBatchReceived sends an acknowledgment for received chunk batches.
 	// This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
 	// The batchCount parameter is the cumulative number of batches received so far.

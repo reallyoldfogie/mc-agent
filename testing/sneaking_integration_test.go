@@ -58,12 +58,12 @@ func TestSneaking_EdgePrevention(t *testing.T) {
 			time.Sleep(2 * time.Second)
 
 			// Get bot position
-			botX, botY, botZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok, "bot position initialized")
+			botPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized, "bot position initialized")
 
-			platformX := int(math.Floor(botX))
-			platformY := int(math.Floor(botY)) - 1
-			platformZ := int(math.Floor(botZ))
+			platformX := int(math.Floor(botPos.X))
+			platformY := int(math.Floor(botPos.Y)) - 1
+			platformZ := int(math.Floor(botPos.Z))
 
 			// create a pit around the platform to test edge prevention
 			fillCmd := fmt.Sprintf(`fill %d %d %d %d %d %d minecraft:air`, platformX-20, platformY, platformZ-20, platformX+20, platformY-5, platformZ+20)
@@ -88,8 +88,8 @@ func TestSneaking_EdgePrevention(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			initialX, initialY, initialZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok, "bot position should be available")
+			initialPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized, "bot position should be available")
 
 			// Start sneaking
 			err = ag.Agent.StartSneaking()
@@ -105,18 +105,16 @@ func TestSneaking_EdgePrevention(t *testing.T) {
 			time.Sleep(6 * time.Second)
 
 			// Check bot position - should not have walked off edge, but should have still moved
-			finalX, finalY, finalZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok, "bot position should be available")
+			finalPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized, "bot position should be available")
 
-			initialV3 := models.V3{X: initialX, Y: initialY, Z: initialZ}
-			finalV3 := models.V3{X: finalX, Y: finalY, Z: finalZ}
-			distanceMoved := initialV3.DistanceTo(finalV3)
-			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %.2f %.2f %.2f to %.2f %.2f %.2f (%.2f blocks)", initialX, initialY, initialZ, finalX, finalY, finalZ, distanceMoved))
+			distanceMoved := initialPos.DistanceTo(finalPos)
+			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
 
-			assert.NotEqual(t, initialV3, finalV3)
+			assert.NotEqual(t, initialPos, finalPos)
 
 			// Bot should still be on platform (within reasonable bounds)
-			assert.GreaterOrEqual(t, finalY, float64(platformY)+0.5,
+			assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
 				"bot should still be on platform level after sneaking movement attempt")
 		})
 	}
@@ -160,12 +158,12 @@ func TestSneaking_MovementAllowed(t *testing.T) {
 			time.Sleep(2 * time.Second)
 
 			// Get bot position
-			botX, botY, botZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok, "bot position initialized")
+			botPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized, "bot position initialized")
 
-			platformX := int(math.Floor(botX))
-			platformY := int(math.Floor(botY)) - 1
-			platformZ := int(math.Floor(botZ))
+			platformX := int(math.Floor(botPos.X))
+			platformY := int(math.Floor(botPos.Y)) - 1
+			platformZ := int(math.Floor(botPos.Z))
 
 			fillCmd := fmt.Sprintf(`fill %d %d %d %d %d %d minecraft:air`, platformX-20, platformY, platformZ-20, platformX+20, platformY-5, platformZ+20)
 			fillResponse, err := inst.RCON.Exec(ctx, fillCmd)
@@ -189,8 +187,8 @@ func TestSneaking_MovementAllowed(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			initialX, initialY, initialZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok)
+			initialPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized)
 
 			// Start sneaking and move
 			err = ag.Agent.StartSneaking()
@@ -203,20 +201,18 @@ func TestSneaking_MovementAllowed(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			// Check bot moved
-			finalX, finalY, finalZ, ok := ag.Agent.GetPositionSimple()
-			require.True(t, ok)
+			finalPos, initialized := ag.Agent.GetPositionSimple()
+			require.True(t, initialized)
 
-			initialV3 := models.V3{X: initialX, Y: initialY, Z: initialZ}
-			finalV3 := models.V3{X: finalX, Y: finalY, Z: finalZ}
-			distanceMoved := initialV3.DistanceTo(finalV3)
-			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %.2f %.2f %.2f to %.2f %.2f %.2f (%.2f blocks)", initialX, initialY, initialZ, finalX, finalY, finalZ, distanceMoved))
+			distanceMoved := initialPos.DistanceTo(finalPos)
+			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
 
-			assert.NotEqual(t, initialV3, finalV3)
+			assert.NotEqual(t, initialPos, finalPos)
 
 			// Should have moved a measurable distance
 			assert.InDeltaf(t, distanceMoved, 3.0, .15,
 				"bot should move at least 3 blocks when sneaking and not near edge")
-			assert.GreaterOrEqual(t, finalY, float64(platformY)+0.5,
+			assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
 				"bot should still be on platform")
 		})
 	}

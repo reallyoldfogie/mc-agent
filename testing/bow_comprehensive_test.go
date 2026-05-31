@@ -86,10 +86,10 @@ func fireAtElevation(t *testing.T, inst *TestInstance, agent *ManagedAgent,
 	agent.Agent.SendChat(fmt.Sprintf("FireBow: height=%+d, distance=%d blocks", heightDelta, distance))
 
 	// Get bot position
-	botX, botY, botZ, ok := agent.Agent.GetPositionSimple()
+	src, ok := agent.Agent.GetPositionSimple()
 	require.True(t, ok, "bot position initialized")
 
-	src := models.V3{X: botX, Y: botY, Z: botZ}
+	botX, botY, botZ := src.X, src.Y, src.Z
 	// Setup target mechanism
 	targetX, targetY, targetZ, gx, gy, gz, err := setupTargetMechanismWithHeight(
 		ctx, t, inst.RCON,

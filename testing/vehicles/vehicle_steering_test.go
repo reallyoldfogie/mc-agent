@@ -85,7 +85,7 @@ func TestBoatSteering(t *testing.T) {
 			require.NoError(t, err, "teleport agent")
 			time.Sleep(500 * time.Millisecond)
 
-			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			_, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
 			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak")
@@ -177,13 +177,13 @@ func TestHorseSteering(t *testing.T) {
 			require.NoError(t, err, "teleport agent")
 			time.Sleep(500 * time.Millisecond)
 
-			agentX, agentY, agentZ, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			agentPos, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
-			err = helper.BuildHorseEnclosure(ctx, agentX+1, agentY, agentZ)
+			err = helper.BuildHorseEnclosure(ctx, agentPos.X+1, agentPos.Y, agentPos.Z)
 			require.NoError(t, err, "build horse enclosure")
 
-			horseEntityID, err := helper.SummonHorse(ctx, agentX+1, agentY, agentZ)
+			horseEntityID, err := helper.SummonHorse(ctx, agentPos.X+1, agentPos.Y, agentPos.Z)
 			require.NoError(t, err, "summon horse")
 			time.Sleep(500 * time.Millisecond)
 
@@ -192,7 +192,7 @@ func TestHorseSteering(t *testing.T) {
 			err = helper.WaitForMounted(ctx, 25*time.Second)
 			require.NoError(t, err, "agent should be mounted")
 
-			err = helper.RemoveHorseEnclosure(ctx, agentX+1, agentY, agentZ)
+			err = helper.RemoveHorseEnclosure(ctx, agentPos.X+1, agentPos.Y, agentPos.Z)
 			require.NoError(t, err, "remove horse enclosure")
 			t.Logf("[%s] agent mounted successfully", helper.AgentName)
 
@@ -274,7 +274,7 @@ func TestVehicleSteeringInputs(t *testing.T) {
 			require.NoError(t, err, "teleport agent")
 			time.Sleep(500 * time.Millisecond)
 
-			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			_, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
 			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak")
@@ -373,16 +373,14 @@ func runBoatPhases(
 				"velocity should reach zero before phase %s", phase.name)
 
 			// Record actual start position (post-coast).
-			startX, startY, startZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-			start := models.V3{X: startX, Y: startY, Z: startZ}
+			start, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 
 			// Apply throttle and let the boat move.
 			helper.SetManualThrottle(phase.throttleX, phase.throttleZ)
 			time.Sleep(phase.duration)
 
 			// Sample end position.
-			endX, endY, endZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-			actual := models.V3{X: endX, Y: endY, Z: endZ}
+			actual, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 
 			displacement := GetDistance(start.X, 0, start.Z, actual.X, 0, actual.Z)
 			t.Logf("[%s] %s: start=(%.2f,%.2f,%.2f) actual=(%.2f,%.2f,%.2f) displacement=%.2f",
@@ -432,8 +430,7 @@ func runHorsePhases(
 				"velocity should reach zero before phase %s", phase.name)
 
 			// Record start position and yaw.
-			startX, startY, startZ, yawF, _, _ := helper.ManagedAgent.Agent.GetPosition()
-			start := models.V3{X: startX, Y: startY, Z: startZ}
+			start, yawF, _, _ := helper.ManagedAgent.Agent.GetPosition()
 			startYaw := float64(yawF)
 
 			// Apply throttle.
@@ -441,8 +438,7 @@ func runHorsePhases(
 			time.Sleep(phase.duration)
 
 			// Sample end position.
-			endX, endY, endZ, _, _, _ := helper.ManagedAgent.Agent.GetPosition()
-			actual := models.V3{X: endX, Y: endY, Z: endZ}
+			actual, _, _, _ := helper.ManagedAgent.Agent.GetPosition()
 
 			displacement := GetDistance(start.X, 0, start.Z, actual.X, 0, actual.Z)
 			t.Logf("[%s] %s: start=(%.2f,%.2f,%.2f) yaw=%.1f actual=(%.2f,%.2f,%.2f) displacement=%.2f",

@@ -18,6 +18,8 @@ type MetadataProcessResult struct {
 	CriticalHit bool        // Critical hit flag for projectiles
 	PierceLevel int8        // Piercing level for projectiles
 	PotionColor int32       // Potion color for arrows (-1 = no potion)
+	Pose        int32       // EntityPose wire ordinal (varint) when present
+	PoseName    string      // Lowercased EntityPose name (or "unknown_<n>")
 	HasHealth   bool        // Whether health was present in metadata
 	HasVelocity bool        // Whether velocity was extracted
 	HasPosition bool        // Whether position was extracted
@@ -25,6 +27,7 @@ type MetadataProcessResult struct {
 	HasCritical bool        // Whether critical hit flag was extracted
 	HasPierce   bool        // Whether pierce level was extracted
 	HasColor    bool        // Whether potion color was extracted
+	HasPose     bool        // Whether a pose entry was present in this update
 }
 
 // MetadataHandler processes entity metadata updates
@@ -39,13 +42,29 @@ type MetadataHandler interface {
 type BasicMetadataProcessor struct {
 	// EntityRegistry provides entity type information for context-aware metadata interpretation
 	entityRegistry *EntityRegistry
+	// poseRegistry maps EntityPose varint ordinals to lowercased names.
+	// May be nil; callers without a registry get DefaultEntityPoseRegistry on demand.
+	poseRegistry *EntityPoseRegistry
 }
 
-// NewBasicMetadataProcessor creates a new metadata processor with an entity registry
+// NewBasicMetadataProcessor creates a new metadata processor with an entity registry.
+// The pose registry is seeded from the built-in fallback; use SetPoseRegistry to
+// inject a version-specific one loaded from poses.json.
 func NewBasicMetadataProcessor(registry *EntityRegistry) *BasicMetadataProcessor {
 	return &BasicMetadataProcessor{
 		entityRegistry: registry,
+		poseRegistry:   DefaultEntityPoseRegistry(),
 	}
+}
+
+// SetPoseRegistry replaces the active pose registry. Safe to call once at
+// startup before metadata packets start arriving.
+func (p *BasicMetadataProcessor) SetPoseRegistry(registry *EntityPoseRegistry) {
+	if registry == nil {
+		p.poseRegistry = DefaultEntityPoseRegistry()
+		return
+	}
+	p.poseRegistry = registry
 }
 
 // HandleMetadata processes a metadata entry and returns structured results
@@ -110,7 +129,11 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 
 	case HandlerEntityPose:
 		if val, ok := entry.Value.(*pk.VarInt); ok {
-			p.handlePoseMetadata(entityID, int32(*val))
+			ordinal := int32(*val)
+			name := p.handlePoseMetadata(entityID, ordinal)
+			result.Pose = ordinal
+			result.PoseName = name
+			result.HasPose = true
 		}
 
 	case HandlerLazyEntityReference:
@@ -213,14 +236,22 @@ func (p *BasicMetadataProcessor) handleBooleanMetadata(entityID int32, key int32
 	}
 }
 
-// handlePoseMetadata processes pose metadata
-func (p *BasicMetadataProcessor) handlePoseMetadata(entityID int32, pose int32) {
-	poses := []string{"STANDING", "FALL_FLYING", "SLEEPING", "SWIMMING", "SPIN_ATTACK", "SNEAKING", "DYING"}
-	poseName := "UNKNOWN"
-	if pose >= 0 && pose < int32(len(poses)) {
-		poseName = poses[pose]
+// handlePoseMetadata processes pose metadata and returns the resolved name.
+// Names are sourced from the loaded EntityPoseRegistry (poses.json) and fall
+// back to the built-in 1.21.10 table. Unknown ordinals get "unknown_<n>".
+func (p *BasicMetadataProcessor) handlePoseMetadata(entityID int32, pose int32) string {
+	reg := p.poseRegistry
+	if reg == nil {
+		reg = DefaultEntityPoseRegistry()
 	}
-	log.Printf("[Metadata] EntityID=%d Pose: %s (%d)", entityID, poseName, pose)
+	name, known := reg.Name(pose)
+	if !known {
+		log.Printf("[Metadata] EntityID=%d Pose: %s (%d) — ordinal not in registry (count=%d)",
+			entityID, name, pose, reg.Count())
+	} else {
+		log.Printf("[Metadata] EntityID=%d Pose: %s (%d)", entityID, name, pose)
+	}
+	return name
 }
 
 // ConvertMetadataEntry takes a raw protocol metadata entry and converts it to our MetadataEntry type

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/reallyoldfogie/mc-agent/actions"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // MoveToWithChat runs moveTo with chat notifications enabled.
@@ -52,17 +52,17 @@ func (a *agent) IsFollowing() bool {
 }
 
 // NearestPlayerInfo returns the nearest tracked player for commands.
-func (a *agent) NearestPlayerInfo(ctx context.Context) (actions.NearestPlayerInfo, bool) {
+func (a *agent) NearestPlayerInfo(ctx context.Context) (models.NearestPlayerInfo, bool) {
 	select {
 	case <-ctx.Done():
-		return actions.NearestPlayerInfo{}, false
+		return models.NearestPlayerInfo{}, false
 	default:
 	}
 	info, ok := a.findNearestPlayer()
 	if !ok {
-		return actions.NearestPlayerInfo{}, false
+		return models.NearestPlayerInfo{}, false
 	}
-	return actions.NearestPlayerInfo{
+	return models.NearestPlayerInfo{
 		EntityID: info.EntityID,
 		UUID:     info.UUID,
 		Distance: info.Distance,

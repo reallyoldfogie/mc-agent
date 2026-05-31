@@ -11,4 +11,10 @@ type TrackedEntityInfo struct {
 	Health     float32 // Current health (0 = dead)
 	MaxHealth  float32 // Maximum health (typically 20.0 for mobs)
 	Removed    bool
+
+	// Pose metadata from EntityPose wire value (e.g., standing, sitting, sleeping)
+	// HasPose is false until the server sends a pose update
+	Pose     int32  // Raw wire ordinal from protocol
+	PoseName string // Lowercased Java enum name (e.g., "standing", "sitting")
+	HasPose  bool   // True if at least one pose update has been received
 }

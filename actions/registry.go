@@ -3,14 +3,14 @@ package actions
 import "github.com/reallyoldfogie/mc-agent/models"
 
 // NewRegistry builds a registry with all standard chat actions.
-func NewRegistry() models.ActionRegistry[CommandAgent] {
-	reg := NewActionRegistry[CommandAgent]()
+func NewRegistry() models.ActionRegistry[models.CommandAgent] {
+	reg := NewActionRegistry[models.CommandAgent]()
 	RegisterDefaults(reg)
 	return reg
 }
 
 // RegisterDefaults registers all built-in actions.
-func RegisterDefaults(reg models.ActionRegistry[CommandAgent]) {
+func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(Help{})
 	reg.Register(Pos{})
 	reg.Register(Say{})

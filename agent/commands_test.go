@@ -2,6 +2,8 @@ package agent
 
 import (
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 func TestHandleChatCommand_Help(t *testing.T) {
@@ -34,7 +36,7 @@ func TestHandleChatCommand_Pos_Uninitialized(t *testing.T) {
 func TestHandleChatCommand_Pos_Initialized(t *testing.T) {
 	agent, capture := setupChatCapture(t, "1.21.5")
 
-	agent.UpdatePosition(1, 2, 3, 0, 0)
+	agent.UpdatePosition(models.V3{X: 1, Y: 2, Z: 3}, 0, 0)
 	agent.handleChatCommand("pos")
 	if !capture.ContainsMessage("1.00") {
 		t.Fatalf("expected position print, got %#v", capture.GetMessages())

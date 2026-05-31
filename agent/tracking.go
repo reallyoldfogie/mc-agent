@@ -40,6 +40,13 @@ type trackedEntity struct {
 	BoatVariant     models.BoatVariant // Wood type (oak, spruce, birch, etc.)
 	BoatPaddleLeft  bool               // Left paddle turning
 	BoatPaddleRight bool               // Right paddle turning
+	// Pose tracks the entity's last-seen EntityPose, sourced from the Pose
+	// metadata field (handler type 21). PoseName is the lowercased Java enum
+	// name (e.g. "standing", "sitting"); Pose is the raw wire ordinal.
+	// HasPose is false until the first pose update arrives.
+	Pose     int32
+	PoseName string
+	HasPose  bool
 }
 
 // GetPosition returns the current bot position and rotation.
@@ -47,23 +54,23 @@ type trackedEntity struct {
 // executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
 // while riding because the server typically does not echo the vehicle's position
 // back to the rider, making it stale within a tick or two.
-func (a *agent) GetPosition() (x, y, z float64, yaw, pitch float64, initialized bool) {
+func (a *agent) GetPosition() (pos models.V3, yaw, pitch float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
 	log.Printf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch)
 
-	return a.posX, a.posY, a.posZ, a.posYaw, a.posPitch, a.posInitialized
+	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posYaw, a.posPitch, a.posInitialized
 }
 
 // setPosition updates the bot position and rotation.
-func (a *agent) setPosition(x, y, z float64, yaw, pitch float64) {
+func (a *agent) setPosition(pos models.V3, yaw, pitch float64) {
 	a.posMu.Lock()
 	defer a.posMu.Unlock()
 
-	a.posX, a.posY, a.posZ = x, y, z
+	a.posX, a.posY, a.posZ = pos.X, pos.Y, pos.Z
 	a.posYaw, a.posPitch = yaw, pitch
 	a.posInitialized = true
-	log.Printf("[setPosition %s] Updated bot position to (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, x, y, z, yaw, pitch)
+	log.Printf("[setPosition %s] Updated bot position to %s with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, pos, yaw, pitch)
 }
 
 // GetPositionSimple returns bot position without rotation.
@@ -71,12 +78,12 @@ func (a *agent) setPosition(x, y, z float64, yaw, pitch float64) {
 // executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
 // while riding because the server typically does not echo the vehicle's position
 // back to the rider, making it stale within a tick or two.
-func (a *agent) GetPositionSimple() (x, y, z float64, initialized bool) {
+func (a *agent) GetPositionSimple() (pos models.V3, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-	log.Printf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, x, y, z)
+	log.Printf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, a.posX, a.posY, a.posZ)
 
-	return a.posX, a.posY, a.posZ, a.posInitialized
+	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posInitialized
 }
 
 // GetEntityID returns the bot's entity ID.
@@ -136,6 +143,17 @@ func (a *agent) GetRidingDragMultiplier() float64 {
 		return inspector.GetRidingDragMultiplier()
 	}
 	return 0
+}
+
+// GetCamelState returns the current camel state if mounted on a camel,
+// or (nil, false) if not mounted or mounted on a different vehicle type.
+func (a *agent) GetCamelState() (*models.CamelState, bool) {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+	if inspector, ok := a.moveExec.(models.RidingPhysicsInspector); ok {
+		return inspector.GetCamelState()
+	}
+	return nil, false
 }
 
 // snapshotEntities returns a shallow copy of tracked entities for external consumption/tests.
@@ -334,6 +352,9 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 			Health:     e.Health,
 			MaxHealth:  e.MaxHealth,
 			Removed:    e.Removed,
+			Pose:       e.Pose,
+			PoseName:   e.PoseName,
+			HasPose:    e.HasPose,
 		}
 	}
 	return out
@@ -377,7 +398,8 @@ func (a *agent) FaceEntity(entityID int32) error {
 	}
 
 	// Get current bot position
-	botX, botY, botZ, initialized := a.GetPositionSimple()
+	pos, initialized := a.GetPositionSimple()
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 	if !initialized {
 		return fmt.Errorf("bot position not initialized")
 	}
@@ -419,7 +441,8 @@ func (a *agent) FacePosition(targetX, targetY, targetZ float64) error {
 	}
 
 	// Get current bot position
-	botX, botY, botZ, initialized := a.GetPositionSimple()
+	pos, initialized := a.GetPositionSimple()
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 	if !initialized {
 		return fmt.Errorf("bot position not initialized")
 	}

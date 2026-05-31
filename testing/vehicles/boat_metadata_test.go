@@ -24,7 +24,8 @@ func TestBoatVariantTracking(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Test various boat variants
 			boatVariants := []struct {
@@ -91,7 +92,7 @@ func TestBoatPaddleTracking(t *testing.T) {
 			time.Sleep(500 * time.Millisecond) // Wait for position update
 
 			// Get agent's initial position
-			_, _, _, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			_, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
 			// Summon a boat at the agent's location
@@ -162,7 +163,8 @@ func TestBoatMetadataConsistency(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon boat
 			boatEntityID, err := helper.SummonBoat(ctx, x, y, z, "oak")

@@ -120,8 +120,9 @@ func fireAt(ctx context.Context, t *testing.T, inst *TestInstance, agent *Manage
 	// Make sure bow is equipped explicitly (active slot cannot be assumed)
 	require.NoError(t, agent.EquipItemByName(ctx, "minecraft:bow"))
 
-	botX, botY, botZ, ok := agent.Agent.GetPositionSimple()
+	botPos, ok := agent.Agent.GetPositionSimple()
 	require.True(t, ok, "bot position initialized")
+	botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
 	// Use math.Floor() to properly convert world coordinates to block coordinates
 	// int() truncates towards zero, which breaks negative coordinates (e.g., int(-0.50) = 0, not -1)
 	// math.Floor() properly rounds down for all values

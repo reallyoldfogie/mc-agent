@@ -608,11 +608,11 @@ func (s Wander) Run(ctx context.Context, agent models.Agent) (StepResult, error)
 		if ctx.Err() != nil {
 			return StepResult{Status: StepFailed, Details: ctx.Err().Error()}, ctx.Err()
 		}
-		x, y, z, _, _, ok := agent.GetPosition()
+		pos, _, _, ok := agent.GetPosition()
 		if !ok {
 			return StepResult{Status: StepFailed, Details: "position not initialized"}, errors.New("position not initialized")
 		}
-		tx, ty, tz := pickWanderTarget(x, y, z, stepDistance, recent, avoidRadius)
+		tx, ty, tz := pickWanderTarget(pos, stepDistance, recent, avoidRadius)
 		if err := agent.MoveTo(ctx, tx, ty, tz, false); err != nil {
 			return StepResult{Status: StepFailed, Details: err.Error()}, err
 		}
@@ -624,17 +624,17 @@ func (s Wander) Run(ctx context.Context, agent models.Agent) (StepResult, error)
 	return StepResult{Status: StepSuccess}, nil
 }
 
-func pickWanderTarget(x, y, z, dist float64, recent [][3]float64, avoidRadius float64) (float64, float64, float64) {
+func pickWanderTarget(pos models.V3, dist float64, recent [][3]float64, avoidRadius float64) (float64, float64, float64) {
 	for i := 0; i < 10; i++ {
 		angle := randFloat64(0, 2*math.Pi)
-		tx := x + math.Cos(angle)*dist
-		tz := z + math.Sin(angle)*dist
-		ty := y
+		tx := pos.X + math.Cos(angle)*dist
+		tz := pos.Z + math.Sin(angle)*dist
+		ty := pos.Y
 		if !isRecent(tx, ty, tz, recent, avoidRadius) {
 			return tx, ty, tz
 		}
 	}
-	return x + dist, y, z
+	return pos.X + dist, pos.Y, pos.Z
 }
 
 func isRecent(x, y, z float64, recent [][3]float64, avoidRadius float64) bool {
@@ -819,9 +819,9 @@ func (s ExpectPosition) Run(ctx context.Context, agent models.Agent) (StepResult
 			return StepResult{Status: StepFailed, Details: ctx.Err().Error()}, ctx.Err()
 		default:
 		}
-		x, y, z, _, _, ok := agent.GetPosition()
+		pos, _, _, ok := agent.GetPosition()
 		if ok {
-			if distance3D(x, y, z, s.X, s.Y, s.Z) <= tolerance {
+			if distance3D(pos.X, pos.Y, pos.Z, s.X, s.Y, s.Z) <= tolerance {
 				return StepResult{Status: StepSuccess}, nil
 			}
 		}

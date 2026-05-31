@@ -41,16 +41,16 @@ func TestKnockback_AttackFromEntity(t *testing.T) {
 			time.Sleep(2 * time.Second)
 
 			// Get the bot's current position
-			botX, botY, botZ, posInitialized := env.Agent.Agent.GetPositionSimple()
+			botPos, posInitialized := env.Agent.Agent.GetPositionSimple()
 			require.True(t, posInitialized, "bot position initialized")
-			t.Logf("Bot position: %.2f, %.2f, %.2f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Spawn a NoAI zombie 5 blocks in the +X direction from the agent.
 			// NoAI prevents it from wandering so the knockback direction is predictable.
 			zombieOffsetX := 5.0
-			spawnX := botX + zombieOffsetX
-			spawnY := botY
-			spawnZ := botZ
+			spawnX := botPos.X + zombieOffsetX
+			spawnY := botPos.Y
+			spawnZ := botPos.Z
 			spawnCmd := fmt.Sprintf(
 				`summon minecraft:zombie %.1f %.1f %.1f {Health:20f,NoAI:1b,CanPickUpLoot:1b,ArmorItems:[{},{},{},{id:"minecraft:leather_helmet",Count:1b}]}`,
 				spawnX, spawnY, spawnZ,
@@ -65,7 +65,7 @@ func TestKnockback_AttackFromEntity(t *testing.T) {
 			// Verify the zombie is tracked
 			zombieType, typeFound := env.Agent.Agent.GetEntityTypeID("minecraft:zombie")
 			require.True(t, typeFound, "zombie entity type should be in registry")
-			_, _, entityFound := debugEntityTracking(t, env.Agent, zombieType, botX, botY, botZ, "minecraft:zombie")
+			_, _, entityFound := debugEntityTracking(t, env.Agent, zombieType, botPos, "minecraft:zombie")
 			require.True(t, entityFound, "zombie should be tracked by the agent")
 
 			// Record the agent's position before taking damage
@@ -129,7 +129,7 @@ func TestKnockback_AttackFromSourcePosition(t *testing.T) {
 			time.Sleep(2 * time.Second)
 
 			// Get the bot's current position
-			botX, _, botZ, posInitialized := env.Agent.Agent.GetPositionSimple()
+			botPos, posInitialized := env.Agent.Agent.GetPositionSimple()
 			require.True(t, posInitialized, "bot position initialized")
 
 			// Record the agent's position before taking damage
@@ -139,10 +139,10 @@ func TestKnockback_AttackFromSourcePosition(t *testing.T) {
 
 			// Deal damage using an explicit source position instead of a tracked entity.
 			// The source is placed in the -Z direction (north) so knockback should push +Z (south).
-			sourceZ := botZ - 3.0
+			sourceZ := botPos.Z - 3.0
 			damageCmd := fmt.Sprintf(
 				`damage %s 5 minecraft:mob_attack at %.1f %.1f %.1f`,
-				env.BotName, botX, beforePos.Y, sourceZ,
+				env.BotName, botPos.X, beforePos.Y, sourceZ,
 			)
 			resp, err := env.Inst.RCON.Exec(env.Ctx, damageCmd)
 			require.NoError(t, err, "deal damage to agent from source position")

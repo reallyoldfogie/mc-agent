@@ -29,6 +29,10 @@ type VehicleTestHelper struct {
 func NewVehicleTestHelper(t *testing.T, mcVersion, agentName string) (*VehicleTestHelper, context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 
+	if len(agentName) > 16 {
+		agentName = agentName[:16] // Minecraft usernames have a max length of 16 characters
+	}
+
 	framework, err := testingpkg.NewFramework()
 	if err != nil {
 		cancel()
@@ -293,6 +297,61 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (
 	return entityID, nil
 }
 
+// SummonCamel summons a tamed and saddled camel at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z float64) (int32, error) {
+	// Summon command varies by version due to saddle NBT location change in 1.21.5
+	// Camels must be tamed (Tame:1b) to be rideable
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+		cmd = fmt.Sprintf(
+			`summon minecraft:camel %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		// Versions 1.21.5+: Use equipment.saddle structure
+		cmd = fmt.Sprintf(
+			`summon minecraft:camel %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon camel: %w", err)
+	}
+
+	// Equip the saddle via item replace for reliability
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:camel,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] camel saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip camel saddle: %w", err)
+	}
+
+	// Wait for entity to spawn and be tracked
+	time.Sleep(500 * time.Millisecond)
+
+	// Get camel entity type ID from the agent's registry
+	camelTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:camel")
+	if !ok {
+		return 0, fmt.Errorf("camel entity type not found in registry")
+	}
+
+	// Find the camel by searching for nearest camel entity
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("camel entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
 // SummonEntity summons a generic entity by type name
 // Note: This returns entity ID 0 and requires caller to find the entity manually via FindNearestEntityByType
 // or other means, since entity ID parsing from RCON responses is unreliable across versions
@@ -444,6 +503,14 @@ func (vh *VehicleTestHelper) SetManualThrottle(throttleX, throttleZ float64) {
 	}
 }
 
+// SetManualJump sets whether the jump button is pressed.
+// For camels, holding charges the dash; releasing fires the impulse.
+func (vh *VehicleTestHelper) SetManualJump(enabled bool) {
+	if err := vh.ManagedAgent.Agent.SetManualJump(enabled); err != nil {
+		vh.t.Fatalf("SetManualJump failed: %v", err)
+	}
+}
+
 // EnterManualMode switches to manual movement mode
 func (vh *VehicleTestHelper) EnterManualMode() error {
 	return vh.ManagedAgent.Agent.EnterManualMode()
@@ -519,7 +586,7 @@ func (vh *VehicleTestHelper) SummonMinecart(ctx context.Context, x, y, z float64
 // BuildRailTrack builds a straight horizontal rail track in the specified direction
 // direction: "north" | "south" | "east" | "west"
 // length: number of rail blocks to place
-func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int) error {
+func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
 	railY := int(startY)
 	var dx, dz int
 
@@ -539,10 +606,15 @@ func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY,
 	startRailX := int(startX)
 	startRailZ := int(startZ)
 
+	railName := "minecraft:rail"
+	if powered {
+		railName = "minecraft:powered_rail"
+	}
+
 	for i := range length {
 		railX := startRailX + (dx * i)
 		railZ := startRailZ + (dz * i)
-		cmd := fmt.Sprintf("setblock %d %d %d minecraft:rail", railX, railY, railZ)
+		cmd := fmt.Sprintf("setblock %d %d %d %s", railX, railY, railZ, railName)
 		resp, err := vh.Instance.RCON.Exec(ctx, cmd)
 		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
 		if err != nil {
@@ -616,12 +688,127 @@ func (vh *VehicleTestHelper) BuildAscendingRailTrack(ctx context.Context, startX
 	return nil
 }
 
+// BuildWaterloggedRailTrack builds a rail track with waterlogged property in the specified direction
+// This tests waterlogged rail detection (rails with waterlogged=true property)
+// direction: "north" | "south" | "east" | "west"
+// length: number of rail blocks to place
+func (vh *VehicleTestHelper) BuildWaterloggedRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
+	railY := int(startY)
+	var dx, dz int
+	var shape string
+
+	switch direction {
+	case "north":
+		dx, dz = 0, -1
+		shape = "north_south"
+	case "south":
+		dx, dz = 0, 1
+		shape = "north_south"
+	case "east":
+		dx, dz = 1, 0
+		shape = "east_west"
+	case "west":
+		dx, dz = -1, 0
+		shape = "east_west"
+	default:
+		return fmt.Errorf("invalid direction: %s", direction)
+	}
+
+	startRailX := int(startX)
+	startRailZ := int(startZ)
+
+	railName := "minecraft:rail"
+	if powered {
+		railName = "minecraft:powered_rail"
+	}
+
+	// Build waterlogged rails with the waterlogged property and proper shape set
+	for i := range length {
+		railX := startRailX + (dx * i)
+		railZ := startRailZ + (dz * i)
+
+		// Place waterlogged rail: setblock with shape and waterlogged=true properties
+		cmd := fmt.Sprintf("setblock %d %d %d %s[shape=%s,waterlogged=true]", railX, railY, railZ, railName, shape)
+		resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place waterlogged rail at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+	}
+	return nil
+}
+
+// BuildAscendingWaterloggedRailTrack builds an ascending waterlogged rail track at 45-degree angle
+// This tests waterlogged rail detection with ascending shapes
+// direction: "north" | "south" | "east" | "west" (the upward direction)
+// length: number of rail blocks to place
+func (vh *VehicleTestHelper) BuildAscendingWaterloggedRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
+	railStartY := int(startY)
+	var dx, dz int
+
+	switch direction {
+	case "north":
+		dx, dz = 0, -1
+	case "south":
+		dx, dz = 0, 1
+	case "east":
+		dx, dz = 1, 0
+	case "west":
+		dx, dz = -1, 0
+	default:
+		return fmt.Errorf("invalid direction: %s", direction)
+	}
+
+	startRailX := int(startX)
+	startRailZ := int(startZ)
+
+	railName := "minecraft:rail"
+	blockName := "minecraft:stone"
+	if powered {
+		blockName = "minecraft:redstone_block"
+		railName = "minecraft:powered_rail"
+	}
+
+	// Map direction to ascending rail type with waterlogged property
+	var railType string
+	switch direction {
+	case "north":
+		railType = railName + "[shape=ascending_north,waterlogged=true]"
+	case "south":
+		railType = railName + "[shape=ascending_south,waterlogged=true]"
+	case "east":
+		railType = railName + "[shape=ascending_east,waterlogged=true]"
+	case "west":
+		railType = railName + "[shape=ascending_west,waterlogged=true]"
+	}
+
+	for i := range length {
+		railX := startRailX + (dx * i)
+		railY := railStartY + i
+		railZ := startRailZ + (dz * i)
+
+		cmd := fmt.Sprintf("setblock %d %d %d %s", railX, railY-1, railZ, blockName)
+		resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place ascending waterlogged rail support at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+
+		cmd = fmt.Sprintf("setblock %d %d %d %s", railX, railY, railZ, railType)
+		resp, err = vh.Instance.RCON.Exec(ctx, cmd)
+		log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+		if err != nil {
+			return fmt.Errorf("place ascending waterlogged rail at (%d,%d,%d): %w", railX, railY, railZ, err)
+		}
+	}
+	return nil
+}
+
 // TrackEntityPosition creates an EntityPositionTracker for monitoring entity movement.
 // The tracker automatically registers itself with the agent and records peak/min coordinates.
 func (vh *VehicleTestHelper) TrackEntityPosition(entityID int32) *utils.EntityPositionTracker {
 	// Get initial position
-	x, y, z, _ := vh.ManagedAgent.Agent.GetPositionSimple()
-	initialPos := models.V3{X: x, Y: y, Z: z}
+	initialPos, _ := vh.ManagedAgent.Agent.GetPositionSimple()
 
 	// Create tracker
 	tracker := utils.NewEntityPositionTracker(entityID, initialPos)

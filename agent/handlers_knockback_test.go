@@ -54,7 +54,7 @@ func TestOnDamageEvent_KnockbackFromTrackedEntity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set agent position at origin, entity ID = 42
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 
 	// Place attacker at (5, 0, 0) — east of agent
@@ -90,7 +90,7 @@ func TestOnDamageEvent_KnockbackFromSourcePosition(t *testing.T) {
 	err = testAgent.Init(context.Background())
 	require.NoError(t, err)
 
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 	testAgent.entities = map[int32]*trackedEntity{} // no tracked entities
 
@@ -122,7 +122,7 @@ func TestOnDamageEvent_DiagonalKnockback(t *testing.T) {
 	err = testAgent.Init(context.Background())
 	require.NoError(t, err)
 
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 
 	// Attacker at (-3, 0, -3) — southwest of agent
@@ -159,7 +159,7 @@ func TestOnDamageEvent_IgnoresOtherEntities(t *testing.T) {
 	err = testAgent.Init(context.Background())
 	require.NoError(t, err)
 
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 
 	velCapture := &velocityCaptureMoveExec{}
@@ -183,7 +183,7 @@ func TestOnDamageEvent_NoPositionAvailable(t *testing.T) {
 	err = testAgent.Init(context.Background())
 	require.NoError(t, err)
 
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 	testAgent.entities = map[int32]*trackedEntity{} // no tracked entities
 
@@ -208,7 +208,7 @@ func TestOnDamageEvent_FallbackToCauseEntity(t *testing.T) {
 	err = testAgent.Init(context.Background())
 	require.NoError(t, err)
 
-	testAgent.UpdatePosition(0, 0, 0, 0, 0)
+	testAgent.UpdatePosition(models.V3{}, 0, 0)
 	testAgent.setEntityID(42)
 
 	// sourceDirectID (77) is not tracked, but sourceCauseID (88) is

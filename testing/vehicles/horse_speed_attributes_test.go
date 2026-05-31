@@ -22,7 +22,8 @@ func TestHorseMovementSpeedAttribute(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			initialPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := initialPos.X, initialPos.Y, initialPos.Z
 
 			// Summon a tamed horse at the location
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
@@ -52,7 +53,8 @@ func TestHorseMovementSpeedAttribute(t *testing.T) {
 			require.NoError(t, err, "enter manual mode")
 
 			// Record initial position
-			initialX, initialY, initialZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			initialPos, _ = helper.ManagedAgent.Agent.GetPositionSimple()
+			// initialX, initialY, initialZ := initialPos.X, initialPos.Y, initialPos.Z
 
 			// Apply forward throttle to move the horse
 			helper.SetManualThrottle(0.0, 1.0) // ThrottleX=0, ThrottleZ=1.0 (full forward)
@@ -61,16 +63,15 @@ func TestHorseMovementSpeedAttribute(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Get new position after movement
-			finalX, finalY, finalZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			finalPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			// finalX, finalY, finalZ := initialPos.X, initialPos.Y, initialPos.Z
 
 			// Calculate distance traveled
-			deltaX := finalX - initialX
-			deltaZ := finalZ - initialZ
-			distance := deltaX*deltaX + deltaZ*deltaZ
-			require.Greater(t, distance, 0.0, "horse should have moved")
+			distanceXZ := initialPos.DistanceToXZ(finalPos)
+			require.Greater(t, distanceXZ, 0.0, "horse should have moved")
 
-			t.Logf("Horse movement: initial=(%.2f, %.2f, %.2f) final=(%.2f, %.2f, %.2f) distance=%.2f",
-				initialX, initialY, initialZ, finalX, finalY, finalZ, distance)
+			t.Logf("Horse movement: initial=%s final=%s distance=%.2f",
+				initialPos, finalPos, distanceXZ)
 
 			// Dismount
 			err = helper.DismountEntity()
@@ -92,7 +93,8 @@ func TestHorseSpeedWithThrottle(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon horse
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
@@ -124,7 +126,7 @@ func TestHorseSpeedWithThrottle(t *testing.T) {
 			for _, test := range throttleTests {
 				t.Run(test.name, func(t *testing.T) {
 					// Reset position
-					initialX, _, initialZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+					initialPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 
 					// Apply throttle
 					helper.SetManualThrottle(0.0, test.throttle)
@@ -133,16 +135,14 @@ func TestHorseSpeedWithThrottle(t *testing.T) {
 					time.Sleep(500 * time.Millisecond)
 
 					// Get final position
-					finalX, _, finalZ, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+					finalPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 
 					// Calculate movement
-					deltaX := finalX - initialX
-					deltaZ := finalZ - initialZ
-					distance := deltaX*deltaX + deltaZ*deltaZ
+					distanceXZ := initialPos.DistanceToXZ(finalPos)
 
 					// Movement should increase with throttle
-					t.Logf("Throttle: %.2f, Distance traveled: %.4f", test.throttle, distance)
-					require.Greater(t, distance, 0.0, "horse should move with throttle")
+					t.Logf("Throttle: %.2f, Distance traveled: %.4f", test.throttle, distanceXZ)
+					require.Greater(t, distanceXZ, 0.0, "horse should move with throttle")
 				})
 			}
 

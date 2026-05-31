@@ -21,6 +21,16 @@ func (m *mockPhysicsState) GetPosition() (pos models.V3, yaw, pitch float64, onG
 	return m.pos, m.yaw, m.pitch, m.onGround
 }
 
+func (m *mockPhysicsState) GetPositionSimple() (pos models.V3, onGround bool) {
+	return m.pos, m.onGround
+}
+
+func (m *mockPhysicsState) UpdatePosition(pos models.V3, yaw, pitch float64) {
+	m.pos = pos
+	m.yaw = yaw
+	m.pitch = pitch
+}
+
 func (m *mockPhysicsState) GetVelocity() models.V3 {
 	return m.vel
 }
@@ -108,7 +118,7 @@ func (m *mockPhysicsState) Tick(_ Inputs, _ models.PhysicsWorld) error {
 	return nil
 }
 
-func (m *mockPhysicsState) PredictMovement(_ []Inputs, _ int, _ models.PhysicsWorld) []PhysicsState {
+func (m *mockPhysicsState) PredictMovement(_ []Inputs, _ int, _ models.PhysicsWorld) []models.PhysicsState {
 	return nil
 }
 

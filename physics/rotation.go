@@ -2,6 +2,16 @@ package physics
 
 import "math"
 
+// CardinalDirection represents one of the four cardinal compass directions.
+type CardinalDirection string
+
+const (
+	CardinalNorth CardinalDirection = "north"
+	CardinalSouth CardinalDirection = "south"
+	CardinalEast  CardinalDirection = "east"
+	CardinalWest  CardinalDirection = "west"
+)
+
 // LimitRotation applies rate limits to yaw and pitch changes according to
 // Minecraft's anti-cheat constraints (MaxYawChange and MaxPitchChange per tick).
 // Returns the new yaw and pitch after limiting.
@@ -71,4 +81,27 @@ func TicksToRotate(currentYaw, currentPitch, targetYaw, targetPitch float64) int
 		return yawTicks
 	}
 	return pitchTicks
+}
+
+// YawToCardinal returns the cardinal direction the agent is facing given a yaw angle.
+// Minecraft yaw convention: 0° = South, 90° = West, ±180° = North, -90° = East.
+// Each direction covers a 90° arc centred on its canonical yaw:
+//
+//	South  [-45,  45)
+//	West   [ 45, 135)
+//	North  [135, 180] ∪ (-180, -135)
+//	East   [-135, -45)
+func YawToCardinal(yaw float64) CardinalDirection {
+	normalized := NormalizeAngle(yaw)
+	switch {
+	case normalized >= -45 && normalized < 45:
+		return CardinalSouth
+	case normalized >= 45 && normalized < 135:
+		return CardinalWest
+	case normalized >= -135 && normalized < -45:
+		return CardinalEast
+	default:
+		// normalized in [-180, -135) or [135, 180]
+		return CardinalNorth
+	}
 }

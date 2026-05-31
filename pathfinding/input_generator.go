@@ -7,9 +7,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-// PhysicsState is an alias to models.PhysicsState for convenience.
-type PhysicsState = models.PhysicsState
-
 // Inputs is an alias to models.Inputs for convenience.
 type Inputs = models.Inputs
 
@@ -42,7 +39,7 @@ func NewInputGenerator() models.InputGenerator {
 // GenerateInputs implements the InputGenerator interface.
 // Based on phys archive bot/path/path.go:107-191 (Tile.Inputs() logic).
 func (ig *DefaultInputGenerator) GenerateInputs(
-	currentState PhysicsState,
+	currentState models.PhysicsState,
 	targetStep PathStep,
 	runTime time.Duration,
 ) Inputs {
@@ -332,7 +329,7 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 // This is a rough estimate used for planning and timeout detection.
 func (ig *DefaultInputGenerator) EstimateTicksRequired(
 	step PathStep,
-	currentState PhysicsState,
+	currentState models.PhysicsState,
 ) int {
 	// Get current position
 	pos, _, _, _ := currentState.GetPosition()

@@ -13,14 +13,14 @@ import (
 )
 
 // debugEntityTracking logs all tracked entities and the search result
-func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, botX, botY, botZ float64, entityName string) (int32, float64, bool) {
+func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, botPos models.V3, entityName string) (int32, float64, bool) {
 	trackedEntities := agent.GetTrackedEntities()
 	t.Logf("Total tracked entities: %d", len(trackedEntities))
 	for id, info := range trackedEntities {
 		t.Logf("  Entity ID %d: type=%d, pos=(%.1f, %.1f, %.1f)", id, info.EntityType, info.X, info.Y, info.Z)
 	}
 
-	entityID, dist, found := agent.FindNearestEntityByType(entityType, botX, botY, botZ)
+	entityID, dist, found := agent.FindNearestEntityByType(entityType, botPos.X, botPos.Y, botPos.Z)
 	t.Logf("FindNearestEntityByType(%s) result: found=%v, entityID=%d, dist=%.2f", entityName, found, entityID, dist)
 	return entityID, dist, found
 }
@@ -73,15 +73,15 @@ func TestEntityInteraction_Attack(t *testing.T) {
 			time.Sleep(3 * time.Second)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find zombie entity
 			zombieType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:zombie")
 			require.True(t, ok, "zombie entity type should be in registry")
 
-			zombieID, dist, found := debugEntityTracking(t, env.Agent, zombieType, botX, botY, botZ, "minecraft:zombie")
+			zombieID, dist, found := debugEntityTracking(t, env.Agent, zombieType, botPos, "minecraft:zombie")
 			require.True(t, found, "should find zombie entity")
 			require.Less(t, dist, 20.0, "zombie should be within 20 blocks")
 
@@ -185,15 +185,15 @@ func TestEntityInteraction_SimpleInteract(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find villager entity
 			villagerType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:villager")
 			require.True(t, ok, "villager entity type should be in registry")
 
-			villagerID, dist, found := debugEntityTracking(t, env.Agent, villagerType, botX, botY, botZ, "minecraft:villager")
+			villagerID, dist, found := debugEntityTracking(t, env.Agent, villagerType, botPos, "minecraft:villager")
 			require.True(t, found, "should find villager entity")
 			require.Less(t, dist, 20.0, "villager should be within 20 blocks")
 
@@ -232,15 +232,15 @@ func TestEntityInteraction_InteractAt(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find horse entity
 			horseType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:horse")
 			require.True(t, ok, "horse entity type should be in registry")
 
-			horseID, dist, found := debugEntityTracking(t, env.Agent, horseType, botX, botY, botZ, "minecraft:horse")
+			horseID, dist, found := debugEntityTracking(t, env.Agent, horseType, botPos, "minecraft:horse")
 			require.True(t, found, "should find horse entity")
 			require.Less(t, dist, 20.0, "horse should be within 20 blocks")
 
@@ -284,15 +284,15 @@ func TestEntityInteraction_Sneaking(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find armor stand entity
 			armorStandType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:armor_stand")
 			require.True(t, ok, "armor_stand entity type should be in registry")
 
-			armorStandID, dist, found := debugEntityTracking(t, env.Agent, armorStandType, botX, botY, botZ, "minecraft:armor_stand")
+			armorStandID, dist, found := debugEntityTracking(t, env.Agent, armorStandType, botPos, "minecraft:armor_stand")
 			require.True(t, found, "should find armor stand entity")
 			require.Less(t, dist, 20.0, "armor stand should be within 20 blocks")
 
@@ -357,15 +357,15 @@ func TestEntityInteraction_OffhandAttack(t *testing.T) {
 			time.Sleep(3 * time.Second)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find zombie entity
 			zombieType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:zombie")
 			require.True(t, ok, "zombie entity type should be in registry")
 
-			zombieID, _, found := debugEntityTracking(t, env.Agent, zombieType, botX, botY, botZ, "minecraft:zombie")
+			zombieID, _, found := debugEntityTracking(t, env.Agent, zombieType, botPos, "minecraft:zombie")
 			require.True(t, found, "should find zombie entity")
 
 			if env.Agent.Config.VersionHandler == nil {
@@ -441,15 +441,15 @@ func TestEntityInteraction_RapidAttacks(t *testing.T) {
 			time.Sleep(3 * time.Second)
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			// Find zombie entity
 			zombieType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:zombie")
 			require.True(t, ok, "zombie entity type should be in registry")
 
-			zombieID, _, found := debugEntityTracking(t, env.Agent, zombieType, botX, botY, botZ, "minecraft:zombie")
+			zombieID, _, found := debugEntityTracking(t, env.Agent, zombieType, botPos, "minecraft:zombie")
 			require.True(t, found, "should find zombie entity")
 
 			if env.Agent.Config.VersionHandler == nil {
@@ -495,9 +495,9 @@ func TestEntityInteraction_VillagerTrade(t *testing.T) {
 			defer env.Cancel()
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			if env.Agent.Config.VersionHandler == nil {
 				t.Skip("Version handler not available")
@@ -515,7 +515,7 @@ func TestEntityInteraction_VillagerTrade(t *testing.T) {
 
 			// Spawn a librarian villager (has diverse trades)
 			spawnVillagerCmd := fmt.Sprintf(`summon minecraft:villager %.1f %.1f %.1f {VillagerData:{profession:"minecraft:librarian",level:3}}`,
-				botX+3, botY, botZ)
+				botPos.X+3, botPos.Y, botPos.Z)
 			resp, err = env.Inst.RCON.Exec(env.Ctx, spawnVillagerCmd)
 			require.NoError(t, err, "spawn librarian villager")
 			t.Logf("Spawn villager response: %s", resp)
@@ -523,7 +523,7 @@ func TestEntityInteraction_VillagerTrade(t *testing.T) {
 
 			// Find villager entity
 			villagerType, _ := env.Agent.Agent.GetEntityTypeID("minecraft:villager")
-			villagerID, _, found := debugEntityTracking(t, env.Agent, villagerType, botX, botY, botZ, "minecraft:librarian")
+			villagerID, _, found := debugEntityTracking(t, env.Agent, villagerType, botPos, "minecraft:librarian")
 			require.True(t, found, "should find librarian villager")
 
 			// Face and interact with villager to open trade GUI
@@ -577,9 +577,9 @@ func TestEntityInteraction_MultipleEntities(t *testing.T) {
 			defer env.Cancel()
 
 			// Get bot position
-			botX, botY, botZ, ok := env.Agent.Agent.GetPositionSimple()
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
 			require.True(t, ok, "bot position initialized")
-			t.Logf("Bot position: %.1f, %.1f, %.1f", botX, botY, botZ)
+			t.Logf("Bot position: %s", botPos)
 
 			if env.Agent.Config.VersionHandler == nil {
 				t.Skip("Version handler not available")
@@ -590,14 +590,14 @@ func TestEntityInteraction_MultipleEntities(t *testing.T) {
 
 			// Test 1: Interact with villager (should open trade GUI)
 			spawnVillagerCmd := fmt.Sprintf(`summon minecraft:villager %.1f %.1f %.1f {VillagerData:{profession:"minecraft:librarian",level:1}}`,
-				botX+3, botY, botZ)
+				botPos.X+3, botPos.Y, botPos.Z)
 			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnVillagerCmd)
 			require.NoError(t, err, "spawn villager")
 			t.Logf("Spawn villager response: %s", resp)
 			time.Sleep(500 * time.Millisecond)
 
 			villagerType, _ := env.Agent.Agent.GetEntityTypeID("minecraft:villager")
-			if villagerID, _, found := debugEntityTracking(t, env.Agent, villagerType, botX, botY, botZ, "minecraft:villager"); found {
+			if villagerID, _, found := debugEntityTracking(t, env.Agent, villagerType, botPos, "minecraft:villager"); found {
 				err := env.Agent.FaceEntity(villagerID)
 				require.NoError(t, err, "face villager")
 				time.Sleep(100 * time.Millisecond)
@@ -626,14 +626,14 @@ func TestEntityInteraction_MultipleEntities(t *testing.T) {
 
 			// Test 2: Interact with armor stand while sneaking (armor stands can be edited)
 			spawnArmorStandCmd := fmt.Sprintf(`summon minecraft:armor_stand %.1f %.1f %.1f {Pose:{Head:[45f,45f,0f]}}`,
-				botX-3, botY, botZ)
+				botPos.X-3, botPos.Y, botPos.Z)
 			resp, err = env.Inst.RCON.Exec(env.Ctx, spawnArmorStandCmd)
 			require.NoError(t, err, "spawn armor stand")
 			t.Logf("Spawn armor stand response: %s", resp)
 			time.Sleep(500 * time.Millisecond)
 
 			armorStandType, _ := env.Agent.Agent.GetEntityTypeID("minecraft:armor_stand")
-			if armorStandID, _, found := debugEntityTracking(t, env.Agent, armorStandType, botX, botY, botZ, "minecraft:armor_stand"); found {
+			if armorStandID, _, found := debugEntityTracking(t, env.Agent, armorStandType, botPos, "minecraft:armor_stand"); found {
 				err := env.Agent.FaceEntity(armorStandID)
 				require.NoError(t, err, "face armor stand")
 				time.Sleep(100 * time.Millisecond)
@@ -662,14 +662,14 @@ func TestEntityInteraction_MultipleEntities(t *testing.T) {
 
 			// Test 3: Interact with horse at specific position (interact-at packet)
 			spawnHorseCmd := fmt.Sprintf(`summon minecraft:horse %.1f %.1f %.1f {Tame:1b,Saddle:1b}`,
-				botX+5, botY, botZ)
+				botPos.X+5, botPos.Y, botPos.Z)
 			resp, err = env.Inst.RCON.Exec(env.Ctx, spawnHorseCmd)
 			require.NoError(t, err, "spawn horse")
 			t.Logf("Spawn horse response: %s", resp)
 			time.Sleep(500 * time.Millisecond)
 
 			horseType, _ := env.Agent.Agent.GetEntityTypeID("minecraft:horse")
-			if horseID, _, found := debugEntityTracking(t, env.Agent, horseType, botX, botY, botZ, "minecraft:horse"); found {
+			if horseID, _, found := debugEntityTracking(t, env.Agent, horseType, botPos, "minecraft:horse"); found {
 				err := env.Agent.FaceEntity(horseID)
 				require.NoError(t, err, "face horse")
 				time.Sleep(100 * time.Millisecond)

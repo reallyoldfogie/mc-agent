@@ -92,7 +92,7 @@ func TestMoveTo_InvalidAndAlreadyThere(t *testing.T) {
 		t.Fatalf("expected invalid X message")
 	}
 
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 	agent.handleChatCommand("moveTo 0 0 0")
 	time.Sleep(10 * time.Millisecond)
 
@@ -113,7 +113,7 @@ func TestMoveForward_NegativeYaw0(t *testing.T) {
 
 	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 	agent.handleChatCommand("moveForward -0.2")
 	time.Sleep(70 * time.Millisecond)
 	if len(fm.posCalls) == 0 {
@@ -139,7 +139,7 @@ func TestMoveForward_Yaw90(t *testing.T) {
 
 	fm := &fakeMoveExec{agent: agent}
 	agent.SetMovementExecutor(fm)
-	agent.UpdatePosition(0, 0, 0, 90, 0)
+	agent.UpdatePosition(models.V3{}, 90, 0)
 	agent.handleChatCommand("moveForward 0.2")
 	time.Sleep(70 * time.Millisecond)
 	if len(fm.posCalls) == 0 {
@@ -165,7 +165,7 @@ func TestMoveUp_Negative(t *testing.T) {
 
 	fm := &fakeMoveExec{}
 	agent.SetMovementExecutor(fm)
-	agent.UpdatePosition(0, 1, 0, 0, 0)
+	agent.UpdatePosition(models.V3{X: 0, Y: 1, Z: 0}, 0, 0)
 	agent.handleChatCommand("moveUp -0.2")
 	time.Sleep(70 * time.Millisecond)
 	if len(fm.posCalls) == 0 {
@@ -198,7 +198,7 @@ func TestFindPath_InvalidAndError(t *testing.T) {
 
 	capture := newCaptureChat()
 	agent.SetChat(capture)
-	agent.UpdatePosition(0, 0, 0, 0, 0)
+	agent.UpdatePosition(models.V3{}, 0, 0)
 	agent.handleChatCommand("findPath agent 0 0")
 	time.Sleep(10 * time.Millisecond)
 	if !containsMsg(capture.GetMessages(), "Invalid X coordinate") {

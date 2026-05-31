@@ -400,6 +400,44 @@ func TestRotationGradualProgress(t *testing.T) {
 		maxIterations, currentYaw, currentPitch, targetYaw, targetPitch)
 }
 
+func TestYawToCardinal(t *testing.T) {
+	tests := []struct {
+		name      string
+		yaw       float64
+		expected  CardinalDirection
+	}{
+		// Cardinal centres
+		{"Exact south (0°)", 0, CardinalSouth},
+		{"Exact west (90°)", 90, CardinalWest},
+		{"Exact north (180°)", 180, CardinalNorth},
+		{"Exact north (-180°)", -180, CardinalNorth},
+		{"Exact east (-90°)", -90, CardinalEast},
+		// Boundary cases
+		{"South boundary low (-45°)", -45, CardinalSouth},
+		{"West boundary low (45°)", 45, CardinalWest},
+		{"East boundary low (-135°)", -135, CardinalEast},
+		{"North boundary (135°)", 135, CardinalNorth},
+		{"North boundary high (179°)", 179, CardinalNorth},
+		{"North boundary low (-179°)", -179, CardinalNorth},
+		// Interior values
+		{"South interior (20°)", 20, CardinalSouth},
+		{"South interior (-20°)", -20, CardinalSouth},
+		{"West interior (80°)", 80, CardinalWest},
+		{"East interior (-100°)", -100, CardinalEast},
+		// Un-normalised inputs
+		{"South via 360°", 360, CardinalSouth},
+		{"West via 450°", 450, CardinalWest},
+		{"North via 540°", 540, CardinalNorth},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := YawToCardinal(tt.yaw)
+			assert.Equal(t, tt.expected, result, "YawToCardinal(%f)", tt.yaw)
+		})
+	}
+}
+
 // Benchmark rotation functions
 func BenchmarkNormalizeAngle(b *testing.B) {
 	for i := 0; i < b.N; i++ {

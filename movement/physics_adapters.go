@@ -77,9 +77,14 @@ func (pw *physicsWorldAdapter) GetEntityDimensions(entityType models.EntityType)
 	case models.EntityTypeHorse, models.EntityTypeMule, models.EntityTypeDonkey:
 		return EntityDimensions{Width: 1.4, Height: 1.6}
 
-	// Camel (0.9 wide x 2.2 tall)
-	case models.EntityTypeCaravanLlama:
+	// Camel (0.9 wide x 2.2 tall) — same for CamelHusk
+	case models.EntityTypeCamel, models.EntityTypeCamelHusk:
 		return EntityDimensions{Width: 0.9, Height: 2.2}
+
+	// Nautilus / ZombieNautilus (1.21.11+): approximate from AbstractNautilusEntity
+	// TODO: verify exact dimensions from Java source when available
+	case models.EntityTypeNautilus, models.EntityTypeZombieNautilus:
+		return EntityDimensions{Width: 1.4, Height: 1.6}
 
 	// Iron golem (large: 1.4 wide x 2.7 tall)
 	case models.EntityTypeIronGolem:

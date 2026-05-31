@@ -242,20 +242,21 @@ func TestSwimming_PathfindingAcrossWater(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			// Get agent position on the flat world (surface at Y=63, standing at Y=64)
-			startX, startY, _, posOK := agent.Agent.GetPositionSimple()
-			require.True(t, posOK, "agent position initialized")
-			t.Logf("Agent start: X=%.1f Y=%.1f", startX, startY)
+			startPos, initialized := agent.Agent.GetPositionSimple()
+			require.True(t, initialized, "agent position initialized")
+			t.Logf("Agent start: %s", startPos)
 
 			// Channel coordinates: 5 blocks wide in X, centered around startZ
 			// Flat world surface: Y=63 (grass). Agent feet at Y=64.
-			groundY := int(math.Floor(startY)) - 1 // Y=63
-			channelStartX := int(math.Floor(startX)) + 4
+			groundY := int(math.Floor(startPos.Y)) - 1 // Y=63
+			channelStartX := int(math.Floor(startPos.X)) + 4
 			channelEndX := channelStartX + 5
-			channelZ1 := int(math.Floor(startX)) - 3 // reuse startX's integer for a nearby Z
+			channelZ1 := int(math.Floor(startPos.X)) - 3 // reuse startX's integer for a nearby Z
 			channelZ2 := channelZ1 + 6
 
 			// Use agent Z for the path
-			_, _, agentZ, _ := agent.Agent.GetPositionSimple()
+			pos, _ := agent.Agent.GetPositionSimple()
+			_, _, agentZ := pos.X, pos.Y, pos.Z
 			channelZ1 = int(math.Floor(agentZ)) - 3
 			channelZ2 = channelZ1 + 6
 
@@ -412,17 +413,21 @@ func TestSwimming_PathfindingDropIntoWater(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			// Get agent position on the flat world
-			_, startY, _, posOK := agent.Agent.GetPositionSimple()
+			agentPos, posOK := agent.Agent.GetPositionSimple()
+			startY := agentPos.Y
 			require.True(t, posOK, "agent position initialized")
 
 			// Flat world surface Y=63, standing at Y=64
 			groundY := int(math.Floor(startY)) - 1 // Y=63
-			_, _, agentZ, _ := agent.Agent.GetPositionSimple()
+			pos, _ := agent.Agent.GetPositionSimple()
+			_, _, agentZ := pos.X, pos.Y, pos.Z
 			platformX := int(math.Floor(startY)) // pick an X near spawn
 			platZ := int(math.Floor(agentZ))
 
 			// Use the agent's actual position for the platform
-			agentX, _, _, _ := agent.Agent.GetPositionSimple()
+
+			agentPos, _ = agent.Agent.GetPositionSimple()
+			agentX := agentPos.X
 			platformX = int(math.Floor(agentX))
 
 			// Build elevated platform: 3 blocks of stone at platformX, Z=platZ±1
@@ -584,13 +589,13 @@ func TestSwimming_PathfindingSwimUp(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			// Get agent position on flat world
-			agentX, agentY, agentZ, posOK := agent.Agent.GetPositionSimple()
+			agentPos, posOK := agent.Agent.GetPositionSimple()
 			require.True(t, posOK, "agent position initialized")
 
 			// Flat world surface: Y=0, standing at Y=1
-			groundY := int(math.Floor(agentY))
-			wellX := int(math.Floor(agentX)) + 5
-			wellZ := int(math.Floor(agentZ))
+			groundY := int(math.Floor(agentPos.Y))
+			wellX := int(math.Floor(agentPos.X)) + 5
+			wellZ := int(math.Floor(agentPos.Z))
 
 			// Create a vertical water column (well): 5 blocks wide, 8 blocks deep
 			wellWidth := 5
@@ -728,20 +733,20 @@ func TestSwimming_PathfindingSwimDown(t *testing.T) {
 			time.Sleep(5 * time.Second)
 
 			// Get agent position on flat world
-			agentX, agentY, agentZ, posOK := agent.Agent.GetPositionSimple()
+			agentPos, posOK := agent.Agent.GetPositionSimple()
 			require.True(t, posOK, "agent position initialized")
 
 			// Flat world surface: Y=0, standing at Y=1
-			groundY := int(math.Floor(agentY))
-			wellX := int(math.Floor(agentX)) + 5
-			wellZ := int(math.Floor(agentZ))
+			groundY := int(math.Floor(agentPos.Y))
+			wellX := int(math.Floor(agentPos.X)) + 5
+			wellZ := int(math.Floor(agentPos.Z))
 
 			// Create a vertical water well: 5 blocks wide, 6 blocks deep from surface
 			wellWidth := 5
 			wellDepth := 6
 			wellBottomY := groundY - wellDepth
 
-			t.Logf("agentPos: (X=%.2f,Y= %2f, Z=%.2f)", agentX, agentY, agentZ)
+			t.Logf("agentPos: %s", agentPos)
 			t.Logf("wellPos : (X=%d, Z=%d), groundY=%d, wellBottomY=%d", wellX, wellZ, groundY, wellBottomY)
 
 			// Dig the well

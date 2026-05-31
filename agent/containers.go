@@ -68,10 +68,10 @@ func (a *agent) startPositionHeartbeat(tps int) {
 				return
 			case <-ticker.C:
 				// Send current position to server
-				x, y, z, yaw, pitch, initialized := a.GetPosition()
+				pos, yaw, pitch, initialized := a.GetPosition()
 				if initialized && a.moveExec != nil {
-					log.Printf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", x, y, z, yaw, pitch)
-					if err := a.moveExec.SendPositionAndRotation(x, y, z, yaw, pitch, true); err != nil {
+					log.Printf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", pos.X, pos.Y, pos.Z, yaw, pitch)
+					if err := a.moveExec.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yaw, pitch, true); err != nil {
 						// Don't spam logs on errors, just continue
 						// log.Printf("[Agent] Position heartbeat send error: %v", err)
 					}
@@ -147,16 +147,16 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 }
 
 func (a *agent) chooseOpenFace(pos models.V3, fallback models.BlockFace) models.BlockFace {
-	x, y, z, _, _, ok := a.GetPosition()
+	botPos, _, _, ok := a.GetPosition()
 	if !ok {
 		return fallback
 	}
 	centerX := math.Floor(pos.X) + 0.5
 	centerY := math.Floor(pos.Y) + 0.5
 	centerZ := math.Floor(pos.Z) + 0.5
-	dx := centerX - x
-	dy := centerY - y
-	dz := centerZ - z
+	dx := centerX - botPos.X
+	dy := centerY - botPos.Y
+	dz := centerZ - botPos.Z
 
 	absX := math.Abs(dx)
 	absY := math.Abs(dy)

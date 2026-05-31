@@ -12,14 +12,14 @@ import (
 type targetSelector struct {
 	getTrackedEntities func() map[int32]*models.TrackedEntity
 	getPlayerUUID      func(playerName string) ([16]byte, error)
-	getBotPosition     func() (x, y, z float64, initialized bool)
+	getBotPosition     func() (models.V3, bool)
 }
 
 // NewTargetSelector creates a new target selector
 func NewTargetSelector(
 	getEntities func() map[int32]*models.TrackedEntity,
 	getPlayerUUID func(string) ([16]byte, error),
-	getBotPos func() (float64, float64, float64, bool),
+	getBotPos func() (models.V3, bool),
 ) models.TargetSelector {
 	return &targetSelector{
 		getTrackedEntities: getEntities,
@@ -49,11 +49,11 @@ func (ts *targetSelector) FindPlayerByName(name string) (*models.TargetInfo, err
 		if entity.UUID == uuid {
 			// Calculate distance to bot
 			distance := 0.0
-			botX, botY, botZ, initialized := ts.getBotPosition()
+			botPos, initialized := ts.getBotPosition()
 			if initialized {
-				dx := entity.X - botX
-				dy := entity.Y - botY
-				dz := entity.Z - botZ
+				dx := entity.X - botPos.X
+				dy := entity.Y - botPos.Y
+				dz := entity.Z - botPos.Z
 				distance = math.Sqrt(dx*dx + dy*dy + dz*dz)
 			}
 
@@ -86,7 +86,7 @@ func (ts *targetSelector) FindNearestPlayer() (*models.TargetInfo, error) {
 		return nil, fmt.Errorf("no entities tracked")
 	}
 
-	botX, botY, botZ, initialized := ts.getBotPosition()
+	botPos, initialized := ts.getBotPosition()
 	if !initialized {
 		return nil, fmt.Errorf("bot position not initialized")
 	}
@@ -95,9 +95,9 @@ func (ts *targetSelector) FindNearestPlayer() (*models.TargetInfo, error) {
 	minDistance := math.MaxFloat64
 
 	for entityID, entity := range entities {
-		dx := entity.X - botX
-		dy := entity.Y - botY
-		dz := entity.Z - botZ
+		dx := entity.X - botPos.X
+		dy := entity.Y - botPos.Y
+		dz := entity.Z - botPos.Z
 		distance := math.Sqrt(dx*dx + dy*dy + dz*dz)
 
 		if distance < minDistance {
@@ -122,35 +122,35 @@ func (ts *targetSelector) FindNearestPlayer() (*models.TargetInfo, error) {
 }
 
 // GetTargetPosition gets the current position of a target entity
-func (ts *targetSelector) GetTargetPosition(entityID int32) (x, y, z float64, exists bool) {
+func (ts *targetSelector) GetTargetPosition(entityID int32) (models.V3, bool) {
 	entities := ts.getTrackedEntities()
 	if entities == nil {
-		return 0, 0, 0, false
+		return models.V3{}, false
 	}
 
 	entity, ok := entities[entityID]
 	if !ok {
-		return 0, 0, 0, false
+		return models.V3{}, false
 	}
 
-	return entity.X, entity.Y, entity.Z, true
+	return models.V3{X: entity.X, Y: entity.Y, Z: entity.Z}, true
 }
 
 // CalculateDistance calculates distance to target
 func (ts *targetSelector) CalculateDistance(entityID int32) (float64, error) {
-	x, y, z, exists := ts.GetTargetPosition(entityID)
+	targetPos, exists := ts.GetTargetPosition(entityID)
 	if !exists {
 		return 0, fmt.Errorf("target entity not found")
 	}
 
-	botX, botY, botZ, initialized := ts.getBotPosition()
+	botPos, initialized := ts.getBotPosition()
 	if !initialized {
 		return 0, fmt.Errorf("bot position not initialized")
 	}
 
-	dx := x - botX
-	dy := y - botY
-	dz := z - botZ
+	dx := targetPos.X - botPos.X
+	dy := targetPos.Y - botPos.Y
+	dz := targetPos.Z - botPos.Z
 	return math.Sqrt(dx*dx + dy*dy + dz*dz), nil
 }
 

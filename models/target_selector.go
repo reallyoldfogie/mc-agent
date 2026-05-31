@@ -4,7 +4,7 @@ package models
 type TargetSelector interface {
 	FindPlayerByName(name string) (*TargetInfo, error)
 	FindNearestPlayer() (*TargetInfo, error)
-	GetTargetPosition(entityID int32) (x, y, z float64, exists bool)
+	GetTargetPosition(entityID int32) (pos V3, exists bool)
 	CalculateDistance(entityID int32) (float64, error)
 }
 

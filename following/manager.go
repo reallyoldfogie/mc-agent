@@ -85,7 +85,7 @@ type followManager struct {
 	pathFinder       models.PathFinder
 	movementExecutor movement.MovementExecutor
 	pathExecutor     pathExecutor
-	getBotPosition   func() (x, y, z float64, yaw, pitch float64, initialized bool)
+	getBotPosition   func() (models.V3, float64, float64, bool)
 	sendChatMessage  func(string) error
 }
 
@@ -94,7 +94,7 @@ func NewFollowManager(
 	targetSelector models.TargetSelector,
 	pathFinder models.PathFinder,
 	movementExecutor movement.MovementExecutor,
-	getBotPos func() (float64, float64, float64, float64, float64, bool),
+	getBotPos func() (models.V3, float64, float64, bool),
 	sendChat func(string) error,
 	config FollowConfig,
 	getFollowerName func() string,
@@ -298,7 +298,9 @@ func (fm *followManager) update() error {
 		targetX, targetY, targetZ = target.X, target.Y, target.Z
 		exists = true
 	} else {
-		targetX, targetY, targetZ, exists = fm.targetSelector.GetTargetPosition(fm.targetEntityID)
+		targetPos, foundExists := fm.targetSelector.GetTargetPosition(fm.targetEntityID)
+		targetX, targetY, targetZ = targetPos.X, targetPos.Y, targetPos.Z
+		exists = foundExists
 	}
 	if !exists {
 		fm.statSkipTargetLost++
@@ -382,11 +384,12 @@ func (fm *followManager) update() error {
 	}
 
 	// Check distance to target
-	botX, botY, botZ, _, _, initialized := fm.getBotPosition()
+	pos, _, _, initialized := fm.getBotPosition()
 	if !initialized {
 		fm.statSkipUninit++
 		return fmt.Errorf("bot position not initialized")
 	}
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 
 	distance := fm.calculateDistance(botX, botY, botZ, targetX, targetY, targetZ)
 

@@ -112,6 +112,16 @@ func (w *worldHandler) ParseUnloadChunk(p pk.Packet) (chunkX, chunkZ int32, err 
 	return chunkX, chunkZ, nil
 }
 
+// ParseUpdateTime parses the ClientboundUpdateTime packet.
+// Returns the world age (ticks since world creation) and time of day (ticks in current day).
+func (w *worldHandler) ParseUpdateTime(p pk.Packet) (worldAge, timeOfDay int64, err error) {
+	pkt := cb.NewUpdateTime()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, common.ErrPacketParse{PacketName: "UpdateTime", Cause: err}
+	}
+	return int64(pkt.Age), int64(pkt.Time), nil
+}
+
 // SendChunkBatchReceived sends an acknowledgment for received chunk batches.
 // This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
 func (w *worldHandler) SendChunkBatchReceived(conn models.PacketWriter, batchCount float32) error {

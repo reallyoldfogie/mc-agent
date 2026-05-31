@@ -201,6 +201,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			Priority: 0,
 			F:        a.onSetEquipment,
 		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundUpdateTime"),
+			Name:     "ClientboundUpdateTime",
+			Priority: 0,
+			F:        a.onUpdateTime,
+		},
 	}
 	// NOTE: Config-phase handlers (registryHandlers, FinishConfiguration) must NOT
 	// be registered here. The event system dispatches by numeric packet ID with no
@@ -387,6 +393,9 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		return err
 	}
 
+	log.Printf("[onMoveEntityPosRot][%s] Received pos/rot update for entity %d: delta=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
+		a.cfg.Name, entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), yaw, pitch)
+
 	a.entitiesMu.Lock()
 	now := time.Now()
 	if e, ok := a.entities[entityID]; ok {
@@ -460,14 +469,33 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
 			if isMountable.GetMountedEntityID() == entityID {
 				if e, ok := a.entities[entityID]; ok {
-	if syncer, ok := moveExec.(interface {
-		SyncMountedPositionWithRotation(float64, float64, float64, float64, float64)
-	}); ok {
-					// Convert yaw/pitch from int8 to float64 (Minecraft uses 1/256 rotation per byte)
-					yawDegrees := float64(e.Yaw) * 360.0 / 256.0
-					pitchDegrees := float64(e.Pitch) * 360.0 / 256.0
-						syncer.SyncMountedPositionWithRotation(e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
-						log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
+					// Check if this is a minecart or boat (where player rotation is independent)
+					isIndependentRotation := false
+					if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+						if name, ok := reg.GetNameByID(e.EntityType); ok {
+							isIndependentRotation = (name == "minecraft:minecart" || name == "minecraft:boat")
+						}
+					}
+
+					if isIndependentRotation {
+						// For minecarts/boats: sync position only, preserve agent's rotation
+						if syncer, ok := moveExec.(interface {
+							SyncMountedPosition(float64, float64, float64)
+						}); ok {
+							syncer.SyncMountedPosition(e.X, e.Y, e.Z)
+							log.Printf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, e.X, e.Y, e.Z)
+						}
+					} else {
+						// For horses/other mobs: sync both position and rotation
+						if syncer, ok := moveExec.(interface {
+							SyncMountedPositionWithRotation(float64, float64, float64, float64, float64)
+						}); ok {
+							// Convert yaw/pitch from int8 to float64 (Minecraft uses 1/256 rotation per byte)
+							yawDegrees := float64(e.Yaw) * 360.0 / 256.0
+							pitchDegrees := float64(e.Pitch) * 360.0 / 256.0
+							syncer.SyncMountedPositionWithRotation(e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
+							log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
+						}
 					}
 				}
 			}
@@ -600,6 +628,9 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("[onSyncEntityPosition][%s] Received sync for entity %d: pos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d, onGround=%v",
+		a.cfg.Name, entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
 
 	a.entitiesMu.Lock()
 	now := time.Now()
@@ -875,10 +906,11 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 	}
 
 	// Calculate knockback direction: attacker → agent (push away from attacker)
-	agentX, _, agentZ, _, _, initialized := a.GetPosition()
+	agentPos, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return nil
 	}
+	agentX, agentZ := agentPos.X, agentPos.Z
 
 	dirX := agentX - attackerX
 	dirZ := agentZ - attackerZ
@@ -1211,6 +1243,9 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	criticalHit := false       // Critical hit flag
 	pierceLevel := int8(0)     // Piercing level
 	potionColor := int32(-1)   // Potion color := no potion)
+	hasPose := false           // Whether any result included a Pose entry
+	poseOrdinal := int32(0)    // EntityPose wire varint
+	poseName := ""             // Lowercased enum name (or "unknown_<n>")
 
 	for _, result := range metadataResults {
 		// Apply health from metadata result
@@ -1239,6 +1274,11 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		if result.HasColor {
 			potionColor = result.PotionColor
 		}
+		if result.HasPose {
+			hasPose = true
+			poseOrdinal = result.Pose
+			poseName = result.PoseName
+		}
 	}
 
 	a.entitiesMu.Lock()
@@ -1261,6 +1301,15 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		e.criticalHit = criticalHit
 		e.pierceLevel = pierceLevel
 		e.potionColor = potionColor
+
+		// Persist pose if this update included a Pose entry. We keep both the
+		// raw wire ordinal and the resolved name so consumers (e.g. the
+		// mounted-camel logic) can match without re-looking up the registry.
+		if hasPose {
+			e.Pose = poseOrdinal
+			e.PoseName = poseName
+			e.HasPose = true
+		}
 
 		// Handle boat-specific metadata
 		// Check if this is a boat entity type and update paddle/variant metadata
@@ -1285,6 +1334,17 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		e.LastMetadataUpdate = time.Now()
 	}
 	a.entitiesMu.Unlock()
+
+	// If this entity is the bot's mount and the executor cares about vehicle
+	// pose changes (e.g. camel sit/stand), forward the update. The interface
+	// assertion keeps this loose so non-physics executors silently skip.
+	if hasPose && entityID == a.getMountedEntityID() && a.moveExec != nil {
+		if notifier, ok := a.moveExec.(interface {
+			NotifyVehiclePose(entityID int32, poseName string, ordinal int32)
+		}); ok {
+			notifier.NotifyVehiclePose(entityID, poseName, poseOrdinal)
+		}
+	}
 
 	// Track isInGround state for arrows (used to distinguish block vs entity hits)
 	a.activeProjectilesMu.Lock()
@@ -1849,6 +1909,28 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 			if err := a.moveExec.SetMounted(vehicleID); err != nil {
 				log.Printf("[onSetPassengers] Error setting movement executor mounted state: %v", err)
 			}
+			// Seed the executor with the mount's currently-tracked pose so
+			// vehicle-specific state (e.g. CamelState) reflects whether the
+			// camel is already sitting at mount time instead of defaulting
+			// to standing.
+			a.entitiesMu.RLock()
+			ent, ok := a.entities[vehicleID]
+			var seedPose int32
+			var seedName string
+			var hasSeed bool
+			if ok && ent.HasPose {
+				seedPose = ent.Pose
+				seedName = ent.PoseName
+				hasSeed = true
+			}
+			a.entitiesMu.RUnlock()
+			if hasSeed {
+				if notifier, ok := a.moveExec.(interface {
+					NotifyVehiclePose(entityID int32, poseName string, ordinal int32)
+				}); ok {
+					notifier.NotifyVehiclePose(vehicleID, seedName, seedPose)
+				}
+			}
 		}
 	} else if !isPassenger && currentMount == vehicleID {
 		// Agent just dismounted from the vehicle
@@ -1861,6 +1943,31 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 		}
 	} else {
 		log.Printf("[onSetPassengers] No mount state change (isPassenger=%v, currentMount=%d, vehicleID=%d)", isPassenger, currentMount, vehicleID)
+	}
+
+	return nil
+}
+
+// onUpdateTime handles the ClientboundUpdateTime packet.
+// This packet contains the world age and time of day from the server.
+// We extract the world age and store it for time-dependent mechanics like camel dash cooldowns.
+func (a *agent) onUpdateTime(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return nil // No version handler, skip
+	}
+
+	// Parse the UpdateTime packet using the version handler
+	worldAge, timeOfDay, err := a.versionHandler.Play().World().ParseUpdateTime(p)
+	if err != nil {
+		log.Printf("[Agent %s] Failed to parse UpdateTime packet: %v", a.cfg.Name, err)
+		return nil // Non-fatal: just log and continue
+	}
+
+	// Update world manager with server's world age and time of day
+	if a.mcAgentWorld != nil {
+		a.mcAgentWorld.SetWorldTime(worldAge, timeOfDay)
+		log.Printf("[Agent %s] Updated world time: age=%d ticks (%.1f days), timeOfDay=%d",
+			a.cfg.Name, worldAge, float64(worldAge)/24000.0, timeOfDay)
 	}
 
 	return nil

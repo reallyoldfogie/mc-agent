@@ -21,7 +21,8 @@ func TestHorseJumping(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon a tamed and saddled horse
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
@@ -45,7 +46,8 @@ func TestHorseJumping(t *testing.T) {
 			// Wait a bit for jump to occur
 			time.Sleep(1 * time.Second)
 
-			_, jumpY, _, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ = helper.ManagedAgent.Agent.GetPositionSimple()
+			jumpY := pos.Y
 
 			// Verify agent jumped upward
 			require.Greater(t, jumpY, initialY, "agent should have jumped upward")
@@ -85,7 +87,8 @@ func TestJumpVehiclePowerRange(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			x, y, z, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon horse
 			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)

@@ -134,17 +134,17 @@ func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callba
 		return nil, fmt.Errorf("movement executor not available")
 	}
 
-	botX, botY, botZ, _, _, initialized := a.GetPosition()
+	botPos, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return nil, fmt.Errorf("bot position not initialized")
 	}
 
 	// Set rotation to the specified pitch/yaw
-	a.setPosition(botX, botY, botZ, yaw, pitch)
+	a.setPosition(botPos, yaw, pitch)
 
 	// Arrow spawns at eye position minus 0.1 blocks (Minecraft PersistentProjectileEntity.java:113)
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
-	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
+	botOrigin := models.V3{X: botPos.X, Y: botPos.Y + a.getEyeHeight() - .1, Z: botPos.Z}
 
 	// Calculate velocity from pitch and yaw
 	pitchRad := (pitch) * math.Pi / 180.0
@@ -297,7 +297,7 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 		return nil, fmt.Errorf("Bot doesn't have line of sight to the target")
 	}
 
-	botX, botY, botZ, _, _, initialized := a.GetPosition()
+	botPos, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return nil, fmt.Errorf("bot position not initialized")
 	}
@@ -306,11 +306,11 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	// Arrows spawn at eye position minus 0.1 blocks
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52
 	// Source: PersistentProjectileEntity.java:113
-	botOrigin := models.V3{X: botX, Y: botY + a.getEyeHeight() - .1, Z: botZ}
+	botOrigin := models.V3{X: botPos.X, Y: botPos.Y + a.getEyeHeight() - .1, Z: botPos.Z}
 	targetPos := models.V3{X: targetX, Y: targetY, Z: targetZ}
 
-	log.Printf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=(%.2f, %.2f, %.2f), target input=(%.2f, %.2f, %.2f)",
-		a.cfg.Name, botX, botY, botZ, targetX, targetY, targetZ)
+	log.Printf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=%s, target input=%s",
+		a.cfg.Name, botPos, targetPos)
 
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(models.Arrow, botOrigin, targetPos)
@@ -343,13 +343,13 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	// CRITICAL: Send position packet with trajectory-verified pitch BEFORE using bow
 	// This ensures server knows the correct player rotation matching the trajectory we calculated
 	log.Printf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.cfg.Name, pitch)
-	if err := a.moveExec.SendPositionAndRotation(botX, botY, botZ, yaw, pitch, true); err != nil {
+	if err := a.moveExec.SendPositionAndRotation(botPos.X, botPos.Y, botPos.Z, yaw, pitch, true); err != nil {
 		return nil, fmt.Errorf("send position for bow: %w", err)
 	}
 
 	time.Sleep(50 * time.Millisecond) // Small delay to ensure position packet is processed
 
-	a.setPosition(botX, botY, botZ, yaw, pitch)
+	a.setPosition(botPos, yaw, pitch)
 
 	// Visualize trajectory with display entities for debugging (uses RCON if available)
 	log.Printf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.cfg.Name, len(trajectory))
@@ -634,10 +634,11 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	}
 
 	// Aim at the target using physics-based aiming
-	botX, botY, botZ, _, _, ok := a.GetPosition()
+	pos, _, _, ok := a.GetPosition()
 	if !ok {
 		return nil, fmt.Errorf("unable to get bot position")
 	}
+	botX, botY, botZ := pos.X, pos.Y, pos.Z
 
 	// Projectile spawns at eye position minus 0.1 blocks
 	// For standing player: eye height = 1.62, so spawn = Y + 1.62 - 0.1 = Y + 1.52

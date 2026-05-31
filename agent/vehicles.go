@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/movement"
@@ -113,6 +114,8 @@ func (a *agent) JumpVehicle(ctx context.Context, power int32) error {
 	); err != nil {
 		return fmt.Errorf("failed to send jump start packet: %v", err)
 	}
+
+	time.Sleep(1 * time.Second) // Wait briefly to ensure the server processes the jump start before sending the stop
 
 	// Immediately send ActionStopJumpHorse to complete the jump cycle
 	if err := a.versionHandler.Play().Movement().SendPlayerCommandWithParam(

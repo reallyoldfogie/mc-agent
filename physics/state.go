@@ -87,11 +87,26 @@ func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 	s.collision.horizontal = false
 }
 
+func (s *state) UpdatePosition(pos models.V3, yaw, pitch float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Pos = pos
+	s.yaw = yaw
+	s.pitch = pitch
+}
+
 // GetPosition returns the current position and rotation.
 func (s *state) GetPosition() (pos models.V3, yaw, pitch float64, onGround bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Pos, s.yaw, s.pitch, s.onGround
+}
+
+// GetPosition returns the current position and rotation.
+func (s *state) GetPositionSimple() (pos models.V3, onGround bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Pos, s.onGround
 }
 
 // GetVelocity returns the current velocity.

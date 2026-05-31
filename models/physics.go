@@ -31,6 +31,13 @@ func (v V3) DistanceTo(other V3) float64 {
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
+// DistanceTo calculates 2D distance to another position (ignoring Y)
+func (v V3) DistanceToXZ(other V3) float64 {
+	dx := other.X - v.X
+	dz := other.Z - v.Z
+	return math.Sqrt(dx*dx + dz*dz)
+}
+
 // ManhattanDistance calculates Manhattan distance to another position
 func (v V3) ManhattanDistance(other V3) float64 {
 	dx := v.X - other.X

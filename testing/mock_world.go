@@ -8,8 +8,10 @@ import (
 // MockWorld implements a synthetic world for testing pathfinding and movement
 // It provides a simple in-memory block storage without chunk complexity
 type MockWorld struct {
-	mu     sync.RWMutex
-	blocks map[BlockPos]uint32 // Block state IDs
+	mu        sync.RWMutex
+	blocks    map[BlockPos]uint32 // Block state IDs
+	worldAge  int64               // Server world age in ticks (-1 = not initialized)
+	timeOfDay int64               // Time of day in ticks (-1 = not initialized)
 }
 
 // BlockPos represents a 3D block position
@@ -20,7 +22,9 @@ type BlockPos struct {
 // NewMockWorld creates an empty test world
 func NewMockWorld() *MockWorld {
 	return &MockWorld{
-		blocks: make(map[BlockPos]uint32),
+		blocks:    make(map[BlockPos]uint32),
+		worldAge:  -1, // Not initialized
+		timeOfDay: -1, // Not initialized
 	}
 }
 
@@ -95,4 +99,32 @@ func (mw *MockWorld) DumpWorld() {
 	for pos, stateID := range mw.blocks {
 		log.Printf("Block at (%.2f, %.2f, %.2f): StateID=%d", pos.X, pos.Y, pos.Z, stateID)
 	}
+}
+
+// GetWorldAge returns the mock world's age and whether it's been initialized
+func (mw *MockWorld) GetWorldAge() (int64, bool) {
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
+	if mw.worldAge < 0 {
+		return 0, false
+	}
+	return mw.worldAge, true
+}
+
+// GetTimeOfDay returns the mock world's time of day and whether it's been initialized
+func (mw *MockWorld) GetTimeOfDay() (int64, bool) {
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
+	if mw.timeOfDay < 0 {
+		return 0, false
+	}
+	return mw.timeOfDay, true
+}
+
+// SetWorldTime sets both the mock world's age and time of day
+func (mw *MockWorld) SetWorldTime(worldAge, timeOfDay int64) {
+	mw.mu.Lock()
+	defer mw.mu.Unlock()
+	mw.worldAge = worldAge
+	mw.timeOfDay = timeOfDay
 }

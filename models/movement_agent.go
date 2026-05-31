@@ -4,8 +4,8 @@ import "context"
 
 // MovementAgent captures shared movement and follow helpers.
 type MovementAgent interface {
-	SendChat(message string) error
-	GetPosition() (x, y, z float64, yaw, pitch float64, initialized bool)
+	Position
+
 	MoveForward(ctx context.Context, distance float64) error
 	MoveUp(ctx context.Context, distance float64) error
 	MoveUpAndSneak(ctx context.Context, distance float64) error

@@ -3,6 +3,8 @@ package movement
 import (
 	"math"
 	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // MockPositionTracker tracks bot position for testing
@@ -17,20 +19,20 @@ type Position struct {
 	Yaw, Pitch float64
 }
 
-func (mpt *MockPositionTracker) GetPosition() (float64, float64, float64, float64, float64, bool) {
-	return mpt.x, mpt.y, mpt.z, mpt.yaw, mpt.pitch, true
+func (mpt *MockPositionTracker) GetPosition() (models.V3, float64, float64, bool) {
+	return models.V3{X: mpt.x, Y: mpt.y, Z: mpt.z}, mpt.yaw, mpt.pitch, true
 }
 
-func (mpt *MockPositionTracker) SetPosition(x, y, z float64, yaw, pitch float64) {
-	mpt.x = x
-	mpt.y = y
-	mpt.z = z
+func (mpt *MockPositionTracker) SetPosition(pos models.V3, yaw, pitch float64) {
+	mpt.x = pos.X
+	mpt.y = pos.Y
+	mpt.z = pos.Z
 	mpt.yaw = yaw
 	mpt.pitch = pitch
 
 	// Record position history
 	mpt.positionHistory = append(mpt.positionHistory, Position{
-		X: x, Y: y, Z: z, Yaw: yaw, Pitch: pitch,
+		X: pos.X, Y: pos.Y, Z: pos.Z, Yaw: yaw, Pitch: pitch,
 	})
 }
 

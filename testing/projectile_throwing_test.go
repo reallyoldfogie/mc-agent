@@ -264,12 +264,12 @@ func throwProjectile(ctx context.Context, t *testing.T, inst *TestInstance, agen
 	// Give a moment for the selection to be acknowledged
 	time.Sleep(200 * time.Millisecond)
 
-	botX, botY, botZ, ok := agent.Agent.GetPositionSimple()
-	require.True(t, ok, "bot position initialized")
-	t.Logf("[throwProjectile] Bot position: (%.2f, %.2f, %.2f)", botX, botY, botZ)
-	targetX := int(botX) + distance
-	targetY := int(botY)
-	targetZ := int(botZ)
+	botPos, initialized := agent.Agent.GetPositionSimple()
+	require.True(t, initialized, "bot position initialized")
+	t.Logf("[throwProjectile] Bot position: %s", botPos)
+	targetX := int(botPos.X) + distance
+	targetY := int(botPos.Y)
+	targetZ := int(botPos.Z)
 
 	target := models.V3{X: float64(targetX), Y: float64(targetY), Z: float64(targetZ)}
 	t.Logf("[throwProjectile] Target: (%d, %d, %d) = (%.1f, %.1f, %.1f)", targetX, targetY, targetZ, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
@@ -362,8 +362,8 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 	})
 
 	// Get position before throw
-	startX, startY, startZ, ok := agent.Agent.GetPositionSimple()
-	require.True(t, ok, "bot position initialized")
+	startPos, initialized := agent.Agent.GetPositionSimple()
+	require.True(t, initialized, "bot position initialized")
 
 	resp, err := inst.RCON.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:glowstone`, targetX, targetY-1, targetZ))
 	require.NoError(t, err, "place glowstone block for ender pearl test")
@@ -377,7 +377,7 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 
 	// Throw the ender pearl with optional callback(s)
 	// use log instead of t.Log to make the log statement show in the agent log, not the test output
-	log.Printf("Throwing ender pearl from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f)", startX, startY, startZ, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
+	log.Printf("Throwing ender pearl from %s to (%.1f, %.1f, %.1f)", startPos, float64(targetX)+0.5, float64(targetY)+0.5, float64(targetZ)+0.5)
 
 	packetWriter := agent.Agent.GetPacketLogWriter()
 	callbacks = append(callbacks, func(evt models.ProjectileHitEvent) {
@@ -398,13 +398,13 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 	time.Sleep(5 * time.Second)
 
 	// Check final position
-	endX, endY, endZ, ok := agent.Agent.GetPositionSimple()
-	require.True(t, ok, "bot position after throw")
+	endPos, initialized := agent.Agent.GetPositionSimple()
+	require.True(t, initialized, "bot position after throw")
 
 	// Ender pearls should teleport the player to where they land
 	// Check if player moved significantly from starting position
-	distanceMoved := math.Sqrt(math.Pow(endX-startX, 2) + math.Pow(endY-startY, 2) + math.Pow(endZ-startZ, 2))
-	distanceFromTarget := models.V3{X: float64(targetX), Y: float64(targetY), Z: float64(targetZ)}.DistanceTo(models.V3{X: endX, Y: endY, Z: endZ})
+	distanceMoved := startPos.DistanceTo(endPos)
+	distanceFromTarget := models.V3{X: float64(targetX), Y: float64(targetY), Z: float64(targetZ)}.DistanceTo(endPos)
 	// hitAccuracy := math.Abs(distanceMoved) > float64(distance)/2
 
 	if math.Abs(distanceFromTarget) < .5 { // expect player to be within 0.5 blocks of target
@@ -693,7 +693,8 @@ func Test_ArrowRange(t *testing.T) {
 					// Wait for callback (non-blocking)
 					select {
 					case evt := <-hitCh:
-						botX, botY, botZ, _ := agnt.Agent.GetPositionSimple()
+						pos, _ := agnt.Agent.GetPositionSimple()
+						botX, botY, botZ := pos.X, pos.Y, pos.Z
 						distanceFromTarget := evt.Position.DistanceTo(target)
 						t.Logf("✓ Arrow callback: HitType=%v, ProjectileType=%v, source=(%.2f %.2f %.2f) target=(%.2f %.2f %.2f) landed=(%.2f %.2f %.2f - %.02f blocks)",
 							evt.HitType, evt.ProjectileType,
@@ -792,12 +793,12 @@ func Test_ProjectileHitCallback(t *testing.T) {
 				hitCh := make(chan models.ProjectileHitEvent, 1)
 				callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
 
-				botX, botY, botZ, ok := agnt.Agent.GetPositionSimple()
-				require.True(t, ok, "bot position initialized")
+				botPos, initialized := agnt.Agent.GetPositionSimple()
+				require.True(t, initialized, "bot position initialized")
 
 				// Throw snowball with callback
 				// Just throw in any direction - we're testing queue matching, not aiming accuracy
-				_, err := agnt.Agent.ThrowProjectileAt(ctx, models.Snowball, botX+5, botY, botZ+5, callback)
+				_, err := agnt.Agent.ThrowProjectileAt(ctx, models.Snowball, botPos.X+5, botPos.Y, botPos.Z+5, callback)
 				require.NoError(t, err, "ThrowProjectileAt should succeed")
 
 				// Wait for callback with timeout
@@ -820,8 +821,8 @@ func Test_ProjectileHitCallback(t *testing.T) {
 				hitCh := make(chan models.ProjectileHitEvent, 1)
 				callback := func(evt models.ProjectileHitEvent) { hitCh <- evt }
 
-				botX, botY, botZ, ok := agnt.Agent.GetPositionSimple()
-				require.True(t, ok, "bot position initialized")
+				botPos, initialized := agnt.Agent.GetPositionSimple()
+				require.True(t, initialized, "bot position initialized")
 
 				// Ensure bow and arrow are ready
 				// Use /item replace (1.17+) instead of /replaceitem (deprecated)
@@ -842,7 +843,7 @@ func Test_ProjectileHitCallback(t *testing.T) {
 
 				// Fire bow with callback - fire DOWNWARD to guarantee hitting ground
 				// This ensures arrow will land quickly and trigger a callback
-				_, err = agnt.Agent.FireBowAt(context.Background(), botX, botY-5, botZ, callback)
+				_, err = agnt.Agent.FireBowAt(context.Background(), botPos.X, botPos.Y-5, botPos.Z, callback)
 				require.NoError(t, err, "FireBowAt should succeed")
 
 				// Wait for callback with timeout

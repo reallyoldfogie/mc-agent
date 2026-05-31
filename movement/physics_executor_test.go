@@ -2,6 +2,7 @@ package movement
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,6 +33,49 @@ func (mw *MockWorld) SetBlock(x, y, z int, blockState uint32) {
 
 func (mw *MockWorld) GetEntitiesInRange(bb physics.AABB) []models.EntityBounds {
 	return []models.EntityBounds{} // No entities in mock world
+}
+
+// MockWorldManager implements models.World for testing
+type MockWorldManager struct {
+	mu        sync.RWMutex
+	worldAge  int64 // -1 = not initialized
+	timeOfDay int64 // -1 = not initialized
+}
+
+func NewMockWorldManager() *MockWorldManager {
+	return &MockWorldManager{
+		worldAge:  -1,
+		timeOfDay: -1,
+	}
+}
+
+func (mwm *MockWorldManager) GetWorldAge() (int64, bool) {
+	mwm.mu.RLock()
+	defer mwm.mu.RUnlock()
+	if mwm.worldAge < 0 {
+		return 0, false
+	}
+	return mwm.worldAge, true
+}
+
+func (mwm *MockWorldManager) GetTimeOfDay() (int64, bool) {
+	mwm.mu.RLock()
+	defer mwm.mu.RUnlock()
+	if mwm.timeOfDay < 0 {
+		return 0, false
+	}
+	return mwm.timeOfDay, true
+}
+
+func (mwm *MockWorldManager) SetWorldTime(worldAge, timeOfDay int64) {
+	mwm.mu.Lock()
+	defer mwm.mu.Unlock()
+	mwm.worldAge = worldAge
+	mwm.timeOfDay = timeOfDay
+}
+
+func (mwm *MockWorldManager) GetBlockAt(x, y, z float64) (uint32, bool) {
+	return 0, true // Not used in physics executor tests
 }
 
 // MockShapeProvider implements physics.BlockShapeProvider for testing
@@ -165,12 +209,12 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 	var currentYaw, currentPitch float64 = 0.0, 0.0
 	var entityID int32 = 1
 
-	getBotPos := func() (float64, float64, float64, float64, float64, bool) {
-		return currentX, currentY, currentZ, currentYaw, currentPitch, true
+	getBotPos := func() (models.V3, float64, float64, bool) {
+		return models.V3{X: currentX, Y: currentY, Z: currentZ}, currentYaw, currentPitch, true
 	}
 
-	setBotPos := func(x, y, z float64, yaw, pitch float64) {
-		currentX, currentY, currentZ = x, y, z
+	setBotPos := func(pos models.V3, yaw, pitch float64) {
+		currentX, currentY, currentZ = pos.X, pos.Y, pos.Z
 		currentYaw, currentPitch = yaw, pitch
 	}
 
@@ -180,6 +224,7 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 
 	world := NewMockWorld()
 	shapeProvider := &MockShapeProvider{}
+	worldManager := NewMockWorldManager()
 
 	// Build a solid world floor at Y=63 (bot starts at Y=64, standing on Y=63 ground)
 	// Also add blocks below to prevent falling through
@@ -200,6 +245,7 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 		getBotEntityID,
 		world,
 		shapeProvider,
+		worldManager,
 	)
 }
 
