@@ -3,6 +3,7 @@ package items
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -24,8 +25,11 @@ const (
 	// Add more container types as needed
 )
 
-// ContainerHelper provides high-level functions for interacting with containers
+// ContainerHelper provides high-level functions for interacting with containers.
+// TODO: Consider renaming to ContainerManager — this type manages state and coordinates
+// multi-step protocol sequences rather than being a stateless utility helper.
 type ContainerHelper struct {
+	mu               sync.Mutex
 	itemUsage        *ItemUsage
 	invMgr           models.InventoryManager
 	screenMgr        mcscreen.Manager
@@ -62,6 +66,8 @@ func (ch *ContainerHelper) SetEntityIDProvider(provider EntityIDProvider) {
 // Returns the window ID assigned by the server, or error if timeout/failure.
 // cursorX, cursorY, cursorZ are the click position on the block face (0.0-1.0).
 func (ch *ContainerHelper) OpenContainer(pos models.V3, face models.BlockFace, timeout time.Duration, cursorX, cursorY, cursorZ float32) (byte, error) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	screensBefore := len(ch.screenMgr.Screens())
 	screenIDsBefore := copyScreenIDs(ch.screenMgr.Screens())
 	faces := buildFaceFallbacks(face)
@@ -160,8 +166,13 @@ func buildFaceFallbacks(primary models.BlockFace) []models.BlockFace {
 //
 // For storage entities (chest boat/minecart), this uses entity interaction.
 func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Duration) (byte, error) {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+
 	// Record the current number of screens before interaction
-	screensBefore := len(ch.screenMgr.Screens())
+	// Make a snapshot to avoid race with packet handler that may be modifying screens map
+	screenSnapshotBefore := ch.screenMgr.Screens()
+	screensBefore := len(screenSnapshotBefore)
 
 	fmt.Printf("[OpenEntityContainer] → Opening container for entity ID %d\n", entityID)
 
@@ -205,13 +216,16 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 	// Wait for the screen manager to receive ClientboundOpenHorseScreen or ClientboundOpenScreen packet
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		screensNow := len(ch.screenMgr.Screens())
+		// Make a snapshot of screens to avoid race condition with packet handler
+		// (packet handler may be writing to screens map while we read)
+		screenSnapshot := ch.screenMgr.Screens()
+		screensNow := len(screenSnapshot)
 
 		// Check if a new screen was added
 		if screensNow > screensBefore {
 			// Find the new window ID (highest ID that's not 0)
 			maxID := 0
-			for windowID := range ch.screenMgr.Screens() {
+			for windowID := range screenSnapshot {
 				if windowID > maxID {
 					maxID = windowID
 				}
@@ -228,12 +242,13 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 	}
 
 	// Log timeout details for debugging
-	screenIDs := make([]int, 0, len(ch.screenMgr.Screens()))
-	for id := range ch.screenMgr.Screens() {
+	screenSnapshot := ch.screenMgr.Screens()
+	screenIDs := make([]int, 0, len(screenSnapshot))
+	for id := range screenSnapshot {
 		screenIDs = append(screenIDs, id)
 	}
 	fmt.Printf("[OpenEntityContainer] TIMEOUT for entity %d: had %d screens, still have %d screens %v\n",
-		entityID, screensBefore, len(ch.screenMgr.Screens()), screenIDs)
+		entityID, screensBefore, len(screenSnapshot), screenIDs)
 
 	return 0, fmt.Errorf("timeout waiting for entity container to open (%s)", timeout.String())
 }
@@ -246,6 +261,8 @@ func (ch *ContainerHelper) CloseContainer() error {
 	if ch == nil {
 		return nil
 	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 
 	if ch.currentWindowID == 0 {
 		return nil // Already on player inventory

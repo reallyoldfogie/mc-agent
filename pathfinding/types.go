@@ -35,6 +35,14 @@ const (
 	Sneak             = models.Sneak
 	SneakThrough      = models.SneakThrough
 	SneakTraverse     = models.SneakTraverse
+	MountVehicle      = models.MountVehicle
+	DismountVehicle   = models.DismountVehicle
+	VehicleTraverse   = models.VehicleTraverse
+	VehicleAscend     = models.VehicleAscend
+	VehicleLavaTraverse = models.VehicleLavaTraverse
+	VehicleRailTraverse = models.VehicleRailTraverse
+	VehicleSwim       = models.VehicleSwim
+	VehicleFly3D      = models.VehicleFly3D
 )
 
 // PathStep is an alias to models.PathStep for backward compatibility.

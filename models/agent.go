@@ -11,6 +11,7 @@ type Agent interface {
 	AgentActions
 	CommandAgent
 	PlanAgent
+	InventoryManager
 	ContainerOperations
 	ChatOperations
 	ScreenOperations

@@ -74,8 +74,16 @@ func (pw *physicsWorldAdapter) GetEntityDimensions(entityType models.EntityType)
 		return EntityDimensions{Width: 0.5, Height: 1.975}
 
 	// Horses and similar mounts (1.4 wide x 1.6 tall)
-	case models.EntityTypeHorse, models.EntityTypeMule, models.EntityTypeDonkey:
+	case models.EntityTypeHorse, models.EntityTypeSkeletonHorse, models.EntityTypeZombieHorse, models.EntityTypeMule, models.EntityTypeDonkey:
 		return EntityDimensions{Width: 1.4, Height: 1.6}
+
+	// Pig (0.9 wide x 0.9 tall)
+	case models.EntityTypePig:
+		return EntityDimensions{Width: 0.9, Height: 0.9}
+
+	// Strider (0.9 wide x 1.7 tall)
+	case models.EntityTypeStrider:
+		return EntityDimensions{Width: 0.9, Height: 1.7}
 
 	// Camel (0.9 wide x 2.2 tall) — same for CamelHusk
 	case models.EntityTypeCamel, models.EntityTypeCamelHusk:

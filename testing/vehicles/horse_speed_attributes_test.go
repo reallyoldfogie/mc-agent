@@ -26,7 +26,7 @@ func TestHorseMovementSpeedAttribute(t *testing.T) {
 			x, y, z := initialPos.X, initialPos.Y, initialPos.Z
 
 			// Summon a tamed horse at the location
-			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
+			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90)
 			require.NoError(t, err, "summon horse")
 
 			time.Sleep(1 * time.Second)
@@ -97,7 +97,7 @@ func TestHorseSpeedWithThrottle(t *testing.T) {
 			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon horse
-			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
+			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90)
 			require.NoError(t, err, "summon horse")
 
 			time.Sleep(1 * time.Second)

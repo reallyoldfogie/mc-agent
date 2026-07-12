@@ -12,4 +12,5 @@ type ContainerAccess interface {
 	FindItemInPlayerInventory(windowID byte, itemID int32) int16
 	FindEmptyChestSlot(windowID byte) int16
 	GetChestRows(windowID byte) int
+	GetContainerSlotCount(windowID byte) int
 }

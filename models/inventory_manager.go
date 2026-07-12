@@ -5,8 +5,8 @@ import "time"
 type InventoryManager interface {
 	SetWindow(windowID byte)
 	GetWindow() byte
-	SetCursor(item ItemStack)
-	GetCursor() ItemStack
+	SetCursorItem(item ItemStack)
+	GetCursorItem() ItemStack
 	SetWaitForUpdates(wait bool)
 	SetUpdateWaitDelay(delay time.Duration)
 	LeftClickSlot(slot int16, slotItem ItemStack) error

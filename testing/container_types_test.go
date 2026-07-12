@@ -115,10 +115,8 @@ func TestFurnaceInteraction(t *testing.T) {
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWaitForUpdates(false)
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, scr, botClient, managedAgent.Config.PacketMgr)
-			managedAgent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			// Open the furnace
 			t.Log("opening furnace")
@@ -143,7 +141,7 @@ func TestFurnaceInteraction(t *testing.T) {
 
 			// Close the furnace
 			t.Log("closing furnace")
-			_ = containerHelper.CloseContainer()
+			_ = managedAgent.Agent.CloseContainer()
 			t.Log("furnace closed successfully")
 
 			_ = botClient.Close()
@@ -238,10 +236,8 @@ func TestHopperInteraction(t *testing.T) {
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWaitForUpdates(false)
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, scr, botClient, managedAgent.Config.PacketMgr)
-			managedAgent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			// Open the hopper
 			t.Log("opening hopper")
@@ -266,7 +262,7 @@ func TestHopperInteraction(t *testing.T) {
 
 			// Close the hopper
 			t.Log("closing hopper")
-			_ = containerHelper.CloseContainer()
+			_ = managedAgent.Agent.CloseContainer()
 			t.Log("hopper closed successfully")
 
 			_ = botClient.Close()

@@ -37,7 +37,7 @@ func (s *ContainerTestSuite) TestAnvil() {
 	}
 
 	// Close anvil
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Anvil test passed")
@@ -67,7 +67,7 @@ func (s *ContainerTestSuite) TestGrindstone() {
 	s.Require().Equal(3, genericContainer.ContainerSlots, "grindstone should have 3 container slots")
 
 	// Close grindstone
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Grindstone test passed")
@@ -97,7 +97,7 @@ func (s *ContainerTestSuite) TestSmithingTable() {
 	s.Require().Equal(4, genericContainer.ContainerSlots, "smithing table should have 4 container slots")
 
 	// Close smithing table
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Smithing table test passed")

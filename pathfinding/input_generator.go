@@ -320,6 +320,34 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		// Sneaking movements (1.5 block gaps, edge safety)
 		out.Sneak = true // Enable sneaking for reduced hitbox and slow speed
 		// Default throttle toward target is fine
+
+	// Vehicle mounting/dismounting
+	case MountVehicle:
+		// Mount step - physics executor handles the actual mount action
+		// No movement input needed while mounting
+		out.ThrottleX = 0
+		out.ThrottleZ = 0
+
+	case DismountVehicle:
+		// Dismount step - physics executor handles the actual dismount action
+		// No movement input needed while dismounting
+		out.ThrottleX = 0
+		out.ThrottleZ = 0
+
+	// Vehicle movements
+	case VehicleTraverse, VehicleAscend, VehicleLavaTraverse, VehicleRailTraverse, VehicleSwim, VehicleFly3D:
+		// Vehicle movements use the default throttle-toward-target inputs
+		// The physics executor's handleRidingTick will apply vehicle-specific physics
+		// Just point the vehicle toward the target
+
+		// For 3D flying (nautilus), adjust pitch as well
+		if targetStep.Movement == VehicleFly3D {
+			// Calculate pitch based on vertical distance
+			verticalDist := targetStep.Position.Y - pos.Y
+			if horizontalDist > 0.01 {
+				out.Pitch = -math.Atan2(verticalDist, horizontalDist) * 180.0 / math.Pi
+			}
+		}
 	}
 
 	return out
@@ -459,6 +487,40 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		// Sneaking is 30% speed = ~0.065 blocks/tick
 		// Much slower, so increase estimate
 		return int(dist/0.06) + 20
+
+	// Vehicle mounting/dismounting
+	case MountVehicle, DismountVehicle:
+		// Mount/dismount actions are quick one-time events
+		// Server typically responds in 1-2 ticks
+		return 10
+
+	// Vehicle movements
+	case VehicleTraverse:
+		// Land vehicle travel is faster than walking
+		// Assume ~0.28 blocks/tick (similar to sprinting)
+		return int(dist/0.28) + 8
+
+	case VehicleAscend:
+		// Land vehicle jump up - takes jump time + horizontal distance
+		return int(dist/0.28) + 15
+
+	case VehicleLavaTraverse:
+		// Strider on lava - moderate speed ~0.22 blocks/tick
+		return int(dist/0.22) + 10
+
+	case VehicleRailTraverse:
+		// Minecart on rail - very fast ~0.4 blocks/tick
+		return int(dist/0.40) + 5
+
+	case VehicleSwim:
+		// Boat on water - moderate speed ~0.27 blocks/tick
+		return int(dist/0.27) + 10
+
+	case VehicleFly3D:
+		// Nautilus 3D underwater - similar to boat
+		// Calculate 3D distance properly
+		dist3d := step.Position.DistanceTo(pos)
+		return int(dist3d/0.24) + 12
 
 	default:
 		// Unknown movement type, use conservative estimate

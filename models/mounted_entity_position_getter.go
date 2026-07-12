@@ -16,6 +16,11 @@ type MountedEntityPositionGetter interface {
 	IsMountedEntityMinecart(int32) bool
 	IsMountedEntityCamel(int32) bool
 	IsMountedEntityNautilus(int32) bool
+	IsMountedEntityZombieNautilus(int32) bool
+	IsMountedEntityPig(int32) bool
+	IsMountedEntityStrider(int32) bool
+	IsMountedEntityDonkey(int32) bool
+	IsMountedEntityMule(int32) bool
 
 	// GetEntityAttribute retrieves an entity attribute value by name.
 	// Returns (value, found) - found is false if the entity or attribute is not tracked.
@@ -26,4 +31,9 @@ type MountedEntityPositionGetter interface {
 	// Returns (velX, velY, velZ, found) in Minecraft protocol units (×8000 blocks/tick).
 	// found is false if the entity is not tracked.
 	GetEntityVelocity(entityID int32) (velX, velY, velZ float64, found bool)
+
+	// GetRiderHeldItem returns the local item name (e.g. "carrot_on_a_stick") of the rider's
+	// currently held item in their active hotbar slot. Returns ("", false) if no item found.
+	// The name has no namespace prefix.
+	GetRiderHeldItem() (itemName string, found bool)
 }

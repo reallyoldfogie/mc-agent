@@ -300,6 +300,138 @@ const (
 	RideableInWaterDragMultiplier = 0.8 // Significant drag in water
 )
 
+// Pig riding constants
+const (
+	// PigBaseMovementSpeed is the default movement speed for a ridden pig.
+	// Vanilla generic.movement_speed for pigs (PigEntity.createPigAttributes: 0.25).
+	PigBaseMovementSpeed = 0.25
+
+	// PigSaddledSpeedMultiplier scales the movement_speed attribute for a ridden pig.
+	// Java PigEntity.getSaddledSpeed():
+	//
+	//	return (float)(getAttributeValue(MOVEMENT_SPEED) * 0.225 * saddledComponent.getMovementSpeedMultiplier());
+	//
+	// Vanilla multiplies the raw attribute by 0.225 before applying the sinusoidal
+	// boost. Without this factor, the ridden pig used the full attribute value and
+	// moved far too fast.
+	PigSaddledSpeedMultiplier = 0.225
+
+	// PigBoostSinAmplitude is the amplitude of the sinusoidal speed boost from
+	// using a carrot_on_a_stick, matching Java SaddledComponent.getMovementSpeedMultiplier():
+	//
+	//	1.0F + 1.15F * sin(boostedTime / boostTime * PI)
+	//
+	// The boost is triggered by "using" (right-click) the carrot_on_a_stick,
+	// NOT by merely holding it.
+	PigBoostSinAmplitude = 1.15
+)
+
+// Horse riding constants (Java AbstractHorseEntity, 1.21.11).
+// Horse jump motion is client-authoritative in vanilla: the client calls
+// setJumpStrength (arming jumpStrength), tickControlled fires jump() on the
+// next on-ground tick, and the resulting Y velocity is shipped via VehicleMove.
+// The START_RIDING_JUMP packet only drives animation/anger server-side.
+const (
+	// HorseBaseJumpStrength is the default JUMP_STRENGTH attribute for horses.
+	// Java AbstractHorseEntity.createBaseHorseAttributes():
+	//
+	//	.add(EntityAttributes.JUMP_STRENGTH, 0.7)
+	HorseBaseJumpStrength = 0.7
+
+	// HorseJumpForwardBoost scales the forward velocity added when jumping while
+	// moving forward. Java AbstractHorseEntity.jump():
+	//
+	//	this.setVelocity(this.getVelocity().add(-0.4F * sin(yaw) * strength,
+	//	                                       0.0,
+	//	                                        0.4F * cos(yaw) * strength));
+	// (only when movementInput.z > 0). The 0.4 factor is applied per-axis after
+	// the yaw rotation, so the horizontal boost magnitude is 0.4 * strength.
+	HorseJumpForwardBoost = 0.4
+)
+
+// RidingAirborneAcceleration is the horizontal movement-input acceleration
+// applied to a ridden entity (horse, camel, etc.) while airborne. Vanilla gives
+// only limited air control (~0.02) versus the full ground movement speed, so a
+// falling mount keeps its horizontal momentum but does not accelerate to many
+// times its ground speed and "fly" forward. Ground movement is unaffected.
+const RidingAirborneAcceleration = 0.02
+
+// Strider riding constants
+const (
+	// StriderBaseMovementSpeed is the default movement speed for a ridden strider.
+	// Java StriderEntity.createStriderAttributes(): EntityAttributes.MOVEMENT_SPEED = 0.175.
+	StriderBaseMovementSpeed = 0.175
+
+	// StriderHurtByWater mirrors Java StriderEntity.hurtByWater() which returns true.
+	// Striders take damage from water, rain, and splash water bottles.
+	// This constant is a stub for future damage-system integration; the movement
+	// executor does not currently apply water damage.
+	StriderHurtByWater = true
+
+	// StriderWarmSpeedMultiplier scales saddled speed when the strider is warm (on lava).
+	// Java StriderEntity.getSaddledSpeed(): this.isCold() ? 0.35F : 0.55F.
+	StriderWarmSpeedMultiplier = 0.55
+
+	// StriderColdSpeedMultiplier scales saddled speed when the strider is cold (off lava).
+	// Java StriderEntity.getSaddledSpeed(): this.isCold() ? 0.35F : 0.55F.
+	StriderColdSpeedMultiplier = 0.35
+
+	// StriderSuffocatingModifier is the ADD_MULTIPLIED_BASE modifier applied to the
+	// movement_speed attribute when the strider is cold. Effective speed = base * (1 + modifier).
+	// Java StriderEntity.SUFFOCATING_MODIFIER: -0.34F, Operation.ADD_MULTIPLIED_BASE.
+	StriderSuffocatingModifier = -0.34
+
+	// StriderOnLavaGravity is the gravitational acceleration when strider is on lava surface.
+	// Striders float on lava without sinking (updateFloating sets onGround=true).
+	StriderOnLavaGravity = 0.0
+
+	// StriderOffLavaGravity is the gravitational acceleration when strider is off lava.
+	// Java: standard entity gravity = 0.08 blocks/tick².
+	StriderOffLavaGravity = -0.08
+
+	// StriderLavaBobUpVelocity is the upward velocity added when a strider is submerged
+	// in lava (not floating on the surface).
+	// Java StriderEntity.updateFloating(): velocity.multiply(0.5).add(0, 0.05, 0).
+	StriderLavaBobUpVelocity = 0.05
+
+	// StriderLavaBobDrag is the velocity multiplier applied when a strider is submerged
+	// in lava (bobbing up).
+	// Java StriderEntity.updateFloating(): velocity.multiply(0.5).
+	StriderLavaBobDrag = 0.5
+
+	// StriderBoostSinAmplitude is the amplitude of the sinusoidal speed boost from
+	// using warped_fungus_on_a_stick.
+	// Java SaddledComponent.getMovementSpeedMultiplier(): 1.0F + 1.15F * sin(...).
+	StriderBoostSinAmplitude = 1.15
+
+	// StriderBoostMinDuration is the minimum boost duration in ticks.
+	// Java SaddledComponent.boost(): random.nextInt(841) + 140, so minimum is 140.
+	// But getBoostTime checks boostedTime > boostTime, so effective min = 141.
+	StriderBoostMinDuration = 140
+
+	// StriderBoostRandomRange is the random range added to min duration.
+	// Java SaddledComponent.boost(): random.nextInt(841) + 140.
+	StriderBoostRandomRange = 841
+)
+
+// Nautilus riding constants (Java AbstractNautilusEntity, 1.21.11).
+// Per-type base movement_speed and dash constants live in models/nautilus.go
+// alongside NautilusState; these are the medium speed/drag factors used by the
+// ridden-movement predictor.
+const (
+	// NautilusInWaterSpeedMultiplier is the saddled-speed multiplier in water.
+	// Java getSaddledSpeed(): 0.0325 * MOVEMENT_SPEED when isTouchingWater().
+	NautilusInWaterSpeedMultiplier = 0.0325
+
+	// NautilusOnLandSpeedMultiplier is the saddled-speed multiplier on land.
+	// Java getSaddledSpeed(): 0.02 * MOVEMENT_SPEED when not touching water.
+	NautilusOnLandSpeedMultiplier = 0.02
+
+	// NautilusWaterDrag is the per-tick velocity multiplier in water.
+	// Java AbstractNautilusEntity.travelInWater(): velocity.multiply(0.9) on all axes.
+	NautilusWaterDrag = 0.9
+)
+
 // HorseLandFriction computes the per-tick velocity multiplier for a ridden entity
 // on land, based on the block's slipperiness. Mirrors the vanilla formula from
 // LivingEntity.travelControlled → Entity.applyMovementInput → friction path:

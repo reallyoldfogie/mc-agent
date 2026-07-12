@@ -10,7 +10,7 @@ type (
 	ChatOperations = models.ChatOperations
 	// Client              = models.Client
 	ContainerAccess     = models.ContainerAccess
-	ContainerHelper     = models.ContainerHelper
+	ContainerHelper     = models.ContainerManager
 	ContainerOperations = models.ContainerOperations
 	CustomRegistry      = models.CustomRegistry
 	EntityIDProvider    = models.EntityIDProvider

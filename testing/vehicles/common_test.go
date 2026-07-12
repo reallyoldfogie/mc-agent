@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -239,7 +240,7 @@ func (vh *VehicleTestHelper) RemoveHorseEnclosure(ctx context.Context, x, y, z f
 }
 
 // SummonHorse summons a tamed and saddled horse at the specified location and returns its entity ID
-func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (int32, error) {
+func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float64) (int32, error) {
 	// Summon command varies by version due to saddle NBT location change in 1.21.5
 	// See docs/horse-nbt-data.md for version-specific NBT requirements
 	// 1.21.1-1.21.4: SaddleItem is a top-level tag
@@ -253,14 +254,14 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (
 	if c.Check(v) {
 		// Versions 1.21.1-1.21.4: Use SaddleItem tag
 		cmd = fmt.Sprintf(
-			`summon minecraft:horse %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0}`,
-			x, y, z,
+			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0}`,
+			x, y, z, yaw,
 		)
 	} else {
 		// Versions 1.21.5+: Use equipment.saddle structure
 		cmd = fmt.Sprintf(
-			`summon minecraft:horse %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}},Variant:0}`,
-			x, y, z,
+			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1},},Variant:0}`,
+			x, y, z, yaw,
 		)
 	}
 
@@ -298,7 +299,7 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z float64) (
 }
 
 // SummonCamel summons a tamed and saddled camel at the specified location and returns its entity ID
-func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z float64) (int32, error) {
+func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z, yaw float64) (int32, error) {
 	// Summon command varies by version due to saddle NBT location change in 1.21.5
 	// Camels must be tamed (Tame:1b) to be rideable
 	var cmd string
@@ -310,14 +311,14 @@ func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z float64) (
 	if c.Check(v) {
 		// Versions 1.21.1-1.21.4: Use SaddleItem tag
 		cmd = fmt.Sprintf(
-			`summon minecraft:camel %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
-			x, y, z,
+			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z, yaw,
 		)
 	} else {
 		// Versions 1.21.5+: Use equipment.saddle structure
 		cmd = fmt.Sprintf(
-			`summon minecraft:camel %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
-			x, y, z,
+			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z, yaw,
 		)
 	}
 
@@ -347,6 +348,55 @@ func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z float64) (
 	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelTypeID, x, y, z)
 	if !found {
 		return 0, fmt.Errorf("camel entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonCamelHusk summons a tamed camel husk at the specified location and returns its entity ID
+// Camel husk was added in Minecraft 1.21.11.
+func (vh *VehicleTestHelper) SummonCamelHusk(ctx context.Context, x, y, z, yaw float64) (int32, error) {
+	// Camel husks must be tamed (Tame:1b) to be rideable
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	minVersion, _ := semver.NewConstraints("< 1.21.11")
+	if minVersion.Check(v) {
+		return 0, fmt.Errorf("camel husk requires Minecraft 1.21.11 or later, got %s", version)
+	}
+
+	// 1.21.11+ always uses the equipment.saddle structure
+	cmd := fmt.Sprintf(
+		`summon minecraft:camel_husk %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+		x, y, z, yaw,
+	)
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon camel husk: %w", err)
+	}
+
+	// Equip the saddle via item replace for reliability
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:camel_husk,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] camel husk saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip camel husk saddle: %w", err)
+	}
+
+	// Wait for entity to spawn and be tracked
+	time.Sleep(500 * time.Millisecond)
+
+	// Get camel husk entity type ID from the agent's registry
+	camelHuskTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:camel_husk")
+	if !ok {
+		return 0, fmt.Errorf("camel husk entity type not found in registry")
+	}
+
+	// Find the camel husk by searching for nearest camel husk entity
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelHuskTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("camel husk entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
 
 	return entityID, nil
@@ -437,6 +487,11 @@ func (vh *VehicleTestHelper) WaitForAttribute(ctx context.Context, entityID int3
 
 // WaitForMounted waits for the agent to mount an entity
 func (vh *VehicleTestHelper) WaitForMounted(ctx context.Context, timeout time.Duration) error {
+	return vh.WaitForMountedWithDiagnostics(ctx, timeout, 0)
+}
+
+// WaitForMountedWithDiagnostics waits for agent to mount and logs diagnostic info on timeout
+func (vh *VehicleTestHelper) WaitForMountedWithDiagnostics(ctx context.Context, timeout time.Duration, vehicleEntityID int32) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -452,8 +507,45 @@ func (vh *VehicleTestHelper) WaitForMounted(ctx context.Context, timeout time.Du
 				return nil
 			}
 			if time.Now().After(deadline) {
+				// Log diagnostic information on timeout
+				vh.logMountingDiagnostics(vehicleEntityID)
 				return fmt.Errorf("agent did not mount after %v", timeout)
 			}
+		}
+	}
+}
+
+// logMountingDiagnostics logs agent position, vehicle position, and distance
+func (vh *VehicleTestHelper) logMountingDiagnostics(vehicleEntityID int32) {
+	agentPos, _ := vh.ManagedAgent.Agent.GetPositionSimple()
+	entities := vh.ManagedAgent.Agent.GetTrackedEntities()
+
+	vh.t.Logf("[Mount Diagnostics] Agent position: (%.2f, %.2f, %.2f)", agentPos.X, agentPos.Y, agentPos.Z)
+
+	if vehicleEntityID != 0 {
+		if entityInfo, exists := entities[vehicleEntityID]; exists {
+			vh.t.Logf("[Mount Diagnostics] Vehicle position: (%.2f, %.2f, %.2f)", entityInfo.X, entityInfo.Y, entityInfo.Z)
+
+			// Calculate 3D distance
+			dx := entityInfo.X - agentPos.X
+			dy := entityInfo.Y - agentPos.Y
+			dz := entityInfo.Z - agentPos.Z
+			distance := math.Sqrt(dx*dx + dy*dy + dz*dz)
+			horizontalDistance := math.Sqrt(dx*dx + dz*dz)
+
+			vh.t.Logf("[Mount Diagnostics] Distance to vehicle: %.2f blocks (horizontal: %.2f)", distance, horizontalDistance)
+			vh.t.Logf("[Mount Diagnostics] Minecraft interaction range is ~4.5 blocks")
+
+			if distance > 5.0 {
+				vh.t.Logf("[Mount Diagnostics] ⚠️  LIKELY CAUSE: Vehicle is too far away (> 5 blocks)")
+			}
+		} else {
+			vh.t.Logf("[Mount Diagnostics] Vehicle entityID %d not found in tracked entities", vehicleEntityID)
+		}
+	} else {
+		vh.t.Logf("[Mount Diagnostics] Tracked entities: %d total", len(entities))
+		for id, info := range entities {
+			vh.t.Logf("  - Entity %d: (%.2f, %.2f, %.2f)", id, info.X, info.Y, info.Z)
 		}
 	}
 }
@@ -804,6 +896,363 @@ func (vh *VehicleTestHelper) BuildAscendingWaterloggedRailTrack(ctx context.Cont
 	return nil
 }
 
+// SummonPig summons a saddled pig at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+		cmd = fmt.Sprintf(
+			`summon minecraft:pig %f %f %f {SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		// Versions 1.21.5+: Use equipment.saddle structure
+		cmd = fmt.Sprintf(
+			`summon minecraft:pig %f %f %f {equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon pig: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:pig,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] pig saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip pig saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	pigTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:pig")
+	if !ok {
+		return 0, fmt.Errorf("pig entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(pigTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("pig entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonStrider summons a saddled strider at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonStrider(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		cmd = fmt.Sprintf(
+			`summon minecraft:strider %f %f %f {SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		cmd = fmt.Sprintf(
+			`summon minecraft:strider %f %f %f {equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon strider: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:strider,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] strider saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip strider saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	striderTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:strider")
+	if !ok {
+		return 0, fmt.Errorf("strider entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(striderTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("strider entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// rconResponseError returns a non-nil error when an RCON response indicates the
+// command did not take effect even though the RCON transport itself succeeded
+// (err == nil). Minecraft reports these conditions as ordinary response text —
+// e.g. filling an unloaded chunk returns "That position is not loaded", and
+// targeting a missing entity returns "No entity was found" — so setup helpers
+// must inspect the response to avoid silently continuing with an unchanged world.
+func rconResponseError(cmd, resp string) error {
+	failurePhrases := []string{"not loaded", "No entity was found"}
+	for _, phrase := range failurePhrases {
+		if strings.Contains(resp, phrase) {
+			return fmt.Errorf("RCON command %q did not take effect: %s", cmd, resp)
+		}
+	}
+	return nil
+}
+
+// BuildLavaPool fills a square region with lava at the specified center and radius.
+// The pool is one block deep. Useful for strider movement tests.
+func (vh *VehicleTestHelper) BuildLavaPool(ctx context.Context, centerX, centerY, centerZ, radius int) error {
+	minX := centerX - radius
+	maxX := centerX + radius
+	minZ := centerZ - radius
+	maxZ := centerZ + radius
+
+	// Use fill command for efficiency (single RCON call for the entire region)
+	cmd := fmt.Sprintf("fill %d %d %d %d %d %d lava", minX, centerY, minZ, maxX, centerY, maxZ)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return fmt.Errorf("build lava pool: %w", err)
+	}
+	if respErr := rconResponseError(cmd, resp); respErr != nil {
+		return fmt.Errorf("build lava pool: %w", respErr)
+	}
+
+	return nil
+}
+
+// GiveAndEquipWarpedFungus gives the agent a warped_fungus_on_a_stick and equips it.
+// This is required for strider control — in vanilla, the player must hold this item
+// for getControllingPassenger() to return the player.
+func (vh *VehicleTestHelper) GiveAndEquipWarpedFungus(ctx context.Context) error {
+	_, err := vh.Instance.RCON.Exec(ctx, fmt.Sprintf("give %s warped_fungus_on_a_stick", vh.AgentName))
+	if err != nil {
+		return fmt.Errorf("give warped_fungus_on_a_stick: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	found, err := vh.ManagedAgent.Agent.SwitchToItem(ctx, "minecraft:warped_fungus_on_a_stick")
+	if err != nil {
+		return fmt.Errorf("switch to warped_fungus_on_a_stick: %w", err)
+	}
+	if !found {
+		return fmt.Errorf("warped_fungus_on_a_stick not found in inventory after giving")
+	}
+
+	time.Sleep(500 * time.Millisecond) // wait for item switch to register on server
+	return nil
+}
+
+// SummonSkeletonHorse summons a tamed and saddled skeleton horse at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonSkeletonHorse(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		cmd = fmt.Sprintf(
+			`summon minecraft:skeleton_horse %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		cmd = fmt.Sprintf(
+			`summon minecraft:skeleton_horse %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon skeleton horse: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:skeleton_horse,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] skeleton horse saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip skeleton horse saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	typeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:skeleton_horse")
+	if !ok {
+		return 0, fmt.Errorf("skeleton horse entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("skeleton horse entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonZombieHorse summons a tamed and saddled zombie horse at the specified location and returns its entity ID
+func (vh *VehicleTestHelper) SummonZombieHorse(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		cmd = fmt.Sprintf(
+			`summon minecraft:zombie_horse %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		cmd = fmt.Sprintf(
+			`summon minecraft:zombie_horse %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon zombie horse: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:zombie_horse,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] zombie horse saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip zombie horse saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	typeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:zombie_horse")
+	if !ok {
+		return 0, fmt.Errorf("zombie horse entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("zombie horse entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonNautilus summons a tamed and saddled nautilus at the specified location (in water) and returns its entity ID
+func (vh *VehicleTestHelper) SummonNautilus(ctx context.Context, x, y, z float64) (int32, error) {
+	// The nautilus is a TameableEntity (like a wolf), so it is tamed via a valid
+	// Owner reference, NOT the horse-style Tame:1b byte (which it ignores). Owning
+	// it to the agent makes isTamed() true so interactMob() will let the agent mount.
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+		cmd = fmt.Sprintf(
+			`summon minecraft:nautilus %f %f %f {Owner:"%s",SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z, vh.AgentName,
+		)
+	} else {
+		// Versions 1.21.5+: Use equipment.saddle structure
+		cmd = fmt.Sprintf(
+			`summon minecraft:nautilus %f %f %f {Owner:"%s",equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z, vh.AgentName,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon nautilus: %w", err)
+	}
+
+	// Equip the saddle via item replace for reliability
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:nautilus,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] nautilus saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip nautilus saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	nautilusTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:nautilus")
+	if !ok {
+		return 0, fmt.Errorf("nautilus entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(nautilusTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("nautilus entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonZombieNautilus summons a zombie nautilus at the specified location (in water) and returns its entity ID
+func (vh *VehicleTestHelper) SummonZombieNautilus(ctx context.Context, x, y, z float64) (int32, error) {
+	// Like the nautilus, the zombie nautilus is a TameableEntity tamed via a valid
+	// Owner reference (not the horse-style Tame:1b byte). Owning it to the agent
+	// makes isTamed() true so interactMob() will let the agent mount.
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+		cmd = fmt.Sprintf(
+			`summon minecraft:zombie_nautilus %f %f %f {Owner:"%s",SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z, vh.AgentName,
+		)
+	} else {
+		// Versions 1.21.5+: Use equipment.saddle structure
+		cmd = fmt.Sprintf(
+			`summon minecraft:zombie_nautilus %f %f %f {Owner:"%s",equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z, vh.AgentName,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon zombie nautilus: %w", err)
+	}
+
+	// Equip the saddle via item replace for reliability
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:zombie_nautilus,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] zombie nautilus saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip zombie nautilus saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	typeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:zombie_nautilus")
+	if !ok {
+		return 0, fmt.Errorf("zombie nautilus entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("zombie nautilus entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
 // TrackEntityPosition creates an EntityPositionTracker for monitoring entity movement.
 // The tracker automatically registers itself with the agent and records peak/min coordinates.
 func (vh *VehicleTestHelper) TrackEntityPosition(entityID int32) *utils.EntityPositionTracker {
@@ -817,4 +1266,21 @@ func (vh *VehicleTestHelper) TrackEntityPosition(entityID int32) *utils.EntityPo
 	tracker.RegisterCallback(vh.ManagedAgent.Agent)
 
 	return tracker
+}
+
+// isVersionGreaterOrEqual checks if targetVersion >= minVersion using semantic versioning.
+// Returns false if the version cannot be parsed (safe default for older versions).
+func isVersionGreaterOrEqual(targetVersion, minVersion string) bool {
+	v, err := semver.Parse(targetVersion)
+	if err != nil {
+		// If we can't parse, assume older version (safer default)
+		return false
+	}
+
+	c, err := semver.NewConstraints(fmt.Sprintf(">= %s", minVersion))
+	if err != nil {
+		return false
+	}
+
+	return c.Check(v)
 }

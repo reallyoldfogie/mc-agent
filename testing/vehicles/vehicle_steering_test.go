@@ -183,7 +183,7 @@ func TestHorseSteering(t *testing.T) {
 			err = helper.BuildHorseEnclosure(ctx, agentPos.X+1, agentPos.Y, agentPos.Z)
 			require.NoError(t, err, "build horse enclosure")
 
-			horseEntityID, err := helper.SummonHorse(ctx, agentPos.X+1, agentPos.Y, agentPos.Z)
+			horseEntityID, err := helper.SummonHorse(ctx, agentPos.X+1, agentPos.Y, agentPos.Z, 25)
 			require.NoError(t, err, "summon horse")
 			time.Sleep(500 * time.Millisecond)
 

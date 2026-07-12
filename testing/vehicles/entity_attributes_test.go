@@ -26,7 +26,7 @@ func TestEntityAttributeTracking(t *testing.T) {
 			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon a horse (will have entity attributes like movement speed, max health)
-			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
+			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90)
 			require.NoError(t, err, "summon horse")
 
 			time.Sleep(500 * time.Millisecond)
@@ -68,7 +68,7 @@ func TestHorseAttributesAfterMounting(t *testing.T) {
 			x, y, z := pos.X, pos.Y, pos.Z
 
 			// Summon horse
-			horseEntityID, err := helper.SummonHorse(ctx, x, y, z)
+			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90)
 			require.NoError(t, err, "summon horse")
 
 			time.Sleep(500 * time.Millisecond)

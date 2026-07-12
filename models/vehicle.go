@@ -6,6 +6,8 @@ type VehicleType int
 const (
 	VehicleTypeNone VehicleType = iota
 	VehicleTypeHorse
+	VehicleTypeSkeletonHorse
+	VehicleTypeZombieHorse
 	VehicleTypeBoat
 	VehicleTypeMinecart
 	VehicleTypeCamel
@@ -25,6 +27,10 @@ func GetVehicleType(entityType EntityType) VehicleType {
 	switch entityType {
 	case EntityTypeHorse:
 		return VehicleTypeHorse
+	case EntityTypeSkeletonHorse:
+		return VehicleTypeSkeletonHorse
+	case EntityTypeZombieHorse:
+		return VehicleTypeZombieHorse
 	case EntityTypeBoat:
 		return VehicleTypeBoat
 	case EntityTypeChestBoat:
@@ -59,6 +65,10 @@ func (v VehicleType) String() string {
 		return "none"
 	case VehicleTypeHorse:
 		return "horse"
+	case VehicleTypeSkeletonHorse:
+		return "skeleton_horse"
+	case VehicleTypeZombieHorse:
+		return "zombie_horse"
 	case VehicleTypeBoat:
 		return "boat"
 	case VehicleTypeChestBoat:

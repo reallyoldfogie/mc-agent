@@ -62,7 +62,7 @@ func TestChestInteraction(t *testing.T) {
 
 			managedAgent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err, "spawn agent")
-			scr := managedAgent.ScreenManager()
+			_ = managedAgent.ScreenManager()
 			botClient := managedAgent.BotClient()
 			require.NotNil(t, botClient, "bot client should be available")
 
@@ -137,10 +137,8 @@ func TestChestInteraction(t *testing.T) {
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWaitForUpdates(false) // Use workaround for ServerUpdateVersion issue
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, scr, botClient, managedAgent.Config.PacketMgr)
-			managedAgent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			// Open the chest (player is west of chest, so click on the east face which faces the player)
 			t.Log("opening chest")
@@ -149,13 +147,13 @@ func TestChestInteraction(t *testing.T) {
 			t.Logf("chest opened with window ID: %d", windowID)
 
 			// Verify the chest window is open
-			rows := containerHelper.GetChestRows(windowID)
+			rows := managedAgent.Agent.GetChestRows(windowID)
 			require.Greater(t, rows, 0, "chest should have rows")
 			t.Logf("chest has %d rows", rows)
 
 			// Close the chest
 			t.Log("closing chest")
-			_ = containerHelper.CloseContainer()
+			_ = managedAgent.Agent.CloseContainer()
 			t.Log("chest closed successfully")
 
 			// Verify inventory is still empty (no items were taken from the empty chest)
@@ -307,10 +305,8 @@ func TestChestWithItems(t *testing.T) {
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWaitForUpdates(false) // Use workaround for ServerUpdateVersion issue
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, scr, botClient, managedAgent.Config.PacketMgr)
-			managedAgent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			// Open the chest (player is west of chest, so click on the east face which faces the player)
 			t.Log("opening chest")
@@ -319,7 +315,7 @@ func TestChestWithItems(t *testing.T) {
 			t.Logf("chest opened with window ID: %d", windowID)
 
 			// Verify the chest window is open
-			rows := containerHelper.GetChestRows(windowID)
+			rows := managedAgent.Agent.GetChestRows(windowID)
 			require.Greater(t, rows, 0, "chest should have rows")
 			t.Logf("chest has %d rows", rows)
 
@@ -348,7 +344,7 @@ func TestChestWithItems(t *testing.T) {
 
 			// Close the chest
 			t.Log("closing chest")
-			_ = containerHelper.CloseContainer()
+			_ = managedAgent.Agent.CloseContainer()
 			time.Sleep(500 * time.Millisecond)
 			t.Log("chest closed successfully")
 

@@ -471,8 +471,8 @@ func TestInventoryManagerConfig(t *testing.T) {
 	im.SetWindow(3)
 	require.Equal(t, byte(3), im.GetWindow())
 
-	im.SetCursor(models.ItemStack{ItemID: 2, Count: 1})
-	require.Equal(t, int8(1), im.GetCursor().Count)
+	im.SetCursorItem(models.ItemStack{ItemID: 2, Count: 1})
+	require.Equal(t, int8(1), im.GetCursorItem().Count)
 }
 
 func TestSwapWithHotbar(t *testing.T) {

@@ -137,18 +137,49 @@ type PhysicsMovementExecutor struct {
 	// falls back to or below this Y, it has landed.
 	ridingGroundY float64
 
+	// minecartCoyoteTicks counts consecutive ticks a ridden minecart has gone
+	// without a detected rail while still near the last rail height. It lets a
+	// brief detection gap at a rail-segment transition (or a not-yet-loaded rail
+	// block) coast on the last rail height for a few ticks instead of immediately
+	// free-falling; once the grace window is exceeded the cart falls normally.
+	minecartCoyoteTicks int
+	// minecartLastRailGroundY is the Y a ridden minecart last rested on a rail,
+	// used as the coast height during the coyote grace window above.
+	minecartLastRailGroundY float64
+
 	// lastRidingJumpState tracks the jump input from the previous tick to detect
 	// jump transitions. Used for camel dash charging.
 	lastRidingJumpState bool
+
+	// Horse (and other JumpingMount) charge-on-hold / release-to-fire jump state.
+	// Mirrors the vanilla client (ClientPlayerEntity.tickMovement) where holding the
+	// jump key accumulates charge via the MountJumpStrength ramp and releasing fires
+	// the jump. The handler arms pendingJumpStrength on release; tickControlled
+	// (here, the on-ground check in handleRidingModeHorse) applies the velocity on
+	// the next on-ground tick, matching AbstractHorseEntity.tickControlled.
+	horseCharging         bool    // true while the jump key is held and accumulating charge
+	horseJumpChargeTicks  int     // ticks the jump key has been held (for the ramp)
+	horsePendingJumpStrength float64 // strength armed by a release; applied on next on-ground tick
 
 	// camelState holds the camel-specific pose, dash, and charge state.
 	// Non-nil only when mounted on a camel or camel_husk; nil for other vehicles.
 	camelState *models.CamelState
 
+	// nautilusState holds the nautilus-specific eased vehicle yaw and dash state.
+	// Non-nil only when mounted on a nautilus or zombie_nautilus; nil otherwise.
+	nautilusState *models.NautilusState
+
 	// onDashReady is an optional callback invoked when the camel's dash cooldown
 	// reaches zero and a new dash can be initiated. Clients use this to know
 	// when they can trigger a lunge/jump again.
 	onDashReady func()
+
+	// Strider/pig SaddledComponent boost state. Mirrors Java SaddledComponent:
+	// boost is triggered by "using" (right-click) the warped_fungus_on_a_stick /
+	// carrot_on_a_stick, providing a temporary sinusoidal speed multiplier.
+	saddleBoosted     bool // Whether a boost is currently active
+	saddleBoostTime   int  // Current tick within the boost
+	saddleBoostTotal  int  // Total boost duration in ticks
 
 	// Boat-only: angular velocity (degrees/tick) preserved between ticks so
 	// turning has momentum, mirroring vanilla AbstractBoatEntity.yawVelocity
@@ -164,6 +195,12 @@ type PhysicsMovementExecutor struct {
 	// update sent to the server. Used by the replay mirror to record position
 	// snapshots for auto-camera timeline generation.
 	onPositionUpdate func(x, y, z float64, yaw, pitch float64)
+
+	// Mount/dismount callbacks for vehicle pathfinding
+	onMountRequired    func(ctx context.Context, entityID int32) error
+	onDismountRequired func(ctx context.Context) error
+	waitingForMount    bool
+	waitingForDismount bool
 }
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
@@ -248,6 +285,8 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 	pe.ridingVelZ = 0
 	pe.ridingVelY = 0
 	pe.boatYawVelocity = 0
+	pe.minecartCoyoteTicks = 0
+	pe.minecartLastRailGroundY = 0
 
 	// Seed the physics state with the entity's current tracked position (and yaw
 	// for boats) so that the very first handleRidingMode tick sends a VehicleMove
@@ -284,6 +323,14 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 	}
 
 	pe.lastRidingJumpState = false // Reset jump state on mount
+	pe.saddleBoosted = false       // Reset boost state on mount
+	pe.saddleBoostTime = 0
+	pe.saddleBoostTotal = 0
+
+	// Reset horse charge state on mount.
+	pe.horseCharging = false
+	pe.horseJumpChargeTicks = 0
+	pe.horsePendingJumpStrength = 0
 
 	// Initialize camel state if mounted on a camel/camel_husk
 	pe.camelState = nil
@@ -303,6 +350,28 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 				}
 				pe.camelState = models.NewCamelState(worldTime, isCamelHusk)
 				log.Printf("[SetMounted] Camel state initialized (husk=%v, worldTime=%d) for entity %d", isCamelHusk, worldTime, vehicleEntityID)
+			}
+		}
+	}
+
+	// Initialize nautilus state if mounted on a nautilus/zombie_nautilus. The
+	// nautilus's own yaw is seeded from the tracked entity yaw (it eases toward
+	// the rider's look yaw each tick), and the zombie flag selects the default
+	// movement speed (1.1 vs 1.0) used when the server omits movement_speed.
+	pe.nautilusState = nil
+	if pe.entityPositionGetter != nil {
+		if entityTypeID, found := pe.entityPositionGetter.GetMountedEntityType(vehicleEntityID); found {
+			if pe.entityPositionGetter.IsMountedEntityNautilus(entityTypeID) {
+				var initialYaw float64
+				if entYaw, yawFound := pe.entityPositionGetter.GetMountedEntityYaw(vehicleEntityID); yawFound {
+					initialYaw = entYaw
+				} else {
+					_, stateYaw, _, _ := pe.physicsState.GetPosition()
+					initialYaw = stateYaw
+				}
+				isZombie := pe.entityPositionGetter.IsMountedEntityZombieNautilus(entityTypeID)
+				pe.nautilusState = models.NewNautilusState(initialYaw, isZombie)
+				log.Printf("[SetMounted] Nautilus state initialized (zombie=%v, yaw=%.1f) for entity %d", isZombie, initialYaw, vehicleEntityID)
 			}
 		}
 	}
@@ -369,9 +438,20 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.ridingVelZ = 0
 	pe.ridingVelY = 0
 	pe.boatYawVelocity = 0
+	pe.minecartCoyoteTicks = 0
+	pe.minecartLastRailGroundY = 0
 	pe.dismountRequested = false
 	pe.lastRidingJumpState = false // Reset jump state on dismount
-	pe.camelState = nil             // Clear camel state on dismount
+	pe.camelState = nil            // Clear camel state on dismount
+	pe.nautilusState = nil         // Clear nautilus state on dismount
+	pe.saddleBoosted = false       // Clear boost state on dismount
+	pe.saddleBoostTime = 0
+	pe.saddleBoostTotal = 0
+
+	// Clear horse charge state on dismount.
+	pe.horseCharging = false
+	pe.horseJumpChargeTicks = 0
+	pe.horsePendingJumpStrength = 0
 	log.Printf("[SetDismounted] Agent dismounted from vehicle (mode stays %s)", pe.GetMode())
 	return nil
 }
@@ -414,8 +494,8 @@ func (pe *PhysicsMovementExecutor) SetMountedEntityPositionGetter(getter models.
 
 // GetMountedEntityID returns the entity ID of the currently mounted vehicle, or -1 if not mounted.
 func (pe *PhysicsMovementExecutor) GetMountedEntityID() int32 {
-	pe.mountedEntityMu.Lock()
-	defer pe.mountedEntityMu.Unlock()
+	pe.mountedEntityMu.RLock()
+	defer pe.mountedEntityMu.RUnlock()
 	return pe.mountedEntityID
 }
 
@@ -437,6 +517,29 @@ func (pe *PhysicsMovementExecutor) SetMountedVelocity(velX, velY, velZ float64) 
 
 	log.Printf("[SetMountedVelocity] Server velocity for entity %d: (%.4f, %.4f) blocks/tick",
 		pe.mountedEntityID, pe.ridingVelX, pe.ridingVelZ)
+}
+
+// TriggerSaddleBoost activates the SaddledComponent speed boost for striders/pigs.
+// Mirrors Java SaddledComponent.boost(Random): sets a random boost duration and
+// enables the sinusoidal speed multiplier. Returns false if a boost is already active.
+// Called when the player "uses" (right-clicks) a warped_fungus_on_a_stick or
+// carrot_on_a_stick while riding.
+func (pe *PhysicsMovementExecutor) TriggerSaddleBoost() bool {
+	pe.mountedEntityMu.Lock()
+	defer pe.mountedEntityMu.Unlock()
+
+	if pe.saddleBoosted {
+		return false
+	}
+
+	pe.saddleBoosted = true
+	pe.saddleBoostTime = 0
+	// Java: random.nextInt(841) + 140
+	// We use a fixed midpoint value for deterministic behavior on the client side.
+	// The actual server-side duration may differ, but the client does not receive it.
+	pe.saddleBoostTotal = physics.StriderBoostMinDuration + physics.StriderBoostRandomRange/2
+	log.Printf("[TriggerSaddleBoost] Boost activated: duration=%d ticks", pe.saddleBoostTotal)
+	return true
 }
 
 // SetDashReadyCallback sets an optional callback invoked when the camel's dash
@@ -469,6 +572,15 @@ func (pe *PhysicsMovementExecutor) SetStuckRecoveryCallback(callback StuckRecove
 // SetStuckThreshold sets how long without progress before the agent is considered stuck.
 func (pe *PhysicsMovementExecutor) SetStuckThreshold(threshold time.Duration) {
 	pe.stuckThreshold = threshold
+}
+
+// SetMountCallbacks sets the callbacks for mount/dismount actions during vehicle pathfinding.
+func (pe *PhysicsMovementExecutor) SetMountCallbacks(
+	onMount func(ctx context.Context, entityID int32) error,
+	onDismount func(ctx context.Context) error,
+) {
+	pe.onMountRequired = onMount
+	pe.onDismountRequired = onDismount
 }
 
 // SendPosition sends a position update to the server.
@@ -587,19 +699,61 @@ func (pe *PhysicsMovementExecutor) SyncWithServer(x, y, z float64, yaw, pitch fl
 	pe.HandleServerCorrection(x, y, z, yaw, pitch, onGround)
 }
 
+// ridingCorrectionVelocityResetThresholdSq is the squared horizontal distance
+// (blocks²) between the server's authoritative vehicle position and our
+// predicted position beyond which SyncRidingPosition discards accumulated
+// riding velocity. Routine corrections are a small fraction of a block; only a
+// large divergence indicates our prediction is genuinely wrong. Zeroing
+// velocity on every routine correction prevents slow mounts (e.g. a camel) from
+// ever ramping up to terminal speed, leaving them effectively stuck a fraction
+// of a block short of where they were headed. 0.25 = 0.5² comfortably preserves
+// per-tick corrections while still resetting on a genuine desync.
+const ridingCorrectionVelocityResetThresholdSq = 0.25
+
+// ridingCorrectionVerticalResetThreshold is the vertical distance (blocks)
+// between the server's authoritative vehicle height and our predicted height
+// beyond which a riding correction discards accumulated vertical velocity.
+// A large vertical gap means our height prediction is wrong (e.g. we free-fell
+// off a ledge while the server rests the vehicle on a block); keeping the stale
+// downward velocity would make the next tick dive again and thrash against the
+// correction. Routine per-tick syncs are well under this threshold.
+const ridingCorrectionVerticalResetThreshold = 0.5
+
 // SyncRidingPosition applies a server-authoritative vehicle position correction
-// while the executor is in riding mode. Unlike SyncWithServer, this resets the
-// riding velocity state so the next VehicleMove is sent from the corrected
-// position rather than continuing from a stale prediction.
+// while the executor is in riding mode. The corrected position is always
+// synced, but accumulated horizontal riding velocity is preserved across
+// routine corrections — momentum is physical and independent of the position
+// fix, and if our prediction really is heading into a wall the next tick's
+// collision resolution will clamp it. Velocity (and boat yaw velocity) is only
+// discarded on a large divergence (see ridingCorrectionVelocityResetThresholdSq),
+// which indicates the prediction is genuinely wrong (e.g. a teleport).
 // Should be called when a ClientboundMoveVehicle packet is received.
 func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitch float64) {
+	currentPos, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+
+	// Horizontal divergence between the server's authoritative position and our
+	// prediction. Only a large gap should cost us our accumulated momentum.
+	deltaX := x - currentPos.X
+	deltaZ := z - currentPos.Z
+	horizontalDivergenceSq := deltaX*deltaX + deltaZ*deltaZ
+
 	pe.mountedEntityMu.Lock()
-	pe.ridingVelX = 0
-	pe.ridingVelZ = 0
-	pe.boatYawVelocity = 0
+	if horizontalDivergenceSq > ridingCorrectionVelocityResetThresholdSq {
+		pe.ridingVelX = 0
+		pe.ridingVelZ = 0
+		pe.boatYawVelocity = 0
+	}
+	// A large vertical divergence means our height prediction disagrees with the
+	// server (e.g. we free-fell while it rests the vehicle on a block). Discard
+	// the stale vertical velocity and rail coyote state so the next tick settles
+	// at the corrected height instead of immediately re-applying the fall.
+	if math.Abs(y-currentPos.Y) > ridingCorrectionVerticalResetThreshold {
+		pe.ridingVelY = 0
+		pe.minecartCoyoteTicks = 0
+		pe.minecartLastRailGroundY = y
+	}
 	pe.mountedEntityMu.Unlock()
 
-	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
 	// Use corrected yaw/pitch if non-zero, otherwise preserve current rotation
 	newYaw := currentYaw
 	newPitch := currentPitch
@@ -616,7 +770,7 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 		false,
 	)
 	pe.movementPacketSender.setBotPosition(pos, newYaw, newPitch)
-	log.Printf("[SyncRidingPosition] Vehicle position corrected by server to %s yaw=%.2f", pos, newYaw)
+	log.Printf("[SyncRidingPosition] Vehicle position corrected by server to %s yaw=%.2f (divergence²=%.4f)", pos, newYaw, horizontalDivergenceSq)
 }
 
 // SyncMountedPosition applies a server-authoritative mounted entity position correction.
@@ -633,7 +787,20 @@ func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
 	}
 
 	pos := models.V3{X: x, Y: y, Z: z}
-	_, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+	currentPos, currentYaw, currentPitch, _ := pe.physicsState.GetPosition()
+
+	// If the server's authoritative height diverges sharply from our prediction,
+	// discard the stale vertical riding velocity (and rail coyote state) so the
+	// next tick settles at the corrected height instead of re-applying the
+	// accumulated fall and thrashing against the server. This keeps a cart that
+	// has run off the end of a track from oscillating between the server's
+	// resting height and the client's free-fall.
+	if math.Abs(y-currentPos.Y) > ridingCorrectionVerticalResetThreshold {
+		pe.ridingVelY = 0
+		pe.minecartCoyoteTicks = 0
+		pe.minecartLastRailGroundY = y
+	}
+
 	pe.physicsState.SetPosition(
 		pos,
 		currentYaw,
@@ -1293,6 +1460,14 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		}
 	}
 
+	// Handle vehicle mounting/dismounting
+	switch step.Movement {
+	case pathfinding.MountVehicle:
+		return pe.handleMountStep(step)
+	case pathfinding.DismountVehicle:
+		return pe.handleDismountStep(step)
+	}
+
 	// Generate inputs - either normal navigation or sideways recovery
 	if pe.recoveryAttempt == 1 {
 		return pe.generateSidewaysRecoveryInputs(step)
@@ -1558,6 +1733,90 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 	return inputs
 }
 
+// handleMountStep handles a MountVehicle step - triggers the mount action and waits for completion.
+func (pe *PhysicsMovementExecutor) handleMountStep(step pathfinding.PathStep) physics.Inputs {
+	// If not yet waiting, trigger the mount action
+	if !pe.waitingForMount {
+		pe.waitingForMount = true
+		if pe.onMountRequired != nil {
+			go func() {
+				err := pe.onMountRequired(pe.ctx, step.VehicleEntityID)
+				if err != nil {
+					log.Printf("[PhysicsExecutor] Mount failed: %v", err)
+				}
+			}()
+		}
+		log.Printf("[PhysicsExecutor] Mounting vehicle (entityID=%d)...", step.VehicleEntityID)
+		return pe.generateIdleInputs() // No movement while mounting
+	}
+
+	// Check if mount is complete
+	pe.mountedEntityMu.RLock()
+	isMounted := pe.mountedEntityID == step.VehicleEntityID
+	pe.mountedEntityMu.RUnlock()
+
+	if isMounted {
+		// Mount complete, advance to next step
+		pe.waitingForMount = false
+		pe.pathMu.Lock()
+		pe.currentStep++
+		pe.stepStartTime = time.Now()
+		pos, _, _, _ := pe.physicsState.GetPosition()
+		pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		pe.lastProgressPos = pe.stepStartPos
+		pe.lastProgressTime = time.Now()
+		pe.pathMu.Unlock()
+
+		log.Printf("[PhysicsExecutor] Mount complete, advancing to next step")
+		return pe.generateIdleInputs()
+	}
+
+	// Still waiting for mount
+	return pe.generateIdleInputs()
+}
+
+// handleDismountStep handles a DismountVehicle step - triggers the dismount action and waits for completion.
+func (pe *PhysicsMovementExecutor) handleDismountStep(step pathfinding.PathStep) physics.Inputs {
+	// If not yet waiting, trigger the dismount action
+	if !pe.waitingForDismount {
+		pe.waitingForDismount = true
+		if pe.onDismountRequired != nil {
+			go func() {
+				err := pe.onDismountRequired(pe.ctx)
+				if err != nil {
+					log.Printf("[PhysicsExecutor] Dismount failed: %v", err)
+				}
+			}()
+		}
+		log.Printf("[PhysicsExecutor] Dismounting vehicle...")
+		return pe.generateIdleInputs() // No movement while dismounting
+	}
+
+	// Check if dismount is complete
+	pe.mountedEntityMu.RLock()
+	isDismounted := pe.mountedEntityID == -1
+	pe.mountedEntityMu.RUnlock()
+
+	if isDismounted {
+		// Dismount complete, advance to next step
+		pe.waitingForDismount = false
+		pe.pathMu.Lock()
+		pe.currentStep++
+		pe.stepStartTime = time.Now()
+		pos, _, _, _ := pe.physicsState.GetPosition()
+		pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		pe.lastProgressPos = pe.stepStartPos
+		pe.lastProgressTime = time.Now()
+		pe.pathMu.Unlock()
+
+		log.Printf("[PhysicsExecutor] Dismount complete, advancing to next step")
+		return pe.generateIdleInputs()
+	}
+
+	// Still waiting for dismount
+	return pe.generateIdleInputs()
+}
+
 // handleRidingTick handles one tick while the agent is mounted on a vehicle.
 // It receives mode-generated inputs from tick() and translates them into
 // vehicle control packets. Riding is orthogonal to PhysicsMode — the mode
@@ -1608,16 +1867,17 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	}
 
 	// Determine vehicle type to dispatch to the appropriate handler.
-	var isBoat, isMinecart, isCamel, isNautilus bool
-	var entityTypeID int32
+	var isBoat, isMinecart, isCamel, isNautilus, isPig, isStrider, isDonkey, isMule bool
 	if et, found := pe.entityPositionGetter.GetMountedEntityType(mountedEntityID); found {
-		entityTypeID = et
 		isBoat = pe.entityPositionGetter.IsMountedEntityBoat(et)
 		isMinecart = pe.entityPositionGetter.IsMountedEntityMinecart(et)
 		isCamel = pe.entityPositionGetter.IsMountedEntityCamel(et)
 		isNautilus = pe.entityPositionGetter.IsMountedEntityNautilus(et)
+		isPig = pe.entityPositionGetter.IsMountedEntityPig(et)
+		isStrider = pe.entityPositionGetter.IsMountedEntityStrider(et)
+		isDonkey = pe.entityPositionGetter.IsMountedEntityDonkey(et)
+		isMule = pe.entityPositionGetter.IsMountedEntityMule(et)
 	}
-	_ = entityTypeID // reserved for future pig/strider name-based detection
 
 	// Use any non-zero throttle to determine direction.
 	forward := inputs.ThrottleZ > 0.01
@@ -1651,20 +1911,40 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 
 	// Dispatch to vehicle-type-specific handler.
 	// Each handler is in its own file (riding_*.go) for isolation.
+	// All handlers return a ridingTickResult so that syncRidingPhysicsState
+	// can be called once here, preventing future handlers from accidentally
+	// skipping the sync.
+	var result ridingTickResult
 	switch {
 	case isBoat:
-		pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
+		result = pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
 	case isMinecart:
-		pe.handleRidingModeMinecart(versionHandler, forward, backward, sneak)
+		result = pe.handleRidingModeMinecart(versionHandler, forward, backward, sneak)
 	case isCamel:
-		pe.handleRidingModeCamel(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+		result = pe.handleRidingModeCamel(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isNautilus:
-		pe.handleRidingModeNautilus(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+		result = pe.handleRidingModeNautilus(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isPig:
+		result = pe.handleRidingModePig(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isStrider:
+		result = pe.handleRidingModeStrider(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isDonkey:
+		result = pe.handleRidingModeDonkey(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isMule:
+		result = pe.handleRidingModeMule(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	default:
-		// Horse, donkey, mule, pig, strider, and any unknown rideable entity
-		// TODO: Add pig/strider name-based detection when their handlers need distinct physics
-		pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+		// Horse and any unknown rideable entity
+		result = pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	}
+
+	// Publish the computed result (physics state + VehicleMove packet) here,
+	// AFTER the handler has returned and released mountedEntityMu, so the
+	// executor never holds the lock across a network send.
+	sendRidingMove(pe, versionHandler, result)
+
+	// Sync physics state fields that would normally be maintained by Tick()
+	// but are skipped during riding because handlers bypass Tick().
+	syncRidingPhysicsState(pe, result.NewPos, result.OnGround, result.Sneak)
 }
 
 // ── Riding handler methods are in separate files: ──
@@ -1675,7 +1955,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 // riding_pig.go       — handleRidingModePig (stub)
 // riding_strider.go   — handleRidingModeStrider (stub)
 // riding_nautilus.go  — handleRidingModeNautilus (stub)
-// riding_common.go    — shared helpers (sendVehicleMove, water physics, etc.)
+// riding_common.go    — shared helpers (sendRidingMove, water physics, etc.)
 
 // GetRidingVelocity returns the executor's current horizontal riding velocity
 // (blocks/tick). Returns (0, 0) when not mounted.
@@ -1703,4 +1983,3 @@ func (pe *PhysicsMovementExecutor) GetCamelState() (*models.CamelState, bool) {
 	}
 	return pe.camelState, true
 }
-

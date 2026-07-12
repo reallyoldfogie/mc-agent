@@ -31,4 +31,11 @@ type PhysicsState interface {
 	HasGroundSupportAt(pos V3, w PhysicsWorld) bool
 	IsLookingAtTarget(targetYaw, targetPitch float64) bool
 	GetSurroundingBoxes(queryBB AABB, w PhysicsWorld) []AABB
+
+	// ResolveCollision performs collision detection and resolution for an arbitrary
+	// AABB moving with the given velocity through the world. Returns the corrected
+	// AABB, corrected velocity, and whether horizontal/vertical collisions occurred.
+	// This is used by riding handlers to apply collision detection for ridden entities
+	// whose dimensions differ from the player's (e.g., strider 0.9×1.7, horse 1.4×1.6).
+	ResolveCollision(entityBB AABB, vel V3, w PhysicsWorld) (AABB, V3, bool, bool)
 }

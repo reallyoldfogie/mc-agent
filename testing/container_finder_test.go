@@ -196,7 +196,6 @@ func TestFindAndOpenContainer(t *testing.T) {
 
 			managedAgent, err := framework.SpawnAgent(ctx, inst, agentCfg)
 			require.NoError(t, err)
-			scr := managedAgent.ScreenManager()
 			botClient := managedAgent.BotClient()
 			require.NotNil(t, botClient)
 
@@ -247,10 +246,8 @@ func TestFindAndOpenContainer(t *testing.T) {
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWaitForUpdates(false)
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, scr, botClient, managedAgent.Config.PacketMgr)
-			managedAgent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			t.Log("opening found chest")
 			windowID, err := OpenContainerWithLOS(ctx, managedAgent.Agent, nearest.Position, models.FaceNorth, 5*time.Second)
@@ -263,10 +260,10 @@ func TestFindAndOpenContainer(t *testing.T) {
 			require.True(t, slotIDFound, "diamond should be in chest")
 			require.NoError(t, err, "failed to find diamond in chest")
 
-			err = containerHelper.TakeItemFromChest(windowID, int16(foundSlotID))
+			err = managedAgent.Agent.TakeItemFromChest(windowID, int16(foundSlotID))
 			require.NoError(t, err)
 
-			_ = containerHelper.CloseContainer()
+			_ = managedAgent.Agent.CloseContainer()
 			time.Sleep(500 * time.Millisecond)
 
 			// Verify diamond is in player inventory

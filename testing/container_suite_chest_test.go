@@ -27,7 +27,7 @@ func (s *ContainerTestSuite) TestChest() {
 	s.Require().Equal(3, chest.Rows, "should be single chest (3 rows)")
 
 	// Close chest
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Chest test passed")
@@ -55,7 +55,7 @@ func (s *ContainerTestSuite) TestBarrel() {
 	s.Require().Equal(63, len(chest.Slots), "barrel should have 63 total slots")
 
 	// Close barrel
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Barrel test passed")
@@ -103,7 +103,7 @@ func (s *ContainerTestSuite) TestChestWithItems() {
 	s.T().Logf("slot 13: ID=%d Count=%d", chest.Slots[13].ID, chest.Slots[13].Count)
 
 	// Close chest
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Chest with items test passed")
@@ -133,7 +133,7 @@ func (s *ContainerTestSuite) TestShulkerBox() {
 	s.Require().Equal(27, genericContainer.ContainerSlots, "shulker box should have 27 container slots")
 
 	// Close shulker box
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Shulker box test passed")

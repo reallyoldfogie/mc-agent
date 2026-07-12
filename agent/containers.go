@@ -9,24 +9,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-// SetContainerHelper injects a ContainerHelper implementation.
-func (a *agent) SetContainerHelper(ch ContainerHelper) {
-	a.containerSubsystemMu.Lock()
-	defer a.containerSubsystemMu.Unlock()
-	a.containerHelper = ch
-
-	// Wire up entity ID provider so container helper can access entity ID
-	if ch != nil {
-		ch.SetEntityIDProvider(a)
-	}
-}
-
-// GetContainerHelper returns the container helper if it has been initialized.
-func (a *agent) GetContainerHelper() ContainerHelper {
-	a.containerSubsystemMu.RLock()
-	defer a.containerSubsystemMu.RUnlock()
-	return a.containerHelper
-}
 
 // startPositionHeartbeat starts a background goroutine that sends position packets at the specified TPS.
 // This ensures the server sees continuous movement packets, which is required for certain interactions
@@ -105,22 +87,14 @@ func (a *agent) stopPositionHeartbeat() {
 //
 // Returns the window ID assigned by the server, or error if timeout/failure.
 func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time.Duration, cursorX, cursorY, cursorZ float32) (byte, error) {
-
-	// Sequential snapshots: read containerHelper and moveExec from their respective locks
-	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
-	a.movementMu.RLock()
-	moveExec := a.moveExec
-	a.movementMu.RUnlock()
-
 	if ch == nil {
-		return 0, fmt.Errorf("container helper not set - call SetContainerHelper first")
+		return 0, fmt.Errorf("container helper not initialized")
 	}
 
+	moveExec := a.moveExec
 	if moveExec == nil {
-		return 0, fmt.Errorf("movement executor not set - call SetMovementExecutor first")
+		return 0, fmt.Errorf("movement executor not initialized")
 	}
 
 	face = a.chooseOpenFace(pos, face)
@@ -189,12 +163,9 @@ func (a *agent) chooseOpenFace(pos models.V3, fallback models.BlockFace) models.
 //
 // Returns the window ID assigned by the server, or error if timeout/failure.
 func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte, error) {
-	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
 	if ch == nil {
-		return 0, fmt.Errorf("container helper not set - call SetContainerHelper first")
+		return 0, fmt.Errorf("container helper not initialized")
 	}
 
 	// Open the entity container using helper
@@ -210,12 +181,9 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 
 // CloseContainer closes the currently open container window.
 func (a *agent) CloseContainer() error {
-	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
 	if ch == nil {
-		return fmt.Errorf("container helper not set - call SetContainerHelper first")
+		return fmt.Errorf("container helper not initialized")
 	}
 
 	log.Printf("[Agent %s] Closing container", a.cfg.Name)
@@ -229,65 +197,203 @@ func (a *agent) CloseContainer() error {
 
 // TakeItemFromChest takes an item from a chest slot and places it in the player's inventory.
 func (a *agent) TakeItemFromChest(windowID byte, chestSlot int16) error {
-	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
 	if ch == nil {
-		return fmt.Errorf("container helper not set - call SetContainerHelper first")
+		return fmt.Errorf("container helper not initialized")
 	}
-
 	return ch.TakeItemFromChest(windowID, chestSlot)
 }
 
 // PutItemInChest puts an item from the player's inventory into a chest slot.
 func (a *agent) PutItemInChest(windowID byte, playerInventorySlot int16, chestSlot int16) error {
-	a.containerSubsystemMu.RLock()
 	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
 	if ch == nil {
-		return fmt.Errorf("container helper not set - call SetContainerHelper first")
+		return fmt.Errorf("container helper not initialized")
 	}
-
 	return ch.PutItemInChest(windowID, playerInventorySlot, chestSlot)
 }
 
 // FindItemInPlayerInventory finds an item in the player's inventory when a chest is open.
 func (a *agent) FindItemInPlayerInventory(windowID byte, itemID int32) int16 {
-	a.containerSubsystemMu.RLock()
-	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
-	if ch == nil {
+	if a.containerHelper == nil {
 		return -1
 	}
-
-	return ch.FindItemInPlayerInventory(windowID, itemID)
+	return a.containerHelper.FindItemInPlayerInventory(windowID, itemID)
 }
 
 // FindEmptyChestSlot finds an empty slot in a chest.
 func (a *agent) FindEmptyChestSlot(windowID byte) int16 {
-	a.containerSubsystemMu.RLock()
-	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
-	if ch == nil {
+	if a.containerHelper == nil {
 		return -1
 	}
-
-	return ch.FindEmptyChestSlot(windowID)
+	return a.containerHelper.FindEmptyChestSlot(windowID)
 }
 
 // GetChestRows returns the number of rows in a chest window.
 func (a *agent) GetChestRows(windowID byte) int {
-	a.containerSubsystemMu.RLock()
-	ch := a.containerHelper
-	a.containerSubsystemMu.RUnlock()
-
-	if ch == nil {
+	if a.containerHelper == nil {
 		return -1
 	}
+	return a.containerHelper.GetChestRows(windowID)
+}
 
-	return ch.GetChestRows(windowID)
+// GetContainerSlotCount returns the number of slots in a container window.
+func (a *agent) GetContainerSlotCount(windowID byte) int {
+	if a.containerHelper == nil {
+		return -1
+	}
+	return a.containerHelper.GetContainerSlotCount(windowID)
+}
+
+// InventoryManager pass-through methods.
+// Each delegates to the internally-managed InventoryManager.
+
+func (a *agent) SetWindow(windowID byte) {
+	if a.invMgr != nil {
+		a.invMgr.SetWindow(windowID)
+	}
+}
+
+func (a *agent) GetWindow() byte {
+	if a.invMgr != nil {
+		return a.invMgr.GetWindow()
+	}
+	return 0
+}
+
+func (a *agent) SetCursorItem(item models.ItemStack) {
+	if a.invMgr != nil {
+		a.invMgr.SetCursorItem(item)
+	}
+}
+
+func (a *agent) GetCursorItem() models.ItemStack {
+	if a.invMgr != nil {
+		return a.invMgr.GetCursorItem()
+	}
+	return models.ItemStack{}
+}
+
+func (a *agent) SetWaitForUpdates(wait bool) {
+	if a.invMgr != nil {
+		a.invMgr.SetWaitForUpdates(wait)
+	}
+}
+
+func (a *agent) SetUpdateWaitDelay(delay time.Duration) {
+	if a.invMgr != nil {
+		a.invMgr.SetUpdateWaitDelay(delay)
+	}
+}
+
+func (a *agent) LeftClickSlot(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.LeftClickSlot(slot, slotItem)
+}
+
+func (a *agent) RightClickSlot(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.RightClickSlot(slot, slotItem)
+}
+
+func (a *agent) ShiftClickSlot(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.ShiftClickSlot(slot, slotItem)
+}
+
+func (a *agent) SwapWithHotbar(slot int16, slotItem models.ItemStack, hotbarSlot int, hotbarItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.SwapWithHotbar(slot, slotItem, hotbarSlot, hotbarItem)
+}
+
+func (a *agent) DropItem(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.DropItem(slot, slotItem)
+}
+
+func (a *agent) DropStack(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.DropStack(slot, slotItem)
+}
+
+func (a *agent) DoubleClick(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.DoubleClick(slot, slotItem)
+}
+
+func (a *agent) StartDrag(dragType byte) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.StartDrag(dragType)
+}
+
+func (a *agent) AddDragSlot(slot int16, dragType byte) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.AddDragSlot(slot, dragType)
+}
+
+func (a *agent) EndDrag(dragType byte, changedSlots []models.ChangedSlot) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.EndDrag(dragType, changedSlots)
+}
+
+func (a *agent) MoveItem(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.MoveItem(fromSlot, toSlot, fromItem, toItem)
+}
+
+func (a *agent) MoveSingle(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.MoveSingle(fromSlot, toSlot, fromItem, toItem)
+}
+
+func (a *agent) TransferItem(fromWindowID byte, fromSlot int16, toWindowID byte, toSlot int16, fromItem, toItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.TransferItem(fromWindowID, fromSlot, toWindowID, toSlot, fromItem, toItem)
+}
+
+func (a *agent) TransferStack(slot int16, slotItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.TransferStack(slot, slotItem)
+}
+
+func (a *agent) SplitStack(sourceSlot, destSlot int16, sourceItem, destItem models.ItemStack) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.SplitStack(sourceSlot, destSlot, sourceItem, destItem)
+}
+
+func (a *agent) DistributeItems(slots []int16, evenlyDistribute bool, changedSlots []models.ChangedSlot) error {
+	if a.invMgr == nil {
+		return fmt.Errorf("inventory manager not initialized")
+	}
+	return a.invMgr.DistributeItems(slots, evenlyDistribute, changedSlots)
 }

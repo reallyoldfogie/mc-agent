@@ -29,6 +29,8 @@ const (
 	EntityTypeSnowGolem      EntityType = "snow_golem"
 	EntityTypeArmorStand     EntityType = "armor_stand"
 	EntityTypeHorse          EntityType = "horse"
+	EntityTypeSkeletonHorse  EntityType = "skeleton_horse"
+	EntityTypeZombieHorse    EntityType = "zombie_horse"
 	EntityTypeSkeleton       EntityType = "skeleton"
 	EntityTypeDonkey         EntityType = "donkey"
 	EntityTypeMule           EntityType = "mule"
@@ -191,7 +193,7 @@ func (t EntityType) IsDisplayEntity() bool {
 // IsRideable returns true if the entity type is rideable
 func (t EntityType) IsRideable() bool {
 	switch t {
-	case EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
+	case EntityTypeHorse, EntityTypeSkeletonHorse, EntityTypeZombieHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
 		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCamel, EntityTypeCamelHusk,
 		EntityTypeNautilus, EntityTypeZombieNautilus:
 		return true

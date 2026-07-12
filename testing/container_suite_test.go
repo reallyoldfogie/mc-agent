@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/stretchr/testify/suite"
@@ -33,10 +32,7 @@ type ContainerTestSuite struct {
 	agent     *ManagedAgent
 
 	// Shared resources
-	screenMgr       mcscreen.Manager
-	itemUsage       *items.ItemUsage
-	invMgr          models.InventoryManager
-	containerHelper *items.ContainerHelper
+	screenMgr mcscreen.Manager
 
 	// Container positions (pre-placed in world)
 	containers map[string]models.V3
@@ -155,9 +151,6 @@ func (s *ContainerTestSuite) SetupSuite() {
 	s.stopAgent(s.agent)
 	s.agent = nil
 	s.screenMgr = nil
-	s.itemUsage = nil
-	s.invMgr = nil
-	s.containerHelper = nil
 
 	if memStatsEnabled() {
 		logMemStats("ContainerTestSuite setup complete")
@@ -344,13 +337,8 @@ func (s *ContainerTestSuite) SetupTest() {
 	s.screenMgr = s.agent.ScreenManager()
 	s.Require().NotNil(s.screenMgr, "screen manager should be available")
 
-	// Container helper is now automatically set up during agent initialization
-	// Retrieve it from the agent for use in tests
-	ch := s.agent.Agent.GetContainerHelper()
-	s.Require().NotNil(ch, "container helper should be auto-initialized after agent.Start()")
-	containerHelper, ok := ch.(*items.ContainerHelper)
-	s.Require().True(ok, "container helper should be *items.ContainerHelper")
-	s.containerHelper = containerHelper
+	// Container helper and inventory manager are auto-initialized during agent.Start()
+	// Tests use agent's promoted interface methods directly
 
 	// Ensure agent is online before issuing RCON commands.
 	if !WaitForPlayerOnline(s.ctx, s.inst.RCON, "ContainerBot", 30*time.Second) {

@@ -33,7 +33,7 @@ import (
 func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	versionHandler models.VersionHandler,
 	forward, backward, left, right, sneak bool,
-) {
+) ridingTickResult {
 	// --- Send vehicle input packet (SteerVehicle on 1.21.1, PlayerInput on 1.21.2+) ---
 	if err := versionHandler.Play().Movement().SendVehicleInput(
 		pe.movementPacketSender.client.Conn(),
@@ -123,32 +123,31 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		velocityY = gravityVal
 	}
 
-	newX := currentPos.X + ridingVelX
-	newY := currentPos.Y + velocityY
-	newZ := currentPos.Z + ridingVelZ
+	// Position computation via collision detection
+	// Boat dimensions: 1.4 wide × 0.6 tall
+	moveVel := models.V3{X: ridingVelX, Y: velocityY, Z: ridingVelZ}
+	newPos, correctedVel, _, _, _ := resolveEntityCollision(pe, currentPos, moveVel, 1.4, 0.6)
 	onGround := false
 
 	// Update shared velocity state (still holding lock)
-	pe.ridingVelX = ridingVelX
-	pe.ridingVelZ = ridingVelZ
+	pe.ridingVelX = correctedVel.X
+	pe.ridingVelZ = correctedVel.Z
 	pe.boatYawVelocity = boatYawVelocity
 	pe.lastVelMultiplier = velMultiplier
 
 	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
-		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, ridingVelX, ridingVelZ, newX, newY, newZ)
+		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z)
 
-	newPos := models.V3{X: newX, Y: newY, Z: newZ}
-
-	pe.physicsState.SetPosition(newPos, yaw, pitch, onGround)
-	pe.movementPacketSender.setBotPosition(newPos, yaw, pitch)
-
-	if err := versionHandler.Play().Movement().SendMoveVehicle(
-		pe.movementPacketSender.client.Conn(),
-		newX, newY, newZ,
-		yaw, pitch,
-		onGround,
-	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
+	// mountedEntityMu is released. State and packet pose are identical for boats.
+	return ridingTickResult{
+		NewPos:      newPos,
+		OnGround:    onGround,
+		Sneak:       sneak,
+		StateYaw:    yaw,
+		StatePitch:  pitch,
+		PacketYaw:   yaw,
+		PacketPitch: pitch,
 	}
 }
 

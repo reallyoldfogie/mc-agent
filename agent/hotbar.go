@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int16) error {
 	a.heldSlotMu.RUnlock()
 	if currentSet && current == int16(slot) {
 		a.logHotbarSelection("already selected", slot, current)
+		a.emitHeldItemEquipment(slot)
 		return nil
 	}
 
@@ -69,8 +71,9 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int16) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case ackSlot := <-a.heldSlotUpdates:
-			if ackSlot == int16(slot) {
+				if ackSlot == int16(slot) {
 				a.logHotbarAck(slot, ackSlot)
+				a.emitHeldItemEquipment(slot)
 				return nil
 			}
 		}
@@ -180,12 +183,55 @@ func (a *agent) logPlayerInventory(context string) {
 	log.Print(b.String())
 }
 
+// LogInventory writes the full player inventory contents to the given writer.
+// Each non-empty slot is printed on its own line with slot index, item name, and count.
+// Hotbar slots (36-44) are labeled separately for clarity.
+func (a *agent) LogInventory(output io.Writer) {
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		fmt.Fprintf(output, "[Agent %s] Inventory: slot resolver not ready\n", a.cfg.Name)
+		return
+	}
+
+	fmt.Fprintf(output, "[Agent %s] Inventory:\n", a.cfg.Name)
+	for i := range int16(46) {
+		name, count := a.resolveInventorySlot(slots, itemMgr, i)
+		if name == "minecraft:air" || count == 0 {
+			continue
+		}
+		label := "inv"
+		if i >= 36 && i <= 44 {
+			label = fmt.Sprintf("hotbar[%d]", i-36)
+		}
+		fmt.Fprintf(output, "  slot %2d (%s): %s x%d\n", i, label, name, count)
+	}
+}
+
 func (a *agent) getSlotInfoDeps() (models.SlotResolver, models.ItemManager) {
 	a.slotsMu.RLock()
 	defer a.slotsMu.RUnlock()
 	a.itemMgrMu.RLock()
 	defer a.itemMgrMu.RUnlock()
 	return a.slots, a.itemMgr
+}
+
+// emitHeldItemEquipment resolves the item in the given hotbar slot and emits
+// an EntityEquipment packet to the replay mirror so the replay viewer can
+// render the held item.
+func (a *agent) emitHeldItemEquipment(slot int16) {
+	if a.moveMirror == nil {
+		return
+	}
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		return
+	}
+	itemID, count, ok := slots.ResolveSlot(-2, mcscreen.HotbarSlotStart+slot)
+	if !ok {
+		itemID = 0
+		count = 0
+	}
+	a.moveMirror.EmitEquipment(a.GetEntityID(), models.MainHand, int32(itemID), int32(count))
 }
 
 func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.ItemManager, slot int16) (string, int) {
@@ -239,6 +285,36 @@ func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (in
 	}
 	log.Printf("[%s] FindHotbarSlotWithItem(%s): NOT FOUND. Hotbar contents: %v", a.cfg.Name, itemName, hotbarDebug)
 	return -1, false
+}
+
+// SwitchToItem finds an item by name anywhere in the player's inventory and equips it.
+// If the item is already in the hotbar, it selects that slot directly.
+// If the item is in the main inventory, it swaps it into a hotbar slot and selects it.
+// Returns (nil, true) if the item was found and equipped, (nil, false) if not found,
+// or (err, false) on error.
+func (a *agent) SwitchToItem(ctx context.Context, itemName string) (bool, error) {
+	// Check hotbar first (fast path)
+	hotbarSlot, found := a.FindHotbarSlotWithItem(ctx, itemName)
+	if found {
+		return true, a.SelectHotbarSlot(ctx, hotbarSlot)
+	}
+
+	// Search entire player inventory (windowID -2)
+	slotIndex, found, err := a.FindSlotWith(ctx, itemName, -2)
+	if err != nil {
+		return false, fmt.Errorf("search inventory for %s: %w", itemName, err)
+	}
+	if !found {
+		return false, nil
+	}
+
+	// Item is in main inventory — swap it into hotbar slot 0
+	targetHotbar := 0
+	if err := a.SwapInventoryWithHotbar(ctx, slotIndex, targetHotbar); err != nil {
+		return false, fmt.Errorf("swap %s to hotbar: %w", itemName, err)
+	}
+
+	return true, a.SelectHotbarSlot(ctx, int16(targetHotbar))
 }
 
 // EquipItemByName finds and equips an item from the hotbar by name.

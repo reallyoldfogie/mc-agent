@@ -104,10 +104,8 @@ func TestRepeatedContainerOpen(t *testing.T) {
 			if agent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(agent.Config.VersionHandler.Play().Containers())
 			}
-			invMgr := items.NewInventoryManager(screenMgr)
-			invMgr.SetWaitForUpdates(false)
-			containerHelper := items.NewContainerHelper(itemUsage, invMgr, screenMgr, botClient, agent.Config.PacketMgr)
-			agent.Agent.SetContainerHelper(containerHelper)
+			// Container helper is auto-initialized during agent.Start()
+			// No manual setup needed
 
 			// Place a single chest at fixed integer coordinates
 			chestX := int(math.Floor(spawnPoint.X)) + 5
@@ -167,7 +165,7 @@ func TestRepeatedContainerOpen(t *testing.T) {
 				require.Equal(t, 3, chest.Rows, "should be single chest (3 rows)")
 
 				// Close chest
-				err = containerHelper.CloseContainer()
+				err = agent.Agent.CloseContainer()
 				require.NoError(t, err, "close chest")
 				t.Logf("   Closed window ID %d", windowID)
 

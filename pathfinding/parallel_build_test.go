@@ -13,11 +13,17 @@ import (
 type testMockWorld struct {
 	blocks map[blockKey]uint32
 	mu     sync.RWMutex
+
+	tod        int64
+	worldTime1 int64
+	worldTime2 int64
 }
 
 type blockKey struct {
 	x, y, z int
 }
+
+var _ models.World = (*testMockWorld)(nil) // Ensure testMockWorld implements World
 
 func newTestMockWorld() *testMockWorld {
 	return &testMockWorld{
@@ -44,6 +50,23 @@ func (w *testMockWorld) SetBlockAt(x, y, z float64, stateID uint32) {
 
 func (w *testMockWorld) IsChunkLoaded(x, z int) bool {
 	return true
+}
+
+func (w *testMockWorld) GetTimeOfDay() (int64, bool) {
+	return w.tod, true
+}
+
+func (w *testMockWorld) SetTimeOfDay(tod int64) {
+	w.tod = tod
+}
+
+func (w *testMockWorld) SetWorldTime(worldTime1, worldTime2 int64) {
+	w.worldTime1 = worldTime1
+	w.worldTime2 = worldTime2
+}
+
+func (w *testMockWorld) GetWorldAge() (int64, bool) {
+	return 5000, true
 }
 
 // testMockShapeManager is a simple mock block shape manager

@@ -1,6 +1,7 @@
 package vehicles
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -86,18 +87,23 @@ func TestBoatPaddleTracking(t *testing.T) {
 			require.NoError(t, err, "fill water area")
 			t.Logf("%s => %s", cmd, resp)
 
-			_, err = helper.Instance.RCON.Exec(ctx, "teleport VehicleBot -1 1 -1")
+			teleportCmd := fmt.Sprintf("teleport %s -1 1 -1", helper.AgentName)
+			teleportResp, err := helper.Instance.RCON.Exec(ctx, teleportCmd)
 			require.NoError(t, err, "teleport agent")
+			require.NoError(t, rconResponseError(teleportCmd, teleportResp), "teleport agent should move the agent")
 
 			time.Sleep(500 * time.Millisecond) // Wait for position update
 
 			// Get agent's initial position
-			_, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
+			agentPos, initialized := helper.ManagedAgent.Agent.GetPositionSimple()
 			require.True(t, initialized, "agent position should be initialized")
 
-			// Summon a boat at the agent's location
-			// Use hardcoded coordinates: agent is at (25.5, 50.5, 25.5), boat should be at (25.5, 50.0, 25.5)
-			boatEntityID, err := helper.SummonBoat(ctx, 1, 1, 1, "oak") // oak boat in water
+			// Summon the boat at the agent's actual position so it is within the
+			// ~4.5 block mount interaction range. Previously the reposition teleport
+			// targeted a non-existent entity name ("VehicleBot") and the boat used
+			// hard-coded coordinates, leaving the agent an unpredictable distance
+			// from the boat and causing intermittent "agent did not mount" timeouts.
+			boatEntityID, err := helper.SummonBoat(ctx, agentPos.X, agentPos.Y, agentPos.Z, "oak")
 			require.NoError(t, err, "summon boat")
 
 			time.Sleep(500 * time.Millisecond) // Wait for boat to spawn

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -67,6 +68,7 @@ const (
 // InventoryManager handles inventory and container interactions
 // This manages window IDs, state tracking, and sends container click packets
 type inventoryManager struct {
+	mu                   sync.Mutex
 	screen               screenClicker
 	cursor               models.ItemStack // Item currently held by cursor
 	windowID             byte             // Currently open window (0 = player inventory)
@@ -101,31 +103,43 @@ func newInventoryManagerWithClicker(screen screenClicker) *inventoryManager {
 // Call this when opening a container (chest, furnace, etc.)
 // windowID 0 = player inventory (always open)
 func (im *inventoryManager) SetWindow(windowID byte) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.windowID = windowID
 }
 
 // GetWindow returns the currently open window ID
 func (im *inventoryManager) GetWindow() byte {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	return im.windowID
 }
 
-// SetCursor sets the item held by cursor (call when server sends cursor updates)
-func (im *inventoryManager) SetCursor(item models.ItemStack) {
+// SetCursorItem sets the item held by cursor (call when server sends cursor updates)
+func (im *inventoryManager) SetCursorItem(item models.ItemStack) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.cursor = item
 }
 
-// GetCursor returns the item currently held by cursor
-func (im *inventoryManager) GetCursor() models.ItemStack {
+// GetCursorItem returns the item currently held by cursor
+func (im *inventoryManager) GetCursorItem() models.ItemStack {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	return im.cursor
 }
 
 // SetWaitForUpdates controls whether multi-click helpers wait for screen updates before continuing.
 func (im *inventoryManager) SetWaitForUpdates(wait bool) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.waitForUpdates = wait
 }
 
 // SetUpdateWaitDelay sets how long to wait for screen updates when waiting is enabled.
 func (im *inventoryManager) SetUpdateWaitDelay(delay time.Duration) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.updateWaitDelay = delay
 }
 
@@ -183,6 +197,12 @@ func (im *inventoryManager) clickWithChanges(windowID byte, slot int16, button b
 // If cursor is empty: picks up the entire stack from the slot
 // If cursor has items: places the entire held stack into the slot
 func (im *inventoryManager) LeftClickSlot(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.leftClickSlot(slot, slotItem)
+}
+
+func (im *inventoryManager) leftClickSlot(slot int16, slotItem models.ItemStack) error {
 	im.SyncCursorFromScreen()
 	slotItem = im.slotItemFor(slot, slotItem)
 
@@ -229,6 +249,12 @@ func (im *inventoryManager) LeftClickSlot(slot int16, slotItem models.ItemStack)
 // If cursor is empty: picks up half the stack (rounded up) from the slot
 // If cursor has items: places one item from held stack into the slot
 func (im *inventoryManager) RightClickSlot(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.rightClickSlot(slot, slotItem)
+}
+
+func (im *inventoryManager) rightClickSlot(slot int16, slotItem models.ItemStack) error {
 	im.SyncCursorFromScreen()
 	slotItem = im.slotItemFor(slot, slotItem)
 
@@ -250,6 +276,12 @@ func (im *inventoryManager) RightClickSlot(slot int16, slotItem models.ItemStack
 // Moves items between player inventory and open container
 // For example: shift+click in chest moves to player inventory, shift+click in player inventory moves to chest
 func (im *inventoryManager) ShiftClickSlot(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.shiftClickSlot(slot, slotItem)
+}
+
+func (im *inventoryManager) shiftClickSlot(slot int16, slotItem models.ItemStack) error {
 	if slotItem.IsEmpty() {
 		return nil // Nothing to transfer
 	}
@@ -267,6 +299,8 @@ func (im *inventoryManager) ShiftClickSlot(slot int16, slotItem models.ItemStack
 // SwapWithHotbar swaps the clicked slot with a hotbar slot (number key 1-9)
 // hotbarSlot: 0-8 (corresponding to keys 1-9)
 func (im *inventoryManager) SwapWithHotbar(slot int16, slotItem models.ItemStack, hotbarSlot int, hotbarItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if hotbarSlot < 0 || hotbarSlot > 8 {
 		return nil // Invalid hotbar slot
 	}
@@ -282,6 +316,8 @@ func (im *inventoryManager) SwapWithHotbar(slot int16, slotItem models.ItemStack
 
 // DropItem drops one item from the slot (Q key)
 func (im *inventoryManager) DropItem(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if slotItem.IsEmpty() {
 		return nil // Nothing to drop
 	}
@@ -305,6 +341,8 @@ func (im *inventoryManager) DropItem(slot int16, slotItem models.ItemStack) erro
 
 // DropStack drops the entire stack from the slot (Ctrl+Q)
 func (im *inventoryManager) DropStack(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if slotItem.IsEmpty() {
 		return nil // Nothing to drop
 	}
@@ -319,6 +357,8 @@ func (im *inventoryManager) DropStack(slot int16, slotItem models.ItemStack) err
 // DoubleClick collects all matching items into the clicked slot (double-click)
 // This gathers all items of the same type from the inventory into one stack
 func (im *inventoryManager) DoubleClick(slot int16, slotItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if slotItem.IsEmpty() {
 		return nil // Nothing to collect
 	}
@@ -335,6 +375,12 @@ func (im *inventoryManager) DoubleClick(slot int16, slotItem models.ItemStack) e
 // StartDrag begins a drag operation
 // dragType: 0 = left drag (distribute evenly), 1 = right drag (place one each), 2 = middle (creative)
 func (im *inventoryManager) StartDrag(dragType byte) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.startDrag(dragType)
+}
+
+func (im *inventoryManager) startDrag(dragType byte) error {
 	// Drag start: slot=-999, button=dragType*4+0 (DragStart encoding)
 	button := dragType*4 + byte(DragStart)
 	return im.clickWithChanges(im.windowID, -999, button, ClickModeDrag, []models.ChangedSlot{}, nil, false)
@@ -343,6 +389,12 @@ func (im *inventoryManager) StartDrag(dragType byte) error {
 // AddDragSlot adds a slot to the current drag operation
 // Call this for each slot you want to include in the drag
 func (im *inventoryManager) AddDragSlot(slot int16, dragType byte) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.addDragSlot(slot, dragType)
+}
+
+func (im *inventoryManager) addDragSlot(slot int16, dragType byte) error {
 	// Drag add: slot=target, button=dragType*4+1 (DragAdd encoding)
 	button := dragType*4 + byte(DragAdd)
 	return im.clickWithChanges(im.windowID, slot, button, ClickModeDrag, []models.ChangedSlot{}, nil, false)
@@ -351,6 +403,12 @@ func (im *inventoryManager) AddDragSlot(slot int16, dragType byte) error {
 // EndDrag completes the drag operation and distributes items
 // The server calculates how items are distributed based on drag type and slots added
 func (im *inventoryManager) EndDrag(dragType byte, changedSlots []models.ChangedSlot) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.endDrag(dragType, changedSlots)
+}
+
+func (im *inventoryManager) endDrag(dragType byte, changedSlots []models.ChangedSlot) error {
 	// Drag end: slot=-999, button=dragType*4+2 (DragEnd encoding)
 	button := dragType*4 + byte(DragEnd)
 	return im.clickWithChanges(im.windowID, -999, button, ClickModeDrag, changedSlots, nil, false)
@@ -359,6 +417,12 @@ func (im *inventoryManager) EndDrag(dragType byte, changedSlots []models.Changed
 // MoveItem moves an entire item stack from one slot to another within the same window
 // This is a high-level helper that uses pickup+place logic
 func (im *inventoryManager) MoveItem(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.moveItem(fromSlot, toSlot, fromItem, toItem)
+}
+
+func (im *inventoryManager) moveItem(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
 	im.SyncCursorFromScreen()
 
 	fromItem = im.slotItemFor(fromSlot, fromItem)
@@ -371,7 +435,7 @@ func (im *inventoryManager) MoveItem(fromSlot, toSlot int16, fromItem, toItem mo
 	fromSlotNext, fromCursorNext := simulateNormalClick(fromItem, beforeCursor, LeftButton)
 
 	// Pick up from source
-	if err := im.LeftClickSlot(fromSlot, fromItem); err != nil {
+	if err := im.leftClickSlot(fromSlot, fromItem); err != nil {
 		return err
 	}
 	if err := im.waitForSlotAndCursor(fromSlot, fromItem, beforeCursor, fromSlotNext, fromCursorNext); err != nil {
@@ -384,7 +448,7 @@ func (im *inventoryManager) MoveItem(fromSlot, toSlot int16, fromItem, toItem mo
 	toSlotNext, toCursorNext := simulateNormalClick(toItem, beforeCursor, LeftButton)
 
 	// Place at destination
-	if err := im.LeftClickSlot(toSlot, toItem); err != nil {
+	if err := im.leftClickSlot(toSlot, toItem); err != nil {
 		return err
 	}
 	return im.waitForSlotAndCursor(toSlot, toItem, beforeCursor, toSlotNext, toCursorNext)
@@ -393,6 +457,9 @@ func (im *inventoryManager) MoveItem(fromSlot, toSlot int16, fromItem, toItem mo
 // MoveSingle moves a single item from one slot to another.
 // This performs pickup + place-one + return-remaining to the source slot.
 func (im *inventoryManager) MoveSingle(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
+
 	im.SyncCursorFromScreen()
 	fromItem = im.slotItemFor(fromSlot, fromItem)
 	if fromItem.IsEmpty() {
@@ -402,7 +469,7 @@ func (im *inventoryManager) MoveSingle(fromSlot, toSlot int16, fromItem, toItem 
 
 	beforeCursor := im.cursor
 	fromSlotNext, fromCursorNext := simulateNormalClick(fromItem, beforeCursor, LeftButton)
-	if err := im.LeftClickSlot(fromSlot, fromItem); err != nil {
+	if err := im.leftClickSlot(fromSlot, fromItem); err != nil {
 		return err
 	}
 	if err := im.waitForSlotAndCursor(fromSlot, fromItem, beforeCursor, fromSlotNext, fromCursorNext); err != nil {
@@ -413,7 +480,7 @@ func (im *inventoryManager) MoveSingle(fromSlot, toSlot int16, fromItem, toItem 
 	toItem = im.slotItemFor(toSlot, toItem)
 	beforeCursor = im.cursor
 	toSlotNext, toCursorNext := simulateNormalClick(toItem, beforeCursor, RightButton)
-	if err := im.RightClickSlot(toSlot, toItem); err != nil {
+	if err := im.rightClickSlot(toSlot, toItem); err != nil {
 		return err
 	}
 	if err := im.waitForSlotAndCursor(toSlot, toItem, beforeCursor, toSlotNext, toCursorNext); err != nil {
@@ -425,7 +492,7 @@ func (im *inventoryManager) MoveSingle(fromSlot, toSlot int16, fromItem, toItem 
 		fromItem = im.slotItemFor(fromSlot, models.ItemStack{})
 		beforeCursor = im.cursor
 		finalSlotNext, finalCursorNext := simulateNormalClick(fromItem, beforeCursor, LeftButton)
-		if err := im.LeftClickSlot(fromSlot, models.ItemStack{}); err != nil {
+		if err := im.leftClickSlot(fromSlot, models.ItemStack{}); err != nil {
 			return err
 		}
 		if err := im.waitForSlotAndCursor(fromSlot, fromItem, beforeCursor, finalSlotNext, finalCursorNext); err != nil {
@@ -439,55 +506,63 @@ func (im *inventoryManager) MoveSingle(fromSlot, toSlot int16, fromItem, toItem 
 // TransferItem moves an item stack between inventories in the same window.
 // Cross-window transfers are not supported because Minecraft only allows one open container.
 func (im *inventoryManager) TransferItem(fromWindowID byte, fromSlot int16, toWindowID byte, toSlot int16, fromItem, toItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if fromWindowID != toWindowID {
 		return errors.New("cannot transfer items between different window IDs")
 	}
-	return im.MoveItem(fromSlot, toSlot, fromItem, toItem)
+	return im.moveItem(fromSlot, toSlot, fromItem, toItem)
 }
 
 // TransferStack transfers an entire stack between inventories using shift+click
 func (im *inventoryManager) TransferStack(slot int16, slotItem models.ItemStack) error {
-	return im.ShiftClickSlot(slot, slotItem)
+	im.mu.Lock()
+	defer im.mu.Unlock()
+	return im.shiftClickSlot(slot, slotItem)
 }
 
 // SplitStack splits a stack in half
 // Places half in the original slot and half in the destination slot
 func (im *inventoryManager) SplitStack(sourceSlot, destSlot int16, sourceItem, destItem models.ItemStack) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	if sourceItem.IsEmpty() || sourceItem.Count < 2 {
 		return nil // Nothing to split or stack too small
 	}
 
 	// Right click source to pick up half
-	if err := im.RightClickSlot(sourceSlot, sourceItem); err != nil {
+	if err := im.rightClickSlot(sourceSlot, sourceItem); err != nil {
 		return err
 	}
 
 	// Left click destination to place picked-up half
-	return im.LeftClickSlot(destSlot, destItem)
+	return im.leftClickSlot(destSlot, destItem)
 }
 
 // DistributeItems distributes items from cursor across multiple slots
 // Uses drag operation to place one item per slot (right drag) or distribute evenly (left drag)
 func (im *inventoryManager) DistributeItems(slots []int16, evenlyDistribute bool, changedSlots []models.ChangedSlot) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	var dragType byte = 1 // Right drag (one each) by default
 	if evenlyDistribute {
 		dragType = 0 // Left drag (distribute evenly)
 	}
 
 	// Start drag
-	if err := im.StartDrag(dragType); err != nil {
+	if err := im.startDrag(dragType); err != nil {
 		return err
 	}
 
 	// Add each slot to drag
 	for _, slot := range slots {
-		if err := im.AddDragSlot(slot, dragType); err != nil {
+		if err := im.addDragSlot(slot, dragType); err != nil {
 			return err
 		}
 	}
 
 	// End drag and distribute
-	return im.EndDrag(dragType, changedSlots)
+	return im.endDrag(dragType, changedSlots)
 }
 
 func slotFromItemStack(stack models.ItemStack) *mcscreen.Slot {

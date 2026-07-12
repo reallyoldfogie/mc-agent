@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/stretchr/testify/require"
@@ -25,10 +24,9 @@ import (
 
 // StandaloneTestEnv holds all resources for a standalone test
 type StandaloneTestEnv struct {
-	Inst            *TestInstance
-	Agent           *ManagedAgent
-	ContainerHelper *items.ContainerHelper
-	ScreenMgr       mcscreen.Manager
+	Inst      *TestInstance
+	Agent     *ManagedAgent
+	ScreenMgr mcscreen.Manager
 	Ctx             context.Context
 	Cancel          context.CancelFunc
 	ContainerPos    models.V3
@@ -169,18 +167,8 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	}
 	t.Logf("spawn point: %+v", spawnPoint)
 
-	// Create container helpers
-	itemUsage := items.NewItemUsage(botClient.Conn(), agent.Config.PacketMgr)
-	// Set version-specific container handler
-	if agent.Config.VersionHandler != nil {
-		itemUsage.SetContainerHandler(agent.Config.VersionHandler.Play().Containers())
-	}
-	invMgr := items.NewInventoryManager(screenMgr)
-	invMgr.SetWaitForUpdates(false)
-	containerHelper := items.NewContainerHelper(itemUsage, invMgr, screenMgr, botClient, agent.Config.PacketMgr)
-
-	// Wire container helper to agent (wraps items.ContainerHelper with adapter)
-	agent.Agent.SetContainerHelper(containerHelper)
+	// Container helper is auto-initialized during agent.Start()
+	// No manual setup needed
 
 	// Place the container for this test (only for block-based containers)
 	var containerPos models.V3
@@ -249,7 +237,7 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	return &StandaloneTestEnv{
 		Inst:            inst,
 		Agent:           agent,
-		ContainerHelper: containerHelper,
+		// ContainerHelper is auto-initialized during agent.Start()
 		ScreenMgr:       screenMgr,
 		Ctx:             ctx,
 		Cancel:          cancel,

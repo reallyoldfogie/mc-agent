@@ -2,212 +2,271 @@ package vehicles
 
 import (
 	"testing"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/stretchr/testify/require"
 )
 
 // TestPigMounting verifies that the agent can mount and dismount a saddled pig.
-//
-// STATUS: TEST STUB - Pig mounting is assumed to work but has NOT been validated.
-// No tests currently exist for pig behavior.
-//
-// IMPLEMENTATION NOTE: Pigs are currently handled by the generic horse-like physics
-// handler in movement/physics_executor.go::handleRidingModeNonBoat(). This means:
-// - Mounting/dismounting should work (same code path as horses)
-// - Generic movement should work (yaw steering + throttle-based speed)
-// - But pig-specific mechanics NOT implemented:
-//   * Carrot-on-stick detection/boost not implemented
-//   * Saddle requirement not verified
-//
-// WHAT NEEDS TO BE TESTED:
-// 1. Basic Mounting/Dismounting
-//    - Agent can mount a saddled pig via MountEntity()
-//    - Mounting an unsaddled pig should fail (needs verification)
-//    - Agent position updates to pig position
-//    - Agent can dismount via DismountEntity()
-//    - Mount state synchronization with server (SetPassengers)
-//
-// 2. Generic Movement (Horse-Like Physics)
-//    - Forward movement: ThrottleZ > 0 should move pig forward
-//    - Yaw steering: ThrottleX should rotate pig
-//    - Velocity decay: Pig should decelerate when throttle released
-//    - Speed: Pigs are slower than horses (vanilla: 0.25 walking, no attribute)
-//
-// 3. Entity Attribute Speed Reading (If Applicable)
-//    - Check if server provides generic.movement_speed for pigs
-//    - Vanilla pigs may not have this attribute (use hardcoded speed)
-//    - May use walking/flying/swimming attributes instead
-//
-// NOT YET IMPLEMENTED - DO NOT TEST:
-// - Carrot-on-stick detection and boost mechanics
-// - Saddle verification
-// - Equipment-based speed modification
-//
-// REFERENCE: See horse_jumping_test.go and horse_speed_attributes_test.go for
-// expected patterns. Pig tests should follow similar structure but validate
-// distinct movement characteristics and test saddle requirement.
 func TestPigMounting(t *testing.T) {
-	t.Skip("STUB: Pig mounting not yet validated. Needs integration test implementation.")
-
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			// TODO: Implement
-			// 1. Create VehicleTestHelper(t, tt.MCVersion, "PigMountBot")
-			// 2. Teleport agent to location with solid ground
-			// 3. Summon pig with SummonPig(ctx, x, y, z) - needs helper method
-			// 4. Equip pig with saddle (needs helper or RCON command)
-			//    Example: /item replace entity @e[type=minecraft:pig] saddle
-			// 5. Mount pig via helper.MountEntity(ctx, pigEntityID)
-			// 6. Verify mounted state with helper.WaitForMounted(ctx, timeout)
-			// 7. Dismount via helper.DismountEntity()
-			// 8. Verify dismounted state with helper.WaitForDismounted(ctx, timeout)
-			//
-			// EDGE CASE TO TEST:
-			// - Try mounting unsaddled pig (should fail or be ignored by server)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "PigMountBot")
+			defer cleanup()
+
+			_, err := helper.Instance.RCON.Exec(ctx, "teleport PigMountBot 100 1 100")
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
+
+			// Summon saddled pig
+			pigID, err := helper.SummonPig(ctx, x+2, y, z)
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			// Mount
+			err = helper.MountEntity(ctx, pigID)
+			require.NoError(t, err)
+
+			// Wait for mounted
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			// Dismount
+			err = helper.DismountEntity()
+			require.NoError(t, err)
+
+			// Wait for dismounted
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err)
 		})
 	}
 }
 
-// TestPigMovement verifies that a mounted pig responds to throttle inputs
-// with proper velocity and steering.
-//
-// STATUS: TEST STUB - Pig movement is assumed to work but has NOT been validated.
-//
-// WHAT NEEDS TO BE TESTED:
-// 1. Forward Movement
-//    - Send ThrottleZ = 1.0 (full forward)
-//    - Verify XZ displacement > minDisplacement blocks
-//    - Verify speed is slower than horse (~0.25 blocks/tick for vanilla pig)
-//    - Note: Pigs may not have generic.movement_speed attribute
-//
-// 2. Yaw Steering
-//    - Send ThrottleX = 1.0 (full right turn)
-//    - Verify yaw change in expected direction
-//    - Verify yaw velocity matches horse model (5°/tick turn rate)
-//
-// 3. Deceleration
-//    - Send throttle, then release to zero
-//    - Verify velocity decays toward zero
-//    - Verify drag matches horse model (0.9 multiplier)
-//
-// 4. Idle State
-//    - Send zero throttle
-//    - Verify pig stays within maxDisplacement of start position
-//    - Verify velocity reaches zero
-//
-// REFERENCE: See TestHorseSteering for steering patterns. Pig movement should
-// follow similar behavior but with slower terminal velocity.
+// TestPigMovement verifies that a mounted pig responds to throttle inputs with proper velocity and steering.
 func TestPigMovement(t *testing.T) {
-	t.Skip("STUB: Pig movement not yet validated. Needs integration test implementation.")
-
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			// TODO: Implement
-			// 1. Create test area (flat terrain, no obstacles)
-			// 2. Mount saddled pig
-			// 3. Test forward movement with steering phases:
-			//    a. Phase 1: Full forward throttle (1.0) for 2 seconds
-			//    b. Phase 2: Coast to stop (throttle = 0)
-			//    c. Phase 3: Turn right (ThrottleX = 0.5) while moving forward
-			//    d. Phase 4: Coast to stop again
-			// 4. Validate XZ displacement with checkSteeringPhase() pattern
-			// 5. Verify terminal velocity ≈ 0.25 blocks/tick (slower than horse 0.225)
-			// 6. If pig has attribute, verify attribute retrieval matches observed speed
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "PigMoveBot")
+			defer cleanup()
+
+			_, err := helper.Instance.RCON.Exec(ctx, "teleport PigMoveBot 200 1 200")
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
+
+			// Summon and mount pig
+			pigID, err := helper.SummonPig(ctx, x, y, z)
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			err = helper.MountEntity(ctx, pigID)
+			require.NoError(t, err)
+
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			// Enter manual mode for controlled movement
+			err = helper.EnterManualMode()
+			require.NoError(t, err)
+
+			// Move forward
+			helper.SetManualThrottle(0, 1.0)
+			time.Sleep(2 * time.Second)
+
+			// Stop
+			helper.SetManualThrottle(0, 0)
+			time.Sleep(1 * time.Second)
+
+			finalPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			displacement := GetDistance(finalPos.X, finalPos.Y, finalPos.Z, x, y, z)
+
+			// Pig should move (base speed ~0.25)
+			require.Greater(t, displacement, 1.0)
+
+			err = helper.ExitManualMode()
+			require.NoError(t, err)
+
+			err = helper.DismountEntity()
+			require.NoError(t, err)
+
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err)
 		})
 	}
 }
 
 // TestPigSpeedAttribute verifies pig speed handling and attribute reading.
-//
-// STATUS: TEST STUB - Pig speed not yet validated.
-//
-// WHAT NEEDS TO BE TESTED:
-// 1. Speed Determination
-//    - Check if server provides generic.movement_speed for pigs
-//    - If yes: Verify vanilla pig value and attribute retrieval
-//    - If no: Verify hardcoded speed fallback (~0.25 blocks/tick)
-//
-// 2. Speed Application
-//    - Forward movement applies detected speed as acceleration
-//    - Terminal velocity matches detected/expected speed
-//
-// 3. Comparison with Other Mounts
-//    - Pig speed < Horse speed (0.225 vs 0.25 - actual speeds unclear)
-//    - Pig speed compared to Camel (0.09) and Strider (0.1)
-//
-// NOTE: Pig speed mechanics may differ from horses. Pigs may not have
-// generic.movement_speed attribute. Need to investigate vanilla behavior.
-//
-// REFERENCE: See horse_speed_attributes_test.go. If pigs don't have attributes,
-// this test needs different approach (hardcoded value validation).
 func TestPigSpeedAttribute(t *testing.T) {
-	t.Skip("STUB: Pig speed handling not yet validated. Needs investigation of vanilla pig mechanics.")
-
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			// TODO: Implement
-			// 1. Mount pig
-			// 2. Attempt to retrieve generic.movement_speed attribute
-			// 3. If attribute exists:
-			//    a. Record value
-			//    b. Assert value is pig-appropriate
-			//    c. Test movement speed matches attribute
-			// 4. If attribute doesn't exist:
-			//    a. Verify hardcoded fallback is used
-			//    b. Test movement speed matches fallback value
-			// 5. Compare pig speed with other mounts
-			//    a. Should be slower than horse (0.225)
-			//    b. Should be faster than camel (0.09)
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "PigSpeedBot")
+			defer cleanup()
+
+			_, err := helper.Instance.RCON.Exec(ctx, "teleport PigSpeedBot 300 1 300")
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x, y, z := pos.X, pos.Y, pos.Z
+
+			// Summon and mount pig
+			pigID, err := helper.SummonPig(ctx, x, y, z)
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			err = helper.MountEntity(ctx, pigID)
+			require.NoError(t, err)
+
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			// Try to get pig's movement speed attribute
+			pigAgent := helper.ManagedAgent.Agent
+			getter, ok := pigAgent.(models.MountedEntityPositionGetter)
+			if !ok {
+				t.Skip("Agent does not implement MountedEntityPositionGetter")
+			}
+
+			speedAttr, found := getter.GetEntityAttribute(pigID, "generic.movement_speed")
+
+			if found {
+				t.Logf("Pig movement_speed attribute: %.4f", speedAttr)
+				require.Greater(t, speedAttr, 0.1)
+			} else {
+				t.Logf("Pig does not have generic.movement_speed attribute")
+			}
+
+			// Verify movement
+			err = helper.EnterManualMode()
+			require.NoError(t, err)
+
+			helper.SetManualThrottle(0, 1.0)
+			time.Sleep(2 * time.Second)
+
+			finalPos, _ := pigAgent.GetPositionSimple()
+			movement := GetDistance(finalPos.X, finalPos.Y, finalPos.Z, x, y, z)
+
+			require.Greater(t, movement, 2.0)
+			require.Less(t, movement, 15.0)
+
+			err = helper.ExitManualMode()
+			require.NoError(t, err)
+
+			err = helper.DismountEntity()
+			require.NoError(t, err)
+
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err)
 		})
 	}
 }
 
-// TestPigCarrotBoostNotImplemented documents the current limitation where
-// carrot-on-stick mechanics are not implemented.
-//
-// STATUS: TEST STUB - Carrot-boost physics not implemented.
-// This test documents the current limitation and should be updated
-// when carrot-on-stick boost is implemented.
-//
-// WHAT NEEDS TO BE DOCUMENTED:
-// 1. Current Behavior (Limited)
-//    - Agent can hold carrot-on-stick
-//    - No speed boost applied even with carrot equipped
-//    - Server may provide boost (client ignores it)
-//    - No equipment tracking in movement executor
-//
-// 2. Expected Behavior (When Implemented)
-//    - Agent equipment tracking: Check for carrot-on-stick in hand
-//    - Speed boost when carrot equipped: Server-side speed increase
-//    - Visual feedback: Pig ears should be visible (server handles)
-//    - Interaction: Pig should look toward carrot
-//
-// IMPLEMENTATION APPROACH:
-// 1. Add equipment tracking to movement executor
-// 2. Check if carrot-on-stick is in agent's hand (via inventory)
-// 3. Apply server-provided boost (if applicable)
-// 4. Or: Send player look toward carrot if equipped
-//
-// REFERENCE: Pig control mechanics are documented in Minecraft wiki:
-//   https://minecraft.wiki/w/Pig#Riding
-func TestPigCarrotBoostNotImplemented(t *testing.T) {
-	t.Skip("STUB: Pig carrot-on-stick boost not yet implemented. This test documents current limitations.")
-
+// TestPigCarrotBoost verifies that carrot-on-a-stick provides a speed boost.
+func TestPigCarrotBoost(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			// TODO: Implement to document current behavior
-			// 1. Mount pig
-			// 2. Equip carrot-on-stick in agent's hand
-			//    Example: /give @s carrot_on_a_stick
-			// 3. Move forward with carrot equipped
-			// 4. Measure velocity with and without carrot
-			// 5. Document if speed boost is applied (currently: no boost expected)
-			//
-			// When carrot-boost is implemented:
-			// 1. Agent speed should increase when holding carrot
-			// 2. Speed should decrease when carrot is put away
-			// 3. Carrot damage should increase based on boost usage
-			// 4. Pig should look toward carrot item
+			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "PigCarrotBot")
+			defer cleanup()
+
+			_, err := helper.Instance.RCON.Exec(ctx, "teleport PigCarrotBot 400 1 400")
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			x1, y1, z1 := pos.X, pos.Y, pos.Z
+
+			// Test movement WITHOUT carrot
+			pigID1, err := helper.SummonPig(ctx, x1, y1, z1)
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			err = helper.MountEntity(ctx, pigID1)
+			require.NoError(t, err)
+
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnterManualMode()
+			require.NoError(t, err)
+
+			helper.SetManualThrottle(0, 1.0)
+			time.Sleep(2 * time.Second)
+
+			pos1, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			movementWithoutCarrot := GetDistance(pos1.X, pos1.Y, pos1.Z, x1, y1, z1)
+
+			err = helper.ExitManualMode()
+			require.NoError(t, err)
+
+			err = helper.DismountEntity()
+			require.NoError(t, err)
+
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			// Teleport to new location
+			x2, y2, z2 := 400.0, 1.0, 500.0
+			_, err = helper.Instance.RCON.Exec(ctx, "teleport PigCarrotBot 400 1 500")
+			require.NoError(t, err)
+
+			time.Sleep(500 * time.Millisecond)
+
+			// Test movement WITH carrot
+			pigID2, err := helper.SummonPig(ctx, x2, y2, z2)
+			require.NoError(t, err)
+
+			// Give carrot and ensure it's in hand
+			_, _ = helper.Instance.RCON.Exec(ctx, "give PigCarrotBot carrot_on_a_stick")
+			time.Sleep(500 * time.Millisecond)
+
+			time.Sleep(500 * time.Millisecond)
+
+			err = helper.MountEntity(ctx, pigID2)
+			require.NoError(t, err)
+
+			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnterManualMode()
+			require.NoError(t, err)
+
+			helper.SetManualThrottle(0, 1.0)
+			time.Sleep(2 * time.Second)
+
+			pos2, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			movementWithCarrot := GetDistance(pos2.X, pos2.Y, pos2.Z, x2, y2, z2)
+
+			// Movement with carrot should be faster
+			actualRatio := movementWithCarrot / movementWithoutCarrot
+
+			t.Logf("Movement without carrot: %.2f blocks", movementWithoutCarrot)
+			t.Logf("Movement with carrot: %.2f blocks", movementWithCarrot)
+			t.Logf("Speed ratio (with/without): %.2f", actualRatio)
+
+			require.Greater(t, actualRatio, 1.0, "carrot should increase movement speed")
+
+			err = helper.ExitManualMode()
+			require.NoError(t, err)
+
+			err = helper.DismountEntity()
+			require.NoError(t, err)
+
+			err = helper.WaitForDismounted(ctx, 5*time.Second)
+			require.NoError(t, err)
 		})
 	}
 }

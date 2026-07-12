@@ -7,6 +7,8 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -260,6 +262,31 @@ func (a *agent) IsMountedEntityNautilus(entityTypeID int32) bool {
 	return rval
 }
 
+// IsMountedEntityZombieNautilus checks if a mounted entity is specifically a
+// zombie_nautilus by type ID. Used to select the zombie's higher base movement
+// speed (1.1 vs 1.0) when the server has not sent generic.movement_speed.
+func (a *agent) IsMountedEntityZombieNautilus(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	return localName == "zombie_nautilus"
+}
+
 // IsMountedEntityMinecart checks if a mounted entity is a minecart by type ID.
 // Returns true if the entity type's local name (after the namespace prefix)
 // is "minecart" or ends with "_minecart" — e.g., minecart, chest_minecart,
@@ -288,6 +315,114 @@ func (a *agent) IsMountedEntityMinecart(entityTypeID int32) bool {
 	rval := localName == "minecart" || strings.HasSuffix(localName, "_minecart")
 
 	log.Printf("[IsMountedEntityMinecart] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
+// IsMountedEntityPig checks if a mounted entity is a pig by type ID.
+func (a *agent) IsMountedEntityPig(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "pig"
+
+	log.Printf("[IsMountedEntityPig] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
+// IsMountedEntityStrider checks if a mounted entity is a strider by type ID.
+func (a *agent) IsMountedEntityStrider(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "strider"
+
+	log.Printf("[IsMountedEntityStrider] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
+// IsMountedEntityDonkey checks if a mounted entity is a donkey by type ID.
+func (a *agent) IsMountedEntityDonkey(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "donkey"
+
+	log.Printf("[IsMountedEntityDonkey] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
+// IsMountedEntityMule checks if a mounted entity is a mule by type ID.
+func (a *agent) IsMountedEntityMule(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "mule"
+
+	log.Printf("[IsMountedEntityMule] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -323,4 +458,81 @@ func (a *agent) GetEntityVelocity(entityID int32) (float64, float64, float64, bo
 	}
 
 	return entity.VelX, entity.VelY, entity.VelZ, true
+}
+
+// GetRiderHeldItem returns the local item name (e.g. "carrot_on_a_stick") of the rider's
+// currently held item in their active hotbar slot. Returns ("", false) if no item found.
+// The name has no namespace prefix.
+func (a *agent) GetRiderHeldItem() (string, bool) {
+	// Get held slot index (0-8 for hotbar)
+	a.heldSlotMu.RLock()
+	slot := a.heldSlot
+	a.heldSlotMu.RUnlock()
+
+	a.slotsMu.RLock()
+	slotResolver := a.slots
+	a.slotsMu.RUnlock()
+
+	a.itemMgrMu.RLock()
+	itemMgr := a.itemMgr
+	a.itemMgrMu.RUnlock()
+
+	if slotResolver == nil || itemMgr == nil {
+		return "", false
+	}
+
+	// Player inventory hotbar slots are indexes 36-44.
+	itemID, _, ok := slotResolver.ResolveSlot(-2, 36+slot)
+	if !ok {
+		return "", false
+	}
+
+	itemName := itemMgr.GetItemNameByID(itemID)
+	if itemName == "" {
+		return "", false
+	}
+
+	// Strip the namespace prefix (e.g., "minecraft:") to get local name
+	localName := itemName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	return localName, true
+}
+
+// FindRideableEntitiesNear returns all rideable entities within a given radius of a center position.
+func (a *agent) FindRideableEntitiesNear(center models.V3, radius float64) []pathfinding.RideableEntity {
+	result := make([]pathfinding.RideableEntity, 0)
+
+	a.entitiesMu.RLock()
+	entities := a.entities
+	a.entitiesMu.RUnlock()
+
+	radiusSq := radius * radius
+
+	for entityID, tracked := range entities {
+		// Skip if entity is too far
+		distSq := (tracked.X-center.X)*(tracked.X-center.X) +
+			(tracked.Y-center.Y)*(tracked.Y-center.Y) +
+			(tracked.Z-center.Z)*(tracked.Z-center.Z)
+
+		if distSq > radiusSq {
+			continue
+		}
+
+		// Check if entity type is rideable
+		entityTypeID := models.EntityType(tracked.EntityType)
+		if !entityTypeID.IsRideable() {
+			continue
+		}
+
+		result = append(result, pathfinding.RideableEntity{
+			EntityID:   entityID,
+			EntityType: entityTypeID,
+			Position:   models.V3{X: tracked.X, Y: tracked.Y, Z: tracked.Z},
+		})
+	}
+
+	return result
 }

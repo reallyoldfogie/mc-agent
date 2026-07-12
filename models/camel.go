@@ -65,6 +65,20 @@ const (
 	// CamelHuskChargingSpeedMultiplier is the rider charging speed multiplier for CamelHusk (1.21.11+).
 	// Java: CamelHuskEntity.getRiderChargingSpeedMultiplier() returns 4.0F
 	CamelHuskChargingSpeedMultiplier = 4.0
+
+	// Camel hitbox dimensions (blocks), matching the vanilla CamelEntity. The
+	// client's ground/edge detection and collision must use these so they agree
+	// with the server's authoritative entity; under-modeling the width makes a
+	// ridden camel flip to airborne at a ledge before the server does and stall
+	// at the edge instead of walking off. Only adults are rideable, and a sitting
+	// camel is stationary, so the mounted-movement path uses the adult standing
+	// box; the remaining values are defined for correctness and future use.
+	CamelWidthAdult          = 1.7
+	CamelHeightAdultStanding = 2.375
+	CamelHeightAdultSitting  = 0.945
+	CamelWidthBaby           = 0.85
+	CamelHeightBabyStanding  = 1.1875
+	CamelHeightBabySitting   = 0.4725
 )
 
 // CamelState tracks the server-side camel pose and dash state.
@@ -220,6 +234,30 @@ func ClampJumpStrength(chargeTicks int) float64 {
 		return 1.0
 	}
 	return 0.4 + 0.4*float64(chargeTicks)/90.0
+}
+
+// MountJumpStrength mirrors the Java client charge ramp from
+// ClientPlayerEntity.tickMovement() that drives the jump-bar while the jump key
+// is held on a JumpingMount (horse/camel):
+//
+//	this.mountJumpTicks++;
+//	if (this.mountJumpTicks < 10) {
+//	    this.mountJumpStrength = this.mountJumpTicks * 0.1F;
+//	} else {
+//	    this.mountJumpStrength = 0.8F + 2.0F / (this.mountJumpTicks - 9) * 0.1F;
+//	}
+//
+// The ramp reaches 1.0 at tick 10 and then decays back toward 0.8 as the charge
+// is held longer. chargeTicks is the number of ticks the jump key has been held
+// (already scaled by the mount's charging speed multiplier, e.g. 4x for a camel
+// husk). The returned float is the 0..1 strength the client would send to the
+// server; callers should floor(mountJumpStrength*100) and feed that int to
+// ClampJumpStrength to match the server-side clamp exactly.
+func MountJumpStrength(chargeTicks int) float64 {
+	if chargeTicks < 10 {
+		return float64(chargeTicks) * 0.1
+	}
+	return 0.8 + 2.0/float64(chargeTicks-9)*0.1
 }
 
 // TickDashCooldown decrements the dash cooldown by one tick.

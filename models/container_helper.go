@@ -1,7 +1,7 @@
 package models
 
-// ContainerHelper provides high-level container interaction methods.
-type ContainerHelper interface {
+// ContainerManager provides high-level container interaction methods.
+type ContainerManager interface {
 	SetEntityIDProvider(provider EntityIDProvider)
 	ContainerAccess
 	GetContainerSlotCount(windowID byte) int

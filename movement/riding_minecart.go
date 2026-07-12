@@ -9,13 +9,28 @@ import (
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
 
+const (
+	// minecartRailReacquireGraceTicks bounds how many consecutive ticks a ridden
+	// minecart may coast at its last rail height after rail detection fails,
+	// before it falls normally. This covers brief gaps at rail-segment
+	// transitions and not-yet-loaded rail blocks without masking a genuine run
+	// off the end of the track (which exceeds the window and then falls).
+	minecartRailReacquireGraceTicks = 6
+
+	// minecartCoyoteMaxDrop is the maximum vertical distance from the last rail
+	// height for which coyote coasting applies. Beyond this the cart is treated
+	// as genuinely off the rail and falls.
+	minecartCoyoteMaxDrop = 1.0
+)
+
 // minecartRailInfo holds information about a rail block beneath a minecart.
 type minecartRailInfo struct {
-	found       bool
-	shape       string
-	isPowered   bool // block is a powered rail
-	isEnergized bool // powered rail has redstone power
-	railBlockY  int  // integer Y of the rail block
+	found         bool
+	shape         string
+	isPowered     bool // block is a powered rail
+	isEnergized   bool // powered rail has redstone power
+	railBlockY    int  // integer Y of the rail block
+	isWaterlogged bool // rail has the waterlogged=true block property
 }
 
 // handleRidingModeMinecart runs one client-authoritative minecart tick.
@@ -24,7 +39,7 @@ type minecartRailInfo struct {
 func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 	versionHandler models.VersionHandler,
 	forward, backward, sneak bool,
-) {
+) ridingTickResult {
 	// (1) Send vehicle input (forward/backward affect momentum; left/right unused on rails)
 	if err := versionHandler.Play().Movement().SendVehicleInput(
 		pe.movementPacketSender.client.Conn(),
@@ -61,31 +76,69 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 	var newVelMultiplier float64
 
 	// Detect water at the minecart's position.
+	// Java AbstractMinecartEntity uses isTouchingWater() to gate underwater physics
+	// (reduced max speed, lighter gravity, extra drag). A rail block that carries
+	// the waterlogged=true property is itself the fluid-bearing block — its block
+	// name is the rail, not water, so IsWater() returns false even though the
+	// minecart is in water. Fold in the waterlogged flag surfaced by
+	// detectRailBelow so water physics also apply on waterlogged rails, matching
+	// vanilla behavior on rails laid through a water pool.
 	inWater := false
 	if pe.world != nil && pe.shapeProvider != nil {
 		blockBelow := pe.getBlockBelowEntity(currentPos.X, currentPos.Y, currentPos.Z)
 		inWater = pe.shapeProvider.IsWater(blockBelow)
 	}
+	if rail.isWaterlogged {
+		inWater = true
+	}
 
+	onRail := rail.found
 	if !rail.found {
-		// Off-rail: apply gravity accumulation and conditional drag.
-		gravityDelta := physics.MinecartFallGravity
-		if inWater {
-			gravityDelta = physics.MinecartWaterGravity
-		}
-		pe.ridingVelY += gravityDelta
+		// Rail detection failed this tick. Before free-falling, allow a short
+		// coyote-time grace: if the cart was recently on a rail and is still near
+		// that rail height, coast at that height for a few ticks so a transient
+		// detection gap (a segment transition or a not-yet-loaded rail block) does
+		// not send it plummeting. The next tick's widened rail probe usually
+		// re-acquires the track. A genuine run off the end of the track exceeds the
+		// grace window (or drops too far) and falls normally.
+		withinCoyote := pe.minecartCoyoteTicks < minecartRailReacquireGraceTicks &&
+			math.Abs(currentPos.Y-pe.minecartLastRailGroundY) <= minecartCoyoteMaxDrop
+		if withinCoyote {
+			pe.minecartCoyoteTicks++
+			pe.ridingVelY = 0
+			newVelX = ridingVelX * physics.MinecartRailDrag
+			newVelZ = ridingVelZ * physics.MinecartRailDrag
+			newVelMultiplier = physics.MinecartRailDrag
+			if inWater {
+				newVelX *= physics.MinecartWaterDragMultiplier
+				newVelZ *= physics.MinecartWaterDragMultiplier
+			}
+			newX = currentPos.X + newVelX*physics.MinecartPassengerSpeedMultiplier
+			newZ = currentPos.Z + newVelZ*physics.MinecartPassengerSpeedMultiplier
+			newY = pe.minecartLastRailGroundY
+			onRail = true // pin to the rail height for finalPos handling below
+		} else {
+			// Off-rail: apply gravity accumulation and conditional drag.
+			gravityDelta := physics.MinecartFallGravity
+			if inWater {
+				gravityDelta = physics.MinecartWaterGravity
+			}
+			pe.ridingVelY += gravityDelta
 
-		offRailDrag := physics.MinecartOffRailAirDrag
-		if math.Abs(pe.ridingVelY) < 0.01 {
-			offRailDrag = physics.MinecartOffRailDrag
-		}
+			offRailDrag := physics.MinecartOffRailAirDrag
+			if math.Abs(pe.ridingVelY) < 0.01 {
+				offRailDrag = physics.MinecartOffRailDrag
+			}
 
-		newVelX = ridingVelX * offRailDrag
-		newVelZ = ridingVelZ * offRailDrag
-		newX = currentPos.X + newVelX
-		newY = currentPos.Y + pe.ridingVelY
-		newZ = currentPos.Z + newVelZ
-		newVelMultiplier = offRailDrag
+			newVelX = ridingVelX * offRailDrag
+			newVelZ = ridingVelZ * offRailDrag
+			newVelMultiplier = offRailDrag
+			// newX/newY/newZ are intentionally left unset here. The single
+			// authoritative off-rail move (with collision) happens below via
+			// resolveEntityCollision starting from currentPos; pre-advancing the
+			// position here and then moving again would double-apply the velocity
+			// and let the cart tunnel through the block it should land on.
+		}
 	} else {
 		// On rail: reset Y velocity
 		pe.ridingVelY = 0
@@ -187,8 +240,21 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 			newVelZ *= physics.MinecartWaterDragMultiplier
 		}
 
-		// Compute Y from rail geometry
-		newY = railYAtPosition(rail.shape, newX, newZ, railBlockX, rail.railBlockY, railBlockZ)
+		// Anchor Y to the rail at the DESTINATION cell, not the rail the cart is
+		// leaving. When newX/newZ cross a block boundary (the common case at a
+		// flat/ascending join), computing Y from the origin rail's shape and anchor
+		// snaps the cart to the wrong height and can drop it off the track. Only if
+		// the destination cell has no rail do we fall back to the origin rail.
+		if destRail := pe.detectRailBelow(newX, currentPos.Y, newZ); destRail.found {
+			newY = railYAtPosition(destRail.shape, newX, newZ, int(math.Floor(newX)), destRail.railBlockY, int(math.Floor(newZ)))
+		} else {
+			newY = railYAtPosition(rail.shape, newX, newZ, railBlockX, rail.railBlockY, railBlockZ)
+		}
+
+		// Record the rail height and reset the coyote counter so a later detection
+		// gap can coast from here instead of immediately free-falling.
+		pe.minecartLastRailGroundY = newY
+		pe.minecartCoyoteTicks = 0
 	}
 
 	// Update shared velocity state
@@ -196,14 +262,32 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 	pe.ridingVelZ = newVelZ
 	pe.lastVelMultiplier = newVelMultiplier
 
+	// Collision detection when off-rail
+	// Minecart dimensions: 0.98 wide × 0.7 tall (Java: AbstractMinecartEntity has slightly
+	// different dimensions than boat, but we approximate with a reasonable size)
+	var finalPos models.V3
+	onGround := onRail
+	if !onRail {
+		// Off-rail: perform a SINGLE move from the current position with collision
+		// detection so the cart comes to rest on whatever block it lands on (e.g.
+		// running off the end of a rail onto a solid block). Moving from currentPos
+		// here — rather than a pre-advanced position — avoids double-applying the
+		// velocity and the resulting tunneling straight through the landing block.
+		moveVel := models.V3{X: newVelX, Y: pe.ridingVelY, Z: newVelZ}
+		collisionPos, collisionVel, collisionOnGround, _, _ := resolveEntityCollision(pe, currentPos, moveVel, 0.98, 0.7)
+		finalPos = collisionPos
+		onGround = collisionOnGround
+		newVelX = collisionVel.X
+		newVelZ = collisionVel.Z
+		pe.ridingVelY = collisionVel.Y
+	} else {
+		finalPos = models.V3{X: newX, Y: newY, Z: newZ}
+	}
+
 	log.Printf("[handleRidingModeMinecart] rail=%v shape=%s isSlope=%v vel=(%.4f,%.4f) pos=(%.3f,%.3f,%.3f)",
-		rail.found, rail.shape, rail.found && isSlope(rail.shape), newVelX, newVelZ, newX, newY, newZ)
+		rail.found, rail.shape, rail.found && isSlope(rail.shape), newVelX, newVelZ, finalPos.X, finalPos.Y, finalPos.Z)
 
-	newPos := models.V3{X: newX, Y: newY, Z: newZ}
-	pe.physicsState.SetPosition(newPos, yaw, pitch, rail.found)
-	pe.movementPacketSender.setBotPosition(newPos, yaw, pitch)
-
-	// Final NaN safety check
+	// Final NaN safety check for the packet pose.
 	sendYaw := yaw
 	sendPitch := pitch
 	if math.IsNaN(sendYaw) {
@@ -213,13 +297,17 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 		sendPitch = 0
 	}
 
-	if err := versionHandler.Play().Movement().SendMoveVehicle(
-		pe.movementPacketSender.client.Conn(),
-		newX, newY, newZ,
-		sendYaw, sendPitch,
-		rail.found,
-	); err != nil {
-		log.Printf("[handleRidingModeMinecart] SendMoveVehicle error: %v", err)
+	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
+	// mountedEntityMu is released. The minecart sends NaN-sanitized yaw/pitch,
+	// which may differ from the pose stored in physicsState.
+	return ridingTickResult{
+		NewPos:      finalPos,
+		OnGround:    onGround,
+		Sneak:       sneak,
+		StateYaw:    yaw,
+		StatePitch:  pitch,
+		PacketYaw:   sendYaw,
+		PacketPitch: sendPitch,
 	}
 }
 
@@ -230,7 +318,12 @@ func (pe *PhysicsMovementExecutor) detectRailBelow(x, y, z float64) minecartRail
 	}
 	bx := int(math.Floor(x))
 	bz := int(math.Floor(z))
-	for _, by := range []int{int(math.Floor(y)), int(math.Floor(y)) - 1} {
+	// Probe the block at the cart's feet and the one below (the normal rail
+	// anchor positions) first, then one above as a last resort. The +1 candidate
+	// is checked last so normal on-rail ticks are unaffected; it only matters when
+	// neither the feet nor the block below carries a rail, which is the case when
+	// stepping up onto the next segment at a flat/ascending transition.
+	for _, by := range []int{int(math.Floor(y)), int(math.Floor(y)) - 1, int(math.Floor(y)) + 1} {
 		stateID, loaded := pe.world.GetBlockStatus(bx, by, bz)
 		if !loaded {
 			continue
@@ -263,11 +356,12 @@ func (pe *PhysicsMovementExecutor) detectRailBelow(x, y, z float64) minecartRail
 		if isRail {
 			isPowered := railType == "minecraft:powered_rail"
 			return minecartRailInfo{
-				found:       true,
-				shape:       props["shape"],
-				isPowered:   isPowered,
-				isEnergized: isPowered && props["powered"] == "true",
-				railBlockY:  by,
+				found:         true,
+				shape:         props["shape"],
+				isPowered:     isPowered,
+				isEnergized:   isPowered && props["powered"] == "true",
+				railBlockY:    by,
+				isWaterlogged: props["waterlogged"] == "true",
 			}
 		}
 	}

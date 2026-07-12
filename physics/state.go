@@ -67,14 +67,20 @@ func NewState(shapeProvider BlockShapeProvider) models.PhysicsState {
 func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Calculate delta for debugging (server corrections should be rare)
-	deltaX := pos.X - s.Pos.X
-	deltaY := pos.Y - s.Pos.Y
-	deltaZ := pos.Z - s.Pos.Z
-
-	if deltaX != 0 || deltaY != 0 || deltaZ != 0 {
-		log.Printf("[Physics] Server position correction: Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
-			deltaX, deltaY, deltaZ, s.Vel.Y)
+	// SetPosition is a low-level setter used both for genuine server corrections
+	// and for the client's own per-tick riding updates (via sendRidingMove), so it
+	// must not label every change a "server correction" — that mislabels routine
+	// client updates and floods the log. Genuine corrections are logged with
+	// accurate context by the executor (HandleServerCorrection / SyncRidingPosition
+	// / SyncMountedPosition). Keep only an opt-in, neutral trace here.
+	if os.Getenv("DEBUG_PHYSICS_POSITION") != "" {
+		deltaX := pos.X - s.Pos.X
+		deltaY := pos.Y - s.Pos.Y
+		deltaZ := pos.Z - s.Pos.Z
+		if deltaX != 0 || deltaY != 0 || deltaZ != 0 {
+			log.Printf("[PhysicsState] SetPosition Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
+				deltaX, deltaY, deltaZ, s.Vel.Y)
+		}
 	}
 
 	s.Pos = pos
@@ -895,6 +901,18 @@ func (s *state) tryStepUp(playerBB AABB, vel models.V3, w World) (AABB, models.V
 	playerBB = playerBB.Offset(0, outVel.Y, 0)
 
 	return playerBB, outVel
+}
+
+// ResolveCollision performs collision detection and resolution for an arbitrary AABB
+// moving with the given velocity through the world. Returns the corrected AABB,
+// corrected velocity, and whether horizontal/vertical collisions occurred.
+// This is the exported version of computeCollisionYXZ for use by riding handlers
+// that need collision detection for ridden entities with non-player dimensions.
+func (s *state) ResolveCollision(entityBB AABB, vel models.V3, w World) (AABB, models.V3, bool, bool) {
+	resultBB, resultVel := s.computeCollisionYXZ(entityBB, vel, w)
+	horizontalCollision := resultVel.X != vel.X || resultVel.Z != vel.Z
+	verticalCollision := resultVel.Y != vel.Y
+	return resultBB, resultVel, horizontalCollision, verticalCollision
 }
 
 // computeCollisionYXZ performs collision detection and resolution in YXZ order.

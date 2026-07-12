@@ -438,6 +438,33 @@ func (p *playHandler) BuildSpawnEntityPacket(entityID int32, uuid [16]byte, enti
 	return packetID, packetData, nil
 }
 
+// BuildEntityEquipmentPacket builds an EntityEquipment packet for replay recording (v1.21.6).
+func (p *playHandler) BuildEntityEquipmentPacket(entityID int32, hand models.Hand, itemID int32, count int32) (int32, []byte, error) {
+	pkt := cb.NewEntityEquipment()
+	pkt.EntityId = pk.VarInt(entityID)
+
+	entry := cb.EntityEquipmentEquipmentsEntry{
+		Slot: pk.Byte(hand),
+	}
+	if count > 0 {
+		entry.Item.ItemCount = pk.VarInt(count)
+		entry.Item.UnnamedType0001 = &basetypes.SlotUnnamedType0001Default{
+			ItemId:              pk.VarInt(itemID),
+			AddedComponentCount: 0,
+			RemovedComponentCount: 0,
+		}
+	} else {
+		entry.Item.ItemCount = 0
+		entry.Item.UnnamedType0001 = &protocol_models.Void{}
+	}
+
+	pkt.Equipments.Values = []*cb.EntityEquipmentEquipmentsEntry{&entry}
+
+	packetID := int32(pkt.PacketID())
+	packetData := pkt.Marshal().Data
+	return packetID, packetData, nil
+}
+
 func ptrVarInt(v int32) *pk.VarInt {
 	val := pk.VarInt(v)
 	return &val

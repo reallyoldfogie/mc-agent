@@ -37,7 +37,7 @@ func (s *ContainerTestSuite) TestCraftingTable() {
 	}
 
 	// Close crafting table
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Crafting table test passed")
@@ -67,7 +67,7 @@ func (s *ContainerTestSuite) TestCrafter() {
 	s.Require().Equal(9, genericContainer.ContainerSlots, "crafter should have 9 container slots")
 
 	// Close crafter
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Crafter test passed")
@@ -97,7 +97,7 @@ func (s *ContainerTestSuite) TestBrewingStand() {
 	s.Require().Equal(5, genericContainer.ContainerSlots, "brewing stand should have 5 container slots")
 
 	// Close brewing stand
-	_ = s.containerHelper.CloseContainer()
+	_ = s.agent.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Brewing stand test passed")

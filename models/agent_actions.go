@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -27,7 +28,19 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	UseItemOnEntity(ctx context.Context, entityID int32, hand Hand, sneaking bool) error
 	SelectHotbarSlot(ctx context.Context, slot int16) error
 	FindSlotWith(ctx context.Context, itemName string, windowID int) (slot int, found bool, err error)
+
+	// WaitForHotbarItem waits for a specific item to appear in the hotbar.
+	// This is useful after RCON commands that place items, as there may be inventory sync delays.
+	// Returns the slot index when found, or error if timeout/context cancelled.
 	WaitForHotbarItem(ctx context.Context, itemName string, maxWaitMS int) (slot int16, err error)
+
+	// SwitchToItem finds an item by name anywhere in the player's inventory and equips it.
+	// If the item is already in the hotbar, it selects that slot directly.
+	// If the item is in the main inventory, it swaps it into a hotbar slot and selects it.
+	// Returns (true, nil) if the item was found and equipped, (false, nil) if not found,
+	// or (false, err) on error.
+	SwitchToItem(ctx context.Context, itemName string) (bool, error)
+	LogInventory(output io.Writer)
 
 	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
 	// PlaceBlockAt(ctx context.Context, pos V3, blockName string) error

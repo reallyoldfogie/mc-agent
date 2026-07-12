@@ -104,7 +104,7 @@ func TestHorse_Standalone(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 
 			// Open horse container
-			windowID, err := env.ContainerHelper.OpenEntityContainer(horseID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(horseID, 5*time.Second)
 			require.NoError(t, err, "open horse container")
 			t.Logf("Horse container opened with window ID: %d", windowID)
 
@@ -117,7 +117,7 @@ func TestHorse_Standalone(t *testing.T) {
 			t.Logf("Screen type: %T", screen)
 
 			// Close container
-			err = env.ContainerHelper.CloseContainer()
+			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close horse container")
 
 			t.Log("✓ Horse container test passed")
@@ -183,7 +183,7 @@ func TestChestBoat_Standalone(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 
 			// Open chest boat container
-			windowID, err := env.ContainerHelper.OpenEntityContainer(boatID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(boatID, 5*time.Second)
 			require.NoError(t, err, "open chest boat container")
 			t.Logf("Chest boat container opened with window ID: %d", windowID)
 
@@ -193,7 +193,7 @@ func TestChestBoat_Standalone(t *testing.T) {
 			t.Logf("Screen type: %T", screen)
 
 			// Close container
-			err = env.ContainerHelper.CloseContainer()
+			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close chest boat container")
 
 			t.Log("✓ Chest boat container test passed")
@@ -258,7 +258,7 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 
 			// Open chest minecart container
-			windowID, err := env.ContainerHelper.OpenEntityContainer(minecartID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(minecartID, 5*time.Second)
 			require.NoError(t, err, "open chest minecart container")
 			t.Logf("Chest minecart container opened with window ID: %d", windowID)
 
@@ -268,7 +268,7 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			t.Logf("Screen type: %T", screen)
 
 			// Close container
-			err = env.ContainerHelper.CloseContainer()
+			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close chest minecart container")
 
 			t.Log("✓ Chest minecart container test passed")

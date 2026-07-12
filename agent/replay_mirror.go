@@ -195,6 +195,38 @@ func (m *replayMovementMirror) NotifyLoginSeen() {
 	m.mu.Unlock()
 }
 
+// EmitEquipment synthesizes a ClientboundEntityEquipment packet for the agent's own
+// entity and records it into the replay stream.
+func (m *replayMovementMirror) EmitEquipment(entityID int32, hand models.Hand, itemID int32, count int32) {
+	if m == nil || m.rec == nil {
+		return
+	}
+	m.mu.Lock()
+	spawned := m.spawned
+	loginSeen := m.loginSeen
+	selfEntityID := m.entityID
+	m.mu.Unlock()
+
+	if !loginSeen || !spawned || selfEntityID == 0 || entityID != selfEntityID {
+		return
+	}
+
+	if m.versionHandler == nil {
+		return
+	}
+
+	packetID, packetData, err := m.versionHandler.Play().BuildEntityEquipmentPacket(entityID, hand, itemID, count)
+	if err != nil {
+		log.Printf("[ReplayMirror] EmitEquipment: failed to build packet: %v", err)
+		return
+	}
+
+	log.Printf("[ReplayMirror] EmitEquipment: entityID=%d hand=%s itemID=%d count=%d", entityID, hand, itemID, count)
+	if err := m.rec.RecordNow(packetID, packetData); err != nil {
+		log.Printf("[ReplayMirror] EmitEquipment: failed to record packet: %v", err)
+	}
+}
+
 func (m *replayMovementMirror) HandleServerbound(p pk.Packet) {
 	if m == nil || m.rec == nil {
 		return
@@ -309,13 +341,25 @@ func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 	}
 }
 
+// lastPosition returns a snapshot of the last known position fields under the
+// mutex. Callers outside the lock must use this helper to read these fields to
+// avoid races with the write performed inside emitTeleport. Do NOT call this
+// while already holding m.mu, as it will deadlock.
+func (m *replayMovementMirror) lastPosition() (x, y, z, yaw, pitch float64) {
+	m.mu.Lock()
+	x, y, z, yaw, pitch = m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch
+	m.mu.Unlock()
+	return
+}
+
 func (m *replayMovementMirror) handlePos(p pk.Packet) {
 	// Use version handler if available, fallback to direct packet parsing
 	if m.versionHandler != nil {
 		x, y, z, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPos(p)
 		if err == nil {
 			log.Printf("[ReplayMirror] handlePos (version-specific): pos=(%.2f, %.2f, %.2f)", x, y, z)
-			m.emitTeleport(x, y, z, m.lastYaw, m.lastPitch, onGround)
+			_, _, _, lastYaw, lastPitch := m.lastPosition()
+			m.emitTeleport(x, y, z, lastYaw, lastPitch, onGround)
 			return
 		}
 	}
@@ -327,7 +371,8 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 		return
 	}
 	log.Printf("[ReplayMirror] handlePos (fallback): pos=(%.2f, %.2f, %.2f)", float64(x), float64(y), float64(z))
-	m.emitTeleport(float64(x), float64(y), float64(z), m.lastYaw, m.lastPitch, bool(onGround))
+	_, _, _, lastYaw, lastPitch := m.lastPosition()
+	m.emitTeleport(float64(x), float64(y), float64(z), lastYaw, lastPitch, bool(onGround))
 }
 
 func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
@@ -360,7 +405,8 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 		yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundRot(p)
 		if err == nil {
 			log.Printf("[ReplayMirror] handleRot (version-specific): yaw=%.2f pitch=%.2f", yaw, pitch)
-			m.emitTeleport(m.lastX, m.lastY, m.lastZ, yaw, pitch, onGround)
+			lastX, lastY, lastZ, _, _ := m.lastPosition()
+			m.emitTeleport(lastX, lastY, lastZ, yaw, pitch, onGround)
 			return
 		}
 	}
@@ -372,7 +418,8 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 		return
 	}
 	log.Printf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
-	m.emitTeleport(m.lastX, m.lastY, m.lastZ, float64(yaw), float64(pitch), bool(onGround))
+	lastX, lastY, lastZ, _, _ := m.lastPosition()
+	m.emitTeleport(lastX, lastY, lastZ, float64(yaw), float64(pitch), bool(onGround))
 }
 
 // handleSwing mirrors a serverbound arm-swing packet into a clientbound Entity
@@ -423,7 +470,8 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 		onGround, err := m.versionHandler.Play().Movement().ParseServerboundStatus(p)
 		if err == nil {
 			log.Printf("[ReplayMirror] handleStatus (version-specific): onGround=%v", onGround)
-			m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, onGround)
+			lastX, lastY, lastZ, lastYaw, lastPitch := m.lastPosition()
+			m.emitTeleport(lastX, lastY, lastZ, lastYaw, lastPitch, onGround)
 			return
 		}
 	}
@@ -434,7 +482,8 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 		return
 	}
 	log.Printf("[ReplayMirror] handleStatus (fallback): onGround=%v", bool(onGround))
-	m.emitTeleport(m.lastX, m.lastY, m.lastZ, m.lastYaw, m.lastPitch, bool(onGround))
+	lastX, lastY, lastZ, lastYaw, lastPitch := m.lastPosition()
+	m.emitTeleport(lastX, lastY, lastZ, lastYaw, lastPitch, bool(onGround))
 }
 
 func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float64, onGround bool) {

@@ -201,8 +201,9 @@ type agent struct {
 	// HPA* dynamic world updates
 	hpaUpdateHandler *pathfinding.WorldUpdateHandler
 
-	// container system
+	// container/inventory system
 	containerHelper ContainerHelper
+	invMgr          models.InventoryManager
 
 	// position heartbeat (continuous position packets at 20 TPS)
 	posHeartbeatMu     sync.Mutex
@@ -724,6 +725,21 @@ func (a *agent) Init(ctx context.Context) error {
 			log.Printf("[Agent %s] Stuck recovery callback configured", a.cfg.Name)
 		}
 
+		// Set up mount/dismount callbacks for vehicle pathfinding
+		if mountCallbackSetter, ok := a.moveExec.(interface {
+			SetMountCallbacks(func(context.Context, int32) error, func(context.Context) error)
+		}); ok {
+			mountCallbackSetter.SetMountCallbacks(
+				func(ctx context.Context, entityID int32) error {
+					return a.MountEntity(ctx, entityID)
+				},
+				func(ctx context.Context) error {
+					return a.DismountEntity()
+				},
+			)
+			log.Printf("[Agent %s] Mount/dismount callbacks configured", a.cfg.Name)
+		}
+
 		// Wrap with HPA* for hierarchical pathfinding on long distances
 		// Larger cluster size = fewer clusters, faster building (but more entrances per cluster)
 		// 32x32x32 aligns with Minecraft chunks (16x16) and is power-of-2 for CPU efficiency
@@ -735,7 +751,16 @@ func (a *agent) Init(ctx context.Context) error {
 			//limiter.SetEntranceLimits(4, 10)
 			limiter.SetEntranceLimits(50, 2000) // Allow paths up to 2000 cost to entrances (handles complex vertical terrain)
 		}
-		a.pathfind = hpaPathfinder
+
+		// Wrap HPA pathfinder with vehicle-aware pathfinder
+		vehicleAwarePathfinder := pathfinding.NewVehicleAwarePathFinder(
+			hpaPathfinder,
+			a,                // Agent implements VehicleProvider
+			a.worldMgr,       // World for terrain checking
+			shapeMgr,         // Shape manager for vehicle movement validation
+			32.0,             // Default search radius for vehicles
+		)
+		a.pathfind = vehicleAwarePathfinder
 
 		// Create update handler for dynamic world changes
 		// Need to extract builder from HPA pathfinder
@@ -1553,6 +1578,11 @@ func (a *agent) initializeContainerHelper() {
 		actionHandler := a.versionHandler.Play().Actions()
 		itemUsage.SetActionHandler(actionHandler)
 		log.Printf("[Agent %s] Action handler initialized for version %s", a.cfg.Name, a.cfg.Version)
+
+		// Set entity handler (for UseItemOnEntity/entity interaction packets)
+		entityHandler := a.versionHandler.Play().Entities()
+		itemUsage.SetEntityHandler(entityHandler)
+		log.Printf("[Agent %s] Entity handler initialized for version %s", a.cfg.Name, a.cfg.Version)
 	}
 
 	// Cast screen manager to concrete type
@@ -1565,12 +1595,23 @@ func (a *agent) initializeContainerHelper() {
 	// Create inventory manager with screen manager
 	invMgr := items.NewInventoryManager(screenMgr)
 	invMgr.SetWaitForUpdates(false)
+	a.invMgr = invMgr
 
 	// Create container helper with all required dependencies
 	containerHelper := items.NewContainerHelper(itemUsage, invMgr, screenMgr, a.client, a.packetMgr)
 
-	// Use setter to properly initialize (now we're not holding a.mu)
-	a.SetContainerHelper(containerHelper)
+	// Assign directly (containerHelper is internally synchronized)
+	a.containerHelper = containerHelper
+	if containerHelper != nil {
+		containerHelper.SetEntityIDProvider(a)
+
+		// Set movement handler (for SendPlayerCommand packets)
+		if a.versionHandler != nil {
+			movementHandler := a.versionHandler.Play().Movement()
+			containerHelper.SetMovementHandler(movementHandler)
+			log.Printf("[Agent %s] Movement handler initialized on container helper for version %s", a.cfg.Name, a.cfg.Version)
+		}
+	}
 	log.Printf("[Agent %s] Container helper automatically initialized after connection", a.cfg.Name)
 }
 

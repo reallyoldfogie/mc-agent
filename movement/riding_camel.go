@@ -24,7 +24,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	inputs models.Inputs,
 	forward, backward, left, right, jump, sneak bool,
 	entityGetter models.MountedEntityPositionGetter,
-) {
+) ridingTickResult {
 	// (1) Send PlayerInput
 	log.Printf("[handleRidingModeCamel] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
@@ -39,9 +39,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		// Safety: should never happen if dispatch is correct
 		log.Printf("[handleRidingModeCamel] WARNING: camelState is nil, falling back to horse handler")
 		pe.mountedEntityMu.Unlock()
-		pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, entityGetter)
+		horseResult := pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, entityGetter)
 		pe.mountedEntityMu.Lock()
-		return
+		return horseResult
 	}
 
 	// Get world time from server (synchronized via ClientboundUpdateTime packets)
@@ -83,10 +83,20 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		pe.ridingVelZ = 0
 		pe.lastRidingJumpState = jump
 
-		sendVehicleMove(pe, versionHandler, currentPos, yaw, pitch, true)
 		log.Printf("[handleRidingModeCamel] Stationary: sitting=%v changingPose=%v pos=(%.2f,%.2f,%.2f)",
 			camelSt.IsSitting(), camelSt.IsChangingPose(worldTime), currentPos.X, currentPos.Y, currentPos.Z)
-		return
+
+		// The VehicleMove send happens in handleRidingTick via sendRidingMove,
+		// after mountedEntityMu is released. State and packet pose are identical.
+		return ridingTickResult{
+			NewPos:      currentPos,
+			OnGround:    true,
+			Sneak:       sneak,
+			StateYaw:    yaw,
+			StatePitch:  pitch,
+			PacketYaw:   yaw,
+			PacketPitch: pitch,
+		}
 	}
 
 	// (2) Yaw-rotation steering
@@ -98,11 +108,25 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	var gravityDelta float64
 	ridingAirborne := false
 
+	// Camel hitbox must match the vanilla server so client-side ground/edge
+	// detection agrees with it. A mounted camel is always an adult, and a sitting
+	// camel is stationary (handled by the early return above), so the standing
+	// box always applies here. Under-modeling the width previously made the
+	// client flip to airborne at a platform edge before the server (which sees
+	// the true 1.7-wide body) agreed, dropping forward accel to air-control and
+	// stalling the mount at the edge instead of letting it walk off and fall.
+	camelWidth := models.CamelWidthAdult
+	camelHeight := models.CamelHeightAdultStanding
+
+	// Probe for ground support so a camel that walks off a ledge with zero
+	// vertical velocity begins to fall instead of hovering.
+	grounded := ridingHasGroundSupport(pe, currentPos, camelWidth, camelHeight)
+
 	if waterParams.IsInWater {
 		velocityDrag = waterParams.VelocityDrag
 		gravityDelta = waterParams.GravityDelta
 	} else {
-		ridingAirborne = pe.ridingVelY > 0.001 || (pe.ridingVelY < -0.001 && currentPos.Y > pe.ridingGroundY+0.01)
+		ridingAirborne = pe.ridingVelY > 0.001 || !grounded
 		if ridingAirborne {
 			velocityDrag = physics.Inertia
 			gravityDelta = -physics.Gravity
@@ -110,8 +134,6 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 			blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
 			velocityDrag = physics.HorseLandFriction(blockSlipperiness)
 			gravityDelta = 0.0
-			pe.ridingVelY = 0.0
-			pe.ridingGroundY = currentPos.Y
 		}
 	}
 
@@ -126,8 +148,15 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		movementAcceleration += models.CamelSprintBonus
 	}
 
-	// (5) Velocity computation
-	ridingVelZ := pe.ridingVelZ*velocityDrag + inputs.ThrottleZ*movementAcceleration
+	// (5) Velocity computation. While airborne, movement input provides only
+	// limited air control; applying full ground movement speed in the air would
+	// let the camel accelerate to several times its ground speed and fly forward
+	// while falling.
+	inputAccel := movementAcceleration
+	if ridingAirborne {
+		inputAccel = physics.RidingAirborneAcceleration
+	}
+	ridingVelZ := pe.ridingVelZ*velocityDrag + inputs.ThrottleZ*inputAccel
 	ridingVelX := 0.0
 	ridingVelY := pe.ridingVelY + gravityDelta
 	if ridingAirborne {
@@ -150,6 +179,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 
 	if camelSt.GetIsCharging() {
 		if jump {
+			// Accumulate charge using the mount's charging speed multiplier.
+			// Regular camel = 1.0x; CamelHusk = 4.0x (charges 4x faster).
 			chargeMul := camelSt.GetChargingSpeedMultiplier()
 			camelSt.AddJumpChargeTicks(int(chargeMul))
 			if camelSt.GetJumpChargeTicks() > 100 {
@@ -159,7 +190,17 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 
 		if !jump || camelSt.GetJumpChargeTicks() >= 100 {
 			jumpTicks := camelSt.GetJumpChargeTicks()
-			strength := models.ClampJumpStrength(jumpTicks)
+			// Mirror the Java client charge ramp (ClientPlayerEntity.tickMovement):
+			// mountJumpStrength ramps to 1.0 by tick 10 then decays toward 0.8.
+			// The client sends floor(mountJumpStrength*100) as the int strength, and
+			// the server clamps it back through JumpingMount.clampJumpStrength.
+			// Going straight to ClampJumpStrength(jumpTicks) (0.4 + 0.4*ticks/90)
+			// made the ramp ~10x too slow, so a 3s hold never reached full strength.
+			strengthPercent := int(math.Floor(models.MountJumpStrength(jumpTicks) * 100.0))
+			if strengthPercent > 100 {
+				strengthPercent = 100
+			}
+			strength := models.ClampJumpStrength(strengthPercent)
 			velocityMultiplier := 1.0
 			deltaVelX, deltaVelY, deltaVelZ := models.DashImpulse(yaw, strength, movementAcceleration, velocityMultiplier)
 
@@ -169,27 +210,42 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 			ridingVelZ = pe.ridingVelZ + forwardImpulse
 
 			camelSt.ApplyDash()
-			log.Printf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d impulse=(%.3f,%.3f,%.3f) forwardVel=%.4f",
-				strength, jumpTicks, deltaVelX, deltaVelY, deltaVelZ, ridingVelZ)
+			log.Printf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d strengthPercent=%d impulse=(%.3f,%.3f,%.3f) forwardVel=%.4f",
+				strength, jumpTicks, strengthPercent, deltaVelX, deltaVelY, deltaVelZ, ridingVelZ)
 		}
 	}
 
 	pe.lastRidingJumpState = jump
 
-	// (7) Position computation
+	// (7) Position computation via collision detection
+	// Camel dimensions: 1.7 wide × 2.375 tall (vanilla adult standing box)
 	yawRad := yaw * math.Pi / 180.0
-	newX := currentPos.X + (-math.Sin(yawRad) * ridingVelZ)
-	newY := currentPos.Y + ridingVelY
-	newZ := currentPos.Z + (math.Cos(yawRad) * ridingVelZ)
-	onGround := !ridingAirborne
-
-	// Landing detection
-	if ridingAirborne && ridingVelY < 0 && newY <= pe.ridingGroundY {
-		newY = pe.ridingGroundY
-		ridingVelY = 0
-		onGround = true
-		log.Printf("[handleRidingModeCamel] Landed at Y=%.2f (groundY=%.2f)", newY, pe.ridingGroundY)
+	moveVel := models.V3{
+		X: -math.Sin(yawRad) * ridingVelZ,
+		Y: ridingVelY,
+		Z: math.Cos(yawRad) * ridingVelZ,
 	}
+	newPos, correctedVel, collisionOnGround, _, _ := resolveEntityCollision(pe, currentPos, moveVel, camelWidth, camelHeight)
+	// onGround reflects actual ground support: either collision stopped a
+	// downward move this tick, or the ground-support probe found a block just
+	// beneath us (e.g. while walking on flat ground with zero Y velocity).
+	onGround := collisionOnGround || grounded
+
+	// Landing: collision stopped a downward move, so we've settled onto solid
+	// ground. Zero the accumulated fall velocity and record the new ground
+	// level. Landing is driven purely by collision now — the old "reached
+	// recorded groundY" check (and the buggy newPos.Y = correctedVel.Y
+	// reposition) would halt a genuine cliff fall at the pre-fall height.
+	if collisionOnGround {
+		correctedVel.Y = 0
+		onGround = true
+		pe.ridingGroundY = newPos.Y
+		log.Printf("[handleRidingModeCamel] Landed at Y=%.2f", newPos.Y)
+	}
+
+	// Use corrected horizontal velocity for next tick
+	ridingVelZ = math.Sqrt(correctedVel.X*correctedVel.X + correctedVel.Z*correctedVel.Z)
+	ridingVelY = correctedVel.Y
 
 	// Update shared velocity state
 	pe.ridingVelX = ridingVelX
@@ -198,15 +254,24 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	pe.lastVelMultiplier = velocityDrag
 
 	// Auto-dismount when submerged
-	checkRiderHeadSubmerged(pe, mountedEntityID, waterParams, newX, newY, newZ)
+	checkRiderHeadSubmerged(pe, mountedEntityID, waterParams, newPos.X, newPos.Y, newPos.Z)
 
 	vehicleKind := "camel"
 	if camelSt.GetIsCamelHusk() {
 		vehicleKind = "camel_husk"
 	}
 	log.Printf("[handleRidingModeCamel] %s physics: water=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f airborne=%v newPos=(%.2f,%.2f,%.2f)",
-		vehicleKind, waterParams.IsInWater, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, ridingAirborne, newX, newY, newZ)
+		vehicleKind, waterParams.IsInWater, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, ridingAirborne, newPos.X, newPos.Y, newPos.Z)
 
-	newPos := models.V3{X: newX, Y: newY, Z: newZ}
-	sendVehicleMove(pe, versionHandler, newPos, yaw, pitch, onGround)
+	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
+	// mountedEntityMu is released. State and packet pose are identical for camels.
+	return ridingTickResult{
+		NewPos:      newPos,
+		OnGround:    onGround,
+		Sneak:       sneak,
+		StateYaw:    yaw,
+		StatePitch:  pitch,
+		PacketYaw:   yaw,
+		PacketPitch: pitch,
+	}
 }

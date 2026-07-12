@@ -38,6 +38,14 @@ const (
 	Sneak
 	SneakThrough
 	SneakTraverse
+	MountVehicle        // Interact with a vehicle to mount it
+	DismountVehicle     // Sneak to dismount current vehicle
+	VehicleTraverse     // Land vehicle traversal (horse/camel/pig/donkey/mule)
+	VehicleAscend       // Land vehicle jump up 1-block ledge
+	VehicleLavaTraverse // Strider on lava surface
+	VehicleRailTraverse // Minecart on rail (forward only)
+	VehicleSwim         // Boat on water surface
+	VehicleFly3D        // Nautilus 3D underwater movement
 )
 
 // String returns the name of the movement type.
@@ -101,6 +109,22 @@ func (mt MovementType) String() string {
 		return "SneakThrough"
 	case SneakTraverse:
 		return "SneakTraverse"
+	case MountVehicle:
+		return "MountVehicle"
+	case DismountVehicle:
+		return "DismountVehicle"
+	case VehicleTraverse:
+		return "VehicleTraverse"
+	case VehicleAscend:
+		return "VehicleAscend"
+	case VehicleLavaTraverse:
+		return "VehicleLavaTraverse"
+	case VehicleRailTraverse:
+		return "VehicleRailTraverse"
+	case VehicleSwim:
+		return "VehicleSwim"
+	case VehicleFly3D:
+		return "VehicleFly3D"
 	default:
 		return "Unknown"
 	}
@@ -151,6 +175,20 @@ func (mt MovementType) BaseCost() float64 {
 		return 1.414
 	case Sneak, SneakThrough, SneakTraverse:
 		return 3.0
+	case MountVehicle, DismountVehicle:
+		return 3.0 // One-time action cost
+	case VehicleTraverse:
+		return 0.3 // Much faster than walking
+	case VehicleAscend:
+		return 1.0
+	case VehicleLavaTraverse:
+		return 0.4
+	case VehicleRailTraverse:
+		return 0.25 // Fast on powered rails
+	case VehicleSwim:
+		return 0.35
+	case VehicleFly3D:
+		return 0.4
 	default:
 		return 1.0
 	}
@@ -158,9 +196,10 @@ func (mt MovementType) BaseCost() float64 {
 
 // PathStep represents one step in a path.
 type PathStep struct {
-	Position V3
-	Movement MovementType
-	Cost     float64
+	Position        V3
+	Movement        MovementType
+	Cost            float64
+	VehicleEntityID int32 // 0 = on foot; non-zero = entity ID of vehicle being ridden
 }
 
 // Path is a sequence of steps from start to goal.

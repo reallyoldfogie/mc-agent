@@ -142,6 +142,10 @@ func (m *mockPhysicsState) GetSurroundingBoxes(_ models.AABB, _ models.PhysicsWo
 	return nil
 }
 
+func (m *mockPhysicsState) ResolveCollision(entityBB models.AABB, vel models.V3, _ models.PhysicsWorld) (models.AABB, models.V3, bool, bool) {
+	return entityBB.Offset(vel.X, vel.Y, vel.Z), vel, false, false
+}
+
 // Test input generation for Traverse movement
 func TestGenerateInputs_Traverse(t *testing.T) {
 	gen := NewInputGenerator()

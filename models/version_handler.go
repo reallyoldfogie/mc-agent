@@ -167,6 +167,14 @@ type PlayHandler interface {
 	// packet: the raw ClientboundPlayerInfo packet to parse
 	// Returns the parsed update structure with all entry data.
 	ParsePlayerInfo(packet pk.Packet) (*PlayerInfoUpdate, error)
+
+	// BuildEntityEquipmentPacket builds an EntityEquipment packet for replay recording.
+	// Returns the packet ID and raw marshaled packet data.
+	// entityID: the bot's entity ID
+	// hand: equipment slot (models.MainHand or models.OffHand)
+	// itemID: protocol item ID (0 for empty)
+	// count: item count (0 for empty)
+	BuildEntityEquipmentPacket(entityID int32, hand Hand, itemID int32, count int32) (packetID int32, packetData []byte, err error)
 }
 
 // LifecycleHandler handles play-phase lifecycle signal packets that the vanilla

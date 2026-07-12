@@ -9,4 +9,12 @@ type MovementMirror interface {
 	SetEntityType(entityType int32)
 	HandlePlayerInfo(pk.Packet)
 	NotifyLoginSeen()
+
+	// EmitEquipment synthesizes a ClientboundEntityEquipment packet for the agent's own
+	// entity and records it into the replay stream. This is needed because the server
+	// only sends EntityEquipment to other players, not to the player who changed equipment.
+	// hand: models.MainHand or models.OffHand
+	// itemID: protocol item ID (0 for empty slot)
+	// count: item count (0 for empty slot)
+	EmitEquipment(entityID int32, hand Hand, itemID int32, count int32)
 }

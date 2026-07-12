@@ -396,125 +396,119 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	log.Printf("[onMoveEntityPosRot][%s] Received pos/rot update for entity %d: delta=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
 		a.cfg.Name, entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), yaw, pitch)
 
-	a.entitiesMu.Lock()
+	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
+	var oldX, oldY, oldZ, newX, newY, newZ float64
+	var entityType int32
+	var callbackPos *models.V3
+
+	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		oldX, oldY, oldZ := e.X, e.Y, e.Z
+		oldX, oldY, oldZ = e.X, e.Y, e.Z
 		// Minecraft encodes position deltas as fixed-point: divide by (128*32=4096) to convert to block units
 		e.X += float64(dx) / (128 * 32)
 		e.Y += float64(dy) / (128 * 32)
 		e.Z += float64(dz) / (128 * 32)
 		e.Yaw, e.Pitch = yaw, pitch
-		// Only update position timestamp if position actually changed (non-zero deltas)
+		newX, newY, newZ = e.X, e.Y, e.Z
+		entityType = e.EntityType
+
 		if dx != 0 || dy != 0 || dz != 0 {
-			// Store position history for interpolation
 			e.lastServerX, e.lastServerY, e.lastServerZ = oldX, oldY, oldZ
 			e.lastServerUpdateTime = e.currentServerUpdateTime
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-		log.Printf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z)
+		if e.Removed {
+			e.Removed = false
+		}
+		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
+	}
+	a.entitiesMu.Unlock()
 
-		// Update position history in active projectiles (for render loop interpolation)
-		// Update even for zero-delta packets - they still represent a server position confirmation
+	// All remaining work OUTSIDE the lock
+
+	if callbackPos == nil {
+		log.Printf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
+		return nil
+	}
+
+	log.Printf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
+
+	// Update active projectiles (separate lock, no entity lock held)
+	if dx != 0 || dy != 0 || dz != 0 {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
-			// Only update if there's an actual position change
-			if dx != 0 || dy != 0 || dz != 0 {
-				projInfo.lastServerPos = models.V3{X: oldX, Y: oldY, Z: oldZ}
-				projInfo.lastServerTime = projInfo.currentServerTime
-				projInfo.currentServerPos = models.V3{X: e.X, Y: e.Y, Z: e.Z}
-				projInfo.currentServerTime = now
-				// Record position in history for trajectory visualization
-				projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-				log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
-					entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z, yaw, pitch)
-			} else {
-				// Zero delta packet - update currentServerTime to indicate we received a position confirmation
-				// but keep the position unchanged
-				projInfo.currentServerTime = now
-				log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
-			}
+			projInfo.lastServerPos = models.V3{X: oldX, Y: oldY, Z: oldZ}
+			projInfo.lastServerTime = projInfo.currentServerTime
+			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
+			projInfo.currentServerTime = now
+			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
+			log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
+				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ, yaw, pitch)
 		}
 		a.activeProjectilesMu.Unlock()
+	} else {
+		a.activeProjectilesMu.Lock()
+		if projInfo, exists := a.activeProjectiles[entityID]; exists {
+			projInfo.currentServerTime = now
+			log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+		}
+		a.activeProjectilesMu.Unlock()
+	}
 
-		// Debug logging for arrows
+	// Debug logging (no locks held)
+	if dx != 0 || dy != 0 || dz != 0 {
 		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
-			if name, ok := reg.GetNameByID(e.EntityType); ok && (dx != 0 || dy != 0 || dz != 0) {
-				// Minecraft encodes position deltas as fixed-point: divide by (128*32=4096) to convert to block units
+			if name, ok := reg.GetNameByID(entityType); ok {
 				deltaX := float64(dx) / (128 * 32)
 				deltaY := float64(dy) / (128 * 32)
 				deltaZ := float64(dz) / (128 * 32)
-				newX := e.X
-				newY := e.Y
-				newZ := e.Z
-				// Also calculate velocity from position change (velocity = delta / tick)
 				log.Printf("[onMoveEntityPosRot] %s: entityID=%d, oldPos=(%.2f, %.2f, %.2f), delta=(%.4f, %.4f, %.4f), newPos=(%.2f, %.2f, %.2f), vel/tick=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
 					name, entityID, oldX, oldY, oldZ, deltaX, deltaY, deltaZ, newX, newY, newZ, deltaX, deltaY, deltaZ, yaw, pitch)
 			}
 		}
-
-		if e.Removed {
-			e.Removed = false
-		}
-	} else {
-		log.Printf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
 	}
 
-	// Sync mounted entity position to physics executor if this is the mounted vehicle
+	// Sync mounted entity position (NO LOCK HELD - can block on physics calls)
 	a.movementMu.RLock()
 	moveExec := a.moveExec
 	a.movementMu.RUnlock()
 	if moveExec != nil {
 		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
 			if isMountable.GetMountedEntityID() == entityID {
-				if e, ok := a.entities[entityID]; ok {
-					// Check if this is a minecart or boat (where player rotation is independent)
-					isIndependentRotation := false
-					if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
-						if name, ok := reg.GetNameByID(e.EntityType); ok {
-							isIndependentRotation = (name == "minecraft:minecart" || name == "minecraft:boat")
-						}
+				// Determine rotation type (minecart/boat are independent)
+				isIndependentRotation := false
+				if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+					if name, ok := reg.GetNameByID(entityType); ok {
+						isIndependentRotation = (name == "minecraft:minecart" || name == "minecraft:boat")
 					}
+				}
 
-					if isIndependentRotation {
-						// For minecarts/boats: sync position only, preserve agent's rotation
-						if syncer, ok := moveExec.(interface {
-							SyncMountedPosition(float64, float64, float64)
-						}); ok {
-							syncer.SyncMountedPosition(e.X, e.Y, e.Z)
-							log.Printf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, e.X, e.Y, e.Z)
-						}
-					} else {
-						// For horses/other mobs: sync both position and rotation
-						if syncer, ok := moveExec.(interface {
-							SyncMountedPositionWithRotation(float64, float64, float64, float64, float64)
-						}); ok {
-							// Convert yaw/pitch from int8 to float64 (Minecraft uses 1/256 rotation per byte)
-							yawDegrees := float64(e.Yaw) * 360.0 / 256.0
-							pitchDegrees := float64(e.Pitch) * 360.0 / 256.0
-							syncer.SyncMountedPositionWithRotation(e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
-							log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, e.X, e.Y, e.Z, yawDegrees, pitchDegrees)
-						}
+				if isIndependentRotation {
+					if syncer, ok := moveExec.(interface {
+						SyncMountedPosition(float64, float64, float64)
+					}); ok {
+						syncer.SyncMountedPosition(newX, newY, newZ)
+						log.Printf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
+					}
+				} else {
+					if syncer, ok := moveExec.(interface {
+						SyncMountedPositionWithRotation(float64, float64, float64, float64, float64)
+					}); ok {
+						yawDegrees := float64(yaw) * 360.0 / 256.0
+						pitchDegrees := float64(pitch) * 360.0 / 256.0
+						syncer.SyncMountedPositionWithRotation(newX, newY, newZ, yawDegrees, pitchDegrees)
+						log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, newX, newY, newZ, yawDegrees, pitchDegrees)
 					}
 				}
 			}
 		}
 	}
 
-	// Capture position for callback while holding lock
-	var callbackPos *models.V3
-	if e, ok := a.entities[entityID]; ok {
-		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
-	}
-
-	a.entitiesMu.Unlock()
-
-	// Call position update callbacks (outside the lock)
-	if callbackPos != nil {
-		log.Printf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
-		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
-	}
+	// Call position update callbacks (outside all locks)
+	log.Printf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
 
@@ -529,91 +523,87 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 		return err
 	}
 
-	a.entitiesMu.Lock()
+	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
+	var oldX, oldY, oldZ, newX, newY, newZ float64
+	var callbackPos *models.V3
+
+	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		oldX, oldY, oldZ := e.X, e.Y, e.Z
-		// Minecraft encodes position deltas as fixed-point: divide by (128*32=4096) to convert to block units
+		oldX, oldY, oldZ = e.X, e.Y, e.Z
 		e.X += float64(dx) / (128 * 32)
 		e.Y += float64(dy) / (128 * 32)
 		e.Z += float64(dz) / (128 * 32)
-		// Only update position timestamp if position actually changed (non-zero deltas)
+		newX, newY, newZ = e.X, e.Y, e.Z
+
 		if dx != 0 || dy != 0 || dz != 0 {
-			// Store position history for interpolation
 			e.lastServerX, e.lastServerY, e.lastServerZ = oldX, oldY, oldZ
 			e.lastServerUpdateTime = e.currentServerUpdateTime
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-
-		// Update position history in active projectiles (for render loop interpolation)
-		// Update even for zero-delta packets - they still represent a server position confirmation
-		a.activeProjectilesMu.Lock()
-		if projInfo, exists := a.activeProjectiles[entityID]; exists {
-			// Only update if there's an actual position change
-			if dx != 0 || dy != 0 || dz != 0 {
-				projInfo.lastServerPos = models.V3{X: oldX, Y: oldY, Z: oldZ}
-				projInfo.lastServerTime = projInfo.currentServerTime
-				projInfo.currentServerPos = models.V3{X: e.X, Y: e.Y, Z: e.Z}
-				projInfo.currentServerTime = now
-				// Record position in history for trajectory visualization
-				projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-				log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
-					entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), e.X, e.Y, e.Z)
-			} else {
-				// Zero delta packet - update currentServerTime to indicate we received a position confirmation
-				// but keep the position unchanged
-				projInfo.currentServerTime = now
-				log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
-			}
-		}
-		a.activeProjectilesMu.Unlock()
-
 		if e.Removed {
 			e.Removed = false
 		}
+		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
+	}
+	a.entitiesMu.Unlock()
+
+	// All remaining work OUTSIDE the lock
+
+	// Update active projectiles (separate lock, no entity lock held)
+	if dx != 0 || dy != 0 || dz != 0 {
+		a.activeProjectilesMu.Lock()
+		if projInfo, exists := a.activeProjectiles[entityID]; exists {
+			projInfo.lastServerPos = models.V3{X: oldX, Y: oldY, Z: oldZ}
+			projInfo.lastServerTime = projInfo.currentServerTime
+			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
+			projInfo.currentServerTime = now
+			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
+			log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
+				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
+		}
+		a.activeProjectilesMu.Unlock()
 	} else {
-		// Entity not tracked - this might be a projectile that spawned but wasn't matched yet
+		a.activeProjectilesMu.Lock()
+		if projInfo, exists := a.activeProjectiles[entityID]; exists {
+			projInfo.currentServerTime = now
+			log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+		}
+		a.activeProjectilesMu.Unlock()
+	}
+
+	// Handle projectile not in entities map
+	if callbackPos == nil {
 		a.activeProjectilesMu.Lock()
 		if _, exists := a.activeProjectiles[entityID]; exists {
 			log.Printf("[onMoveEntityPos] PROJECTILE entityID=%d not in entities map yet! delta=(%.4f,%.4f,%.4f)",
 				entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32))
 		}
 		a.activeProjectilesMu.Unlock()
+		return nil
 	}
 
-	// Sync mounted entity position to physics executor if this is the mounted vehicle
+	// Sync mounted entity position (NO LOCK HELD - can block on physics calls)
 	a.movementMu.RLock()
 	moveExec := a.moveExec
 	a.movementMu.RUnlock()
 	if moveExec != nil {
 		if isMountable, ok := moveExec.(interface{ GetMountedEntityID() int32 }); ok {
 			if isMountable.GetMountedEntityID() == entityID {
-				if e, ok := a.entities[entityID]; ok {
-					if syncer, ok := moveExec.(interface {
-						SyncMountedPosition(float64, float64, float64)
-					}); ok {
-						syncer.SyncMountedPosition(e.X, e.Y, e.Z)
-						log.Printf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, e.X, e.Y, e.Z)
-					}
+				if syncer, ok := moveExec.(interface {
+					SyncMountedPosition(float64, float64, float64)
+				}); ok {
+					syncer.SyncMountedPosition(newX, newY, newZ)
+					log.Printf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
 				}
 			}
 		}
 	}
 
-	// Capture position for callback while holding lock
-	var callbackPos *models.V3
-	if e, ok := a.entities[entityID]; ok {
-		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
-	}
-
-	a.entitiesMu.Unlock()
-
-	// Call position update callbacks (outside the lock)
-	if callbackPos != nil {
-		log.Printf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
-		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
-	}
+	// Call position update callbacks (outside all locks)
+	log.Printf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
 
@@ -632,86 +622,92 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 	log.Printf("[onSyncEntityPosition][%s] Received sync for entity %d: pos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d, onGround=%v",
 		a.cfg.Name, entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
 
-	a.entitiesMu.Lock()
+	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
+	var oldX, oldY, oldZ, oldServerX, oldServerY, oldServerZ float64
+	var oldLastServerUpdateTime time.Time
+	var entityType int32
+	var callbackPos *models.V3
+
+	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		// Debug logging for arrows
-		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
-			if name, ok := reg.GetNameByID(e.EntityType); ok && name == "minecraft:arrow" {
-				log.Printf("[onSyncEntityPosition] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), ground=%v",
-					entityID, e.X, e.Y, e.Z, x, y, z, dx, dy, dz, onGround)
-			}
-		}
-		// Store position history for interpolation
+		oldX, oldY, oldZ = e.X, e.Y, e.Z
+		oldServerX, oldServerY, oldServerZ = e.lastServerX, e.lastServerY, e.lastServerZ
+		oldLastServerUpdateTime = e.lastServerUpdateTime
+		entityType = e.EntityType
+
 		e.lastServerX, e.lastServerY, e.lastServerZ = e.X, e.Y, e.Z
 		e.lastServerUpdateTime = e.currentServerUpdateTime
 		e.X, e.Y, e.Z = x, y, z
 		e.Yaw, e.Pitch = yaw, pitch
 		e.currentServerUpdateTime = now
-		e.LastPositionUpdate = now // Track when position was last updated
+		e.LastPositionUpdate = now
 
-		// Update position history in active projectiles (for render loop interpolation)
-		a.activeProjectilesMu.Lock()
-		if projInfo, exists := a.activeProjectiles[entityID]; exists {
-			projInfo.lastServerPos = models.V3{X: e.lastServerX, Y: e.lastServerY, Z: e.lastServerZ}
-			projInfo.lastServerTime = e.lastServerUpdateTime
-			projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
-			projInfo.currentServerTime = now
-			// Record position in history for trajectory visualization
-			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-			log.Printf("[onSyncEntityPosition] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), newPos=(%.2f,%.2f,%.2f)",
-				entityID, e.lastServerX, e.lastServerY, e.lastServerZ, x, y, z)
-
-			// Check if this projectile has a pending callback waiting for server position confirmation
-			if projInfo.pendingCallbackFire && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
-				// Use server's authoritative position instead of client prediction
-				serverPos := models.V3{X: x, Y: y, Z: z}
-				flightTime := now.Sub(projInfo.spawnTime).Seconds()
-
-				hitResult := models.ProjectileResultBlock
-				hitEntityID := int32(-1)
-				if projInfo.pendingHitType == models.ProjectileHitEntity {
-					hitResult = models.ProjectileResultEntity
-					hitEntityID = entityID
-				}
-				evt := models.ProjectileHitEvent{
-					ProjectileEntityID: entityID,
-					HitType:            projInfo.pendingHitType,
-					ProjectileType:     projInfo.projectileType,
-					Position:           serverPos,
-					FiredAt:            projInfo.firedAt,
-					HitAt:              now,
-					HitResult:          hitResult,
-					HitEntityID:        hitEntityID,
-				}
-
-				for _, cb := range projInfo.callbacks {
-					go cb(evt) // Fire asynchronously
-				}
-
-				projInfo.callbacksFired = true
-				log.Printf("[onSyncEntityPosition] Fired pending projectile callbacks with server position: projectileID=%d, type=%s, hitType=%v, count=%d, flightTime=%.3fs, clientPred=(%.2f, %.2f, %.2f), serverPos=(%.2f, %.2f, %.2f), delta=%.2f blocks",
-					entityID, projInfo.projectileType, projInfo.pendingHitType, len(projInfo.callbacks), flightTime,
-					projInfo.pendingHitPos.X, projInfo.pendingHitPos.Y, projInfo.pendingHitPos.Z,
-					serverPos.X, serverPos.Y, serverPos.Z,
-					projInfo.pendingHitPos.DistanceTo(serverPos))
-			}
-		}
-		a.activeProjectilesMu.Unlock()
 		if e.Removed {
 			e.Removed = false
 		}
+		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
-
-	// Capture position for callback while holding lock
-	var callbackPos *models.V3
-	if e, ok := a.entities[entityID]; ok {
-		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
-	}
-
 	a.entitiesMu.Unlock()
 
-	// Call position update callbacks (outside the lock)
+	// All remaining work OUTSIDE the lock
+
+	// Debug logging (no locks held)
+	if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+		if name, ok := reg.GetNameByID(entityType); ok && name == "minecraft:arrow" {
+			log.Printf("[onSyncEntityPosition] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), ground=%v",
+				entityID, oldX, oldY, oldZ, x, y, z, dx, dy, dz, onGround)
+		}
+	}
+
+	// Update active projectiles (separate lock, no entity lock held)
+	a.activeProjectilesMu.Lock()
+	if projInfo, exists := a.activeProjectiles[entityID]; exists {
+		projInfo.lastServerPos = models.V3{X: oldServerX, Y: oldServerY, Z: oldServerZ}
+		projInfo.lastServerTime = oldLastServerUpdateTime
+		projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
+		projInfo.currentServerTime = now
+		projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
+		log.Printf("[onSyncEntityPosition] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), newPos=(%.2f,%.2f,%.2f)",
+			entityID, oldServerX, oldServerY, oldServerZ, x, y, z)
+
+		// Check if this projectile has a pending callback waiting for server position confirmation
+		if projInfo.pendingCallbackFire && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
+			serverPos := models.V3{X: x, Y: y, Z: z}
+			flightTime := now.Sub(projInfo.spawnTime).Seconds()
+
+			hitResult := models.ProjectileResultBlock
+			hitEntityID := int32(-1)
+			if projInfo.pendingHitType == models.ProjectileHitEntity {
+				hitResult = models.ProjectileResultEntity
+				hitEntityID = entityID
+			}
+			evt := models.ProjectileHitEvent{
+				ProjectileEntityID: entityID,
+				HitType:            projInfo.pendingHitType,
+				ProjectileType:     projInfo.projectileType,
+				Position:           serverPos,
+				FiredAt:            projInfo.firedAt,
+				HitAt:              now,
+				HitResult:          hitResult,
+				HitEntityID:        hitEntityID,
+			}
+
+			for _, cb := range projInfo.callbacks {
+				go cb(evt)
+			}
+
+			projInfo.callbacksFired = true
+			log.Printf("[onSyncEntityPosition] Fired pending projectile callbacks with server position: projectileID=%d, type=%s, hitType=%v, count=%d, flightTime=%.3fs, clientPred=(%.2f, %.2f, %.2f), serverPos=(%.2f, %.2f, %.2f), delta=%.2f blocks",
+				entityID, projInfo.projectileType, projInfo.pendingHitType, len(projInfo.callbacks), flightTime,
+				projInfo.pendingHitPos.X, projInfo.pendingHitPos.Y, projInfo.pendingHitPos.Z,
+				serverPos.X, serverPos.Y, serverPos.Z,
+				projInfo.pendingHitPos.DistanceTo(serverPos))
+		}
+	}
+	a.activeProjectilesMu.Unlock()
+
+	// Call position update callbacks (outside all locks)
 	if callbackPos != nil {
 		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	}
@@ -729,47 +725,55 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 		return err
 	}
 
-	a.entitiesMu.Lock()
+	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
+	var oldX, oldY, oldZ, oldServerX, oldServerY, oldServerZ float64
+	var oldLastServerUpdateTime time.Time
+	var entityType int32
+	var callbackPos *models.V3
+
+	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		// Debug logging for arrows
-		if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
-			if name, ok := reg.GetNameByID(e.EntityType); ok && name == "minecraft:arrow" {
-				log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d",
-					entityID, e.X, e.Y, e.Z, x, y, z, yaw, pitch)
-			}
-		}
-		// Store position history for interpolation
+		oldX, oldY, oldZ = e.X, e.Y, e.Z
+		oldServerX, oldServerY, oldServerZ = e.lastServerX, e.lastServerY, e.lastServerZ
+		oldLastServerUpdateTime = e.lastServerUpdateTime
+		entityType = e.EntityType
+
 		e.lastServerX, e.lastServerY, e.lastServerZ = e.X, e.Y, e.Z
 		e.lastServerUpdateTime = e.currentServerUpdateTime
 		e.X, e.Y, e.Z = x, y, z
 		e.currentServerUpdateTime = now
 		e.Yaw, e.Pitch = yaw, pitch
-		e.LastPositionUpdate = now // Track when position was last updated
+		e.LastPositionUpdate = now
 
-		// Update position history in active projectiles (for render loop interpolation)
-		a.activeProjectilesMu.Lock()
-		if projInfo, exists := a.activeProjectiles[entityID]; exists {
-			projInfo.lastServerPos = models.V3{X: e.lastServerX, Y: e.lastServerY, Z: e.lastServerZ}
-			projInfo.lastServerTime = e.lastServerUpdateTime
-			projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
-			projInfo.currentServerTime = now
-		}
-		a.activeProjectilesMu.Unlock()
 		if e.Removed {
 			e.Removed = false
 		}
+		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
-
-	// Capture position for callback while holding lock
-	var callbackPos *models.V3
-	if e, ok := a.entities[entityID]; ok {
-		callbackPos = &models.V3{X: e.X, Y: e.Y, Z: e.Z}
-	}
-
 	a.entitiesMu.Unlock()
 
-	// Call position update callbacks (outside the lock)
+	// All remaining work OUTSIDE the lock
+
+	// Debug logging (no locks held)
+	if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
+		if name, ok := reg.GetNameByID(entityType); ok && name == "minecraft:arrow" {
+			log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d",
+				entityID, oldX, oldY, oldZ, x, y, z, yaw, pitch)
+		}
+	}
+
+	// Update active projectiles (separate lock, no entity lock held)
+	a.activeProjectilesMu.Lock()
+	if projInfo, exists := a.activeProjectiles[entityID]; exists {
+		projInfo.lastServerPos = models.V3{X: oldServerX, Y: oldServerY, Z: oldServerZ}
+		projInfo.lastServerTime = oldLastServerUpdateTime
+		projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
+		projInfo.currentServerTime = now
+	}
+	a.activeProjectilesMu.Unlock()
+
+	// Call position update callbacks (outside all locks)
 	if callbackPos != nil {
 		a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	}
@@ -1557,8 +1561,41 @@ func (a *agent) onEntityLook(p pk.Packet) error {
 }
 
 // onSetSlot handles inventory slot changes.
+// When the offhand slot (index 45) changes, it emits an EntityEquipment packet
+// to the replay mirror so the replay viewer can render the offhand item.
+// When the currently-held hotbar slot changes (e.g., item consumed), it also
+// re-emits the main hand equipment.
 func (a *agent) onSetSlot(p pk.Packet) error {
-	// Packets are automatically recorded by the bot client's replay recorder
+	if a.versionHandler == nil || a.moveMirror == nil {
+		return nil
+	}
+
+	_, _, slotIndex, item, err := a.versionHandler.Play().Containers().ParseContainerSetSlot(p)
+	if err != nil {
+		return nil
+	}
+
+	// Offhand slot is index 45 in the player inventory (windowID 0 or -2)
+	const offhandSlotIndex int16 = 45
+	if slotIndex == offhandSlotIndex {
+		a.moveMirror.EmitEquipment(a.GetEntityID(), models.OffHand, item.ItemID, item.Count)
+	}
+
+	// Hotbar slots are 36-44. If the currently-held slot's contents changed,
+	// re-emit main hand equipment so the replay stays in sync (e.g., after
+	// consuming food, placing blocks, or picking up items).
+	const hotbarSlotStart int16 = 36
+	const hotbarSlotEnd int16 = 44
+	if slotIndex >= hotbarSlotStart && slotIndex <= hotbarSlotEnd {
+		a.heldSlotMu.RLock()
+		heldSlot := a.heldSlot
+		heldSlotSet := a.heldSlotSet
+		a.heldSlotMu.RUnlock()
+		if heldSlotSet && slotIndex == hotbarSlotStart+heldSlot {
+			a.moveMirror.EmitEquipment(a.GetEntityID(), models.MainHand, item.ItemID, item.Count)
+		}
+	}
+
 	return nil
 }
 
@@ -2019,7 +2056,7 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			},
 		},
 		{
-			ID:       a.packetMgr.GetClientboundPacketID("ClientboundBlockUpdate"),
+			ID:       blockUpdateID,
 			Priority: 50,
 			F: func(p pk.Packet) error {
 				x, y, z, blockStateID, err := worldHandler.ParseBlockUpdate(p)
