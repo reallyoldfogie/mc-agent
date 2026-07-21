@@ -297,9 +297,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 		sendPitch = 0
 	}
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. The minecart sends NaN-sanitized yaw/pitch,
-	// which may differ from the pose stored in physicsState.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	// StateYaw/Pitch (possibly NaN) are stored in physicsState; NaN-sanitized
+	// values (sendYaw/sendPitch) are used only for the VehicleMove packet.
+	applyRidingTickState(pe, finalPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      finalPos,
 		OnGround:    onGround,

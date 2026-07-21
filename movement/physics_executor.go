@@ -151,6 +151,18 @@ type PhysicsMovementExecutor struct {
 	// jump transitions. Used for camel dash charging.
 	lastRidingJumpState bool
 
+	// sentVehicleMoves is a ring buffer of the most recent VehicleMove positions
+	// we sent while controlling a vehicle. Some server versions (observed on
+	// 1.21.9/1.21.10) re-broadcast the controlling passenger's own moves back as
+	// RelEntityMove packets a few ticks late; applying those stale echoes as
+	// corrections snaps the vehicle backwards mid-motion (worst during a camel
+	// dash at ~2 blocks/tick). SyncMountedPosition drops any sync that matches a
+	// position in this buffer. Guarded by sentVehicleMovesMu.
+	sentVehicleMovesMu  sync.Mutex
+	sentVehicleMoves    [sentVehicleMovesSize]models.V3
+	sentVehicleMovesLen int
+	sentVehicleMovesIdx int
+
 	// Horse (and other JumpingMount) charge-on-hold / release-to-fire jump state.
 	// Mirrors the vanilla client (ClientPlayerEntity.tickMovement) where holding the
 	// jump key accumulates charge via the MountJumpStrength ramp and releasing fires
@@ -323,6 +335,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 	}
 
 	pe.lastRidingJumpState = false // Reset jump state on mount
+	pe.clearSentVehicleMoves()     // Fresh echo-detection history for the new vehicle
 	pe.saddleBoosted = false       // Reset boost state on mount
 	pe.saddleBoostTime = 0
 	pe.saddleBoostTotal = 0
@@ -442,6 +455,7 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.minecartLastRailGroundY = 0
 	pe.dismountRequested = false
 	pe.lastRidingJumpState = false // Reset jump state on dismount
+	pe.clearSentVehicleMoves()     // Clear echo-detection history on dismount
 	pe.camelState = nil            // Clear camel state on dismount
 	pe.nautilusState = nil         // Clear nautilus state on dismount
 	pe.saddleBoosted = false       // Clear boost state on dismount
@@ -600,20 +614,41 @@ func (pe *PhysicsMovementExecutor) SendPosition(x, y, z float64, onGround bool) 
 // SendPositionAndRotation sends a combined position and rotation update.
 // Also syncs the physics state to prevent the tick loop from sending stale positions.
 func (pe *PhysicsMovementExecutor) SendPositionAndRotation(x, y, z float64, yaw, pitch float64, onGround bool) error {
-	// Sync physics state FIRST so tick loop doesn't send stale position
+	// Sync physics state FIRST so tick loop doesn't send stale position.
+	// mountedEntityMu serializes this write with a riding tick's
+	// read-compute-write cycle: a handler holds the lock from reading the
+	// rotation through applyRidingTickState's write-back, so without it a
+	// mid-tick external rotation change (e.g. TurnTowards) would be clobbered
+	// by the tick's stale write-back. Released before any network I/O.
+	pe.mountedEntityMu.Lock()
+	mounted := pe.mountedEntityID >= 0
 	pe.physicsState.SetPosition(
 		models.V3{X: x, Y: y, Z: z},
 		yaw,
 		pitch,
 		onGround,
 	)
+	pe.mountedEntityMu.Unlock()
+
+	pe.syncManualRotation(yaw, pitch)
+
+	if mounted {
+		// A passenger must not send player position packets (the server ignores
+		// or rejects them). Send rotation only, like a vanilla riding client;
+		// the riding tick carries the new heading in its per-tick Look and
+		// VehicleMove packets.
+		return pe.movementPacketSender.SendRotation(yaw, pitch, onGround)
+	}
 	return pe.movementPacketSender.SendPositionAndRotation(x, y, z, yaw, pitch, onGround)
 }
 
 // SendRotation sends a rotation update.
 // Also syncs the physics state to prevent the tick loop from sending stale rotation.
 func (pe *PhysicsMovementExecutor) SendRotation(yaw, pitch float64, onGround bool) error {
-	// Sync physics state FIRST so tick loop doesn't send stale rotation
+	// Sync physics state FIRST so tick loop doesn't send stale rotation.
+	// mountedEntityMu guards against a riding tick writing back a stale
+	// rotation (see SendPositionAndRotation); released before network I/O.
+	pe.mountedEntityMu.Lock()
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	pe.physicsState.SetPosition(
 		pos,
@@ -621,7 +656,23 @@ func (pe *PhysicsMovementExecutor) SendRotation(yaw, pitch float64, onGround boo
 		pitch,
 		onGround,
 	)
+	pe.mountedEntityMu.Unlock()
+
+	pe.syncManualRotation(yaw, pitch)
+
 	return pe.movementPacketSender.SendRotation(yaw, pitch, onGround)
+}
+
+// syncManualRotation mirrors an externally set rotation into the manual-mode
+// look inputs. ResetManualInputs captures a concrete yaw/pitch on entering
+// manual mode, so without this a later external rotation change would be
+// rate-limited back toward the stale value by applyLookInputs on every
+// manual walking tick.
+func (pe *PhysicsMovementExecutor) syncManualRotation(yaw, pitch float64) {
+	pe.manualInputsMu.Lock()
+	pe.manualInputs.Yaw = yaw
+	pe.manualInputs.Pitch = pitch
+	pe.manualInputsMu.Unlock()
 }
 
 // MoveTowards is not used by physics executor (use ExecutePath instead).
@@ -719,6 +770,56 @@ const ridingCorrectionVelocityResetThresholdSq = 0.25
 // correction. Routine per-tick syncs are well under this threshold.
 const ridingCorrectionVerticalResetThreshold = 0.5
 
+// sentVehicleMovesSize is how many recent VehicleMove positions are kept for
+// echo detection — one second of history at 20 TPS, comfortably more than the
+// few-tick latency of observed server echoes.
+const sentVehicleMovesSize = 20
+
+// vehicleMoveEchoEpsilon is the per-axis tolerance when matching an incoming
+// mounted-entity sync against recently sent VehicleMove positions.
+// RelEntityMove deltas are quantized to 1/4096 blocks and the entity tracker
+// accumulates them, so an echo can drift slightly from the exact doubles we
+// sent. A genuine server correction this close to a position we just sent
+// would be inconsequential to apply anyway.
+const vehicleMoveEchoEpsilon = 0.05
+
+// recordSentVehicleMove remembers a VehicleMove position we sent so later
+// server echoes of it can be recognized and ignored.
+func (pe *PhysicsMovementExecutor) recordSentVehicleMove(pos models.V3) {
+	pe.sentVehicleMovesMu.Lock()
+	defer pe.sentVehicleMovesMu.Unlock()
+	pe.sentVehicleMoves[pe.sentVehicleMovesIdx] = pos
+	pe.sentVehicleMovesIdx = (pe.sentVehicleMovesIdx + 1) % sentVehicleMovesSize
+	if pe.sentVehicleMovesLen < sentVehicleMovesSize {
+		pe.sentVehicleMovesLen++
+	}
+}
+
+// isVehicleMoveEcho reports whether an incoming mounted-entity position matches
+// a VehicleMove we recently sent (i.e. the server relaying our own movement
+// back to us rather than issuing a correction).
+func (pe *PhysicsMovementExecutor) isVehicleMoveEcho(x, y, z float64) bool {
+	pe.sentVehicleMovesMu.Lock()
+	defer pe.sentVehicleMovesMu.Unlock()
+	for i := 0; i < pe.sentVehicleMovesLen; i++ {
+		sent := pe.sentVehicleMoves[i]
+		if math.Abs(x-sent.X) <= vehicleMoveEchoEpsilon &&
+			math.Abs(y-sent.Y) <= vehicleMoveEchoEpsilon &&
+			math.Abs(z-sent.Z) <= vehicleMoveEchoEpsilon {
+			return true
+		}
+	}
+	return false
+}
+
+// clearSentVehicleMoves empties the echo-detection history (on mount/dismount).
+func (pe *PhysicsMovementExecutor) clearSentVehicleMoves() {
+	pe.sentVehicleMovesMu.Lock()
+	defer pe.sentVehicleMovesMu.Unlock()
+	pe.sentVehicleMovesLen = 0
+	pe.sentVehicleMovesIdx = 0
+}
+
 // SyncRidingPosition applies a server-authoritative vehicle position correction
 // while the executor is in riding mode. The corrected position is always
 // synced, but accumulated horizontal riding velocity is preserved across
@@ -778,6 +879,12 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 // Unlike SyncRidingPosition, this preserves riding velocity (it's a passive sync, not a full reset).
 // The position comes from the entity tracker which aggregates server move packets.
 func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
+	// Ignore stale echoes of our own VehicleMove packets (see sentVehicleMoves).
+	if pe.isVehicleMoveEcho(x, y, z) {
+		log.Printf("[SyncMountedPosition] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z)
+		return
+	}
+
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 
@@ -815,6 +922,12 @@ func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
 // SyncMountedPositionWithRotation applies a server-authoritative mounted entity position and rotation correction.
 // Called when entity movement packets with rotation (MoveEntityPosRot) arrive for the mounted entity.
 func (pe *PhysicsMovementExecutor) SyncMountedPositionWithRotation(x, y, z, yaw, pitch float64) {
+	// Ignore stale echoes of our own VehicleMove packets (see sentVehicleMoves).
+	if pe.isVehicleMoveEcho(x, y, z) {
+		log.Printf("[SyncMountedPositionWithRotation] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z)
+		return
+	}
+
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 
@@ -1098,7 +1211,10 @@ func (pe *PhysicsMovementExecutor) SetManualThrottle(westEastThrottle, northSout
 // yaw: horizontal look direction (degrees, 0=south, 90=west, 180=north, 270=east)
 // pitch: vertical look direction (degrees, -90=up, 0=forward, 90=down)
 // Pass math.NaN() for yaw or pitch to keep current value.
-// Works in manual mode and while mounted.
+// Only effective in manual walking mode: riding handlers derive their heading
+// from the physics state, not from these inputs. To steer while mounted, use
+// SendRotation/SendPositionAndRotation (e.g. via the agent's TurnTowards),
+// which write the rotation into the physics state under mountedEntityMu.
 func (pe *PhysicsMovementExecutor) SetManualRotation(yaw, pitch float64) error {
 	pe.manualInputsMu.Lock()
 	// Only update yaw if not NaN (allows "don't change" semantics)

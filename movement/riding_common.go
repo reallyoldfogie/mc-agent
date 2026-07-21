@@ -5,6 +5,7 @@ import (
 	"math"
 
 	semver "github.com/aquasecurity/go-version/pkg/version"
+	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
@@ -214,17 +215,29 @@ func computeStriderColdState(
 	return !isWarm || parentIsCold
 }
 
-// sendRidingMove publishes the result of a riding tick: it updates the player's
-// physics state and bot position, then sends the VehicleMove packet to the
-// server.
+// applyRidingTickState updates the physics state and bot position tracking for
+// one riding tick. It MUST be called while pe.mountedEntityMu is held so that
+// external yaw changes (e.g. from a concurrent TurnTowards call) cannot race
+// between the riding handler's compute phase and this write-back.
 //
-// It MUST be called AFTER mountedEntityMu has been released. Each riding handler
-// computes its result under the lock and returns it; handleRidingTick then calls
-// this so the executor never holds mountedEntityMu across a network send.
-func sendRidingMove(pe *PhysicsMovementExecutor, versionHandler models.VersionHandler, result ridingTickResult) {
-	pe.physicsState.SetPosition(result.NewPos, result.StateYaw, result.StatePitch, result.OnGround)
-	pe.movementPacketSender.setBotPosition(result.NewPos, result.StateYaw, result.StatePitch)
+// The lock ordering mountedEntityMu → physicsState.mu is already established
+// throughout the codebase (e.g. SyncRidingPosition) so this is deadlock-free.
+func applyRidingTickState(pe *PhysicsMovementExecutor, newPos models.V3, stateYaw, statePitch float64, onGround bool) {
+	pe.physicsState.SetPosition(newPos, stateYaw, statePitch, onGround)
+	pe.movementPacketSender.setBotPosition(newPos, stateYaw, statePitch)
+}
 
+// sendRidingMove sends the VehicleMove packet for one riding tick.
+//
+// Physics-state and bot-position are updated inside each riding handler (under
+// mountedEntityMu) via applyRidingTickState, so this function is responsible
+// only for the network send, which must happen AFTER the lock is released to
+// avoid holding mountedEntityMu across I/O.
+func sendRidingMove(pe *PhysicsMovementExecutor, versionHandler models.VersionHandler, result ridingTickResult) {
+	// Remember what we sent so server echoes of it can be recognized and
+	// ignored by SyncMountedPosition (some server versions relay the
+	// controlling passenger's own moves back as RelEntityMove).
+	pe.recordSentVehicleMove(result.NewPos)
 	if err := versionHandler.Play().Movement().SendMoveVehicle(
 		pe.movementPacketSender.client.Conn(),
 		result.NewPos.X, result.NewPos.Y, result.NewPos.Z,
@@ -243,6 +256,21 @@ func sendRidingInput(pe *PhysicsMovementExecutor, versionHandler models.VersionH
 		forward, backward, left, right, jump, sneak,
 	); err != nil {
 		log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
+	}
+}
+
+// sendRidingJumpCommand sends PlayerCommand(START_RIDING_JUMP, strengthPercent)
+// on jump-key release, mirroring the vanilla client (LocalPlayer.sendRidingJump).
+// This is what triggers the server-side mount jump/dash (impulse, sound,
+// animation visible to other players); strengthPercent is floor(jumpRidingScale*100),
+// clamped to 0–100.
+func sendRidingJumpCommand(pe *PhysicsMovementExecutor, versionHandler models.VersionHandler, strengthPercent int) {
+	entityID := pe.movementPacketSender.getBotEntityID()
+	if err := versionHandler.Play().Movement().SendPlayerCommandWithParam(
+		pe.movementPacketSender.client.Conn(),
+		entityID, versions_common.ActionStartJumpHorse, int32(strengthPercent),
+	); err != nil {
+		log.Printf("[sendRidingJumpCommand] Failed to send START_RIDING_JUMP (strength=%d): %v", strengthPercent, err)
 	}
 }
 

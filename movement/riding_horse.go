@@ -109,6 +109,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 			}
 			pe.horsePendingJumpStrength = models.ClampJumpStrength(strengthPercent)
 			pe.horseCharging = false
+			// Tell the server about the released jump so the server-side horse
+			// jumps too (vanilla LocalPlayer.sendRidingJump on key release).
+			sendRidingJumpCommand(pe, versionHandler, strengthPercent)
 			log.Printf("[handleRidingModeHorse] Jump armed: chargeTicks=%d strengthPercent=%d strength=%.3f",
 				pe.horseJumpChargeTicks, strengthPercent, pe.horsePendingJumpStrength)
 		}
@@ -210,8 +213,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 	log.Printf("[handleRidingModeHorse] physics: water=%v behavior=%s airborne=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f newPos=(%.2f,%.2f,%.2f)",
 		waterParams.IsInWater, waterBehavior, ridingAirborne, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. State and packet pose are identical for horses.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	applyRidingTickState(pe, newPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

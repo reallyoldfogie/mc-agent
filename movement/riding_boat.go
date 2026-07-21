@@ -138,8 +138,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
 		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. State and packet pose are identical for boats.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	applyRidingTickState(pe, newPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

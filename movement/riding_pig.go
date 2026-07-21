@@ -137,8 +137,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	log.Printf("[handleRidingModePig] holds_carrot=%v boost_active=%v boostMul=%.3f accel=%.4f drag=%.3f velZ=%.4f velY=%.4f yaw=%.1f throttle=(%.2f,%.2f) water=%v behavior=%s newPos=(%.2f,%.2f,%.2f)",
 		holdsCarrotOnAStick, carrotBoost, boostMultiplier, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, yaw, inputs.ThrottleX, inputs.ThrottleZ, waterParams.IsInWater, waterBehavior, newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. State and packet pose are identical for pigs.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	applyRidingTickState(pe, newPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

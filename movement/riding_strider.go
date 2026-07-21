@@ -100,6 +100,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	if !canMoveVoluntarily() {
 		// Rotation updates still happen even when movement is suppressed.
 		newPos := models.V3{X: currentPos.X, Y: currentPos.Y, Z: currentPos.Z}
+		applyRidingTickState(pe, newPos, yaw, pitch, true)
 		return ridingTickResult{
 			NewPos:      newPos,
 			OnGround:    true,
@@ -254,8 +255,9 @@ if isOnGround {
 		cold, boostMultiplier, saddledSpeed, speedFactor, friction, velX, velY, velZ, yaw,
 		lavaParams.IsOnLava, lavaParams.IsSubmergedInLava, newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. State and packet pose are identical for striders.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	applyRidingTickState(pe, newPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

@@ -86,7 +86,7 @@ func climbAscendingSlope(t *testing.T, helper *VehicleTestHelper, label string, 
 			}
 			helper.SetManualThrottle(0, 1.0) // forward, up the stairs
 
-			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+			pos, yaw, pitch, initialized := helper.ManagedAgent.Agent.GetPosition()
 			sampleCount++
 			if pos.Y > maxY {
 				maxY = pos.Y
@@ -94,7 +94,7 @@ func climbAscendingSlope(t *testing.T, helper *VehicleTestHelper, label string, 
 			if pos.Y < minY {
 				minY = pos.Y
 			}
-			log.Printf("[%s] t=%.2fs Y=%.2f", label, time.Since(startTime).Seconds(), pos.Y)
+			log.Printf("[%s] t=%.2fs X=%.2f Y=%.2f Z=%.2f yaw=%.2f pitch=%.2f initialized=%t", label, time.Since(startTime).Seconds(), pos.X, pos.Y, pos.Z, yaw, pitch, initialized)
 		}
 	}
 	helper.SetManualThrottle(0, 0)
@@ -182,7 +182,10 @@ func TestCamelAscendingSlope(t *testing.T) {
 			buildAscendingStaircase(t, helper, ctx, baseX, baseY, baseZ)
 			time.Sleep(1 * time.Second)
 
-			camelID, err := helper.SummonCamel(ctx, baseX, baseY, baseZ, 180)
+			// Summon without AI so the camel cannot wander out of interact
+			// range (or up the staircase) before we mount; AI is restored
+			// after mounting so the server runs rider-steered travel again.
+			camelID, err := helper.SummonCamel(ctx, baseX, baseY, baseZ, 180, WithNoAI())
 			require.NoError(t, err, "spawn camel")
 			time.Sleep(500 * time.Millisecond)
 
@@ -199,6 +202,17 @@ func TestCamelAscendingSlope(t *testing.T) {
 			err = helper.WaitForMounted(ctx, 5*time.Second)
 			require.NoError(t, err, "agent should be mounted")
 
+			// Restore AI now that we're aboard: a NoAI camel ignores rider
+			// steering, so the server would never move it.
+			err = helper.EnableEntityAI(ctx, "minecraft:camel")
+			require.NoError(t, err, "re-enable camel AI")
+
+			err = helper.EnterManualMode()
+			require.NoError(t, err, "enter manual mode")
+			defer func() {
+				_ = helper.ExitManualMode()
+			}()
+
 			// Turn the agent's BODY to face up the staircase (+Z) AFTER mounting.
 			// The mounted movement direction is the body (physics-state) yaw the
 			// riding handler reads; LookAt only turns the head and would leave the
@@ -207,12 +221,6 @@ func TestCamelAscendingSlope(t *testing.T) {
 			err = helper.ManagedAgent.Agent.TurnTowards(ctx, baseX, baseY, baseZ+float64(ascendingSlopeSteps)+5)
 			require.NoError(t, err, "face up the slope")
 			time.Sleep(500 * time.Millisecond)
-
-			err = helper.EnterManualMode()
-			require.NoError(t, err, "enter manual mode")
-			defer func() {
-				_ = helper.ExitManualMode()
-			}()
 
 			climbAscendingSlope(t, helper, "TestCamelAscendingSlope", baseY, ctx)
 		})

@@ -298,12 +298,40 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float
 	return entityID, nil
 }
 
+// SummonOption customizes the NBT applied when summoning an entity.
+type SummonOption func(*summonOptions)
+
+type summonOptions struct {
+	noAI bool
+}
+
+// WithNoAI summons the entity with NoAI:1b so the server never runs its brain.
+// Use this in tests that force a pose (e.g. sitting via LastPoseTick) and need
+// the entity to hold it. NoAI entities do not respond to rider steering, so
+// tests that exercise ridden movement must either leave AI enabled or restore
+// it after mounting via EnableEntityAI (which also stops the mount wandering
+// out of interact range during test setup).
+func WithNoAI() SummonOption {
+	return func(options *summonOptions) {
+		options.noAI = true
+	}
+}
+
 // SummonCamel summons a tamed and saddled camel at the specified location and returns its entity ID
-func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z, yaw float64) (int32, error) {
+func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z, yaw float64, opts ...SummonOption) (int32, error) {
 	// Summon command varies by version due to saddle NBT location change in 1.21.5
 	// Camels must be tamed (Tame:1b) to be rideable
 	var cmd string
 	version := vh.Instance.Server.Version
+
+	var options summonOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	extraNBT := ""
+	if options.noAI {
+		extraNBT = ",NoAI:1b"
+	}
 
 	v, _ := semver.Parse(version)
 	c, _ := semver.NewConstraints(("< 1.21.5"))
@@ -311,14 +339,14 @@ func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z, yaw float
 	if c.Check(v) {
 		// Versions 1.21.1-1.21.4: Use SaddleItem tag
 		cmd = fmt.Sprintf(
-			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
-			x, y, z, yaw,
+			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}%s}`,
+			x, y, z, yaw, extraNBT,
 		)
 	} else {
 		// Versions 1.21.5+: Use equipment.saddle structure
 		cmd = fmt.Sprintf(
-			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
-			x, y, z, yaw,
+			`summon minecraft:camel %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}%s}`,
+			x, y, z, yaw, extraNBT,
 		)
 	}
 
@@ -576,6 +604,20 @@ func (vh *VehicleTestHelper) WaitForDismounted(ctx context.Context, timeout time
 // MountEntity mounts the agent on a vehicle
 func (vh *VehicleTestHelper) MountEntity(ctx context.Context, entityID int32) error {
 	return vh.ManagedAgent.Agent.MountEntity(ctx, entityID)
+}
+
+// EnableEntityAI clears the NoAI flag on the single entity of the given type.
+// Pair with WithNoAI: summon the mount brainless so it cannot wander out of
+// interact range before mounting, then restore AI once mounted so the server
+// runs its travel logic (rider steering, gravity) again.
+func (vh *VehicleTestHelper) EnableEntityAI(ctx context.Context, entityType string) error {
+	cmd := fmt.Sprintf("data merge entity @e[type=%s,limit=1] {NoAI:0b}", entityType)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return fmt.Errorf("enable AI on %s: %w", entityType, err)
+	}
+	return rconResponseError(cmd, resp)
 }
 
 // DismountEntity dismounts the agent from a vehicle

@@ -170,11 +170,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNautilus(
 		inWater, movementSpeed, vehicleYaw, agentYaw, agentPitch, sideways, vertical, forwardComponent,
 		newVel.X, newVel.Y, newVel.Z, nautilusState.IsDashing(), newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. The nautilus stores the RIDER look direction
-	// (agentYaw/agentPitch) in physicsState so the player LookAndOnGround packet
-	// carries the rider's head pose, while the VehicleMove packet carries the
-	// nautilus's own eased yaw and halved pitch.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	// StateYaw/Pitch store the RIDER look direction; vehicleYaw/Pitch go only
+	// into the VehicleMove packet (the nautilus's own eased yaw and halved pitch).
+	applyRidingTickState(pe, newPos, agentYaw, agentPitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

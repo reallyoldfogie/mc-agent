@@ -86,8 +86,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		log.Printf("[handleRidingModeCamel] Stationary: sitting=%v changingPose=%v pos=(%.2f,%.2f,%.2f)",
 			camelSt.IsSitting(), camelSt.IsChangingPose(worldTime), currentPos.X, currentPos.Y, currentPos.Z)
 
-		// The VehicleMove send happens in handleRidingTick via sendRidingMove,
-		// after mountedEntityMu is released. State and packet pose are identical.
+		// Update physicsState inside the lock so a concurrent TurnTowards
+		// cannot race with this write-back (see applyRidingTickState).
+		applyRidingTickState(pe, currentPos, yaw, pitch, true)
 		return ridingTickResult{
 			NewPos:      currentPos,
 			OnGround:    true,
@@ -201,6 +202,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 				strengthPercent = 100
 			}
 			strength := models.ClampJumpStrength(strengthPercent)
+			// Tell the server about the released jump so the server-side camel
+			// dashes too (vanilla LocalPlayer.sendRidingJump on key release).
+			sendRidingJumpCommand(pe, versionHandler, strengthPercent)
 			velocityMultiplier := 1.0
 			deltaVelX, deltaVelY, deltaVelZ := models.DashImpulse(yaw, strength, movementAcceleration, velocityMultiplier)
 
@@ -263,8 +267,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	log.Printf("[handleRidingModeCamel] %s physics: water=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f airborne=%v newPos=(%.2f,%.2f,%.2f)",
 		vehicleKind, waterParams.IsInWater, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, ridingAirborne, newPos.X, newPos.Y, newPos.Z)
 
-	// The VehicleMove send happens in handleRidingTick via sendRidingMove, after
-	// mountedEntityMu is released. State and packet pose are identical for camels.
+	// Update physicsState inside the lock before returning so sendRidingMove
+	// (called outside the lock) cannot race with a concurrent TurnTowards.
+	applyRidingTickState(pe, newPos, yaw, pitch, onGround)
 	return ridingTickResult{
 		NewPos:      newPos,
 		OnGround:    onGround,

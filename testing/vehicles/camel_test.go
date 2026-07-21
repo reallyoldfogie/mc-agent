@@ -319,12 +319,17 @@ func TestCamelJumping(t *testing.T) {
 			t.Log(msg)
 			helper.ManagedAgent.Agent.SendChat(msg)
 
-			// === Full-charge dash (hold jump ~2 seconds then release) ===
+			// === Full-charge dash (hold jump ~10 ticks then release) ===
 			helper.ManagedAgent.Agent.SendChat(fmt.Sprintf("Starting Dash (%s)", time.Now().Format(time.RFC3339Nano)))
 
-			// Hold jump to charge the dash
+			// Hold jump to charge the dash. The vanilla charge ramp
+			// (MountJumpStrength) peaks at exactly 10 ticks (500ms) and then
+			// decays toward 80%, so holding longer *reduces* dash strength.
+			// Releasing at 9-11 ticks all report >=90%, which the server clamps
+			// to full strength (ClampJumpStrength), so 500ms sits in the middle
+			// of the max-power window with a tick of jitter margin either side.
 			helper.SetManualJump(true)
-			time.Sleep(3 * time.Second) // hold for 3 seconds to try and get the max dash distance (~12 blocks)
+			time.Sleep(500 * time.Millisecond)
 
 			// Release jump to fire the dash impulse
 			helper.SetManualJump(false)
@@ -530,8 +535,9 @@ func TestCamelSittingDetectionUnmounted(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x, y, z := pos.X, pos.Y, pos.Z
 
-			// Summon a saddled camel
-			camelEntityID, err := helper.SummonCamel(ctx, x, y, z, 180)
+			// Summon a saddled camel with AI disabled so its brain cannot stand
+			// it back up after the forced sit below.
+			camelEntityID, err := helper.SummonCamel(ctx, x, y, z, 180, WithNoAI())
 			require.NoError(t, err, "summon camel")
 
 			time.Sleep(3 * time.Second)
@@ -553,7 +559,7 @@ func TestCamelSittingDetectionUnmounted(t *testing.T) {
 			t.Logf("Make camel sit: %s => %s", dataCmd, resp)
 
 			// Wait for the pose update to be received and processed
-			time.Sleep(3 * time.Second)
+			time.Sleep(10 * time.Second)
 
 			// Check if we can detect the sitting pose WITHOUT mounting
 			entities = helper.ManagedAgent.Agent.GetTrackedEntities()
