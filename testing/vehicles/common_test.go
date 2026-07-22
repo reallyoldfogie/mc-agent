@@ -240,7 +240,7 @@ func (vh *VehicleTestHelper) RemoveHorseEnclosure(ctx context.Context, x, y, z f
 }
 
 // SummonHorse summons a tamed and saddled horse at the specified location and returns its entity ID
-func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float64) (int32, error) {
+func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float64, opts ...SummonOption) (int32, error) {
 	// Summon command varies by version due to saddle NBT location change in 1.21.5
 	// See docs/horse-nbt-data.md for version-specific NBT requirements
 	// 1.21.1-1.21.4: SaddleItem is a top-level tag
@@ -248,20 +248,29 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float
 	var cmd string
 	version := vh.Instance.Server.Version
 
+	var options summonOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	extraNBT := ""
+	if options.noAI {
+		extraNBT = ",NoAI:1b"
+	}
+
 	v, _ := semver.Parse(version)
 	c, _ := semver.NewConstraints(("< 1.21.5")) // (">= 1.21.1, < 1.21.5") // 1.21.1 - 1.21.4 uses the old summon syntax
 
 	if c.Check(v) {
 		// Versions 1.21.1-1.21.4: Use SaddleItem tag
 		cmd = fmt.Sprintf(
-			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0}`,
-			x, y, z, yaw,
+			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},Variant:0%s}`,
+			x, y, z, yaw, extraNBT,
 		)
 	} else {
 		// Versions 1.21.5+: Use equipment.saddle structure
 		cmd = fmt.Sprintf(
-			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1},},Variant:0}`,
-			x, y, z, yaw,
+			`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1},},Variant:0%s}`,
+			x, y, z, yaw, extraNBT,
 		)
 	}
 

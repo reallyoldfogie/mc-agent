@@ -27,8 +27,11 @@ func TestHorseJumping(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x, y, z := pos.X, pos.Y, pos.Z
 
-			// Summon a tamed and saddled horse
-			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90)
+			// Summon without AI so the horse cannot wander out of interact
+			// range (or rotate away from its spawn facing) before we mount;
+			// AI is restored after mounting so the server runs rider-steered
+			// travel again.
+			horseEntityID, err := helper.SummonHorse(ctx, x, y, z, 90, WithNoAI())
 			require.NoError(t, err, "summon horse")
 
 			time.Sleep(500 * time.Millisecond)
@@ -41,8 +44,23 @@ func TestHorseJumping(t *testing.T) {
 			err = helper.WaitForMounted(ctx, 5*time.Second)
 			require.NoError(t, err, "agent should be mounted")
 
+			// Restore AI now that we're aboard: a NoAI horse ignores rider
+			// steering, so the server would never move it.
+			err = helper.EnableEntityAI(ctx, "minecraft:horse")
+			require.NoError(t, err, "re-enable horse AI")
+
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
+
+			// Turn the agent's BODY to face +Z AFTER mounting. The mounted
+			// movement direction is the body (physics-state) yaw the riding
+			// handler reads; the spawn Rotation only sets the entity's initial
+			// facing and would leave the mount pointed wherever it wandered
+			// before we mounted, so forward throttle would drive the wrong
+			// way. TurnTowards sets that yaw.
+			err = helper.ManagedAgent.Agent.TurnTowards(ctx, x, y, z+50)
+			require.NoError(t, err, "face forward along +Z")
+			time.Sleep(500 * time.Millisecond)
 
 			// Build 2-high barrier of blocks in front of the horse for it to jump up on
 			barrierCmd := fmt.Sprintf("fill %d %d %d %d %d %d grass_block",
@@ -58,7 +76,7 @@ func TestHorseJumping(t *testing.T) {
 			initialX, initialY, initialZ := initialPos.X, initialPos.Y, initialPos.Z
 
 			// Apply forward throttle (toward +Z direction) - the horse needs forward momentum to move up onto the barrier
-			helper.SetManualThrottle(0, 1.0) // TODO: Figure out why horse isn't moving foward
+			helper.SetManualThrottle(0, 1.0)
 			time.Sleep(1 * time.Second)
 
 			// Jump with maximum power while moving forward
