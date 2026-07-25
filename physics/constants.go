@@ -324,6 +324,12 @@ const (
 	// The boost is triggered by "using" (right-click) the carrot_on_a_stick,
 	// NOT by merely holding it.
 	PigBoostSinAmplitude = 1.15
+
+	// PigInWaterBaseSpeed is the base horizontal movement speed acceleration
+	// applied to a ridden pig in water. Mirrors Java LivingEntity.travelInWater
+	// where g = 0.02F (the fallback when WATER_MOVEMENT_EFFICIENCY is 0, as it
+	// is for pigs which have no water efficiency attribute).
+	PigInWaterBaseSpeed = 0.02
 )
 
 // Horse riding constants (Java AbstractHorseEntity, 1.21.11).

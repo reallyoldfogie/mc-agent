@@ -10,12 +10,33 @@ import (
 
 // handleRidingModePig runs one tick for a ridden pig.
 //
-// Pigs use carrot_on_a_stick for speed boost and direction control. Holding the
-// item makes the rider the controlling passenger (getControllingPassenger);
-// the sinusoidal speed boost is applied only while a SaddledComponent boost is
-// active, which is armed by *using* (right-click) the carrot_on_a_stick via
-// TriggerSaddleBoost. Movement is otherwise identical to horses:
-// slipperiness-based friction, water sinking, and yaw-rotation steering.
+// Mirrors the Java 1.21.11 call chain:
+//
+//	tickMovement() → travelControlled(player, vec3d2)
+//	  → getControlledMovementInput(): returns (0,0,1) always — pig ignores player keys
+//	  → tickControlled(): pig.yaw=player.yaw, pig.pitch=player.pitch*0.5, tick boost
+//	  → setMovementSpeed(getSaddledSpeed): attribute*0.225*saddledComponent.getMovementSpeedMultiplier()
+//	  → travel(vec3d) → travelMidAir (land/air) or travelInFluid (water)
+//	floatIfRidden(): +0.04 Y/tick upward push when CAN_FLOAT_WHILE_RIDDEN and deep (1.21.11+)
+//
+// Steering: pig.yaw is set to the player's yaw via setRotation each tick.
+//   Since the agent IS the controlling player, the pig's yaw is taken directly
+//   from physicsState without any ThrottleX-based increment. The agent steers
+//   by changing its own look direction (via TurnTowards) before each tick.
+//
+// Direction: getControlledMovementInput always returns (0,0,1). The `forward`
+//   bool gates whether to apply that full-forward acceleration: true = full
+//   speed, false = coast to a stop. `inputs` is not used for movement
+//   computation — only `forward` and the yaw from physicsState matter.
+//
+// Velocity formula (Java travelMidAir, three-step):
+//
+//	1. updateVelocity(speedFactor, movementInput): vel += accel
+//	2. move(SELF, vel): collision resolution
+//	3. vel.xz *= slip*0.91  (post-move friction)
+//
+//	speedFactor = saddledSpeed*(0.216/slip³) on ground
+//	            = saddledSpeed*0.1           when airborne
 func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	versionHandler models.VersionHandler,
 	mountedEntityID int32,
@@ -23,6 +44,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	forward, backward, left, right, jump, sneak bool,
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
+	// inputs is not used for movement computation — getControlledMovementInput
+	// always returns (0,0,1). The forward/backward/left/right booleans are used
+	// only for the VehicleInput packet.
+	_ = inputs
+
 	// (1) Send PlayerInput
 	log.Printf("[handleRidingModePig] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
@@ -33,58 +59,54 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 
 	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
 
-	// (2) Yaw-rotation steering
-	yaw -= inputs.ThrottleX * horseTurnDegsPerTick
+	// (2) tickControlled: snap pitch to player pitch * 0.5.
+	// Java: this.setRotation(controllingPlayer.getYaw(), controllingPlayer.getPitch() * 0.5F)
+	// Yaw is already the agent's own yaw — no modification needed (pig.yaw = player.yaw).
+	pitch = pitch * 0.5
 
-	// (3) Water/land physics
-	waterParams := computeRidingWaterPhysics(pe, versionHandler, currentPos)
-	var velocityDrag float64
-	var gravityDelta float64
-
-	if waterParams.IsInWater {
-		velocityDrag = waterParams.VelocityDrag
-		gravityDelta = waterParams.GravityDelta
-	} else {
-		// On land: slipperiness-based friction
-		blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
-		velocityDrag = physics.HorseLandFriction(blockSlipperiness)
-		gravityDelta = 0.0
-		pe.ridingVelY = 0.0
+	// (3) tickControlled: tick the SaddledComponent boost.
+	// Java SaddledComponent.tickBoost(): if (boosted && boostedTime++ > boostTime) boosted = false
+	// Post-increment: the condition tests the old boostedTime, so the boost runs one extra tick.
+	if pe.saddleBoosted {
+		oldBoostTime := pe.saddleBoostTime
+		pe.saddleBoostTime++
+		if oldBoostTime > pe.saddleBoostTotal {
+			pe.saddleBoosted = false
+		}
 	}
 
-	// (4) Movement speed from entity attribute, with carrot boost
-	// Java PigEntity.getSaddledSpeed():
-	//
-	//	return getAttributeValue(MOVEMENT_SPEED) * 0.225 * saddledComponent.getMovementSpeedMultiplier();
-	//
-	// The 0.225 saddled multiplier is always applied for a ridden pig. The sinusoidal
-	// boost multiplier (1.0 + 1.15*sin(...)) comes from the SaddledComponent and is
-	// triggered by *using* (right-click) the carrot_on_a_stick, not merely holding it.
-	// Holding the item only makes the player the controlling passenger (handled
-	// server-side via getControllingPassenger); it does not change speed.
-	attributeSpeed := physics.PigBaseMovementSpeed // Default pig speed
+	// (4) Water/land physics detection.
+	waterParams := computeRidingWaterPhysics(pe, versionHandler, currentPos)
+
+	// (5) Airborne detection (mirrors horse handler).
+	// A pig is airborne when it has upward Y velocity or is no longer supported
+	// by ground. Probing for support lets a pig that walks off a ledge with zero
+	// Y velocity start to fall on the same tick, rather than hovering.
+	grounded := ridingHasGroundSupport(pe, currentPos, 0.9, 0.9)
+	ridingAirborne := !waterParams.IsInWater && (pe.ridingVelY > 0.001 || !grounded)
+
+	// (6) Compute saddled movement speed.
+	// Java: getSaddledSpeed = attribute * 0.225 * saddledComponent.getMovementSpeedMultiplier()
+	attributeSpeed := physics.PigBaseMovementSpeed
 	if entityGetter != nil {
 		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
 			attributeSpeed = movementSpeed
 		}
 	}
-	movementAcceleration := attributeSpeed * physics.PigSaddledSpeedMultiplier
+	saddledSpeed := attributeSpeed * physics.PigSaddledSpeedMultiplier
 
-	// Apply the SaddledComponent sinusoidal boost when active. Mirrors Java
-	// SaddledComponent.getMovementSpeedMultiplier():
-	//
-	//	1.0F + 1.15F * sin(boostedTime / boostTime * PI)
-	// The boost is armed via TriggerSaddleBoost (carrot_on_a_stick use).
+	// Apply sinusoidal carrot_on_a_stick boost.
+	// Java SaddledComponent.getMovementSpeedMultiplier(): 1.0 + 1.15*sin(boostedTime/boostTime*PI)
 	carrotBoost := false
 	boostMultiplier := 1.0
 	if pe.saddleBoosted && pe.saddleBoostTotal > 0 {
 		carrotBoost = true
 		boostMultiplier = 1.0 + physics.PigBoostSinAmplitude*math.Sin(float64(pe.saddleBoostTime)/float64(pe.saddleBoostTotal)*math.Pi)
 	}
-	movementAcceleration *= boostMultiplier
+	saddledSpeed *= boostMultiplier
 
 	// Holding carrot_on_a_stick makes the player the controlling passenger, but
-	// does not by itself change speed. We track it for logging/test visibility only.
+	// does not by itself change speed. Tracked for logging/test visibility only.
 	holdsCarrotOnAStick := false
 	if entityGetter != nil {
 		if heldItem, found := entityGetter.GetRiderHeldItem(); found && heldItem == "carrot_on_a_stick" {
@@ -92,37 +114,102 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		}
 	}
 
-	// (5) Velocity computation
-	ridingVelZ := pe.ridingVelZ*velocityDrag + inputs.ThrottleZ*movementAcceleration
-	ridingVelX := 0.0 // Pigs don't strafe; ThrottleX is steering
-	ridingVelY := pe.ridingVelY + gravityDelta
+	// (7) Per-surface speedFactor and friction.
+	//
+	// Java travelMidAir:
+	//   getMovementSpeed(slip): onGround → movementSpeed*(0.216/slip³)
+	//                           airborne → getOffGroundSpeed() = movementSpeed*0.1
+	//   friction (post-move):   slip * 0.91
+	//
+	// Java travelInWater:
+	//   g = 0.02 base speed (pig has no WATER_MOVEMENT_EFFICIENCY attribute)
+	//   horizontal drag = 0.8 per tick (f in travelInWater)
+	var speedFactor, friction float64
 
-	if math.Abs(ridingVelZ) < physics.ResetVelocity {
-		ridingVelZ = 0
+	switch {
+	case waterParams.IsInWater:
+		speedFactor = physics.PigInWaterBaseSpeed
+		friction = waterParams.VelocityDrag
+	case ridingAirborne:
+		// getOffGroundSpeed with controlling player: movementSpeed * 0.1
+		speedFactor = saddledSpeed * 0.1
+		friction = physics.Inertia // air: slip=1.0, friction = 1.0*0.91
+	default:
+		// On land
+		blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
+		slipCubed := blockSlipperiness * blockSlipperiness * blockSlipperiness
+		speedFactor = saddledSpeed * (0.21600002 / slipCubed)
+		friction = blockSlipperiness * physics.Inertia // slip * 0.91
+		// Zero Y velocity on land; collision will keep it grounded.
+		pe.ridingVelY = 0.0
 	}
 
-	// (6) Position computation via collision detection
-	// Pig dimensions: 0.9 wide × 0.9 tall
+	// (8) getControlledMovementInput always returns (0,0,1).
+	// `forward` gates acceleration: true = full speed; false = coast (no accel).
+	var accelFactor float64
+	if forward {
+		accelFactor = speedFactor
+	}
+
 	yawRad := yaw * math.Pi / 180.0
-	moveVel := models.V3{
-		X: -math.Sin(yawRad) * ridingVelZ,
-		Y: ridingVelY,
-		Z: math.Cos(yawRad) * ridingVelZ,
+	accelX := -math.Sin(yawRad) * accelFactor
+	accelZ := math.Cos(yawRad) * accelFactor
+
+	// updateVelocity(speedFactor, movementInput): velocity += accel  (Java step 1)
+	velX := pe.ridingVelX + accelX
+	velZ := pe.ridingVelZ + accelZ
+
+	// Y velocity per surface state.
+	var velY float64
+	switch {
+	case waterParams.IsInWater:
+		velY = pe.ridingVelY + waterParams.GravityDelta
+		// floatIfRidden: pigs are in CAN_FLOAT_WHILE_RIDDEN.
+		// Java: if fluidHeight > swimHeight → vel.y += 0.04F
+		// Applied for 1.21.11+ floating behavior (not the pre-1.21.11 sinking path).
+		if !waterParams.ShouldApplyOldSinkingBehavior {
+			velY += 0.04
+		}
+	case ridingAirborne:
+		velY = pe.ridingVelY - physics.Gravity // -0.08 per tick
+	default:
+		velY = 0.0 // on ground
 	}
+
+	// (9) move(SELF, velocity) — collision detection.  (Java step 2)
+	// Pig dimensions: 0.9 wide × 0.9 tall.
+	moveVel := models.V3{X: velX, Y: velY, Z: velZ}
 	newPos, correctedVel, collisionOnGround, _, _ := resolveEntityCollision(pe, currentPos, moveVel, 0.9, 0.9)
-	onGround := collisionOnGround || (!waterParams.IsInWater && ridingVelY >= 0)
+	onGround := collisionOnGround || grounded
 
-	// Use corrected velocity for next tick
-	ridingVelZ = math.Sqrt(correctedVel.X*correctedVel.X + correctedVel.Z*correctedVel.Z)
-	ridingVelY = correctedVel.Y
+	// Landing: vertical collision stopped a downward move.
+	if collisionOnGround {
+		correctedVel.Y = 0
+		onGround = true
+		pe.ridingGroundY = newPos.Y
+	}
 
-	// Update shared velocity state
-	pe.ridingVelX = ridingVelX
-	pe.ridingVelZ = ridingVelZ
-	pe.ridingVelY = ridingVelY
-	pe.lastVelMultiplier = velocityDrag
+	// (10) Post-move friction: velocity.xz *= friction  (Java step 3)
+	velX = correctedVel.X * friction
+	velZ = correctedVel.Z * friction
+	velY = correctedVel.Y
+	if ridingAirborne {
+		velY *= physics.Drag // 0.98 Y air drag (Java: d*h, h=0.98 for non-Flutterer)
+	}
 
-	// Auto-dismount when submerged
+	if math.Abs(velX) < physics.ResetVelocity {
+		velX = 0
+	}
+	if math.Abs(velZ) < physics.ResetVelocity {
+		velZ = 0
+	}
+
+	pe.ridingVelX = velX
+	pe.ridingVelZ = velZ
+	pe.ridingVelY = velY
+	pe.lastVelMultiplier = friction
+
+	// Auto-dismount when submerged (pre-1.21.11 behavior).
 	checkRiderHeadSubmerged(pe, mountedEntityID, waterParams, newPos.X, newPos.Y, newPos.Z)
 
 	waterBehavior := "none"
@@ -134,8 +221,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		}
 	}
 
-	log.Printf("[handleRidingModePig] holds_carrot=%v boost_active=%v boostMul=%.3f accel=%.4f drag=%.3f velZ=%.4f velY=%.4f yaw=%.1f throttle=(%.2f,%.2f) water=%v behavior=%s newPos=(%.2f,%.2f,%.2f)",
-		holdsCarrotOnAStick, carrotBoost, boostMultiplier, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, yaw, inputs.ThrottleX, inputs.ThrottleZ, waterParams.IsInWater, waterBehavior, newPos.X, newPos.Y, newPos.Z)
+	log.Printf("[handleRidingModePig] holds_carrot=%v boost_active=%v boostMul=%.3f accel=%.4f friction=%.3f velX=%.4f velZ=%.4f velY=%.4f yaw=%.1f pitch=%.1f forward=%v water=%v behavior=%s newPos=(%.2f,%.2f,%.2f)",
+		holdsCarrotOnAStick, carrotBoost, boostMultiplier, accelFactor, friction, velX, velZ, velY, yaw, pitch, forward, waterParams.IsInWater, waterBehavior, newPos.X, newPos.Y, newPos.Z)
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

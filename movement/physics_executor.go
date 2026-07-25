@@ -1956,8 +1956,13 @@ func (pe *PhysicsMovementExecutor) handleDismountStep(step pathfinding.PathStep)
 // matching vanilla AbstractBoatEntity.yawVelocity, and forward/backward
 // (ThrottleZ) thrusts along the boat's current heading.
 //
-// For horses, ThrottleX rotates the horse's yaw and ThrottleZ thrusts
-// forward along the facing direction.
+// For horses/camels/donkeys, ThrottleX rotates the entity's yaw by
+// horseTurnDegsPerTick per tick, and ThrottleZ thrusts forward.
+//
+// For pigs and striders, the entity's yaw equals the player's yaw directly
+// (Java setRotation); the agent steers by changing its own look direction
+// via TurnTowards. ThrottleZ>0 (forward=true) applies full forward
+// acceleration; ThrottleX is not used for yaw in these entities.
 func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	// Get mounted entity ID and version handler
 	pe.mountedEntityMu.RLock()
