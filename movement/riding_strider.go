@@ -36,7 +36,14 @@ func canMoveVoluntarily() bool {
 //
 // Note: The `inputs` parameter is ignored for movement computation because Java's
 // getControlledMovementInput() always returns (0, 0, 1) regardless of the actual input.
-// The forward/backward/left/right booleans are used only for the VehicleInput packet.
+// The forward/backward/left/right booleans are used only for the VehicleInput packet,
+// and (as of this handler) also to gate whether forward acceleration is applied at all
+// — see the `forward` check below, matching the pig handler's coast-to-a-stop behavior.
+//
+// Controlling item: a rider only becomes the strider's controlling passenger while
+//   holding warped_fungus_on_a_stick (https://minecraft.wiki/w/Strider) — without it
+//   the strider ignores rider input entirely, so speedFactor is gated on
+//   holdsFungusOnAStick below, independent of `forward`.
 func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	versionHandler models.VersionHandler,
 	mountedEntityID int32,
@@ -144,6 +151,17 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 
 	saddledSpeed := attributeSpeed * speedMultiplier * boostMultiplier
 
+	// Holding warped_fungus_on_a_stick makes the player the controlling
+	// passenger — a strider ignores steering input entirely without it, the
+	// same mechanic as the pig/carrot_on_a_stick pairing
+	// (https://minecraft.wiki/w/Strider). Gates speedFactor below.
+	holdsFungusOnAStick := false
+	if entityGetter != nil {
+		if heldItem, found := entityGetter.GetRiderHeldItem(); found && heldItem == "warped_fungus_on_a_stick" {
+			holdsFungusOnAStick = true
+		}
+	}
+
 	// ── travelMidAir physics ──
 	// Java: slipperiness = onGround ? blockBelow.getSlipperiness() : 1.0
 	//       friction = slipperiness * 0.91
@@ -173,13 +191,19 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 // in supportedOnGround (prior-tick ground collision confirmed by a solid block
 // below) lets a land-bound strider use the full on-ground speed factor so it
 // actually moves — matching the cold/land movement Java produces.
+// `forward` gates acceleration (coast to a stop when not throttling, matching
+// the pig handler's UX choice — see riding_pig.go); holdsFungusOnAStick gates
+// it too, since a rider without the fungus is not the controlling passenger
+// in vanilla and cannot steer the strider at all.
 var speedFactor float64
 isOnGround := supportedOnGround || lavaParams.IsOnLava
-if isOnGround {
-	slipCubed := slipperiness * slipperiness * slipperiness
-	speedFactor = saddledSpeed * (0.21600002 / slipCubed)
-} else {
-	speedFactor = saddledSpeed * 0.1
+if forward && holdsFungusOnAStick {
+	if isOnGround {
+		slipCubed := slipperiness * slipperiness * slipperiness
+		speedFactor = saddledSpeed * (0.21600002 / slipCubed)
+	} else {
+		speedFactor = saddledSpeed * 0.1
+	}
 }
 
 	// getControlledMovementInput always returns (0, 0, 1) — constant forward
@@ -251,8 +275,8 @@ if isOnGround {
 	pe.ridingVelY = velY
 	pe.lastVelMultiplier = friction
 
-	log.Printf("[handleRidingModeStrider] cold=%v boost=%.2f saddledSpeed=%.4f speedFactor=%.4f friction=%.3f vel=(%.4f,%.4f,%.4f) yaw=%.1f onLava=%v submerged=%v newPos=(%.2f,%.2f,%.2f)",
-		cold, boostMultiplier, saddledSpeed, speedFactor, friction, velX, velY, velZ, yaw,
+	log.Printf("[handleRidingModeStrider] holds_fungus=%v cold=%v boost=%.2f saddledSpeed=%.4f speedFactor=%.4f friction=%.3f vel=(%.4f,%.4f,%.4f) yaw=%.1f onLava=%v submerged=%v newPos=(%.2f,%.2f,%.2f)",
+		holdsFungusOnAStick, cold, boostMultiplier, saddledSpeed, speedFactor, friction, velX, velY, velZ, yaw,
 		lavaParams.IsOnLava, lavaParams.IsSubmergedInLava, newPos.X, newPos.Y, newPos.Z)
 
 	// Update physicsState inside the lock before returning so sendRidingMove

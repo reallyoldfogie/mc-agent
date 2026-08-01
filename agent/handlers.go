@@ -1731,6 +1731,11 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	// for TeleportConfirm before accepting VehicleMove packets. Applying the position
 	// here would overwrite the vehicle-seeded physicsState with the player's passenger
 	// offset, causing every subsequent VehicleMove to carry the wrong Y coordinate.
+	//
+	// NOTE on packet ordering: ServerPlayerEntity.startRiding() sends PlayerPositionLook
+	// *before* EntityPassengersSetS2CPacket, so IsMounted() is still false when this
+	// handler fires for the initial mount teleport. The non-mounted path below also sends
+	// TeleportConfirm; this branch covers subsequent corrections while already riding.
 	if a.IsMounted() {
 		log.Printf("[onClientboundPosition] Mounted: skipping position update (%.2f,%.2f,%.2f), confirming teleportID=%d",
 			X, Y, Z, TeleportID)
@@ -1739,7 +1744,11 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 			t = teleport
 		}
 		if t != nil {
-			_ = t.AcceptTeleportation(pk.VarInt(TeleportID))
+			if err := t.AcceptTeleportation(pk.VarInt(TeleportID)); err != nil {
+				log.Printf("[onClientboundPosition] Warning: failed to send teleport confirmation (mounted): %v", err)
+			}
+		} else {
+			log.Printf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport (mounted) ID=%d", TeleportID)
 		}
 		a.sendPlayerLoadedOnce()
 		if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
@@ -1810,6 +1819,8 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		if err := t.AcceptTeleportation(pk.VarInt(TeleportID)); err != nil {
 			log.Printf("[onClientboundPosition] Warning: failed to send teleport confirmation: %v", err)
 		}
+	} else {
+		log.Printf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport ID=%d", TeleportID)
 	}
 	a.sendPlayerLoadedOnce()
 	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {

@@ -29,6 +29,11 @@ import (
 //   speed, false = coast to a stop. `inputs` is not used for movement
 //   computation — only `forward` and the yaw from physicsState matter.
 //
+// Controlling item: a rider only becomes the pig's controlling passenger while
+//   holding carrot_on_a_stick (https://minecraft.wiki/w/Pig) — without it the
+//   pig ignores rider input entirely, so accelFactor is also gated on
+//   holdsCarrotOnAStick below, independent of `forward`.
+//
 // Velocity formula (Java travelMidAir, three-step):
 //
 //	1. updateVelocity(speedFactor, movementInput): vel += accel
@@ -105,8 +110,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	}
 	saddledSpeed *= boostMultiplier
 
-	// Holding carrot_on_a_stick makes the player the controlling passenger, but
-	// does not by itself change speed. Tracked for logging/test visibility only.
+	// Holding carrot_on_a_stick makes the player the controlling passenger — a
+	// pig ignores steering input entirely without it (https://minecraft.wiki/w/Pig,
+	// confirmed empirically in docs/PIG_MOUNT_SYNC_SNAPBACK_INVESTIGATION.md). Gates
+	// accelFactor below; also used for the boost calculation and logging.
 	holdsCarrotOnAStick := false
 	if entityGetter != nil {
 		if heldItem, found := entityGetter.GetRiderHeldItem(); found && heldItem == "carrot_on_a_stick" {
@@ -146,8 +153,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 
 	// (8) getControlledMovementInput always returns (0,0,1).
 	// `forward` gates acceleration: true = full speed; false = coast (no accel).
+	// holdsCarrotOnAStick gates it too: a rider without the carrot is not the
+	// controlling passenger in vanilla and cannot steer the pig at all.
 	var accelFactor float64
-	if forward {
+	if forward && holdsCarrotOnAStick {
 		accelFactor = speedFactor
 	}
 

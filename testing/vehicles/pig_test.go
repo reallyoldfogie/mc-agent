@@ -1,6 +1,7 @@
 package vehicles
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -23,8 +24,11 @@ func TestPigMounting(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x, y, z := pos.X, pos.Y, pos.Z
 
-			// Summon saddled pig
-			pigID, err := helper.SummonPig(ctx, x+2, y, z)
+			// Summon without AI so the pig cannot wander out of interact range
+			// before we mount (pigs wander significantly within ~1-2s of
+			// spawning — see docs/bugs/1.21.1_pig_mount_timeout/); AI is
+			// restored after mounting to match SummonHorse/SummonCamel.
+			pigID, err := helper.SummonPig(ctx, x+2, y, z, WithNoAI())
 			require.NoError(t, err)
 
 			time.Sleep(500 * time.Millisecond)
@@ -35,6 +39,9 @@ func TestPigMounting(t *testing.T) {
 
 			// Wait for mounted
 			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnableEntityAI(ctx, "minecraft:pig")
 			require.NoError(t, err)
 
 			// Dismount
@@ -63,16 +70,26 @@ func TestPigMovement(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x, y, z := pos.X, pos.Y, pos.Z
 
-			// Summon and mount pig
-			pigID, err := helper.SummonPig(ctx, x, y, z)
+			// Summon and mount pig. NoAI keeps it from wandering out of
+			// interact range before we mount (see
+			// docs/bugs/1.21.1_pig_mount_timeout/); AI is restored after
+			// mounting since a NoAI pig also can't respond to rider steering.
+			pigID, err := helper.SummonPig(ctx, x, y, z, WithNoAI())
 			require.NoError(t, err)
 
+			// A saddled pig only responds to steering when the rider holds a
+			// carrot on a stick (https://minecraft.wiki/w/Pig) — without it the
+			// pig cannot be controlled at all, regardless of throttle input.
+			_, _ = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("give %s carrot_on_a_stick", helper.AgentName))
 			time.Sleep(500 * time.Millisecond)
 
 			err = helper.MountEntity(ctx, pigID)
 			require.NoError(t, err)
 
 			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnableEntityAI(ctx, "minecraft:pig")
 			require.NoError(t, err)
 
 			// Enter manual mode for controlled movement
@@ -120,16 +137,26 @@ func TestPigSpeedAttribute(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x, y, z := pos.X, pos.Y, pos.Z
 
-			// Summon and mount pig
-			pigID, err := helper.SummonPig(ctx, x, y, z)
+			// Summon and mount pig. NoAI keeps it from wandering out of
+			// interact range before we mount (see
+			// docs/bugs/1.21.1_pig_mount_timeout/); AI is restored after
+			// mounting since a NoAI pig also can't respond to rider steering.
+			pigID, err := helper.SummonPig(ctx, x, y, z, WithNoAI())
 			require.NoError(t, err)
 
+			// A saddled pig only responds to steering when the rider holds a
+			// carrot on a stick (https://minecraft.wiki/w/Pig) — without it the
+			// pig cannot be controlled at all, regardless of throttle input.
+			_, _ = helper.Instance.RCON.Exec(ctx, fmt.Sprintf("give %s carrot_on_a_stick", helper.AgentName))
 			time.Sleep(500 * time.Millisecond)
 
 			err = helper.MountEntity(ctx, pigID)
 			require.NoError(t, err)
 
 			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnableEntityAI(ctx, "minecraft:pig")
 			require.NoError(t, err)
 
 			// Try to get pig's movement speed attribute
@@ -188,8 +215,11 @@ func TestPigCarrotBoost(t *testing.T) {
 			pos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
 			x1, y1, z1 := pos.X, pos.Y, pos.Z
 
-			// Test movement WITHOUT carrot
-			pigID1, err := helper.SummonPig(ctx, x1, y1, z1)
+			// Test movement WITHOUT carrot. NoAI keeps the pig from wandering
+			// out of interact range before we mount (see
+			// docs/bugs/1.21.1_pig_mount_timeout/); AI is restored after
+			// mounting since a NoAI pig also can't respond to rider steering.
+			pigID1, err := helper.SummonPig(ctx, x1, y1, z1, WithNoAI())
 			require.NoError(t, err)
 
 			time.Sleep(500 * time.Millisecond)
@@ -198,6 +228,9 @@ func TestPigCarrotBoost(t *testing.T) {
 			require.NoError(t, err)
 
 			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnableEntityAI(ctx, "minecraft:pig")
 			require.NoError(t, err)
 
 			err = helper.EnterManualMode()
@@ -225,8 +258,11 @@ func TestPigCarrotBoost(t *testing.T) {
 
 			time.Sleep(500 * time.Millisecond)
 
-			// Test movement WITH carrot
-			pigID2, err := helper.SummonPig(ctx, x2, y2, z2)
+			// Test movement WITH carrot. NoAI keeps the pig from wandering out
+			// of interact range before we mount (see
+			// docs/bugs/1.21.1_pig_mount_timeout/); AI is restored after
+			// mounting since a NoAI pig also can't respond to rider steering.
+			pigID2, err := helper.SummonPig(ctx, x2, y2, z2, WithNoAI())
 			require.NoError(t, err)
 
 			// Give carrot and ensure it's in hand
@@ -239,6 +275,9 @@ func TestPigCarrotBoost(t *testing.T) {
 			require.NoError(t, err)
 
 			err = helper.WaitForMounted(ctx, 5*time.Second)
+			require.NoError(t, err)
+
+			err = helper.EnableEntityAI(ctx, "minecraft:pig")
 			require.NoError(t, err)
 
 			err = helper.EnterManualMode()

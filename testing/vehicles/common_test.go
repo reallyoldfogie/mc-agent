@@ -947,25 +947,46 @@ func (vh *VehicleTestHelper) BuildAscendingWaterloggedRailTrack(ctx context.Cont
 	return nil
 }
 
-// SummonPig summons a saddled pig at the specified location and returns its entity ID
-func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64) (int32, error) {
+// SummonPig summons a saddled pig at the specified location and returns its entity ID.
+// Pigs wander significantly within a couple of seconds of spawning (observed ~5 blocks
+// in 3s in docs/bugs/1.21.1_pig_mount_timeout/ investigation) — pass WithNoAI() so the
+// pig cannot wander out of interact range before the caller mounts it, then restore AI
+// via EnableEntityAI(ctx, "minecraft:pig") once mounted, matching the SummonHorse/
+// SummonCamel pattern (a NoAI pig also cannot respond to rider steering).
+func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64, opts ...SummonOption) (int32, error) {
 	var cmd string
 	version := vh.Instance.Server.Version
 
+	var options summonOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	extraNBT := ""
+	if options.noAI {
+		extraNBT = ",NoAI:1b"
+	}
+
 	v, _ := semver.Parse(version)
 	c, _ := semver.NewConstraints(("< 1.21.5"))
+	preEquipmentComponent := c.Check(v)
 
-	if c.Check(v) {
-		// Versions 1.21.1-1.21.4: Use SaddleItem tag
+	if preEquipmentComponent {
+		// Versions 1.21.1-1.21.4: unlike AbstractHorse-family mobs (which use an
+		// item-stack SaddleItem tag), PigEntity pre-1.21.5 stores saddle state as
+		// a plain boolean Saddle tag. Using SaddleItem here (as SummonHorse does
+		// for horses) is silently ignored by the game — the resulting pig NBT
+		// shows Saddle:0b and no SaddleItem field at all, leaving the pig
+		// unsaddled and un-mountable with no error anywhere. Confirmed via RCON
+		// `data get entity` in docs/bugs/1.21.1_pig_mount_timeout/.
 		cmd = fmt.Sprintf(
-			`summon minecraft:pig %f %f %f {SaddleItem:{id:"minecraft:saddle",count:1}}`,
-			x, y, z,
+			`summon minecraft:pig %f %f %f {Saddle:1b%s}`,
+			x, y, z, extraNBT,
 		)
 	} else {
 		// Versions 1.21.5+: Use equipment.saddle structure
 		cmd = fmt.Sprintf(
-			`summon minecraft:pig %f %f %f {equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
-			x, y, z,
+			`summon minecraft:pig %f %f %f {equipment:{saddle:{id:"minecraft:saddle",count:1}}%s}`,
+			x, y, z, extraNBT,
 		)
 	}
 
@@ -975,10 +996,15 @@ func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64) (in
 		return 0, fmt.Errorf("summon pig: %w", err)
 	}
 
-	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:pig,limit=1] saddle with minecraft:saddle")
-	log.Printf("[VehicleTestHelper] pig saddle equip => %s", saddleResp)
-	if err != nil {
-		return 0, fmt.Errorf("equip pig saddle: %w", err)
+	// The "saddle" equipment slot name (used by the fallback below) doesn't
+	// exist pre-1.21.5 either — the Saddle:1b summon NBT above is the only
+	// mechanism that works for those versions, so skip the redundant call.
+	if !preEquipmentComponent {
+		saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:pig,limit=1] saddle with minecraft:saddle")
+		log.Printf("[VehicleTestHelper] pig saddle equip => %s", saddleResp)
+		if err != nil {
+			return 0, fmt.Errorf("equip pig saddle: %w", err)
+		}
 	}
 
 	time.Sleep(500 * time.Millisecond)
@@ -996,17 +1022,22 @@ func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64) (in
 	return entityID, nil
 }
 
-// SummonStrider summons a saddled strider at the specified location and returns its entity ID
+// SummonStrider summons a saddled strider at the specified location and returns its
+// entity ID. Like PigEntity (docs/bugs/1.21.1_pig_mount_timeout/), StriderEntity
+// pre-1.21.5 stores saddle state as a plain boolean Saddle tag, not the item-stack
+// SaddleItem tag AbstractHorse-family mobs use — confirmed via RCON `data get entity`
+// showing Saddle:0b and no SaddleItem field after summoning with the old NBT.
 func (vh *VehicleTestHelper) SummonStrider(ctx context.Context, x, y, z float64) (int32, error) {
 	var cmd string
 	version := vh.Instance.Server.Version
 
 	v, _ := semver.Parse(version)
 	c, _ := semver.NewConstraints(("< 1.21.5"))
+	preEquipmentComponent := c.Check(v)
 
-	if c.Check(v) {
+	if preEquipmentComponent {
 		cmd = fmt.Sprintf(
-			`summon minecraft:strider %f %f %f {SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			`summon minecraft:strider %f %f %f {Saddle:1b}`,
 			x, y, z,
 		)
 	} else {
@@ -1022,10 +1053,15 @@ func (vh *VehicleTestHelper) SummonStrider(ctx context.Context, x, y, z float64)
 		return 0, fmt.Errorf("summon strider: %w", err)
 	}
 
-	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:strider,limit=1] saddle with minecraft:saddle")
-	log.Printf("[VehicleTestHelper] strider saddle equip => %s", saddleResp)
-	if err != nil {
-		return 0, fmt.Errorf("equip strider saddle: %w", err)
+	// The "saddle" equipment slot name (used by the fallback below) doesn't
+	// exist pre-1.21.5 either — the Saddle:1b summon NBT above is the only
+	// mechanism that works for those versions, so skip the redundant call.
+	if !preEquipmentComponent {
+		saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:strider,limit=1] saddle with minecraft:saddle")
+		log.Printf("[VehicleTestHelper] strider saddle equip => %s", saddleResp)
+		if err != nil {
+			return 0, fmt.Errorf("equip strider saddle: %w", err)
+		}
 	}
 
 	time.Sleep(500 * time.Millisecond)

@@ -158,10 +158,22 @@ type PhysicsMovementExecutor struct {
 	// corrections snaps the vehicle backwards mid-motion (worst during a camel
 	// dash at ~2 blocks/tick). SyncMountedPosition drops any sync that matches a
 	// position in this buffer. Guarded by sentVehicleMovesMu.
-	sentVehicleMovesMu  sync.Mutex
-	sentVehicleMoves    [sentVehicleMovesSize]models.V3
-	sentVehicleMovesLen int
-	sentVehicleMovesIdx int
+	sentVehicleMovesMu   sync.Mutex
+	sentVehicleMoves     [sentVehicleMovesSize]models.V3
+	sentVehicleMovesTime [sentVehicleMovesSize]time.Time
+	sentVehicleMovesLen  int
+	sentVehicleMovesIdx  int
+
+	// firstVehicleMoveAt/firstVehicleMovePos record the very first VehicleMove
+	// position sent after mounting, kept outside the ring buffer above (which
+	// only covers ~1s of history) purely for diagnostics: if a later
+	// server-side entity sync fails to match anything in the ring buffer but
+	// matches this mount-time snapshot, isVehicleMoveEcho logs exactly how
+	// stale that echo is, distinguishing a genuinely (if unusually) late
+	// server echo from an unrelated correction. See
+	// docs/PIG_MOUNT_SYNC_SNAPBACK_INVESTIGATION.md.
+	firstVehicleMoveAt  time.Time
+	firstVehicleMovePos models.V3
 
 	// Horse (and other JumpingMount) charge-on-hold / release-to-fire jump state.
 	// Mirrors the vanilla client (ClientPlayerEntity.tickMovement) where holding the
@@ -169,8 +181,8 @@ type PhysicsMovementExecutor struct {
 	// the jump. The handler arms pendingJumpStrength on release; tickControlled
 	// (here, the on-ground check in handleRidingModeHorse) applies the velocity on
 	// the next on-ground tick, matching AbstractHorseEntity.tickControlled.
-	horseCharging         bool    // true while the jump key is held and accumulating charge
-	horseJumpChargeTicks  int     // ticks the jump key has been held (for the ramp)
+	horseCharging            bool    // true while the jump key is held and accumulating charge
+	horseJumpChargeTicks     int     // ticks the jump key has been held (for the ramp)
 	horsePendingJumpStrength float64 // strength armed by a release; applied on next on-ground tick
 
 	// camelState holds the camel-specific pose, dash, and charge state.
@@ -189,9 +201,9 @@ type PhysicsMovementExecutor struct {
 	// Strider/pig SaddledComponent boost state. Mirrors Java SaddledComponent:
 	// boost is triggered by "using" (right-click) the warped_fungus_on_a_stick /
 	// carrot_on_a_stick, providing a temporary sinusoidal speed multiplier.
-	saddleBoosted     bool // Whether a boost is currently active
-	saddleBoostTime   int  // Current tick within the boost
-	saddleBoostTotal  int  // Total boost duration in ticks
+	saddleBoosted    bool // Whether a boost is currently active
+	saddleBoostTime  int  // Current tick within the boost
+	saddleBoostTotal int  // Total boost duration in ticks
 
 	// Boat-only: angular velocity (degrees/tick) preserved between ticks so
 	// turning has momentum, mirroring vanilla AbstractBoatEntity.yawVelocity
@@ -788,7 +800,13 @@ const vehicleMoveEchoEpsilon = 0.05
 func (pe *PhysicsMovementExecutor) recordSentVehicleMove(pos models.V3) {
 	pe.sentVehicleMovesMu.Lock()
 	defer pe.sentVehicleMovesMu.Unlock()
+	now := time.Now()
+	if pe.firstVehicleMoveAt.IsZero() {
+		pe.firstVehicleMoveAt = now
+		pe.firstVehicleMovePos = pos
+	}
 	pe.sentVehicleMoves[pe.sentVehicleMovesIdx] = pos
+	pe.sentVehicleMovesTime[pe.sentVehicleMovesIdx] = now
 	pe.sentVehicleMovesIdx = (pe.sentVehicleMovesIdx + 1) % sentVehicleMovesSize
 	if pe.sentVehicleMovesLen < sentVehicleMovesSize {
 		pe.sentVehicleMovesLen++
@@ -806,10 +824,63 @@ func (pe *PhysicsMovementExecutor) isVehicleMoveEcho(x, y, z float64) bool {
 		if math.Abs(x-sent.X) <= vehicleMoveEchoEpsilon &&
 			math.Abs(y-sent.Y) <= vehicleMoveEchoEpsilon &&
 			math.Abs(z-sent.Z) <= vehicleMoveEchoEpsilon {
+			log.Printf("[isVehicleMoveEcho] Matched ring-buffer entry age=%s pos=(%.2f,%.2f,%.2f)",
+				time.Since(pe.sentVehicleMovesTime[i]), sent.X, sent.Y, sent.Z)
 			return true
 		}
 	}
+	// Diagnostic: no match in the ~1s ring buffer. Check whether this is a
+	// late echo of the very first VehicleMove we sent after mounting (the
+	// mount-time snapshot never expires from this check, unlike the ring
+	// buffer) so we can measure exactly how stale a non-matching packet is.
+	// See docs/PIG_MOUNT_SYNC_SNAPBACK_INVESTIGATION.md next step #1.
+	if !pe.firstVehicleMoveAt.IsZero() &&
+		math.Abs(x-pe.firstVehicleMovePos.X) <= vehicleMoveEchoEpsilon &&
+		math.Abs(y-pe.firstVehicleMovePos.Y) <= vehicleMoveEchoEpsilon &&
+		math.Abs(z-pe.firstVehicleMovePos.Z) <= vehicleMoveEchoEpsilon {
+		log.Printf("[isVehicleMoveEcho] NOT recognized as echo, but matches mount-time snapshot from %s ago (pos=(%.2f,%.2f,%.2f)); ring buffer holds %d entries spanning %s",
+			time.Since(pe.firstVehicleMoveAt), pe.firstVehicleMovePos.X, pe.firstVehicleMovePos.Y, pe.firstVehicleMovePos.Z,
+			pe.sentVehicleMovesLen, pe.sentVehicleMovesHistorySpanLocked())
+	} else if pe.sentVehicleMovesLen > 0 {
+		log.Printf("[isVehicleMoveEcho] NOT recognized as echo: pos=(%.2f,%.2f,%.2f), ring buffer holds %d entries spanning %s (oldest=%s ago, newest=%s ago)",
+			x, y, z, pe.sentVehicleMovesLen, pe.sentVehicleMovesHistorySpanLocked(),
+			time.Since(pe.oldestSentVehicleMoveTimeLocked()), time.Since(pe.newestSentVehicleMoveTimeLocked()))
+	}
 	return false
+}
+
+// oldestSentVehicleMoveTimeLocked returns the timestamp of the oldest entry
+// currently in the ring buffer. Callers must hold sentVehicleMovesMu.
+func (pe *PhysicsMovementExecutor) oldestSentVehicleMoveTimeLocked() time.Time {
+	if pe.sentVehicleMovesLen == 0 {
+		return time.Time{}
+	}
+	oldestIdx := pe.sentVehicleMovesIdx
+	if pe.sentVehicleMovesLen == sentVehicleMovesSize {
+		// Buffer is full; the slot the next write will land on holds the oldest entry.
+		return pe.sentVehicleMovesTime[oldestIdx]
+	}
+	// Buffer not yet full; the oldest entry is at index 0.
+	return pe.sentVehicleMovesTime[0]
+}
+
+// newestSentVehicleMoveTimeLocked returns the timestamp of the most recently
+// recorded entry. Callers must hold sentVehicleMovesMu.
+func (pe *PhysicsMovementExecutor) newestSentVehicleMoveTimeLocked() time.Time {
+	if pe.sentVehicleMovesLen == 0 {
+		return time.Time{}
+	}
+	newestIdx := (pe.sentVehicleMovesIdx - 1 + sentVehicleMovesSize) % sentVehicleMovesSize
+	return pe.sentVehicleMovesTime[newestIdx]
+}
+
+// sentVehicleMovesHistorySpanLocked reports how much wall-clock time the
+// current ring-buffer contents cover. Callers must hold sentVehicleMovesMu.
+func (pe *PhysicsMovementExecutor) sentVehicleMovesHistorySpanLocked() time.Duration {
+	if pe.sentVehicleMovesLen == 0 {
+		return 0
+	}
+	return pe.newestSentVehicleMoveTimeLocked().Sub(pe.oldestSentVehicleMoveTimeLocked())
 }
 
 // clearSentVehicleMoves empties the echo-detection history (on mount/dismount).
@@ -818,6 +889,8 @@ func (pe *PhysicsMovementExecutor) clearSentVehicleMoves() {
 	defer pe.sentVehicleMovesMu.Unlock()
 	pe.sentVehicleMovesLen = 0
 	pe.sentVehicleMovesIdx = 0
+	pe.firstVehicleMoveAt = time.Time{}
+	pe.firstVehicleMovePos = models.V3{}
 }
 
 // SyncRidingPosition applies a server-authoritative vehicle position correction
