@@ -170,6 +170,15 @@ type agent struct {
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
 
+	// entityWindowsMu guards entityWindows.
+	entityWindowsMu sync.RWMutex
+	// entityWindows maps an open container window ID to the entity whose
+	// container it is. The container packets only carry a window ID, so without
+	// this the contents cannot be attributed to the entity they belong to.
+	// Entries are added when an entity container is opened and removed when it
+	// closes.
+	entityWindows map[byte]int32
+
 	// e.g., player, playerList, world, movement, pathfinding, registries, etc.
 	// registries
 	regMu      sync.RWMutex

@@ -9,7 +9,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-
 // startPositionHeartbeat starts a background goroutine that sends position packets at the specified TPS.
 // This ensures the server sees continuous movement packets, which is required for certain interactions
 // (e.g., opening loom/beacon containers in Minecraft 1.21.5+).
@@ -175,7 +174,12 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 		return 0, fmt.Errorf("open entity container: %w", err)
 	}
 
-	log.Printf("[Agent %s] Entity container opened successfully with window ID %d", a.cfg.Name, windowID)
+	// Record which entity this window belongs to. The container packets only
+	// carry a window ID, so this is the only point at which the association is
+	// known and it has to be captured here for the contents to be attributable.
+	a.registerEntityWindow(windowID, entityID)
+
+	log.Printf("[Agent %s] Entity container opened successfully with window ID %d (entity %d)", a.cfg.Name, windowID, entityID)
 	return windowID, nil
 }
 
@@ -190,6 +194,10 @@ func (a *agent) CloseContainer() error {
 	if err := ch.CloseContainer(); err != nil {
 		return fmt.Errorf("close container: %w", err)
 	}
+
+	// Any cached entity container contents stop tracking the server now. The
+	// snapshot is kept but flagged not-live so callers know it can go stale.
+	a.releaseEntityWindows()
 
 	log.Printf("[Agent %s] Container closed successfully", a.cfg.Name)
 	return nil

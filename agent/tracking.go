@@ -46,6 +46,11 @@ type trackedEntity struct {
 	// slot itself carries the meaning, but any check that needs to know *which*
 	// item is equipped must wait for the parsers to extract the item ID.
 	Equipment map[models.EquipmentSlotType]models.InventorySlot
+	// Inventory is a cached snapshot of the entity's own container contents
+	// (donkey/mule/llama chest, chest boat, chest minecart). Nil until the
+	// container has been opened at least once. See models.EntityInventory for
+	// the staleness contract.
+	Inventory *models.EntityInventory
 	// Boat-specific metadata (only populated for boat/chest-boat entity types)
 	BoatVariant     models.BoatVariant // Wood type (oak, spruce, birch, etc.)
 	BoatPaddleLeft  bool               // Left paddle turning
@@ -212,13 +217,19 @@ func (a *agent) startEntityCleanup(ctxDone <-chan struct{}) {
 
 func (a *agent) cleanupRemovedEntities() {
 	now := time.Now()
+	purgedEntityIDs := make([]int32, 0)
 	a.entitiesMu.Lock()
 	for id, e := range a.entities {
 		if e.Removed && now.Sub(e.RemovedAt) > EntityRemovalGracePeriod {
 			delete(a.entities, id)
+			purgedEntityIDs = append(purgedEntityIDs, id)
 		}
 	}
 	a.entitiesMu.Unlock()
+
+	// Drop any container-window mapping for entities that no longer exist, so a
+	// recycled window ID cannot be attributed to a dead entity.
+	a.forgetEntityWindows(purgedEntityIDs)
 
 	// Check for expired projectiles and fire timeout callbacks
 	a.activeProjectilesMu.Lock()

@@ -1583,12 +1583,24 @@ func (a *agent) onEntityLook(p pk.Packet) error {
 // When the currently-held hotbar slot changes (e.g., item consumed), it also
 // re-emits the main hand equipment.
 func (a *agent) onSetSlot(p pk.Packet) error {
-	if a.versionHandler == nil || a.moveMirror == nil {
+	if a.versionHandler == nil {
 		return nil
 	}
 
-	_, _, slotIndex, item, err := a.versionHandler.Play().Containers().ParseContainerSetSlot(p)
+	windowID, _, slotIndex, item, err := a.versionHandler.Play().Containers().ParseContainerSetSlot(p)
 	if err != nil {
+		return nil
+	}
+
+	// Keep any tracked entity container snapshot in step with single-slot
+	// changes. Negative window IDs are the player's own inventory views, never
+	// an entity container.
+	if windowID > 0 {
+		a.updateEntityWindowSlot(byte(windowID), slotIndex, item)
+	}
+
+	// The remainder is replay-mirror bookkeeping only.
+	if a.moveMirror == nil {
 		return nil
 	}
 
@@ -1617,24 +1629,28 @@ func (a *agent) onSetSlot(p pk.Packet) error {
 }
 
 // onWindowItems handles container/window inventory updates (ClientboundContainerSetContent).
-// This packet is parsed by the version handler and the screen manager is responsible
-// for updating inventory state. The mc-bot-go library should handle this internally.
+//
+// The player-facing inventory state is owned by the screen manager inside
+// mc-bot-go. What this handler adds is entity attribution: when the window
+// belongs to an entity container we opened (donkey/mule/llama chest, chest
+// boat, chest minecart), the contents are cached against that entity so they
+// remain readable after the window closes.
 func (a *agent) onWindowItems(p pk.Packet) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
 	}
 
-	// Parse to validate packet integrity (version handler will cache if needed)
-	_, _, _, _, err := a.versionHandler.Play().Containers().ParseContainerSetContent(p)
+	windowID, _, slots, _, err := a.versionHandler.Play().Containers().ParseContainerSetContent(p)
 	if err != nil {
 		return err
 	}
 
-	// The actual inventory update is handled by the screen manager's internal handlers
-	// in the mc-bot-go library. This packet handler exists to:
-	// 1. Validate packet format
-	// 2. Ensure version handler has the packet available
-	// 3. Act as a logging/debugging point if needed
+	// Negative window IDs address the player's own inventory views, which are
+	// never an entity container.
+	if windowID > 0 {
+		a.storeEntityWindowContents(byte(windowID), slots)
+	}
+
 	return nil
 }
 
