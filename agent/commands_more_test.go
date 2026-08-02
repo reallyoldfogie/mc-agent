@@ -24,6 +24,7 @@ type fakeMoveExec struct {
 	manualMode     bool
 	manualThrottle [2]float64
 	manualRotation [2]float64
+	manualJump     bool
 	// For manual mode simulation
 	currentPos [3]float64
 	tickTimer  *time.Ticker
@@ -31,6 +32,14 @@ type fakeMoveExec struct {
 	// Reference to agent for position updates in tests
 	agent *agent
 }
+
+// Compile-time assertions that the fake satisfies the executor interfaces the
+// agent commands require. Without these, a missing method silently downgrades
+// the fake to a plain MovementExecutor and manual-mode commands fail at runtime.
+var (
+	_ models.MovementExecutor       = (*fakeMoveExec)(nil)
+	_ models.ManualMovementExecutor = (*fakeMoveExec)(nil)
+)
 
 func (f *fakeMoveExec) SendPosition(x, y, z float64, onGround bool) error {
 	f.posCalls = append(f.posCalls, [3]float64{x, y, z})
@@ -126,6 +135,11 @@ func (f *fakeMoveExec) SetManualThrottle(westEastThrottle, northSouthThrottle fl
 
 func (f *fakeMoveExec) SetManualRotation(yaw, pitch float64) error {
 	f.manualRotation = [2]float64{yaw, pitch}
+	return nil
+}
+
+func (f *fakeMoveExec) SetManualJump(enabled bool) error {
+	f.manualJump = enabled
 	return nil
 }
 

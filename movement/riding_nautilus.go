@@ -8,15 +8,6 @@ import (
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
 
-// nautilusGroundFrictionSpeedFactor is the constant from Java
-// LivingEntity.getMovementSpeed(slipperiness): speed * (0.21600002 / slip^3)
-// when on the ground. Kept as a named constant rather than a bare literal.
-const nautilusGroundFrictionSpeedFactor = 0.21600002
-
-// nautilusOffGroundSpeedFactor mirrors Java LivingEntity.getOffGroundSpeed():
-// movementSpeed * 0.1 when the controlling passenger is a player.
-const nautilusOffGroundSpeedFactor = 0.1
-
 // nautilusDashVelocityMultiplier is the block-based velocity multiplier applied
 // to a dash impulse. Java uses getVelocityMultiplier() (soul sand/honey slow);
 // we assume 1.0, matching the other riding handlers.
@@ -269,13 +260,7 @@ func nautilusWaterStep(pos, prevVel models.V3, sideways, vertical, forward, vehi
 //	velocity.y  = (velocity.y - gravity) * 0.98
 func nautilusLandStep(pos, prevVel models.V3, sideways, vertical, forward, vehicleYawDeg, saddledSpeed, slipperiness float64, onGround bool) (newPos, newVel models.V3, resolvedOnGround bool) {
 	friction := slipperiness * physics.Inertia
-
-	var speedFactor float64
-	if onGround {
-		speedFactor = saddledSpeed * (nautilusGroundFrictionSpeedFactor / (slipperiness * slipperiness * slipperiness))
-	} else {
-		speedFactor = saddledSpeed * nautilusOffGroundSpeedFactor
-	}
+	speedFactor := travelMidAirSpeedFactor(saddledSpeed, slipperiness, onGround)
 
 	accel := nautilusInputToVelocity(sideways, vertical, forward, vehicleYawDeg, speedFactor)
 	velAfterAccel := prevVel.Add(accel)

@@ -427,6 +427,35 @@ func (a *agent) IsMountedEntityMule(entityTypeID int32) bool {
 	return rval
 }
 
+// IsMountedEntityLlama checks if a mounted entity is a llama or trader llama
+// by type ID. Both accept a passenger but take no saddle and ignore rider
+// input, so they route to the passive-passenger handler.
+func (a *agent) IsMountedEntityLlama(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	rval := localName == "llama" || localName == "trader_llama"
+
+	log.Printf("[IsMountedEntityLlama] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+
+	return rval
+}
+
 // GetEntityAttribute retrieves an entity attribute value by name.
 // Returns the attribute value and a found flag. Common attributes include:
 // - "generic.movement_speed" (horse speed, etc.)

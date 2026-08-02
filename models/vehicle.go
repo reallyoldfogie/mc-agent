@@ -19,6 +19,8 @@ const (
 	VehicleTypeCamelHusk
 	VehicleTypeNautilus
 	VehicleTypeZombieNautilus
+	VehicleTypeLlama
+	VehicleTypeTraderLlama
 )
 
 // GetVehicleType returns what kind of vehicle an entity type represents.
@@ -53,6 +55,10 @@ func GetVehicleType(entityType EntityType) VehicleType {
 		return VehicleTypeDonkey
 	case EntityTypeMule:
 		return VehicleTypeMule
+	case EntityTypeLlama:
+		return VehicleTypeLlama
+	case EntityTypeTraderLlama:
+		return VehicleTypeTraderLlama
 	default:
 		return VehicleTypeNone
 	}
@@ -91,6 +97,10 @@ func (v VehicleType) String() string {
 		return "nautilus"
 	case VehicleTypeZombieNautilus:
 		return "zombie_nautilus"
+	case VehicleTypeLlama:
+		return "llama"
+	case VehicleTypeTraderLlama:
+		return "trader_llama"
 	default:
 		return "unknown"
 	}
@@ -99,4 +109,16 @@ func (v VehicleType) String() string {
 // IsRideable returns true if the vehicle type can be ridden
 func (v VehicleType) IsRideable() bool {
 	return v != VehicleTypeNone
+}
+
+// IsSteerable returns true if a rider can direct where the vehicle goes.
+// Llamas accept a passenger but take no saddle and ignore rider input, so the
+// rider is a passive passenger rather than the controlling passenger.
+func (v VehicleType) IsSteerable() bool {
+	switch v {
+	case VehicleTypeNone, VehicleTypeLlama, VehicleTypeTraderLlama:
+		return false
+	default:
+		return true
+	}
 }

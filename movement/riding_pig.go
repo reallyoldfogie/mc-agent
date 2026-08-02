@@ -2,7 +2,6 @@ package movement
 
 import (
 	"log"
-	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
@@ -20,28 +19,33 @@ import (
 //	floatIfRidden(): +0.04 Y/tick upward push when CAN_FLOAT_WHILE_RIDDEN and deep (1.21.11+)
 //
 // Steering: pig.yaw is set to the player's yaw via setRotation each tick.
-//   Since the agent IS the controlling player, the pig's yaw is taken directly
-//   from physicsState without any ThrottleX-based increment. The agent steers
-//   by changing its own look direction (via TurnTowards) before each tick.
+//
+//	Since the agent IS the controlling player, the pig's yaw is taken directly
+//	from physicsState without any ThrottleX-based increment. The agent steers
+//	by changing its own look direction (via TurnTowards) before each tick.
 //
 // Direction: getControlledMovementInput always returns (0,0,1). The `forward`
-//   bool gates whether to apply that full-forward acceleration: true = full
-//   speed, false = coast to a stop. `inputs` is not used for movement
-//   computation — only `forward` and the yaw from physicsState matter.
+//
+//	bool gates whether to apply that full-forward acceleration: true = full
+//	speed, false = coast to a stop. `inputs` is not used for movement
+//	computation — only `forward` and the yaw from physicsState matter.
 //
 // Controlling item: a rider only becomes the pig's controlling passenger while
-//   holding carrot_on_a_stick (https://minecraft.wiki/w/Pig) — without it the
-//   pig ignores rider input entirely, so accelFactor is also gated on
-//   holdsCarrotOnAStick below, independent of `forward`.
+//
+//	holding carrot_on_a_stick (https://minecraft.wiki/w/Pig) — without it the
+//	pig ignores rider input entirely, so accelFactor is also gated on
+//	holdsCarrotOnAStick below, independent of `forward`.
 //
 // Velocity formula (Java travelMidAir, three-step):
 //
-//	1. updateVelocity(speedFactor, movementInput): vel += accel
-//	2. move(SELF, vel): collision resolution
-//	3. vel.xz *= slip*0.91  (post-move friction)
+//  1. updateVelocity(speedFactor, movementInput): vel += accel
 //
-//	speedFactor = saddledSpeed*(0.216/slip³) on ground
-//	            = saddledSpeed*0.1           when airborne
+//  2. move(SELF, vel): collision resolution
+//
+//  3. vel.xz *= slip*0.91  (post-move friction)
+//
+//     speedFactor = saddledSpeed*(0.216/slip³) on ground
+//     = saddledSpeed*0.1           when airborne
 func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	versionHandler models.VersionHandler,
 	mountedEntityID int32,
@@ -102,12 +106,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 
 	// Apply sinusoidal carrot_on_a_stick boost.
 	// Java SaddledComponent.getMovementSpeedMultiplier(): 1.0 + 1.15*sin(boostedTime/boostTime*PI)
-	carrotBoost := false
-	boostMultiplier := 1.0
-	if pe.saddleBoosted && pe.saddleBoostTotal > 0 {
-		carrotBoost = true
-		boostMultiplier = 1.0 + physics.PigBoostSinAmplitude*math.Sin(float64(pe.saddleBoostTime)/float64(pe.saddleBoostTotal)*math.Pi)
-	}
+	carrotBoost := pe.saddleBoosted && pe.saddleBoostTotal > 0
+	boostMultiplier := saddledBoostMultiplier(pe.saddleBoosted, pe.saddleBoostTime, pe.saddleBoostTotal, physics.PigBoostSinAmplitude)
 	saddledSpeed *= boostMultiplier
 
 	// Holding carrot_on_a_stick makes the player the controlling passenger — a
@@ -139,13 +139,12 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		friction = waterParams.VelocityDrag
 	case ridingAirborne:
 		// getOffGroundSpeed with controlling player: movementSpeed * 0.1
-		speedFactor = saddledSpeed * 0.1
+		speedFactor = travelMidAirSpeedFactor(saddledSpeed, airSlipperiness, false)
 		friction = physics.Inertia // air: slip=1.0, friction = 1.0*0.91
 	default:
 		// On land
 		blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
-		slipCubed := blockSlipperiness * blockSlipperiness * blockSlipperiness
-		speedFactor = saddledSpeed * (0.21600002 / slipCubed)
+		speedFactor = travelMidAirSpeedFactor(saddledSpeed, blockSlipperiness, true)
 		friction = blockSlipperiness * physics.Inertia // slip * 0.91
 		// Zero Y velocity on land; collision will keep it grounded.
 		pe.ridingVelY = 0.0
@@ -160,9 +159,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		accelFactor = speedFactor
 	}
 
-	yawRad := yaw * math.Pi / 180.0
-	accelX := -math.Sin(yawRad) * accelFactor
-	accelZ := math.Cos(yawRad) * accelFactor
+	accelX, accelZ := forwardVelocityToWorld(accelFactor, yaw)
 
 	// updateVelocity(speedFactor, movementInput): velocity += accel  (Java step 1)
 	velX := pe.ridingVelX + accelX
@@ -206,12 +203,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		velY *= physics.Drag // 0.98 Y air drag (Java: d*h, h=0.98 for non-Flutterer)
 	}
 
-	if math.Abs(velX) < physics.ResetVelocity {
-		velX = 0
-	}
-	if math.Abs(velZ) < physics.ResetVelocity {
-		velZ = 0
-	}
+	velX = zeroTinyVelocity(velX)
+	velZ = zeroTinyVelocity(velZ)
 
 	pe.ridingVelX = velX
 	pe.ridingVelZ = velZ

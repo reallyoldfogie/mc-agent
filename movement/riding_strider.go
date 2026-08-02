@@ -2,16 +2,10 @@ package movement
 
 import (
 	"log"
-	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
-
-// striderVelocityZeroThreshold mirrors the Java LivingEntity.tickMovement()
-// threshold for zeroing tiny velocities on non-player entities.
-// Java: if (Math.abs(vec3d.x) < 0.003) d = 0.0; (same for z and y).
-const striderVelocityZeroThreshold = 0.003
 
 // canMoveVoluntarily mirrors Java LivingEntity/MobEntity.canMoveVoluntarily().
 // In vanilla, this returns false when the entity has a status effect that prevents
@@ -27,12 +21,13 @@ func canMoveVoluntarily() bool {
 // handleRidingModeStrider runs one tick for a ridden strider.
 //
 // Mirrors the Java 1.21.11 call chain:
-//   tickMovement() → travelControlled(player, vec3d2)
-//     → getControlledMovementInput() returns (0,0,1)  [always forward, ignores actual inputs]
-//     → tickControlled(): snap yaw to player's yaw, pitch * 0.5, tick boost
-//     → setMovementSpeed(getSaddledSpeed(player))
-//     → travel(vec3d) → travelMidAir() (because canWalkOnFluid returns true for lava)
-//   tick() → updateFloating(): set onGround when floating, or bob when submerged
+//
+//	tickMovement() → travelControlled(player, vec3d2)
+//	  → getControlledMovementInput() returns (0,0,1)  [always forward, ignores actual inputs]
+//	  → tickControlled(): snap yaw to player's yaw, pitch * 0.5, tick boost
+//	  → setMovementSpeed(getSaddledSpeed(player))
+//	  → travel(vec3d) → travelMidAir() (because canWalkOnFluid returns true for lava)
+//	tick() → updateFloating(): set onGround when floating, or bob when submerged
 //
 // Note: The `inputs` parameter is ignored for movement computation because Java's
 // getControlledMovementInput() always returns (0, 0, 1) regardless of the actual input.
@@ -41,9 +36,10 @@ func canMoveVoluntarily() bool {
 // — see the `forward` check below, matching the pig handler's coast-to-a-stop behavior.
 //
 // Controlling item: a rider only becomes the strider's controlling passenger while
-//   holding warped_fungus_on_a_stick (https://minecraft.wiki/w/Strider) — without it
-//   the strider ignores rider input entirely, so speedFactor is gated on
-//   holdsFungusOnAStick below, independent of `forward`.
+//
+//	holding warped_fungus_on_a_stick (https://minecraft.wiki/w/Strider) — without it
+//	the strider ignores rider input entirely, so speedFactor is gated on
+//	holdsFungusOnAStick below, independent of `forward`.
 func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	versionHandler models.VersionHandler,
 	mountedEntityID int32,
@@ -128,28 +124,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 		}
 	}
 
-	// Apply SUFFOCATING_MODIFIER when cold.
-	// Java: ADD_MULTIPLIED_BASE means effective = base * (1 + modifier)
-	if cold {
-		attributeSpeed *= (1.0 + physics.StriderSuffocatingModifier)
-	}
-
-	// Apply cold/warm speed multiplier
-	var speedMultiplier float64
-	if cold {
-		speedMultiplier = physics.StriderColdSpeedMultiplier
-	} else {
-		speedMultiplier = physics.StriderWarmSpeedMultiplier
-	}
-
-	// Apply SaddledComponent boost multiplier
+	// Apply the SaddledComponent boost multiplier, the cold SUFFOCATING_MODIFIER
+	// and the cold/warm speed multiplier.
 	// Java: 1.0F + 1.15F * sin(boostedTime / boostTime * PI)
-	boostMultiplier := 1.0
-	if pe.saddleBoosted && pe.saddleBoostTotal > 0 {
-		boostMultiplier = 1.0 + physics.StriderBoostSinAmplitude*math.Sin(float64(pe.saddleBoostTime)/float64(pe.saddleBoostTotal)*math.Pi)
-	}
-
-	saddledSpeed := attributeSpeed * speedMultiplier * boostMultiplier
+	boostMultiplier := saddledBoostMultiplier(pe.saddleBoosted, pe.saddleBoostTime, pe.saddleBoostTotal, physics.StriderBoostSinAmplitude)
+	saddledSpeed := striderSaddledSpeed(attributeSpeed, cold, boostMultiplier)
 
 	// Holding warped_fungus_on_a_stick makes the player the controlling
 	// passenger — a strider ignores steering input entirely without it, the
@@ -180,38 +159,31 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	}
 	friction := slipperiness * physics.Inertia // slip * 0.91
 
-// Java LivingEntity.getMovementSpeed():
-//   onGround ? movementSpeed * (0.216 / slip³) : getOffGroundSpeed()
-// Java LivingEntity.getOffGroundSpeed():
-//   controllingPassenger instanceof Player ? movementSpeed * 0.1 : 0.02
-// isOnGround mirrors Java LivingEntity.isOnGround(): supported on a solid surface
-// OR (for the strider) floating on lava. The previous code derived isOnGround solely
-// from lavaParams.IsOnLava, which made a strider standing on solid land appear
-// airborne every tick and collapsed its speed to the 0.1 off-ground factor. Folding
-// in supportedOnGround (prior-tick ground collision confirmed by a solid block
-// below) lets a land-bound strider use the full on-ground speed factor so it
-// actually moves — matching the cold/land movement Java produces.
-// `forward` gates acceleration (coast to a stop when not throttling, matching
-// the pig handler's UX choice — see riding_pig.go); holdsFungusOnAStick gates
-// it too, since a rider without the fungus is not the controlling passenger
-// in vanilla and cannot steer the strider at all.
-var speedFactor float64
-isOnGround := supportedOnGround || lavaParams.IsOnLava
-if forward && holdsFungusOnAStick {
-	if isOnGround {
-		slipCubed := slipperiness * slipperiness * slipperiness
-		speedFactor = saddledSpeed * (0.21600002 / slipCubed)
-	} else {
-		speedFactor = saddledSpeed * 0.1
+	// Java LivingEntity.getMovementSpeed():
+	//   onGround ? movementSpeed * (0.216 / slip³) : getOffGroundSpeed()
+	// Java LivingEntity.getOffGroundSpeed():
+	//   controllingPassenger instanceof Player ? movementSpeed * 0.1 : 0.02
+	// isOnGround mirrors Java LivingEntity.isOnGround(): supported on a solid surface
+	// OR (for the strider) floating on lava. The previous code derived isOnGround solely
+	// from lavaParams.IsOnLava, which made a strider standing on solid land appear
+	// airborne every tick and collapsed its speed to the 0.1 off-ground factor. Folding
+	// in supportedOnGround (prior-tick ground collision confirmed by a solid block
+	// below) lets a land-bound strider use the full on-ground speed factor so it
+	// actually moves — matching the cold/land movement Java produces.
+	// `forward` gates acceleration (coast to a stop when not throttling, matching
+	// the pig handler's UX choice — see riding_pig.go); holdsFungusOnAStick gates
+	// it too, since a rider without the fungus is not the controlling passenger
+	// in vanilla and cannot steer the strider at all.
+	var speedFactor float64
+	isOnGround := supportedOnGround || lavaParams.IsOnLava
+	if forward && holdsFungusOnAStick {
+		speedFactor = travelMidAirSpeedFactor(saddledSpeed, slipperiness, isOnGround)
 	}
-}
 
 	// getControlledMovementInput always returns (0, 0, 1) — constant forward
 	// movementInputToVelocity with input (0,0,1) and speed:
 	//   result = (-speed * sin(yaw), 0, speed * cos(yaw))
-	yawRad := yaw * math.Pi / 180.0
-	accelX := -math.Sin(yawRad) * speedFactor
-	accelZ := math.Cos(yawRad) * speedFactor
+	accelX, accelZ := forwardVelocityToWorld(speedFactor, yaw)
 
 	// Compute pre-move velocity (updateVelocity: velocity += accel)
 	velX := pe.ridingVelX + accelX
@@ -259,15 +231,9 @@ if forward && holdsFungusOnAStick {
 
 	// ── Velocity zeroing (Java LivingEntity.tickMovement) ──
 	// Non-player entities: zero X/Z when abs < 0.003, zero Y when abs < 0.003
-	if math.Abs(velX) < striderVelocityZeroThreshold {
-		velX = 0
-	}
-	if math.Abs(velZ) < striderVelocityZeroThreshold {
-		velZ = 0
-	}
-	if math.Abs(velY) < striderVelocityZeroThreshold {
-		velY = 0
-	}
+	velX = zeroTinyVelocity(velX)
+	velZ = zeroTinyVelocity(velZ)
+	velY = zeroTinyVelocity(velY)
 
 	// Update shared velocity state
 	pe.ridingVelX = velX

@@ -45,8 +45,6 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 
 	// (3) Water/land physics
 	waterParams := computeRidingWaterPhysics(pe, versionHandler, currentPos)
-	var velocityDrag float64
-	var gravityDelta float64
 
 	// An entity is airborne while it has upward Y velocity or is no longer
 	// supported by ground below. Probing for ground support (instead of relying
@@ -57,23 +55,24 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 	grounded := ridingHasGroundSupport(pe, currentPos, 1.4, 1.6)
 	ridingAirborne := !waterParams.IsInWater && (pe.ridingVelY > 0.001 || !grounded)
 
-	if waterParams.IsInWater {
-		velocityDrag = waterParams.VelocityDrag
-		gravityDelta = waterParams.GravityDelta
-	} else if ridingAirborne {
-		velocityDrag = physics.Inertia // 0.91 air friction
-		gravityDelta = -physics.Gravity // -0.08
-	} else {
-		// On land: slipperiness-based friction
-		blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
-		velocityDrag = physics.HorseLandFriction(blockSlipperiness)
-		gravityDelta = 0.0
-		// NOTE: Don't zero pe.ridingVelY here. We haven't yet confirmed via collision
-		// that we're actually on ground. When walking off a cliff, ridingAirborne is
-		// initially false (velocity hasn't changed yet), so we'd incorrectly zero Y
-		// velocity before gravity has a chance to apply. Instead, zero it after
-		// collision confirms we're on solid ground (see landing detection below).
+	// NOTE: Don't zero pe.ridingVelY on the ground branch. We haven't yet confirmed
+	// via collision that we're actually on ground. When walking off a cliff,
+	// ridingAirborne is initially false (velocity hasn't changed yet), so we'd
+	// incorrectly zero Y velocity before gravity has a chance to apply. Instead,
+	// zero it after collision confirms we're on solid ground (see landing below).
+	surface := mountSurfaceGround
+	switch {
+	case waterParams.IsInWater:
+		surface = mountSurfaceWater
+	case ridingAirborne:
+		surface = mountSurfaceAirborne
 	}
+	velocityDrag, gravityDelta := mountSurfacePhysics(
+		surface,
+		waterParams.VelocityDrag,
+		waterParams.GravityDelta,
+		physics.GetBlockSlipperiness(waterParams.BlockBelowEntity),
+	)
 
 	// (4) Movement speed from entity attribute
 	movementAcceleration := 0.225 // Default: vanilla horse movement speed
@@ -97,17 +96,14 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 	if pe.horseCharging {
 		if jump {
 			pe.horseJumpChargeTicks++
-			if pe.horseJumpChargeTicks > 100 {
-				pe.horseJumpChargeTicks = 100
+			if pe.horseJumpChargeTicks > mountJumpChargeCapTicks {
+				pe.horseJumpChargeTicks = mountJumpChargeCapTicks
 			}
 		}
-		// Fire on release (or when the charge saturates at 100 ticks).
-		if !jump || pe.horseJumpChargeTicks >= 100 {
-			strengthPercent := int(math.Floor(models.MountJumpStrength(pe.horseJumpChargeTicks) * 100.0))
-			if strengthPercent > 100 {
-				strengthPercent = 100
-			}
-			pe.horsePendingJumpStrength = models.ClampJumpStrength(strengthPercent)
+		// Fire on release (or when the charge saturates at the cap).
+		if !jump || pe.horseJumpChargeTicks >= mountJumpChargeCapTicks {
+			strengthPercent, strength := mountJumpChargeStrength(pe.horseJumpChargeTicks)
+			pe.horsePendingJumpStrength = strength
 			pe.horseCharging = false
 			// Tell the server about the released jump so the server-side horse
 			// jumps too (vanilla LocalPlayer.sendRidingJump on key release).
@@ -126,8 +122,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 		pe.ridingVelY = jumpVel
 		ridingAirborne = true
 		// Recompute drag/gravity for the now-airborne entity.
-		velocityDrag = physics.Inertia
-		gravityDelta = -physics.Gravity
+		velocityDrag, gravityDelta = mountSurfacePhysics(mountSurfaceAirborne, 0, 0, 0)
 
 		// Forward boost (Java: only when movementInput.z > 0). inputs.ThrottleZ
 		// is the forward input magnitude; the boost is added to the scalar forward
@@ -147,27 +142,18 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 	// limited air control; applying full ground movement speed in the air would
 	// let the horse accelerate to several times its ground speed and fly forward
 	// while falling.
-	inputAccel := movementAcceleration
-	if ridingAirborne {
-		inputAccel = physics.RidingAirborneAcceleration
-	}
-	ridingVelZ := pe.ridingVelZ*velocityDrag + inputs.ThrottleZ*inputAccel
+	inputAccel := mountInputAcceleration(movementAcceleration, ridingAirborne)
+	ridingVelZ := mountForwardVelocity(pe.ridingVelZ, velocityDrag, inputs.ThrottleZ, inputAccel)
 	ridingVelX := 0.0 // Horses don't strafe; ThrottleX is steering
-	ridingVelY := pe.ridingVelY + gravityDelta
-	if ridingAirborne {
-		ridingVelY *= physics.Drag // 0.98 air drag on Y
-	}
-	if math.Abs(ridingVelZ) < physics.ResetVelocity {
-		ridingVelZ = 0
-	}
+	ridingVelY := mountVerticalVelocity(pe.ridingVelY, gravityDelta, ridingAirborne)
 
 	// (8) Position computation via collision detection
 	// Horse/donkey/mule dimensions: 1.4 wide × 1.6 tall
-	yawRad := yaw * math.Pi / 180.0
+	moveVelX, moveVelZ := forwardVelocityToWorld(ridingVelZ, yaw)
 	moveVel := models.V3{
-		X: -math.Sin(yawRad) * ridingVelZ,
+		X: moveVelX,
 		Y: ridingVelY,
-		Z: math.Cos(yawRad) * ridingVelZ,
+		Z: moveVelZ,
 	}
 	newPos, correctedVel, collisionOnGround, _, _ := resolveEntityCollision(pe, currentPos, moveVel, 1.4, 1.6)
 	// onGround reflects actual ground support: either collision stopped a

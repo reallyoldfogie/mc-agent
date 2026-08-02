@@ -100,11 +100,26 @@ func (a *agent) setEntityID(id int32) {
 	a.entIDMu.Unlock()
 }
 
-// setMountedEntity sets the mounted vehicle entity ID. Pass -1 to indicate dismounted.
-func (a *agent) setMountedEntity(entityID int32) {
+// setMountedEntity sets the mounted vehicle entity ID and our seat index within
+// that vehicle's passenger list. Pass entityID -1 (and index -1) to indicate
+// dismounted. Both are written under one lock so a reader can never observe a
+// mounted entity paired with a stale seat index.
+func (a *agent) setMountedEntity(entityID int32, passengerIndex int) {
 	a.mountedEntityMu.Lock()
 	defer a.mountedEntityMu.Unlock()
 	a.mountedEntityID = entityID
+	a.mountedPassengerIndex = passengerIndex
+}
+
+// GetMountedPassengerIndex returns our index in the mounted vehicle's passenger
+// list, or -1 when not mounted. Index 0 is the controlling passenger.
+func (a *agent) GetMountedPassengerIndex() int {
+	a.mountedEntityMu.RLock()
+	defer a.mountedEntityMu.RUnlock()
+	if a.mountedEntityID == -1 {
+		return -1
+	}
+	return a.mountedPassengerIndex
 }
 
 // getMountedEntityID returns the currently mounted entity ID, or -1 if not mounted.

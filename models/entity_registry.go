@@ -34,6 +34,8 @@ const (
 	EntityTypeSkeleton       EntityType = "skeleton"
 	EntityTypeDonkey         EntityType = "donkey"
 	EntityTypeMule           EntityType = "mule"
+	EntityTypeLlama          EntityType = "llama"
+	EntityTypeTraderLlama    EntityType = "trader_llama"
 	EntityTypeCamel          EntityType = "camel"
 	EntityTypeCamelHusk      EntityType = "camel_husk"
 	EntityTypeNautilus       EntityType = "nautilus"
@@ -161,6 +163,7 @@ func (t EntityType) IsLivingEntity() bool {
 		EntityTypeWither, EntityTypeBat, EntityTypeWitch, EntityTypeZombieVillager,
 		EntityTypeVillager, EntityTypeIronGolem, EntityTypeSnowGolem, EntityTypeArmorStand,
 		EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeCamel, EntityTypeCamelHusk,
+		EntityTypeLlama, EntityTypeTraderLlama,
 		EntityTypeNautilus, EntityTypeZombieNautilus:
 		return true
 	default:
@@ -190,14 +193,37 @@ func (t EntityType) IsDisplayEntity() bool {
 	}
 }
 
-// IsRideable returns true if the entity type is rideable
+// IsRideable returns true if the entity type is rideable.
+//
+// Note that "rideable" is not the same as "steerable". Llamas accept a
+// passenger but cannot be saddled or directed, so they are rideable but not
+// controllable — see IsSteerable.
 func (t EntityType) IsRideable() bool {
 	switch t {
 	case EntityTypeHorse, EntityTypeSkeletonHorse, EntityTypeZombieHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
 		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCamel, EntityTypeCamelHusk,
+		EntityTypeLlama, EntityTypeTraderLlama,
 		EntityTypeNautilus, EntityTypeZombieNautilus:
 		return true
 	default:
 		return false
+	}
+}
+
+// IsSteerable returns true if a rider can direct where the entity goes.
+//
+// A llama can be mounted and its inventory accessed while riding, but it takes
+// no saddle and ignores rider input entirely — it keeps running its own mob AI.
+// The rider is a plain passenger, so the client is not the movement authority
+// and must not predict the entity's position or send VehicleMove packets for it.
+func (t EntityType) IsSteerable() bool {
+	if !t.IsRideable() {
+		return false
+	}
+	switch t {
+	case EntityTypeLlama, EntityTypeTraderLlama:
+		return false
+	default:
+		return true
 	}
 }

@@ -30,6 +30,15 @@ type ridingTickResult struct {
 	StatePitch  float64
 	PacketYaw   float64
 	PacketPitch float64
+
+	// SuppressVehicleMove tells the dispatch loop not to send a VehicleMove
+	// packet for this tick. Vanilla only sends VehicleMove when the client is
+	// the movement authority for the root vehicle
+	// (ClientPlayerEntity.tick → isLogicalSideForUpdatingMovement). A passive
+	// passenger — e.g. riding a llama, which takes no saddle and ignores rider
+	// input — is not the authority, so predicting a position and shipping it to
+	// the server would fight the server's own AI-driven movement.
+	SuppressVehicleMove bool
 }
 
 // horseTurnDegsPerTick is the yaw rotation rate for ridden mobs (horse, camel, etc.)

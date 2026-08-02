@@ -159,6 +159,13 @@ type agent struct {
 
 	mountedEntityMu sync.RWMutex
 	mountedEntityID int32 // -1 = not mounted
+	// mountedPassengerIndex is our position in the vehicle's passenger list,
+	// as ordered by ClientboundSetPassengers. Index 0 is the controlling
+	// passenger (the driver); later indices are passive riders. -1 when not
+	// mounted. Vehicles that seat more than one player (boat, camel, happy
+	// ghast) only obey the passenger at index 0, so the riding dispatch needs
+	// this to decide whether to predict movement or just follow the server.
+	mountedPassengerIndex int
 
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
@@ -305,14 +312,15 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 	}
 
 	a := &agent{
-		cfg:                cfg,
-		packetLogWriter:    cfg.LogWriter,
-		chatEvents:         make(chan string, 64),
-		commandRegistry:    actions.NewRegistry(),
-		pendingProjectiles: []pendingProjectileInfo{},
-		activeProjectiles:  map[int32]*activeProjectileInfo{},
-		entityRegistry:     models.NewEntityRegistry(),
-		mountedEntityID:    -1, // -1 indicates not mounted
+		cfg:                   cfg,
+		packetLogWriter:       cfg.LogWriter,
+		chatEvents:            make(chan string, 64),
+		commandRegistry:       actions.NewRegistry(),
+		pendingProjectiles:    []pendingProjectileInfo{},
+		activeProjectiles:     map[int32]*activeProjectileInfo{},
+		entityRegistry:        models.NewEntityRegistry(),
+		mountedEntityID:       -1, // -1 indicates not mounted
+		mountedPassengerIndex: -1,
 	}
 	a.planRunner = plan.NewRunner(a)
 
@@ -755,10 +763,10 @@ func (a *agent) Init(ctx context.Context) error {
 		// Wrap HPA pathfinder with vehicle-aware pathfinder
 		vehicleAwarePathfinder := pathfinding.NewVehicleAwarePathFinder(
 			hpaPathfinder,
-			a,                // Agent implements VehicleProvider
-			a.worldMgr,       // World for terrain checking
-			shapeMgr,         // Shape manager for vehicle movement validation
-			32.0,             // Default search radius for vehicles
+			a,          // Agent implements VehicleProvider
+			a.worldMgr, // World for terrain checking
+			shapeMgr,   // Shape manager for vehicle movement validation
+			32.0,       // Default search radius for vehicles
 		)
 		a.pathfind = vehicleAwarePathfinder
 

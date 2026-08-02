@@ -2061,7 +2061,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	}
 
 	// Determine vehicle type to dispatch to the appropriate handler.
-	var isBoat, isMinecart, isCamel, isNautilus, isPig, isStrider, isDonkey, isMule bool
+	var isBoat, isMinecart, isCamel, isNautilus, isPig, isStrider, isDonkey, isMule, isLlama bool
 	if et, found := pe.entityPositionGetter.GetMountedEntityType(mountedEntityID); found {
 		isBoat = pe.entityPositionGetter.IsMountedEntityBoat(et)
 		isMinecart = pe.entityPositionGetter.IsMountedEntityMinecart(et)
@@ -2071,7 +2071,17 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 		isStrider = pe.entityPositionGetter.IsMountedEntityStrider(et)
 		isDonkey = pe.entityPositionGetter.IsMountedEntityDonkey(et)
 		isMule = pe.entityPositionGetter.IsMountedEntityMule(et)
+		isLlama = pe.entityPositionGetter.IsMountedEntityLlama(et)
 	}
+
+	// Only the passenger at index 0 is the controlling passenger. On a
+	// multi-seat vehicle (boat and camel seat two; a happy ghast seats four)
+	// every later seat is a passive rider whose input the server ignores, so
+	// predicting movement and shipping VehicleMove from those seats would
+	// contradict the real driver. Treat an unknown index (-1) as the driver so
+	// a server that never reports ordering keeps the previous behaviour.
+	passengerIndex := pe.entityPositionGetter.GetMountedPassengerIndex()
+	isPassiveRider := passengerIndex > 0
 
 	// Use any non-zero throttle to determine direction.
 	forward := inputs.ThrottleZ > 0.01
@@ -2110,6 +2120,9 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	// skipping the sync.
 	var result ridingTickResult
 	switch {
+	case isPassiveRider:
+		// Not the driver: follow the server, whatever the vehicle type is.
+		result = pe.handleRidingModePassenger(versionHandler, mountedEntityID, passengerIndex, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isBoat:
 		result = pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
 	case isMinecart:
@@ -2126,6 +2139,8 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 		result = pe.handleRidingModeDonkey(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isMule:
 		result = pe.handleRidingModeMule(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isLlama:
+		result = pe.handleRidingModeLlama(versionHandler, mountedEntityID, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	default:
 		// Horse and any unknown rideable entity
 		result = pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
@@ -2134,7 +2149,13 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	// Publish the computed result (physics state + VehicleMove packet) here,
 	// AFTER the handler has returned and released mountedEntityMu, so the
 	// executor never holds the lock across a network send.
-	sendRidingMove(pe, versionHandler, result)
+	//
+	// Passive passengers (llamas, and any non-driver seat) skip the send: the
+	// server owns the entity's movement, so a client-authored VehicleMove would
+	// contradict it.
+	if !result.SuppressVehicleMove {
+		sendRidingMove(pe, versionHandler, result)
+	}
 
 	// Sync physics state fields that would normally be maintained by Tick()
 	// but are skipped during riding because handlers bypass Tick().
@@ -2146,6 +2167,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 // riding_minecart.go  — handleRidingModeMinecart + rail helpers
 // riding_camel.go     — handleRidingModeCamel (camel-specific physics)
 // riding_horse.go     — handleRidingModeHorse (horse/donkey/mule/fallback)
+// riding_llama.go     — handleRidingModeLlama (passive, non-steerable passenger)
 // riding_pig.go       — handleRidingModePig (stub)
 // riding_strider.go   — handleRidingModeStrider (stub)
 // riding_nautilus.go  — handleRidingModeNautilus (stub)

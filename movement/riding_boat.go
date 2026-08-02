@@ -6,7 +6,6 @@ import (
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/physics"
 )
 
 // handleRidingModeBoat runs one client-authoritative boat tick.
@@ -67,7 +66,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	// --- Boat physics (vanilla tick order) ---
 	currentPos, yaw, pitch, _ := pe.physicsState.GetPosition()
 	blockBelowBoat := pe.getBlockBelowBoat(currentPos.X, currentPos.Y, currentPos.Z)
-	velMultiplier, gravityVal := pe.getBoatPhysicsValues(currentPos.X, currentPos.Y, currentPos.Z, blockBelowBoat)
+	surface := pe.getBoatSurface(currentPos.X, currentPos.Y, currentPos.Z, blockBelowBoat)
+	velMultiplier, gravityVal := boatSurfacePhysics(surface)
 
 	// Read current velocity
 	ridingVelX := pe.ridingVelX
@@ -80,21 +80,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	boatYawVelocity *= velMultiplier
 
 	// (2) Input → angular acceleration: left/right modify yawVelocity ±1 deg/tick
-	if left {
-		boatYawVelocity--
-	}
-	if right {
-		boatYawVelocity++
-	}
+	boatYawVelocity += boatYawAcceleration(left, right)
 
 	// (3) Input → thrust magnitude along heading
-	var thrustSpeed float64
-	if forward {
-		thrustSpeed += physics.BoatForwardAcceleration // +0.04
-	}
-	if backward {
-		thrustSpeed -= physics.BoatBackwardAcceleration // -0.005
-	}
+	thrustSpeed := boatThrustSpeed(forward, backward)
 
 	// (4) Apply rotation: yaw += yawVelocity
 	yaw += boatYawVelocity
@@ -105,15 +94,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	ridingVelZ += math.Cos(yawRad) * thrustSpeed
 
 	// (6) Vanilla Entity.resetVelocityIfSmall: clamp tiny velocities to zero
-	if math.Abs(ridingVelX) < physics.ResetVelocity {
-		ridingVelX = 0
-	}
-	if math.Abs(ridingVelZ) < physics.ResetVelocity {
-		ridingVelZ = 0
-	}
-	if math.Abs(boatYawVelocity) < physics.ResetVelocity {
-		boatYawVelocity = 0
-	}
+	ridingVelX = zeroTinyVelocity(ridingVelX)
+	ridingVelZ = zeroTinyVelocity(ridingVelZ)
+	boatYawVelocity = zeroTinyVelocity(boatYawVelocity)
 
 	// Vertical: gravity unless floating in water (server maintains buoyancy).
 	var velocityY float64
@@ -135,8 +118,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	pe.boatYawVelocity = boatYawVelocity
 	pe.lastVelMultiplier = velMultiplier
 
-	log.Printf("[handleRidingMode] Boat physics: surface=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
-		pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z)
+	log.Printf("[handleRidingMode] Boat physics: surface=%s block=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
+		surface, pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z)
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.
@@ -171,50 +154,37 @@ func (pe *PhysicsMovementExecutor) getBlockBelowBoat(boatX, boatY, boatZ float64
 	return blockState
 }
 
-// getBoatPhysicsValues returns the velocity multiplier and gravity for the boat
-// based on its current environment (water, flowing water, or land with different surfaces).
+// getBoatSurface resolves the world around the boat into a boatSurface profile.
+// It performs the block lookups; the surface-selection rules and the resulting
+// drag/gravity values live in the pure helpers in riding_physics.go.
 // Per Minecraft 1.21.10 source: AbstractBoatEntity.java
-func (pe *PhysicsMovementExecutor) getBoatPhysicsValues(boatX, boatY, boatZ float64, blockBelowBoat uint32) (float64, float64) {
+func (pe *PhysicsMovementExecutor) getBoatSurface(boatX, boatY, boatZ float64, blockBelowBoat uint32) boatSurface {
 	if pe.shapeProvider == nil {
 		// Fallback: assume boat is in water
-		return physics.BoatInWaterVelocityMultiplier, physics.BoatInWaterGravity
+		return boatSurfaceWater
 	}
 
-	// Check if boat is in water
 	isWater := pe.shapeProvider.IsWater(blockBelowBoat)
-	if isWater {
-		// Boat is in water - check if it's under flowing water (current affects gravity)
-		isFlowing := pe.shapeProvider.GetWaterFlowSpeed(blockBelowBoat) > 0.0
-		if isFlowing {
-			// Under flowing water: reduced gravity due to strong current
-			return physics.BoatUnderFlowingWaterVelocityMultiplier, physics.BoatUnderFlowingWaterGravity
-		}
+	isFlowing := isWater && pe.shapeProvider.GetWaterFlowSpeed(blockBelowBoat) > 0.0
 
-		// Check if boat is fully submerged.
-		blockAbove := int(math.Floor(boatY)) + 1
+	// A boat counts as submerged only when there is also water directly above it.
+	isSubmerged := false
+	if isWater && pe.world != nil {
 		blockX := int(math.Floor(boatX))
+		blockAbove := int(math.Floor(boatY)) + 1
 		blockZ := int(math.Floor(boatZ))
-		blockAboveState, loaded := pe.world.GetBlockStatus(blockX, blockAbove, blockZ)
-		if loaded && pe.shapeProvider.IsWater(blockAboveState) {
-			// Fully submerged: much slower movement
-			return physics.BoatUnderWaterVelocityMultiplier, physics.BoatUnderWaterGravity
+		if blockAboveState, loaded := pe.world.GetBlockStatus(blockX, blockAbove, blockZ); loaded {
+			isSubmerged = pe.shapeProvider.IsWater(blockAboveState)
 		}
-
-		// Standard water (not flowing, not submerged)
-		return physics.BoatInWaterVelocityMultiplier, physics.BoatInWaterGravity
 	}
 
-	// Boat is on land - check block type for slipperiness
-	blockName := pe.shapeProvider.BlockName(blockBelowBoat)
-	switch blockName {
-	case "minecraft:blue_ice":
-		return physics.BoatOnLandBlueIceVelocityMultiplier, physics.BoatOnLandGravity
-	case "minecraft:ice", "minecraft:packed_ice":
-		return physics.BoatOnLandIceVelocityMultiplier, physics.BoatOnLandGravity
-	default:
-		// Standard land surface
-		return physics.BoatOnLandStandardVelocityMultiplier, physics.BoatOnLandGravity
+	// The block name only matters on land, where it selects the ice variants.
+	blockName := ""
+	if !isWater {
+		blockName = pe.shapeProvider.BlockName(blockBelowBoat)
 	}
+
+	return selectBoatSurface(isWater, isFlowing, isSubmerged, blockName)
 }
 
 // getBlockNameForBoat returns a human-readable name for the boat's surface for logging.

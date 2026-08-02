@@ -976,7 +976,7 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	for _, id := range entityIDs {
 		if id == currentMount {
 			log.Printf("[onRemoveEntities] Mounted vehicle %d was removed; triggering clean dismount", id)
-			a.setMountedEntity(-1)
+			a.setMountedEntity(-1, -1)
 			a.movementMu.RLock()
 			moveExec := a.moveExec
 			a.movementMu.RUnlock()
@@ -1937,22 +1937,36 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 		return err
 	}
 
+	// Record our index in the passenger list, not merely our membership. The
+	// list is ordered, and index 0 is the controlling passenger: vehicles that
+	// seat several players (boat, camel, happy ghast) ignore input from anyone
+	// else, so a later index means we are a passive rider and must not predict
+	// the vehicle's movement.
 	agentID := a.GetEntityID()
-	isPassenger := false
-	for _, pid := range passengerIDs {
+	passengerIndex := -1
+	for idx, pid := range passengerIDs {
 		if pid == agentID {
-			isPassenger = true
+			passengerIndex = idx
 			break
 		}
 	}
+	isPassenger := passengerIndex >= 0
 
 	currentMount := a.getMountedEntityID()
-	log.Printf("[onSetPassengers] RECEIVED: vehicleID=%d isPassenger=%v currentMount=%d passengerCount=%d", vehicleID, isPassenger, currentMount, len(passengerIDs))
+	log.Printf("[onSetPassengers] RECEIVED: vehicleID=%d isPassenger=%v passengerIndex=%d currentMount=%d passengerCount=%d", vehicleID, isPassenger, passengerIndex, currentMount, len(passengerIDs))
+
+	// A seat change without a mount/dismount happens when another passenger
+	// boards or leaves: e.g. the driver of a happy ghast dismounts and the
+	// remaining riders rotate up, promoting one of them to controlling
+	// passenger. Keep our recorded index current so the dispatch follows.
+	if isPassenger && currentMount == vehicleID {
+		a.setMountedEntity(vehicleID, passengerIndex)
+	}
 
 	if isPassenger && currentMount != vehicleID {
 		// Agent just mounted a vehicle
-		log.Printf("[onSetPassengers] Agent mounted entity %d (vehicle with %d passengers)", vehicleID, len(passengerIDs))
-		a.setMountedEntity(vehicleID)
+		log.Printf("[onSetPassengers] Agent mounted entity %d at passenger index %d (vehicle with %d passengers)", vehicleID, passengerIndex, len(passengerIDs))
+		a.setMountedEntity(vehicleID, passengerIndex)
 		if a.moveExec != nil {
 			if err := a.moveExec.SetMounted(vehicleID); err != nil {
 				log.Printf("[onSetPassengers] Error setting movement executor mounted state: %v", err)
@@ -1983,7 +1997,7 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 	} else if !isPassenger && currentMount == vehicleID {
 		// Agent just dismounted from the vehicle
 		log.Printf("[onSetPassengers] Agent dismounted from entity %d", vehicleID)
-		a.setMountedEntity(-1)
+		a.setMountedEntity(-1, -1)
 		if a.moveExec != nil {
 			if err := a.moveExec.SetDismounted(); err != nil {
 				log.Printf("[onSetPassengers] Error setting movement executor dismounted state: %v", err)

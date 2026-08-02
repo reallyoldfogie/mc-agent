@@ -105,9 +105,6 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 
 	// (3) Water/land/airborne physics
 	waterParams := computeRidingWaterPhysics(pe, versionHandler, currentPos)
-	var velocityDrag float64
-	var gravityDelta float64
-	ridingAirborne := false
 
 	// Camel hitbox must match the vanilla server so client-side ground/edge
 	// detection agrees with it. A mounted camel is always an adult, and a sitting
@@ -122,21 +119,21 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	// Probe for ground support so a camel that walks off a ledge with zero
 	// vertical velocity begins to fall instead of hovering.
 	grounded := ridingHasGroundSupport(pe, currentPos, camelWidth, camelHeight)
+	ridingAirborne := !waterParams.IsInWater && (pe.ridingVelY > 0.001 || !grounded)
 
-	if waterParams.IsInWater {
-		velocityDrag = waterParams.VelocityDrag
-		gravityDelta = waterParams.GravityDelta
-	} else {
-		ridingAirborne = pe.ridingVelY > 0.001 || !grounded
-		if ridingAirborne {
-			velocityDrag = physics.Inertia
-			gravityDelta = -physics.Gravity
-		} else {
-			blockSlipperiness := physics.GetBlockSlipperiness(waterParams.BlockBelowEntity)
-			velocityDrag = physics.HorseLandFriction(blockSlipperiness)
-			gravityDelta = 0.0
-		}
+	surface := mountSurfaceGround
+	switch {
+	case waterParams.IsInWater:
+		surface = mountSurfaceWater
+	case ridingAirborne:
+		surface = mountSurfaceAirborne
 	}
+	velocityDrag, gravityDelta := mountSurfacePhysics(
+		surface,
+		waterParams.VelocityDrag,
+		waterParams.GravityDelta,
+		physics.GetBlockSlipperiness(waterParams.BlockBelowEntity),
+	)
 
 	// (4) Movement speed with camel sprint bonus
 	movementAcceleration := models.CamelDefaultMovementSpeed
@@ -153,19 +150,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	// limited air control; applying full ground movement speed in the air would
 	// let the camel accelerate to several times its ground speed and fly forward
 	// while falling.
-	inputAccel := movementAcceleration
-	if ridingAirborne {
-		inputAccel = physics.RidingAirborneAcceleration
-	}
-	ridingVelZ := pe.ridingVelZ*velocityDrag + inputs.ThrottleZ*inputAccel
+	inputAccel := mountInputAcceleration(movementAcceleration, ridingAirborne)
+	ridingVelZ := mountForwardVelocity(pe.ridingVelZ, velocityDrag, inputs.ThrottleZ, inputAccel)
 	ridingVelX := 0.0
-	ridingVelY := pe.ridingVelY + gravityDelta
-	if ridingAirborne {
-		ridingVelY *= physics.Drag
-	}
-	if math.Abs(ridingVelZ) < physics.ResetVelocity {
-		ridingVelZ = 0
-	}
+	ridingVelY := mountVerticalVelocity(pe.ridingVelY, gravityDelta, ridingAirborne)
 
 	// (6) Dash charge mechanic
 	if jump && !pe.lastRidingJumpState {
@@ -184,24 +172,17 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 			// Regular camel = 1.0x; CamelHusk = 4.0x (charges 4x faster).
 			chargeMul := camelSt.GetChargingSpeedMultiplier()
 			camelSt.AddJumpChargeTicks(int(chargeMul))
-			if camelSt.GetJumpChargeTicks() > 100 {
-				camelSt.SetJumpChargeTicks(100)
+			if camelSt.GetJumpChargeTicks() > mountJumpChargeCapTicks {
+				camelSt.SetJumpChargeTicks(mountJumpChargeCapTicks)
 			}
 		}
 
-		if !jump || camelSt.GetJumpChargeTicks() >= 100 {
+		if !jump || camelSt.GetJumpChargeTicks() >= mountJumpChargeCapTicks {
 			jumpTicks := camelSt.GetJumpChargeTicks()
-			// Mirror the Java client charge ramp (ClientPlayerEntity.tickMovement):
-			// mountJumpStrength ramps to 1.0 by tick 10 then decays toward 0.8.
-			// The client sends floor(mountJumpStrength*100) as the int strength, and
-			// the server clamps it back through JumpingMount.clampJumpStrength.
-			// Going straight to ClampJumpStrength(jumpTicks) (0.4 + 0.4*ticks/90)
-			// made the ramp ~10x too slow, so a 3s hold never reached full strength.
-			strengthPercent := int(math.Floor(models.MountJumpStrength(jumpTicks) * 100.0))
-			if strengthPercent > 100 {
-				strengthPercent = 100
-			}
-			strength := models.ClampJumpStrength(strengthPercent)
+			// mountJumpChargeStrength mirrors the Java client charge ramp
+			// (ClientPlayerEntity.tickMovement) rather than clamping raw ticks,
+			// which would make the ramp ~10x too slow.
+			strengthPercent, strength := mountJumpChargeStrength(jumpTicks)
 			// Tell the server about the released jump so the server-side camel
 			// dashes too (vanilla LocalPlayer.sendRidingJump on key release).
 			sendRidingJumpCommand(pe, versionHandler, strengthPercent)
@@ -223,11 +204,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 
 	// (7) Position computation via collision detection
 	// Camel dimensions: 1.7 wide × 2.375 tall (vanilla adult standing box)
-	yawRad := yaw * math.Pi / 180.0
+	moveVelX, moveVelZ := forwardVelocityToWorld(ridingVelZ, yaw)
 	moveVel := models.V3{
-		X: -math.Sin(yawRad) * ridingVelZ,
+		X: moveVelX,
 		Y: ridingVelY,
-		Z: math.Cos(yawRad) * ridingVelZ,
+		Z: moveVelZ,
 	}
 	newPos, correctedVel, collisionOnGround, _, _ := resolveEntityCollision(pe, currentPos, moveVel, camelWidth, camelHeight)
 	// onGround reflects actual ground support: either collision stopped a

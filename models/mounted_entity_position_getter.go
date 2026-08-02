@@ -22,6 +22,18 @@ type MountedEntityPositionGetter interface {
 	IsMountedEntityDonkey(int32) bool
 	IsMountedEntityMule(int32) bool
 
+	// IsMountedEntityLlama reports whether the mounted entity is a llama or
+	// trader llama. Llamas can be ridden but not steered, so they need the
+	// passive-passenger handler rather than a controlling-passenger one.
+	IsMountedEntityLlama(int32) bool
+
+	// GetMountedPassengerIndex returns our seat index in the mounted vehicle's
+	// passenger list, or -1 when not mounted. Index 0 is the controlling
+	// passenger; every later index is a passive rider that must not predict the
+	// vehicle's movement. Boats and camels seat two, and a happy ghast seats
+	// four, so this is what separates the driver from the passengers.
+	GetMountedPassengerIndex() int
+
 	// GetEntityAttribute retrieves an entity attribute value by name.
 	// Returns (value, found) - found is false if the entity or attribute is not tracked.
 	// Common attributes: "generic.movement_speed", "generic.max_health", etc.
