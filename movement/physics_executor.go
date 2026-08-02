@@ -2083,6 +2083,24 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	passengerIndex := pe.entityPositionGetter.GetMountedPassengerIndex()
 	isPassiveRider := passengerIndex > 0
 
+	// A saddleable mount only obeys its rider while it is actually saddled
+	// (Java AbstractHorseEntity.isSaddled gates getControllingPassenger). An
+	// unsaddled horse, camel, donkey or mule therefore has to be ridden
+	// passively too. Boats, minecarts and llamas take no saddle at all, so they
+	// are exempt from the check.
+	//
+	// Saddle state is unknowable before 1.21.5, where the saddle lived in the
+	// mount's NBT inventory rather than an equipment slot. IsMountedEntitySaddled
+	// reports that as known=false and we keep driving, preserving the previous
+	// behaviour on those versions instead of losing control of every mount.
+	needsSaddle := isCamel || isDonkey || isMule || (!isBoat && !isMinecart && !isNautilus && !isPig && !isStrider && !isLlama)
+	unsaddled := false
+	if needsSaddle {
+		if saddled, known := pe.entityPositionGetter.IsMountedEntitySaddled(mountedEntityID); known && !saddled {
+			unsaddled = true
+		}
+	}
+
 	// Use any non-zero throttle to determine direction.
 	forward := inputs.ThrottleZ > 0.01
 	backward := inputs.ThrottleZ < -0.01
@@ -2123,6 +2141,9 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	case isPassiveRider:
 		// Not the driver: follow the server, whatever the vehicle type is.
 		result = pe.handleRidingModePassenger(versionHandler, mountedEntityID, passengerIndex, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case unsaddled:
+		// Saddleable mount with no saddle: the server ignores our input.
+		result = pe.handleRidingModePassiveRider(versionHandler, mountedEntityID, "mount is not saddled", forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isBoat:
 		result = pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
 	case isMinecart:

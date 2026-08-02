@@ -36,6 +36,16 @@ type trackedEntity struct {
 	currentServerUpdateTime               time.Time // When current (X, Y, Z) position was received
 	// Entity attributes (health, speed, etc.)
 	Attributes map[string]float64 // Entity attribute values (e.g. "generic.movement_speed")
+	// Equipment holds the entity's last-seen equipment, keyed by slot, as
+	// reported by ClientboundEntityEquipment. Used to tell whether a mount is
+	// saddled (1.21.5+, where the saddle became a real equipment slot).
+	//
+	// Caveat: the version handlers currently leave EquipmentEntry.Item.ItemID
+	// at 0 with a TODO, so only occupancy (Count/Present) is trustworthy here,
+	// not the item identity. That is enough for saddle detection because the
+	// slot itself carries the meaning, but any check that needs to know *which*
+	// item is equipped must wait for the parsers to extract the item ID.
+	Equipment map[models.EquipmentSlotType]models.InventorySlot
 	// Boat-specific metadata (only populated for boat/chest-boat entity types)
 	BoatVariant     models.BoatVariant // Wood type (oak, spruce, birch, etc.)
 	BoatPaddleLeft  bool               // Left paddle turning

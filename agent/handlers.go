@@ -195,12 +195,9 @@ func (a *agent) handlers() []bot.PacketHandler {
 			Priority: 0,
 			F:        a.onWindowItems,
 		},
-		{
-			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetEquipment"),
-			Name:     "ClientboundSetEquipment",
-			Priority: 0,
-			F:        a.onSetEquipment,
-		},
+		// NOTE: no separate ClientboundSetEquipment handler. That name is only an
+		// alias for ClientboundEntityEquipment (both resolve to the same packet
+		// ID), so registering it again would run two handlers for one packet.
 		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundUpdateTime"),
 			Name:     "ClientboundUpdateTime",
@@ -1499,7 +1496,15 @@ func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 	return nil
 }
 
-// onEntityEquipment handles entity equipment changes (held items, armor).
+// onEntityEquipment handles entity equipment changes (held items, armor, saddle).
+//
+// The packet is also known as ClientboundSetEquipment; both names resolve to
+// the same clientbound packet, so only one handler is registered for it.
+//
+// Equipment is recorded per entity so the riding dispatch can tell whether a
+// mount is actually saddled. Vanilla only treats a rider as the controlling
+// passenger when the mount is equipped (AbstractHorseEntity.isSaddled), and
+// without this the executor drove unsaddled mounts as if they obeyed input.
 func (a *agent) onEntityEquipment(p pk.Packet) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
@@ -1510,9 +1515,21 @@ func (a *agent) onEntityEquipment(p pk.Packet) error {
 		return err
 	}
 
-	// Log all equipment updates in this packet
+	a.entitiesMu.Lock()
+	if entity, ok := a.entities[entityID]; ok {
+		if entity.Equipment == nil {
+			entity.Equipment = make(map[models.EquipmentSlotType]models.InventorySlot)
+		}
+		for _, eq := range equipment {
+			entity.Equipment[models.EquipmentSlotType(eq.InventorySlot)] = eq.Item
+		}
+	}
+	a.entitiesMu.Unlock()
+
 	for _, eq := range equipment {
-		log.Printf("[onEntityEquipment] Entity %d equipment slot %d: itemID=%d, count=%d", entityID, eq.InventorySlot, eq.Item.ItemID, eq.Item.Count)
+		slot := models.EquipmentSlotType(eq.InventorySlot)
+		log.Printf("[onEntityEquipment] Entity %d equipment slot %d (%s): itemID=%d, count=%d",
+			entityID, eq.InventorySlot, slot, eq.Item.ItemID, eq.Item.Count)
 	}
 	return nil
 }
@@ -1618,12 +1635,6 @@ func (a *agent) onWindowItems(p pk.Packet) error {
 	// 1. Validate packet format
 	// 2. Ensure version handler has the packet available
 	// 3. Act as a logging/debugging point if needed
-	return nil
-}
-
-// onSetEquipment handles entity equipment changes (held items, armor).
-func (a *agent) onSetEquipment(p pk.Packet) error {
-	// Packets are automatically recorded by the bot client's replay recorder
 	return nil
 }
 

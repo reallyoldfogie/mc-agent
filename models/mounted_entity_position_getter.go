@@ -34,6 +34,19 @@ type MountedEntityPositionGetter interface {
 	// four, so this is what separates the driver from the passengers.
 	GetMountedPassengerIndex() int
 
+	// IsMountedEntitySaddled reports whether the given mount has a saddle
+	// equipped. Vanilla only makes a rider the controlling passenger of a
+	// saddleable mount when it is actually saddled
+	// (AbstractHorseEntity.isSaddled), so an unsaddled mount must be ridden
+	// passively.
+	//
+	// known is false when saddle state cannot be determined from the wire. That
+	// is the case before 1.21.5, where the saddle lived in the mount's NBT
+	// inventory rather than an equipment slot and was never sent to the client.
+	// Callers should treat unknown as "assume saddled" so older versions keep
+	// their existing behaviour rather than silently losing control of a mount.
+	IsMountedEntitySaddled(entityID int32) (saddled bool, known bool)
+
 	// GetEntityAttribute retrieves an entity attribute value by name.
 	// Returns (value, found) - found is false if the entity or attribute is not tracked.
 	// Common attributes: "generic.movement_speed", "generic.max_health", etc.

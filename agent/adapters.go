@@ -5,10 +5,11 @@ import (
 	"strings"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	semver "github.com/aquasecurity/go-version/pkg/version"
 
-	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -454,6 +455,67 @@ func (a *agent) IsMountedEntityLlama(entityTypeID int32) bool {
 	log.Printf("[IsMountedEntityLlama] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
+}
+
+// IsMountedEntitySaddled reports whether a mount has a saddle equipped.
+//
+// Saddle state only reaches the client as an equipment slot from 1.21.5
+// onwards. Before that the saddle was a SaddleItem NBT compound inside the
+// mount's own inventory (see docs/horse-nbt-data.md), which the server never
+// sends, so this returns known=false and the caller keeps its previous
+// behaviour rather than wrongly demoting the rider to a passenger.
+func (a *agent) IsMountedEntitySaddled(entityID int32) (saddled bool, known bool) {
+	version := ""
+	if a.versionHandler != nil {
+		version = a.versionHandler.Version()
+	}
+	if !saddleSlotSupported(version) {
+		return false, false
+	}
+
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists || len(entity.Equipment) == 0 {
+		// No equipment seen yet. The server sends ClientboundEntityEquipment
+		// when the entity comes into view and whenever it changes, so an empty
+		// map this early is genuinely "don't know" rather than "no saddle".
+		return false, false
+	}
+
+	return equipmentHasSaddle(entity.Equipment), true
+}
+
+// saddleSlotSupported reports whether a Minecraft version carries the saddle in
+// the equipment packet. Before 1.21.5 the saddle was a SaddleItem NBT compound
+// in the mount's own inventory and never reached the client, so saddle state is
+// simply not observable there.
+func saddleSlotSupported(version string) bool {
+	if version == "" {
+		return false
+	}
+	parsed, err := semver.Parse(version)
+	if err != nil {
+		return false
+	}
+	constraint, err := semver.NewConstraints(">= " + models.MinSaddleSlotVersion)
+	if err != nil {
+		return false
+	}
+	return constraint.Check(parsed)
+}
+
+// equipmentHasSaddle reports whether an equipment map has an occupied saddle
+// slot.
+//
+// Only occupancy is consulted, not item identity: the version handlers still
+// leave EquipmentEntry.Item.ItemID at 0 (see trackedEntity.Equipment). That is
+// sufficient because the slot itself carries the meaning — nothing but a saddle
+// goes in the saddle slot.
+func equipmentHasSaddle(equipment map[models.EquipmentSlotType]models.InventorySlot) bool {
+	saddleItem, hasSaddleSlot := equipment[models.EquipmentSlotSaddle]
+	return hasSaddleSlot && saddleItem.Count > 0
 }
 
 // GetEntityAttribute retrieves an entity attribute value by name.
