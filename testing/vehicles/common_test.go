@@ -307,6 +307,111 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float
 	return entityID, nil
 }
 
+// SummonUnsaddledHorse summons a tamed but deliberately UNSADDLED horse.
+//
+// A tamed horse can be mounted without a saddle, but vanilla does not make the
+// rider its controlling passenger (AbstractHorseEntity.isSaddled gates
+// getControllingPassenger), so it ignores rider input entirely. This is the
+// negative case for saddle detection.
+//
+// Note the contrast with SummonHorse: no saddle NBT, and crucially no
+// `item replace ... saddle` follow-up, because that would defeat the point.
+func (vh *VehicleTestHelper) SummonUnsaddledHorse(ctx context.Context, x, y, z, yaw float64, opts ...SummonOption) (int32, error) {
+	var options summonOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	extraNBT := ""
+	if options.noAI {
+		extraNBT = ",NoAI:1b"
+	}
+
+	// Tame so the horse can be mounted; Variant:0 keeps it visually consistent
+	// with SummonHorse. No saddle in any version's format.
+	cmd := fmt.Sprintf(
+		`summon minecraft:horse %f %f %f {Rotation:[%ff,0f],Tame:1b,Variant:0%s}`,
+		x, y, z, yaw, extraNBT,
+	)
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon unsaddled horse: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	horseTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:horse")
+	if !ok {
+		return 0, fmt.Errorf("horse entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(horseTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("unsaddled horse not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonLlama summons a tamed llama and returns its entity ID.
+//
+// Llamas take no saddle at all — they are rideable but never steerable — so
+// there is no equipment step here. Taming is still required for the mount
+// interaction to succeed.
+func (vh *VehicleTestHelper) SummonLlama(ctx context.Context, x, y, z, yaw float64, opts ...SummonOption) (int32, error) {
+	var options summonOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+	extraNBT := ""
+	if options.noAI {
+		extraNBT = ",NoAI:1b"
+	}
+
+	cmd := fmt.Sprintf(
+		`summon minecraft:llama %f %f %f {Rotation:[%ff,0f],Tame:1b%s}`,
+		x, y, z, yaw, extraNBT,
+	)
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon llama: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	llamaTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:llama")
+	if !ok {
+		return 0, fmt.Errorf("llama entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(llamaTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("llama not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SupportsSaddleEquipmentSlot reports whether the server under test carries the
+// saddle in the equipment packet (1.21.5+). Before that the saddle lived in the
+// mount's NBT inventory and never reached the client, so the agent cannot tell
+// saddled from unsaddled and tests that depend on it must skip.
+// See docs/horse-nbt-data.md.
+func (vh *VehicleTestHelper) SupportsSaddleEquipmentSlot() bool {
+	parsed, err := semver.Parse(vh.Instance.Server.Version)
+	if err != nil {
+		return false
+	}
+	constraint, err := semver.NewConstraints(">= " + models.MinSaddleSlotVersion)
+	if err != nil {
+		return false
+	}
+	return constraint.Check(parsed)
+}
+
 // SummonOption customizes the NBT applied when summoning an entity.
 type SummonOption func(*summonOptions)
 

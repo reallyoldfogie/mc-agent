@@ -120,6 +120,11 @@ func TestHorse_Standalone(t *testing.T) {
 			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close horse container")
 
+			// A plain horse has no chest, so its window carries only the saddle and
+			// armour slots. Nothing was seeded, so only the snapshot contract is
+			// checked: the contents survived the close and are flagged not-live.
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, horseID, 0)
+
 			t.Log("✓ Horse container test passed")
 		})
 	}
@@ -182,6 +187,14 @@ func TestChestBoat_Standalone(t *testing.T) {
 			require.NoError(t, err, "teleport near chest boat")
 			time.Sleep(300 * time.Millisecond)
 
+			// Seed a known stack so the cached snapshot is checked against a value
+			// we chose, rather than against an empty container that a completely
+			// broken cache would also satisfy.
+			const seededDiamonds = 5
+			seedEntityContainerSlot(t, env,
+				"@e[type=minecraft:oak_chest_boat,limit=1,sort=nearest]",
+				0, "minecraft:diamond", seededDiamonds)
+
 			// Open chest boat container
 			windowID, err := env.Agent.Agent.OpenEntityContainer(boatID, 5*time.Second)
 			require.NoError(t, err, "open chest boat container")
@@ -195,6 +208,10 @@ func TestChestBoat_Standalone(t *testing.T) {
 			// Close container
 			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close chest boat container")
+
+			// The seeded stack must still be readable now the window is gone — that
+			// is the whole point of caching it against the entity.
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, boatID, seededDiamonds)
 
 			t.Log("✓ Chest boat container test passed")
 		})
@@ -257,6 +274,13 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			require.NoError(t, err, "teleport near chest minecart")
 			time.Sleep(300 * time.Millisecond)
 
+			// Seed a distinct count from the chest boat test so a snapshot leaking
+			// between entities would be obvious rather than coincidentally passing.
+			const seededEmeralds = 7
+			seedEntityContainerSlot(t, env,
+				"@e[type=minecraft:chest_minecart,limit=1,sort=nearest]",
+				0, "minecraft:emerald", seededEmeralds)
+
 			// Open chest minecart container
 			windowID, err := env.Agent.Agent.OpenEntityContainer(minecartID, 5*time.Second)
 			require.NoError(t, err, "open chest minecart container")
@@ -270,6 +294,8 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			// Close container
 			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close chest minecart container")
+
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, minecartID, seededEmeralds)
 
 			t.Log("✓ Chest minecart container test passed")
 		})
