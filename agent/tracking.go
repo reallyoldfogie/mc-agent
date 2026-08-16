@@ -62,6 +62,17 @@ type trackedEntity struct {
 	Pose     int32
 	PoseName string
 	HasPose  bool
+	// HorseFlags is the AbstractHorseEntity flags byte (metadata key 17),
+	// carrying tamed/saddled/bred/eating/angry bits. Only populated for
+	// saddleable mounts, and only meaningful before 1.21.5 where it is the
+	// client's only source of saddled state.
+	//
+	// HasHorseFlags stays false until an update arrives. Because the server only
+	// transmits tracked data that differs from its default, an all-zero flags
+	// byte is never sent — so "not seen" and "no flags set" are the same thing,
+	// which is exactly how the vanilla client reads it.
+	HorseFlags    uint8
+	HasHorseFlags bool
 }
 
 // GetPosition returns the current bot position and rotation.

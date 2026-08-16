@@ -38,6 +38,55 @@ func (a *agent) entityForWindow(windowID byte) (int32, bool) {
 	return entityID, ok
 }
 
+// beginEntityContainerOpen notes that we are opening entityID's container but do
+// not yet know which window the server will assign.
+//
+// This has to be called before the open request goes out. The server delivers
+// the window's contents as part of opening it, which is also the event the open
+// call blocks on, so the contents routinely arrive before the window ID is
+// available to record. Without this the first (and often only) ContainerSetContent
+// for the window is dropped.
+func (a *agent) beginEntityContainerOpen(entityID int32) {
+	a.entityWindowsMu.Lock()
+	defer a.entityWindowsMu.Unlock()
+	a.pendingEntityContainerID = entityID
+}
+
+// endEntityContainerOpen clears the in-flight open marker.
+func (a *agent) endEntityContainerOpen() {
+	a.entityWindowsMu.Lock()
+	defer a.entityWindowsMu.Unlock()
+	a.pendingEntityContainerID = -1
+}
+
+// resolveEntityForWindow returns the entity that windowID's contents belong to,
+// binding the window to an in-flight open if it is not mapped yet.
+//
+// Binding here rather than only at open time is what makes attribution immune to
+// packet ordering: whichever arrives first, the window ID from the server or our
+// own record of which entity we asked about, the two get joined.
+func (a *agent) resolveEntityForWindow(windowID byte) (int32, bool) {
+	a.entityWindowsMu.Lock()
+	defer a.entityWindowsMu.Unlock()
+
+	if entityID, ok := a.entityWindows[windowID]; ok {
+		return entityID, true
+	}
+
+	if a.pendingEntityContainerID < 0 {
+		return 0, false // Not an entity container we asked for.
+	}
+
+	entityID := a.pendingEntityContainerID
+	if a.entityWindows == nil {
+		a.entityWindows = make(map[byte]int32)
+	}
+	a.entityWindows[windowID] = entityID
+	log.Printf("[entityInventory] Window %d bound to entity %d from the in-flight open (contents arrived before the window ID was recorded)",
+		windowID, entityID)
+	return entityID, true
+}
+
 // releaseEntityWindows marks every tracked entity container as no longer live
 // and forgets the window mapping.
 //
@@ -51,6 +100,7 @@ func (a *agent) releaseEntityWindows() {
 		trackedEntityIDs = append(trackedEntityIDs, entityID)
 		delete(a.entityWindows, windowID)
 	}
+	a.pendingEntityContainerID = -1
 	a.entityWindowsMu.Unlock()
 
 	if len(trackedEntityIDs) == 0 {
@@ -99,7 +149,7 @@ func (a *agent) forgetEntityWindows(entityIDs []int32) {
 // slots followed by the player's inventory. Only the container portion is
 // stored; our own inventory is not the entity's business.
 func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.InventorySlot) {
-	entityID, ok := a.entityForWindow(windowID)
+	entityID, ok := a.resolveEntityForWindow(windowID)
 	if !ok {
 		return // Not an entity container we are tracking.
 	}
@@ -130,6 +180,23 @@ func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.In
 
 	log.Printf("[entityInventory] Entity %d container refreshed: %d entity slots (window had %d total)",
 		entityID, len(storedSlots), len(windowSlots))
+	logEntityInventorySlots(entityID, storedSlots)
+}
+
+// logEntityInventorySlots logs every non-empty slot in an entity's container.
+//
+// This is the raw layout as the server actually reported it — which slot
+// index holds what — and is the primary debugging aid for mount types whose
+// exact container.N slot layout (saddle vs. chest vs. decoration) isn't yet
+// confirmed against a live server (see testChestedMountInventoryCache and
+// TestLlamaInventoryCache in testing/container_entity_test.go).
+func logEntityInventorySlots(entityID int32, slots []models.InventorySlot) {
+	for i, slot := range slots {
+		if slot.Present || slot.Count > 0 {
+			log.Printf("[entityInventory] Entity %d slot %d: itemID=%d count=%d present=%v",
+				entityID, i, slot.ItemID, slot.Count, slot.Present)
+		}
+	}
 }
 
 // updateEntityWindowSlot records a single-slot change for the entity showing in
@@ -138,7 +205,7 @@ func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.In
 // slotIndex is a window-relative index. Indices at or beyond the container's
 // own slot count belong to the player inventory section and are ignored.
 func (a *agent) updateEntityWindowSlot(windowID byte, slotIndex int16, item models.InventorySlot) {
-	entityID, ok := a.entityForWindow(windowID)
+	entityID, ok := a.resolveEntityForWindow(windowID)
 	if !ok {
 		return
 	}
@@ -160,6 +227,8 @@ func (a *agent) updateEntityWindowSlot(windowID byte, slotIndex int16, item mode
 
 	entity.Inventory.Slots[slotIndex] = item
 	entity.Inventory.UpdatedAt = time.Now()
+	log.Printf("[entityInventory] Entity %d slot %d updated: itemID=%d count=%d present=%v",
+		entityID, slotIndex, item.ItemID, item.Count, item.Present)
 }
 
 // GetEntityInventory returns the cached snapshot of an entity's container

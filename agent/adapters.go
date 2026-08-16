@@ -459,17 +459,38 @@ func (a *agent) IsMountedEntityLlama(entityTypeID int32) bool {
 
 // IsMountedEntitySaddled reports whether a mount has a saddle equipped.
 //
-// Saddle state only reaches the client as an equipment slot from 1.21.5
-// onwards. Before that the saddle was a SaddleItem NBT compound inside the
-// mount's own inventory (see docs/horse-nbt-data.md), which the server never
-// sends, so this returns known=false and the caller keeps its previous
-// behaviour rather than wrongly demoting the rider to a passenger.
+// This mirrors how the vanilla client decides, which differs by version but
+// shares one crucial property: **the default state is "not saddled", and the
+// server never transmits a negative**.
+//
+//   - 1.21.5+ reads the saddle equipment slot
+//     (AbstractHorseEntity.getControllingPassenger → MobEntity.hasSaddleEquipped
+//     → LivingEntity.hasStackEquipped(SADDLE)). EntityTrackerEntry.sendPackets
+//     builds the equipment list from non-empty slots only and skips the packet
+//     entirely when nothing is equipped.
+//   - Before 1.21.5 it reads AbstractHorseEntity.isSaddled(), the SADDLED bit of
+//     the horse flags metadata byte. DataTracker.getChangedEntries filters out
+//     entries still at their default, so an all-zero flags byte is never sent.
+//
+// So in both cases the absence of a positive signal *is* the answer, and this
+// reports known=true without waiting for anything. That is safe because the
+// positive signal ships inside EntityTrackerEntry.sendPackets, the same bundle
+// as the spawn packet — a saddled mount is known to be saddled long before it
+// can be mounted.
+//
+// known is false only when the version itself is unavailable (no version
+// handler), since the two paths read completely different fields.
 func (a *agent) IsMountedEntitySaddled(entityID int32) (saddled bool, known bool) {
 	version := ""
 	if a.versionHandler != nil {
 		version = a.versionHandler.Version()
 	}
-	if !saddleSlotSupported(version) {
+	if version == "" {
+		return false, false
+	}
+
+	usesEquipmentSlot, versionKnown := saddleSlotSupported(version)
+	if !versionKnown {
 		return false, false
 	}
 
@@ -477,33 +498,73 @@ func (a *agent) IsMountedEntitySaddled(entityID int32) (saddled bool, known bool
 	defer a.entitiesMu.RUnlock()
 
 	entity, exists := a.entities[entityID]
-	if !exists || len(entity.Equipment) == 0 {
-		// No equipment seen yet. The server sends ClientboundEntityEquipment
-		// when the entity comes into view and whenever it changes, so an empty
-		// map this early is genuinely "don't know" rather than "no saddle".
+	if !exists {
+		// We cannot even see the entity, so we have no basis to demote the
+		// rider. Report unknown and let the caller keep its behaviour.
 		return false, false
 	}
 
-	return equipmentHasSaddle(entity.Equipment), true
+	if usesEquipmentSlot {
+		return equipmentHasSaddle(entity.Equipment), true
+	}
+	return models.HorseFlagSaddled.IsSet(entity.HorseFlags), true
 }
 
 // saddleSlotSupported reports whether a Minecraft version carries the saddle in
-// the equipment packet. Before 1.21.5 the saddle was a SaddleItem NBT compound
-// in the mount's own inventory and never reached the client, so saddle state is
-// simply not observable there.
-func saddleSlotSupported(version string) bool {
+// the equipment packet (1.21.5+) rather than in the horse flags metadata byte.
+//
+// versionKnown is false when the version string cannot be parsed, in which case
+// neither path can be trusted.
+func saddleSlotSupported(version string) (usesEquipmentSlot bool, versionKnown bool) {
 	if version == "" {
-		return false
+		return false, false
 	}
 	parsed, err := semver.Parse(version)
 	if err != nil {
-		return false
+		return false, false
 	}
 	constraint, err := semver.NewConstraints(">= " + models.MinSaddleSlotVersion)
 	if err != nil {
+		return false, false
+	}
+	return constraint.Check(parsed), true
+}
+
+// isSaddleableMountType reports whether an entity type ID is an
+// AbstractHorseEntity subclass, which is what makes metadata key 17 the horse
+// flags byte rather than something else.
+//
+// Horse and camel extend AbstractHorseEntity directly; donkey, mule and llama
+// reach it through AbstractDonkeyEntity. Llamas are included because they do
+// carry the flags byte even though they can never be saddled.
+func (a *agent) isSaddleableMountType(entityTypeID int32) bool {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
 		return false
 	}
-	return constraint.Check(parsed)
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return false
+	}
+
+	localName := entityTypeName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	switch localName {
+	case "horse", "skeleton_horse", "zombie_horse",
+		"donkey", "mule",
+		"llama", "trader_llama",
+		"camel", "camel_husk":
+		return true
+	default:
+		return false
+	}
 }
 
 // equipmentHasSaddle reports whether an equipment map has an occupied saddle

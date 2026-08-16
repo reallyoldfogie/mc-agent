@@ -16,7 +16,7 @@ func newInventoryTestAgent(entityIDs ...int32) *agent {
 	for _, entityID := range entityIDs {
 		entities[entityID] = &trackedEntity{EntityID: entityID}
 	}
-	return &agent{entities: entities}
+	return &agent{entities: entities, pendingEntityContainerID: -1}
 }
 
 // windowSlots builds a container window: containerCount entity slots followed
@@ -55,9 +55,70 @@ func TestStoreEntityWindowContentsIgnoresUnknownWindow(t *testing.T) {
 	const entityID int32 = 7
 
 	testAgent := newInventoryTestAgent(entityID)
-	// No registerEntityWindow call: this is somebody else's window (a chest
-	// block, say), so nothing should be attributed to the entity.
+	// Neither a registered window nor an open in flight: this is somebody
+	// else's window (a chest block, say), so nothing should be attributed.
 	testAgent.storeEntityWindowContents(4, windowSlots(15))
+
+	_, found := testAgent.GetEntityInventory(entityID)
+	assert.False(t, found)
+}
+
+// TestStoreEntityWindowContentsBindsInFlightOpen covers the ordering that broke
+// this feature in practice.
+//
+// The server delivers a window's contents as part of opening it, and that is the
+// same event the open call blocks on, so ContainerSetContent routinely arrives
+// before the window ID is available to record. Attribution must still work.
+func TestStoreEntityWindowContentsBindsInFlightOpen(t *testing.T) {
+	const (
+		entityID   int32 = 7
+		windowID   byte  = 3
+		chestSlots       = 15
+	)
+
+	testAgent := newInventoryTestAgent(entityID)
+
+	// Open in flight, window ID not yet known — the state the agent is in while
+	// blocked inside the container helper.
+	testAgent.beginEntityContainerOpen(entityID)
+	testAgent.storeEntityWindowContents(windowID, windowSlots(chestSlots))
+
+	inventory, found := testAgent.GetEntityInventory(entityID)
+	require.True(t, found, "contents arriving before the window ID was recorded must still be attributed")
+	assert.Len(t, inventory.Slots, chestSlots)
+
+	// The binding should now be recorded, so later slot updates land too.
+	mappedEntity, mapped := testAgent.entityForWindow(windowID)
+	require.True(t, mapped)
+	assert.Equal(t, entityID, mappedEntity)
+}
+
+// TestStoreEntityWindowContentsIgnoredAfterOpenCompletes guards the other side:
+// once the open is no longer in flight, an unmapped window must not be bound to
+// whatever entity happened to be opened last.
+func TestStoreEntityWindowContentsIgnoredAfterOpenCompletes(t *testing.T) {
+	const entityID int32 = 7
+
+	testAgent := newInventoryTestAgent(entityID)
+	testAgent.beginEntityContainerOpen(entityID)
+	testAgent.endEntityContainerOpen()
+
+	testAgent.storeEntityWindowContents(9, windowSlots(15))
+
+	_, found := testAgent.GetEntityInventory(entityID)
+	assert.False(t, found, "an unrelated window opened later must not bind to a finished open")
+}
+
+// TestReleaseEntityWindowsClearsPendingOpen stops a stale in-flight marker from
+// capturing a subsequent unrelated container.
+func TestReleaseEntityWindowsClearsPendingOpen(t *testing.T) {
+	const entityID int32 = 7
+
+	testAgent := newInventoryTestAgent(entityID)
+	testAgent.beginEntityContainerOpen(entityID)
+	testAgent.releaseEntityWindows()
+
+	testAgent.storeEntityWindowContents(5, windowSlots(15))
 
 	_, found := testAgent.GetEntityInventory(entityID)
 	assert.False(t, found)

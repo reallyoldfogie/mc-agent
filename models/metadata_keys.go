@@ -43,7 +43,45 @@ const (
 	EntityMetadataKeyBoatVariant     EntityMetadataKeyType = 11 // VarInt: boat wood type (0-8)
 	EntityMetadataKeyBoatPaddleLeft  EntityMetadataKeyType = 12 // boolean: left paddle turning
 	EntityMetadataKeyBoatPaddleRight EntityMetadataKeyType = 13 // boolean: right paddle turning
+
+	// EntityMetadataKeyHorseFlags is the byte bitfield registered by
+	// AbstractHorseEntity, carrying tamed/saddled/bred/eating/angry state.
+	//
+	// The index is 17 because seventeen tracked-data entries are registered
+	// ahead of it up the class hierarchy: 8 on Entity, 7 on LivingEntity, 1 on
+	// MobEntity, 0 on PathAwareEntity, 1 on PassiveEntity and 0 on AnimalEntity.
+	// Verified identical across 1.21.1, 1.21.2 and 1.21.4 by counting
+	// DataTracker.registerData calls in the decompiled source.
+	//
+	// Every saddleable mount inherits it: horse and camel extend
+	// AbstractHorseEntity directly, while donkey, mule and llama reach it via
+	// AbstractDonkeyEntity.
+	//
+	// This is only meaningful before 1.21.5. From 1.21.5 the saddle moved to a
+	// real equipment slot and AbstractHorseEntity.isSaddled() was replaced by
+	// MobEntity.hasSaddleEquipped(), which reads equipment instead.
+	EntityMetadataKeyHorseFlags EntityMetadataKeyType = 17
 )
+
+// HorseFlagMask is a bit within the AbstractHorseEntity flags byte
+// (EntityMetadataKeyHorseFlags).
+type HorseFlagMask uint8
+
+// Horse flag bits, taken verbatim from AbstractHorseEntity's private constants
+// (TAMED_FLAG, SADDLED_FLAG, ...) in the decompiled source.
+const (
+	HorseFlagTamed       HorseFlagMask = 2
+	HorseFlagSaddled     HorseFlagMask = 4
+	HorseFlagBred        HorseFlagMask = 8
+	HorseFlagEatingGrass HorseFlagMask = 16
+	HorseFlagAngry       HorseFlagMask = 32
+	HorseFlagEating      HorseFlagMask = 64
+)
+
+// IsSet reports whether this flag is set in the given horse flags byte.
+func (flag HorseFlagMask) IsSet(horseFlags uint8) bool {
+	return horseFlags&uint8(flag) != 0
+}
 
 // EntityMetadataKeyType is a type alias for metadata key indices
 type EntityMetadataKeyType int32

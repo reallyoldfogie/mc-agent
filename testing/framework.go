@@ -358,6 +358,19 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 
 	extraEnv["TYPE"] = "FABRIC" // Use Fabric for tests
 
+	// Control structure generation via environment variable. Set
+	// MC_AGENT_GENERATE_STRUCTURES=true to allow villages, mineshafts, etc.
+	// Defaults to false for all world types: structures placed by generation
+	// are a source of unrelated same-type entities (e.g. a mineshaft chest
+	// minecart) that tests can mistake for the one they just spawned.
+	if _, ok := extraEnv["GENERATE_STRUCTURES"]; !ok {
+		if genStructures := os.Getenv("MC_AGENT_GENERATE_STRUCTURES"); genStructures != "" {
+			extraEnv["GENERATE_STRUCTURES"] = genStructures
+		} else {
+			extraEnv["GENERATE_STRUCTURES"] = "false"
+		}
+	}
+
 	// Apply flat-world configuration if requested
 	if cfg.WorldGen == WorldGenFlat || cfg.WorldGen == WorldGenControlled {
 		// Use the flat world preset: "minecraft:flat"
@@ -377,7 +390,7 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 					"block":
 					"minecraft:dirt",
 					"height":3
-				},			
+				},
 				{
 					"block":"minecraft:grass_block",
 					"height":1
@@ -385,18 +398,6 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 			],
 			"biome":"minecraft:plains"
 		}`
-
-		// Control structure generation for flat worlds via environment variable
-		// Set MC_AGENT_GENERATE_STRUCTURES=false to disable villages, temples, etc.
-		// Defaults to false (no structures) for predictable flat world testing
-		if _, ok := extraEnv["GENERATE_STRUCTURES"]; !ok {
-			if genStructures := os.Getenv("MC_AGENT_GENERATE_STRUCTURES"); genStructures != "" {
-				extraEnv["GENERATE_STRUCTURES"] = genStructures
-			} else {
-				// Default: disable structures for predictable testing in flat worlds
-				extraEnv["GENERATE_STRUCTURES"] = "false"
-			}
-		}
 	}
 	// Set memory limit to reduce OOM risk
 	if cfg.Memory != "" {

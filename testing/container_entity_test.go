@@ -44,8 +44,97 @@ func getHorseNBT(version string) string {
 	return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`
 }
 
-// TestHorse_Standalone tests horse inventory opening
-func TestHorse_Standalone(t *testing.T) {
+// chestBoatEntityID returns the entity type (without the "minecraft:" prefix)
+// used to summon and look up an oak chest boat, and any extra NBT needed to
+// spawn one, based on the Minecraft version.
+//
+// Version ranges:
+//   - 1.21.1 and earlier: a single "chest_boat" entity type, wood species set
+//     via the legacy Type NBT tag (e.g. {Type:"oak"}).
+//   - 1.21.2+: per-species entity types (oak_chest_boat, birch_chest_boat, ...)
+//     with no Type tag needed.
+func chestBoatEntityID(version string) (entityType string, spawnNBT string) {
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return "oak_chest_boat", ""
+	}
+
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "oak_chest_boat", ""
+	}
+
+	patch := 0
+	if len(parts) >= 3 {
+		patch, _ = strconv.Atoi(parts[2])
+	}
+
+	// Version 1.21.2+ uses per-species entity types
+	if minor > 21 || (minor == 21 && patch >= 2) {
+		return "oak_chest_boat", ""
+	}
+
+	// Version 1.21.1 and earlier use the single chest_boat type with a Type tag
+	return "chest_boat", `{Type:"oak"}`
+}
+
+// mcMinorPatch parses a Minecraft version string like "1.21.5" into its minor
+// and patch components. ok is false if the string can't be parsed.
+func mcMinorPatch(version string) (minor, patch int, ok bool) {
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	var err error
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	if len(parts) >= 3 {
+		patch, _ = strconv.Atoi(parts[2])
+	}
+	return minor, patch, true
+}
+
+// mcVersionAtLeast reports whether version is at or above 1.<minMinor>.<minPatch>.
+// An unparseable version reports false, so callers that gate a feature behind
+// this skip rather than risk running against a version that doesn't have it.
+func mcVersionAtLeast(version string, minMinor, minPatch int) bool {
+	minor, patch, ok := mcMinorPatch(version)
+	if !ok {
+		return false
+	}
+	return minor > minMinor || (minor == minMinor && patch >= minPatch)
+}
+
+// getChestedMountNBT returns the NBT for a tamed, saddled, chest-equipped
+// donkey or mule. ChestedHorse:1b adds the 15-slot chest inventory that
+// distinguishes donkeys/mules from plain horses, which can never carry one.
+//
+// Version ranges mirror getHorseNBT (see docs/horse-nbt-data.md); donkeys and
+// mules share AbstractHorseEntity's saddle handling with horses, so the same
+// 1.21.5 split applies:
+//   - 1.21.1 - 1.21.4: {Tame:1b,SaddleItem:{...},ChestedHorse:1b}
+//   - 1.21.5+:         {Tame:1b,equipment:{saddle:{...}},ChestedHorse:1b}
+func getChestedMountNBT(version string) string {
+	minor, patch, ok := mcMinorPatch(version)
+	if !ok || minor > 21 || (minor == 21 && patch >= 5) {
+		return `{Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}},ChestedHorse:1b}`
+	}
+	return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},ChestedHorse:1b}`
+}
+
+// llamaChestNBT is the NBT for a tamed llama with maximum chest capacity
+// (Strength:5 -> 15 slots) plus a carpet decoration.
+//
+// Llamas take no saddle in any version — see SummonLlama in
+// testing/vehicles/common_test.go — so unlike the other mounts here there is
+// no version split: the same NBT applies across all tested versions.
+const llamaChestNBT = `{Tame:1b,ChestedHorse:1b,Strength:5,DecorItem:{id:"minecraft:white_carpet",count:1}}`
+
+// TestHorseInventoryCache verifies that a horse's saddle/armour inventory
+// snapshot is cached after its container is opened and closed.
+func TestHorseInventoryCache(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			env := setupStandaloneTestForEntityWithReplay(t, "entity_horse", tt.MCVersion)
@@ -87,15 +176,11 @@ func TestHorse_Standalone(t *testing.T) {
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 
-			// Look up horse entity type from registry (version-agnostic)
-			horseType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:horse")
-			require.True(t, ok, "minecraft:horse entity type should be in registry")
-			t.Logf("Horse entity type ID from registry: %d", horseType)
-
-			// Find nearest horse entity
-			horseID, dist, found := env.Agent.FindNearestEntityByType(horseType, botX, botY, botZ)
-			require.True(t, found, "should find horse entity")
-			t.Logf("Found horse entity ID %d at distance %.2f blocks", horseID, dist)
+			// Look up horse entity type from registry (version-agnostic). Both
+			// lookups poll: the registry arrives during configuration, and an RCON
+			// summon returns before the spawn packet reaches us.
+			horseType := waitForEntityTypeID(t, env, "minecraft:horse", 10*time.Second)
+			horseID := waitForNearestEntityByType(t, env, horseType, botX, botY, botZ, 10*time.Second)
 
 			// Teleport near the horse for interaction
 			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
@@ -104,7 +189,7 @@ func TestHorse_Standalone(t *testing.T) {
 			time.Sleep(300 * time.Millisecond)
 
 			// Open horse container
-			windowID, err := env.Agent.Agent.OpenEntityContainer(horseID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(horseID, 10*time.Second)
 			require.NoError(t, err, "open horse container")
 			t.Logf("Horse container opened with window ID: %d", windowID)
 
@@ -130,8 +215,9 @@ func TestHorse_Standalone(t *testing.T) {
 	}
 }
 
-// TestChestBoat_Standalone tests chest boat inventory opening
-func TestChestBoat_Standalone(t *testing.T) {
+// TestChestBoatInventoryCache verifies that a chest boat's storage snapshot
+// is cached and survives after its container is opened and closed.
+func TestChestBoatInventoryCache(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_boat", tt.MCVersion)
@@ -149,8 +235,13 @@ func TestChestBoat_Standalone(t *testing.T) {
 			require.NoError(t, err, "place water")
 			time.Sleep(200 * time.Millisecond)
 
-			// Summon chest boat (1.21.5+ uses wood-specific names like oak_chest_boat)
-			spawnCmd := fmt.Sprintf("summon minecraft:oak_chest_boat %.1f %.1f %.1f", spawnX, spawnY, spawnZ)
+			// Summon chest boat (entity type changed from a single chest_boat
+			// with a wood-species NBT tag to per-species entity types in 1.21.2)
+			chestBoatEntity, chestBoatSpawnNBT := chestBoatEntityID(tt.MCVersion)
+			spawnCmd := fmt.Sprintf("summon minecraft:%s %.1f %.1f %.1f", chestBoatEntity, spawnX, spawnY, spawnZ)
+			if chestBoatSpawnNBT != "" {
+				spawnCmd += " " + chestBoatSpawnNBT
+			}
 			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnCmd)
 			require.NoError(t, err, "spawn chest boat")
 			t.Logf("Spawn response: %s", resp)
@@ -159,7 +250,8 @@ func TestChestBoat_Standalone(t *testing.T) {
 			time.Sleep(500 * time.Millisecond)
 
 			// Verify the chest boat was spawned
-			verifyCmd := "data get entity @e[type=minecraft:oak_chest_boat,limit=1,sort=nearest]"
+			chestBoatSelector := fmt.Sprintf("@e[type=minecraft:%s,limit=1,sort=nearest]", chestBoatEntity)
+			verifyCmd := "data get entity " + chestBoatSelector
 			verifyResp, err := env.Inst.RCON.Exec(env.Ctx, verifyCmd)
 			if err == nil {
 				t.Logf("Chest boat NBT data: %s", verifyResp)
@@ -171,15 +263,9 @@ func TestChestBoat_Standalone(t *testing.T) {
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 
-			// Look up oak chest boat entity type from registry (version-agnostic)
-			chestBoatType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:oak_chest_boat")
-			require.True(t, ok, "minecraft:oak_chest_boat entity type should be in registry")
-			t.Logf("Oak chest boat entity type ID from registry: %d", chestBoatType)
-
-			// Find nearest chest boat entity
-			boatID, dist, found := env.Agent.FindNearestEntityByType(chestBoatType, botX, botY, botZ)
-			require.True(t, found, "should find chest boat entity")
-			t.Logf("Found chest boat entity ID %d at distance %.2f blocks", boatID, dist)
+			// Registry and spawn lookups both poll; see waitForEntityTypeID.
+			chestBoatType := waitForEntityTypeID(t, env, "minecraft:"+chestBoatEntity, 10*time.Second)
+			boatID := waitForNearestEntityByType(t, env, chestBoatType, botX, botY, botZ, 10*time.Second)
 
 			// Teleport near the chest boat
 			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
@@ -191,12 +277,10 @@ func TestChestBoat_Standalone(t *testing.T) {
 			// we chose, rather than against an empty container that a completely
 			// broken cache would also satisfy.
 			const seededDiamonds = 5
-			seedEntityContainerSlot(t, env,
-				"@e[type=minecraft:oak_chest_boat,limit=1,sort=nearest]",
-				0, "minecraft:diamond", seededDiamonds)
+			seedEntityContainerSlot(t, env, chestBoatSelector, 0, "minecraft:diamond", seededDiamonds)
 
 			// Open chest boat container
-			windowID, err := env.Agent.Agent.OpenEntityContainer(boatID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(boatID, 10*time.Second)
 			require.NoError(t, err, "open chest boat container")
 			t.Logf("Chest boat container opened with window ID: %d", windowID)
 
@@ -218,8 +302,9 @@ func TestChestBoat_Standalone(t *testing.T) {
 	}
 }
 
-// TestChestMinecart_Standalone tests chest minecart inventory opening
-func TestChestMinecart_Standalone(t *testing.T) {
+// TestChestMinecartInventoryCache verifies that a chest minecart's storage
+// snapshot is cached and survives after its container is opened and closed.
+func TestChestMinecartInventoryCache(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			env := setupStandaloneTestForEntityWithReplay(t, "entity_chest_minecart", tt.MCVersion)
@@ -258,15 +343,9 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			require.True(t, ok, "bot position initialized")
 			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
 
-			// Look up chest minecart entity type from registry (version-agnostic)
-			chestMinecartType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:chest_minecart")
-			require.True(t, ok, "minecraft:chest_minecart entity type should be in registry")
-			t.Logf("Chest minecart entity type ID from registry: %d", chestMinecartType)
-
-			// Find nearest chest minecart entity
-			minecartID, dist, found := env.Agent.FindNearestEntityByType(chestMinecartType, botX, botY, botZ)
-			require.True(t, found, "should find chest minecart entity")
-			t.Logf("Found chest minecart entity ID %d at distance %.2f blocks", minecartID, dist)
+			// Registry and spawn lookups both poll; see waitForEntityTypeID.
+			chestMinecartType := waitForEntityTypeID(t, env, "minecraft:chest_minecart", 10*time.Second)
+			minecartID := waitForNearestEntityByType(t, env, chestMinecartType, botX, botY, botZ, 10*time.Second)
 
 			// Teleport near the chest minecart
 			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
@@ -282,7 +361,7 @@ func TestChestMinecart_Standalone(t *testing.T) {
 				0, "minecraft:emerald", seededEmeralds)
 
 			// Open chest minecart container
-			windowID, err := env.Agent.Agent.OpenEntityContainer(minecartID, 5*time.Second)
+			windowID, err := env.Agent.Agent.OpenEntityContainer(minecartID, 10*time.Second)
 			require.NoError(t, err, "open chest minecart container")
 			t.Logf("Chest minecart container opened with window ID: %d", windowID)
 
@@ -298,6 +377,276 @@ func TestChestMinecart_Standalone(t *testing.T) {
 			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, minecartID, seededEmeralds)
 
 			t.Log("✓ Chest minecart container test passed")
+		})
+	}
+}
+
+// testSaddledMountInventoryCache exercises the horse-style saddle-only
+// inventory contract (open -> verify window -> close -> cached snapshot
+// survives) for an AbstractHorseEntity subtype that takes a saddle but never
+// a chest: camel, camel husk, skeleton horse, zombie horse.
+//
+// minMinor/minPatch gate the entity to versions at or above 1.<minMinor>.<minPatch>
+// (e.g. camel husk needs 1.21.11+); pass 0, 0 for no gate.
+//
+// TestHorseInventoryCache stays as its own standalone function rather than
+// routing through this helper, since it predates it and is the most-referenced
+// example of the pattern.
+func testSaddledMountInventoryCache(t *testing.T, entityType, testDirName string, minMinor, minPatch int) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			if minMinor > 0 && !mcVersionAtLeast(tt.MCVersion, minMinor, minPatch) {
+				t.Skipf("%s requires Minecraft 1.%d.%d+, got %s", entityType, minMinor, minPatch, tt.MCVersion)
+			}
+
+			env := setupStandaloneTestForEntityWithReplay(t, testDirName, tt.MCVersion)
+			defer env.Cancel()
+
+			spawnX := env.ContainerPos.X + 3
+			spawnY := env.ContainerPos.Y
+			spawnZ := env.ContainerPos.Z
+
+			mountNBT := getHorseNBT(env.Version)
+			spawnCmd := fmt.Sprintf("summon minecraft:%s %.1f %.1f %.1f %s", entityType, spawnX, spawnY, spawnZ, mountNBT)
+			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnCmd)
+			require.NoError(t, err, "spawn "+entityType)
+			t.Logf("Spawn response: %s", resp)
+
+			time.Sleep(500 * time.Millisecond)
+
+			selector := fmt.Sprintf("@e[type=minecraft:%s,limit=1,sort=nearest]", entityType)
+			tameCmd := "data get entity " + selector + " Tame"
+			tameResp, err := env.Inst.RCON.Exec(env.Ctx, tameCmd)
+			require.NoError(t, err, "verify "+entityType+" tamed")
+			t.Logf("%s Tame status: %s", entityType, tameResp)
+			require.Contains(t, tameResp, "1b", entityType+" should be tamed (Tame:1b)")
+
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
+			require.True(t, ok, "bot position initialized")
+			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
+
+			// Registry and spawn lookups both poll; see waitForEntityTypeID.
+			mountType := waitForEntityTypeID(t, env, "minecraft:"+entityType, 10*time.Second)
+			mountID := waitForNearestEntityByType(t, env, mountType, botX, botY, botZ, 10*time.Second)
+
+			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
+			_, err = env.Inst.RCON.Exec(env.Ctx, tpCmd)
+			require.NoError(t, err, "teleport near "+entityType)
+			time.Sleep(300 * time.Millisecond)
+
+			windowID, err := env.Agent.Agent.OpenEntityContainer(mountID, 10*time.Second)
+			require.NoError(t, err, "open "+entityType+" container")
+			t.Logf("%s container opened with window ID: %d", entityType, windowID)
+
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, entityType+" window should exist")
+			t.Logf("Screen type: %T", screen)
+
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, entityType+" container close")
+
+			// No chest on these mobs, so the window carries only the saddle
+			// slot. Nothing was seeded, so only the snapshot contract is
+			// checked (see TestHorseInventoryCache for the seeded-content
+			// variant, used on entities that carry a real chest).
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0)
+
+			t.Logf("✓ %s container test passed", entityType)
+		})
+	}
+}
+
+// TestCamelInventoryCache verifies that a camel's saddle inventory snapshot
+// is cached after its container is opened and closed. Camels take a saddle
+// but, unlike donkeys/mules/llamas, can never carry a chest.
+func TestCamelInventoryCache(t *testing.T) {
+	testSaddledMountInventoryCache(t, "camel", "entity_camel", 0, 0)
+}
+
+// TestCamelHuskInventoryCache verifies the same contract as
+// TestCamelInventoryCache for camel husks, which were added in Minecraft
+// 1.21.11 and are skipped on earlier versions.
+func TestCamelHuskInventoryCache(t *testing.T) {
+	testSaddledMountInventoryCache(t, "camel_husk", "entity_camel_husk", 21, 11)
+}
+
+// TestSkeletonHorseInventoryCache verifies that a skeleton horse's saddle
+// inventory snapshot is cached after its container is opened and closed.
+func TestSkeletonHorseInventoryCache(t *testing.T) {
+	testSaddledMountInventoryCache(t, "skeleton_horse", "entity_skeleton_horse", 0, 0)
+}
+
+// TestZombieHorseInventoryCache verifies that a zombie horse's saddle
+// inventory snapshot is cached after its container is opened and closed.
+func TestZombieHorseInventoryCache(t *testing.T) {
+	testSaddledMountInventoryCache(t, "zombie_horse", "entity_zombie_horse", 0, 0)
+}
+
+// testChestedMountInventoryCache exercises the donkey/mule-style inventory
+// contract: a saddle slot plus a 15-slot chest (ChestedHorse:1b), which is
+// the capability that actually distinguishes these two from a plain horse.
+func testChestedMountInventoryCache(t *testing.T, entityType, testDirName string) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, testDirName, tt.MCVersion)
+			defer env.Cancel()
+
+			spawnX := env.ContainerPos.X + 3
+			spawnY := env.ContainerPos.Y
+			spawnZ := env.ContainerPos.Z
+
+			mountNBT := getChestedMountNBT(env.Version)
+			spawnCmd := fmt.Sprintf("summon minecraft:%s %.1f %.1f %.1f %s", entityType, spawnX, spawnY, spawnZ, mountNBT)
+			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnCmd)
+			require.NoError(t, err, "spawn "+entityType)
+			t.Logf("Spawn response: %s", resp)
+
+			time.Sleep(500 * time.Millisecond)
+
+			selector := fmt.Sprintf("@e[type=minecraft:%s,limit=1,sort=nearest]", entityType)
+
+			tameCmd := "data get entity " + selector + " Tame"
+			tameResp, err := env.Inst.RCON.Exec(env.Ctx, tameCmd)
+			require.NoError(t, err, "verify "+entityType+" tamed")
+			t.Logf("%s Tame status: %s", entityType, tameResp)
+			require.Contains(t, tameResp, "1b", entityType+" should be tamed (Tame:1b)")
+
+			// This is the assertion that actually confirms the chest attached —
+			// if ChestedHorse turns out to be the wrong tag for a given version,
+			// this fails immediately here instead of surfacing later as a
+			// confusing container-open or slot-count mismatch.
+			chestCmd := "data get entity " + selector + " ChestedHorse"
+			chestResp, err := env.Inst.RCON.Exec(env.Ctx, chestCmd)
+			require.NoError(t, err, "verify "+entityType+" has chest equipped")
+			t.Logf("%s ChestedHorse status: %s", entityType, chestResp)
+			require.Contains(t, chestResp, "1b", entityType+" should have a chest equipped (ChestedHorse:1b)")
+
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
+			require.True(t, ok, "bot position initialized")
+			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
+
+			mountType := waitForEntityTypeID(t, env, "minecraft:"+entityType, 10*time.Second)
+			mountID := waitForNearestEntityByType(t, env, mountType, botX, botY, botZ, 10*time.Second)
+
+			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
+			_, err = env.Inst.RCON.Exec(env.Ctx, tpCmd)
+			require.NoError(t, err, "teleport near "+entityType)
+			time.Sleep(300 * time.Millisecond)
+
+			windowID, err := env.Agent.Agent.OpenEntityContainer(mountID, 10*time.Second)
+			require.NoError(t, err, "open "+entityType+" container")
+			t.Logf("%s container opened with window ID: %d", entityType, windowID)
+
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, entityType+" window should exist")
+			t.Logf("Screen type: %T", screen)
+
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, entityType+" container close")
+
+			// The chest slots aren't seeded here: the exact container.N index
+			// for a chested donkey/mule's chest (as opposed to the saddle slot
+			// at index 0) hasn't been confirmed against a live server. This
+			// checks only the open/close/cache round-trip, same as the plain
+			// (unchested) horse case; the slot dump assertEntityInventoryCachedAfterClose
+			// logs on the first real run is what to check that index against
+			// before adding a seeded-content assertion here.
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0)
+
+			t.Logf("✓ %s container test passed", entityType)
+		})
+	}
+}
+
+// TestDonkeyInventoryCache verifies that a donkey's saddle+chest inventory
+// snapshot is cached after its container is opened and closed. This is the
+// capability TestHorseInventoryCache structurally can't cover, since plain
+// horses can never carry a chest.
+func TestDonkeyInventoryCache(t *testing.T) {
+	testChestedMountInventoryCache(t, "donkey", "entity_donkey")
+}
+
+// TestMuleInventoryCache verifies the same contract as TestDonkeyInventoryCache
+// for mules.
+func TestMuleInventoryCache(t *testing.T) {
+	testChestedMountInventoryCache(t, "mule", "entity_mule")
+}
+
+// TestLlamaInventoryCache verifies that a llama's decoration/storage
+// inventory snapshot is cached after its container is opened and closed.
+//
+// Llamas take no saddle in any version (see SummonLlama in
+// testing/vehicles/common_test.go); their inventory is a carpet decoration
+// slot plus a strength-based chest (3-15 slots, here maxed at Strength:5).
+// Unlike TestDonkeyInventoryCache/TestMuleInventoryCache this doesn't share
+// testChestedMountInventoryCache, since llamas have no saddle slot and a
+// fixed (non-version-split) spawn NBT.
+func TestLlamaInventoryCache(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestForEntityWithReplay(t, "entity_llama_chest", tt.MCVersion)
+			defer env.Cancel()
+
+			spawnX := env.ContainerPos.X + 3
+			spawnY := env.ContainerPos.Y
+			spawnZ := env.ContainerPos.Z
+
+			spawnCmd := fmt.Sprintf("summon minecraft:llama %.1f %.1f %.1f %s", spawnX, spawnY, spawnZ, llamaChestNBT)
+			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnCmd)
+			require.NoError(t, err, "spawn llama")
+			t.Logf("Spawn response: %s => %s", spawnCmd, resp)
+
+			time.Sleep(500 * time.Millisecond)
+
+			selector := "@e[type=minecraft:llama,limit=1,sort=nearest]"
+
+			tameCmd := "data get entity " + selector + " Tame"
+			tameResp, err := env.Inst.RCON.Exec(env.Ctx, tameCmd)
+			require.NoError(t, err, "verify llama tamed")
+			t.Logf("Llama Tame status: %s", tameResp)
+			require.Contains(t, tameResp, "1b", "llama should be tamed (Tame:1b)")
+
+			// Confirms the chest attached — see the comment in
+			// testChestedMountInventoryCache on why this check exists.
+			chestCmd := "data get entity " + selector + " ChestedHorse"
+			chestResp, err := env.Inst.RCON.Exec(env.Ctx, chestCmd)
+			require.NoError(t, err, "verify llama has chest equipped")
+			t.Logf("Llama ChestedHorse status: %s", chestResp)
+			require.Contains(t, chestResp, "1b", "llama should have a chest equipped (ChestedHorse:1b)")
+
+			botPos, ok := env.Agent.Agent.GetPositionSimple()
+			botX, botY, botZ := botPos.X, botPos.Y, botPos.Z
+			require.True(t, ok, "bot position initialized")
+			t.Logf("Bot position: (%.1f, %.1f, %.1f)", botX, botY, botZ)
+
+			llamaType := waitForEntityTypeID(t, env, "minecraft:llama", 10*time.Second)
+			llamaID := waitForNearestEntityByType(t, env, llamaType, botX, botY, botZ, 10*time.Second)
+
+			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, spawnX-2, spawnY, spawnZ)
+			_, err = env.Inst.RCON.Exec(env.Ctx, tpCmd)
+			require.NoError(t, err, "teleport near llama")
+			time.Sleep(300 * time.Millisecond)
+
+			windowID, err := env.Agent.Agent.OpenEntityContainer(llamaID, 10*time.Second)
+			require.NoError(t, err, "open llama container")
+			t.Logf("Llama container opened with window ID: %d", windowID)
+
+			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
+			require.True(t, ok, "llama window should exist")
+			t.Logf("Screen type: %T", screen)
+
+			err = env.Agent.Agent.CloseContainer()
+			require.NoError(t, err, "close llama container")
+
+			// As with the chested donkey/mule tests, the exact container.N
+			// index for the decoration and chest slots hasn't been confirmed
+			// against a live server, so this checks only the open/close/cache
+			// round-trip; see testChestedMountInventoryCache for why.
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, llamaID, 0)
+
+			t.Log("✓ Llama container test passed")
 		})
 	}
 }

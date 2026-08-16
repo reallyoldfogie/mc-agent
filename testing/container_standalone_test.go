@@ -24,14 +24,14 @@ import (
 
 // StandaloneTestEnv holds all resources for a standalone test
 type StandaloneTestEnv struct {
-	Inst      *TestInstance
-	Agent     *ManagedAgent
-	ScreenMgr mcscreen.Manager
-	Ctx             context.Context
-	Cancel          context.CancelFunc
-	ContainerPos    models.V3
-	BotName         string
-	Version         string // Minecraft version (e.g., "1.21.5")
+	Inst         *TestInstance
+	Agent        *ManagedAgent
+	ScreenMgr    mcscreen.Manager
+	Ctx          context.Context
+	Cancel       context.CancelFunc
+	ContainerPos models.V3
+	BotName      string
+	Version      string // Minecraft version (e.g., "1.21.5")
 }
 
 // setupStandaloneTest creates a fresh server and agent for a single test (survival mode)
@@ -68,7 +68,8 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	t.Logf("framework initialized (gameMode: %s)", gameMode)
 
 	// Configure server
-	serverCfg := DefaultServerConfig()
+	// serverCfg := DefaultServerConfig()
+	serverCfg := FlatWorldServerConfig()
 	serverCfg.Memory = "512M"
 	serverCfg.MinFreeMemoryMB = 256
 	serverCfg.Version = mcVersion
@@ -107,7 +108,7 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 
 	// Spawn agent
 	addr := fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort)
-	botName := "StandaloneBot" // Must be <= 16 chars
+	botName := "ChestAccess" // Must be <= 16 chars
 	agentCfg := AgentConfig{
 		Name:           botName,
 		ServerAddress:  addr,
@@ -235,15 +236,15 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	}
 
 	return &StandaloneTestEnv{
-		Inst:            inst,
-		Agent:           agent,
+		Inst:  inst,
+		Agent: agent,
 		// ContainerHelper is auto-initialized during agent.Start()
-		ScreenMgr:       screenMgr,
-		Ctx:             ctx,
-		Cancel:          cancel,
-		ContainerPos:    containerPos,
-		BotName:         botName,
-		Version:         serverCfg.Version,
+		ScreenMgr:    screenMgr,
+		Ctx:          ctx,
+		Cancel:       cancel,
+		ContainerPos: containerPos,
+		BotName:      botName,
+		Version:      serverCfg.Version,
 	}
 }
 

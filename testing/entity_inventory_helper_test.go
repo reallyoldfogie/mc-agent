@@ -10,6 +10,98 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// waitForEntityTypeID polls the agent's registry for an entity type name.
+//
+// The registry arrives during the configuration phase, so a lookup issued too
+// early legitimately misses. Failing immediately turned that into a flaky
+// "entity type should be in registry" assertion.
+func waitForEntityTypeID(t *testing.T, env *StandaloneTestEnv, entityTypeName string, timeout time.Duration) int32 {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		if typeID, ok := env.Agent.Agent.GetEntityTypeID(entityTypeName); ok {
+			return typeID
+		}
+		if time.Now().After(deadline) {
+			env.Agent.Agent.DumpRegistry("minecraft:entity_type")
+			require.FailNowf(t, "entity type never appeared in registry",
+				"%s not found after %v", entityTypeName, timeout)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// waitForNearestEntityByType polls until an entity of the given type is tracked
+// near the supplied position.
+//
+// An RCON summon returns as soon as the server has spawned the entity, which is
+// before the spawn packet has reached us and been processed. Asserting straight
+// after the summon therefore races the network, which is what produced the
+// intermittent "should find X entity" failures.
+//
+// maxEntitySearchDistance caps how far a type-match can be from the search
+// point before it's treated as not found yet and polling continues. World
+// generation (e.g. a mineshaft's chest minecart) can produce a genuine,
+// unrelated entity of the same type elsewhere in the loaded area; without a
+// cap, a stray match like that gets returned instead of the one the test just
+// spawned nearby, and the later interaction times out because it's too far
+// away to reach.
+const maxEntitySearchDistance = 15.0
+
+// entityTrackingAttempts bounds how many full timeout windows
+// waitForNearestEntityByType polls before failing.
+//
+// RCON already confirms the entity exists server-side before this is ever
+// called (every call site verifies the spawn via RCON first), so a timeout
+// here means the spawn packet was slow or dropped in transit, not that the
+// entity doesn't exist. Re-arming the deadline once absorbs a slow packet
+// without hiding a real regression: an entity that truly never gets tracked
+// still fails, just after two windows instead of one.
+const entityTrackingAttempts = 2
+
+func waitForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityTypeID int32, x, y, z float64, timeout time.Duration) int32 {
+	t.Helper()
+
+	for attempt := 1; attempt <= entityTrackingAttempts; attempt++ {
+		if entityID, found := pollForNearestEntityByType(t, env, entityTypeID, x, y, z, timeout); found {
+			return entityID
+		}
+		if attempt < entityTrackingAttempts {
+			t.Logf("entity type %d not tracked within %v (attempt %d/%d); retrying wait",
+				entityTypeID, timeout, attempt, entityTrackingAttempts)
+		}
+	}
+
+	require.FailNowf(t, "entity never became tracked",
+		"no entity of type %d within %.1f blocks of (%.1f, %.1f, %.1f) after %d attempts of %v",
+		entityTypeID, maxEntitySearchDistance, x, y, z, entityTrackingAttempts, timeout)
+	return 0 // unreachable: FailNowf stops the goroutine
+}
+
+// pollForNearestEntityByType polls once for up to timeout, returning
+// (0, false) instead of failing the test if nothing turns up.
+func pollForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityTypeID int32, x, y, z float64, timeout time.Duration) (int32, bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for {
+		entityID, distance, found := env.Agent.FindNearestEntityByType(entityTypeID, x, y, z)
+		if found && distance <= maxEntitySearchDistance {
+			t.Logf("Found entity type %d as ID %d at distance %.2f blocks", entityTypeID, entityID, distance)
+			return entityID, true
+		}
+		if found {
+			t.Logf("Entity type %d found as ID %d at distance %.2f blocks, past the %.1f-block cap — treating as not found yet",
+				entityTypeID, entityID, distance, maxEntitySearchDistance)
+		}
+		if time.Now().After(deadline) {
+			return 0, false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 // seedEntityContainerSlot puts a known item stack into an entity container slot
 // via RCON, so a cached snapshot can be checked against a value we chose rather
 // than against an empty container (which an entirely broken cache would also

@@ -1328,6 +1328,21 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if paddleVal, ok := entry.Value.(bool); ok {
 					e.BoatPaddleRight = paddleVal
 				}
+			case int(models.EntityMetadataKeyHorseFlags):
+				// Key 17 is only the horse flags byte on AbstractHorseEntity
+				// subclasses; on a player it is the score VarInt, so the entity
+				// type has to gate this or we would misread unrelated entities.
+				if !a.isSaddleableMountType(e.EntityType) {
+					continue
+				}
+				if flagsVal, ok := entry.Value.(*pk.Byte); ok && flagsVal != nil {
+					e.HorseFlags = uint8(*flagsVal)
+					e.HasHorseFlags = true
+					log.Printf("[onSetEntityMetadata] Entity %d horse flags=0x%02X (saddled=%v tamed=%v)",
+						entityID, e.HorseFlags,
+						models.HorseFlagSaddled.IsSet(e.HorseFlags),
+						models.HorseFlagTamed.IsSet(e.HorseFlags))
+				}
 			}
 		}
 
@@ -1644,6 +1659,8 @@ func (a *agent) onWindowItems(p pk.Packet) error {
 	if err != nil {
 		return err
 	}
+
+	log.Printf("[Agent %s] ClientboundContainerSetContent: windowID=%d slots=%d", a.cfg.Name, windowID, len(slots))
 
 	// Negative window IDs address the player's own inventory views, which are
 	// never an entity container.

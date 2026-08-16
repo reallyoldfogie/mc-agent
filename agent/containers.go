@@ -167,6 +167,14 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 		return 0, fmt.Errorf("container helper not initialized")
 	}
 
+	// Note the entity BEFORE the request goes out. The server sends the window's
+	// contents as part of opening it, and that is the very event OpenEntityContainer
+	// blocks on, so ContainerSetContent routinely arrives while we are still inside
+	// the call below and have no window ID to record yet. Marking the open in
+	// flight lets those contents bind themselves once the window ID shows up.
+	a.beginEntityContainerOpen(entityID)
+	defer a.endEntityContainerOpen()
+
 	// Open the entity container using helper
 	log.Printf("[Agent %s] Opening entity container for entity ID %d", a.cfg.Name, entityID)
 	windowID, err := ch.OpenEntityContainer(entityID, timeout)
@@ -174,10 +182,24 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 		return 0, fmt.Errorf("open entity container: %w", err)
 	}
 
-	// Record which entity this window belongs to. The container packets only
-	// carry a window ID, so this is the only point at which the association is
-	// known and it has to be captured here for the contents to be attributable.
+	// Record the mapping explicitly too, for the case where the contents have
+	// not arrived yet. registerEntityWindow is idempotent with the in-flight
+	// binding above.
 	a.registerEntityWindow(windowID, entityID)
+
+	// Total slot count for the window (entity slots + the 36-slot player
+	// section) is the fastest way to tell what kind of container the server
+	// actually opened — e.g. distinguishing a chested donkey/mule/llama's
+	// larger window from a plain horse's saddle-only one.
+	log.Printf("[Agent %s] Window %d total slot count: %d", a.cfg.Name, windowID, ch.GetContainerSlotCount(windowID))
+
+	// Report whether contents were actually captured. A container whose window
+	// opens but never delivers ContainerSetContent would leave no snapshot, and
+	// this is the only place that distinction is visible.
+	if _, captured := a.GetEntityInventory(entityID); !captured {
+		log.Printf("[Agent %s][WARN] Entity container opened (window %d, entity %d) but no contents have been received yet; inventory snapshot is empty",
+			a.cfg.Name, windowID, entityID)
+	}
 
 	log.Printf("[Agent %s] Entity container opened successfully with window ID %d (entity %d)", a.cfg.Name, windowID, entityID)
 	return windowID, nil

@@ -27,16 +27,16 @@ import (
 
 // TestUnsaddledHorseIsNotDriven verifies that mounting an unsaddled horse routes
 // to the passive-rider handler: no steering, no thrust, no accumulated velocity.
+//
+// This runs on every supported version. The agent reads two different fields to
+// decide (the saddle equipment slot from 1.21.5, the horse flags metadata byte
+// before that), but both are absent for an unsaddled mount, and in both cases
+// vanilla treats that absence as "not saddled".
 func TestUnsaddledHorseIsNotDriven(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "NoSaddleBot")
 			defer cleanup()
-
-			if !helper.SupportsSaddleEquipmentSlot() {
-				t.Skipf("saddle state is not observable before %s: the saddle lives in the mount's NBT inventory and is never sent to the client (see docs/horse-nbt-data.md)",
-					models.MinSaddleSlotVersion)
-			}
 
 			_, err := helper.Instance.RCON.Exec(ctx, "teleport NoSaddleBot 100 1 100")
 			require.NoError(t, err)
@@ -56,11 +56,10 @@ func TestUnsaddledHorseIsNotDriven(t *testing.T) {
 			require.NoError(t, helper.MountEntity(ctx, horseID))
 			require.NoError(t, helper.WaitForMounted(ctx, 5*time.Second))
 
-			// Give the server time to deliver the horse's equipment packet. Until
-			// it arrives the agent reports saddle state as unknown and keeps
-			// driving, so asserting too early would race the packet.
-			time.Sleep(1 * time.Second)
-
+			// No settle delay needed. The positive saddle signal ships inside
+			// EntityTrackerEntry.sendPackets, the same bundle as the spawn packet,
+			// so a saddled mount is already known to be saddled by the time it can
+			// be mounted. Absence is therefore decidable immediately.
 			require.NoError(t, helper.EnterManualMode())
 
 			// Drive hard at it. A saddled horse would accelerate; this one must not.
@@ -112,10 +111,6 @@ func TestSaddledHorseIsStillDriven(t *testing.T) {
 
 			require.NoError(t, helper.MountEntity(ctx, horseID))
 			require.NoError(t, helper.WaitForMounted(ctx, 5*time.Second))
-
-			// Same settle window as the unsaddled case, so both tests observe the
-			// agent in the same state with respect to equipment delivery.
-			time.Sleep(1 * time.Second)
 
 			require.NoError(t, helper.EnterManualMode())
 

@@ -3,6 +3,7 @@ package items
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,15 +30,17 @@ const (
 // TODO: Consider renaming to ContainerManager — this type manages state and coordinates
 // multi-step protocol sequences rather than being a stateless utility helper.
 type ContainerHelper struct {
-	mu               sync.Mutex
-	itemUsage        *ItemUsage
-	invMgr           models.InventoryManager
-	screenMgr        mcscreen.Manager
-	client           bot.Client
-	packetMgr        protocol_models.PacketMgr
-	movementHandler  models.MovementHandler // Version-specific movement handler
-	currentWindowID  byte
-	entityIDProvider EntityIDProvider // Optional: for entity containers that need player's entity ID
+	mu                 sync.Mutex
+	itemUsage          *ItemUsage
+	invMgr             models.InventoryManager
+	screenMgr          mcscreen.Manager
+	client             bot.Client
+	packetMgr          protocol_models.PacketMgr
+	movementHandler    models.MovementHandler // Version-specific movement handler
+	currentWindowID    byte
+	entityIDProvider   EntityIDProvider   // Optional: for entity containers that need player's entity ID
+	entityTypeProvider EntityTypeProvider // Optional: for choosing how to interact with entity containers
+	mountStateProvider MountStateProvider // Optional: confirms mount completed before OPEN_INVENTORY is sent
 }
 
 // NewContainerHelper creates a new ContainerHelper
@@ -60,6 +63,43 @@ func (ch *ContainerHelper) SetMovementHandler(handler models.MovementHandler) {
 // SetEntityIDProvider sets the entity ID provider (needed for entity container interactions)
 func (ch *ContainerHelper) SetEntityIDProvider(provider EntityIDProvider) {
 	ch.entityIDProvider = provider
+}
+
+// SetEntityTypeProvider sets the entity type provider (used to pick the right
+// interaction sequence in OpenEntityContainer; see isDirectOpenContainerEntity).
+func (ch *ContainerHelper) SetEntityTypeProvider(provider EntityTypeProvider) {
+	ch.entityTypeProvider = provider
+}
+
+// SetMountStateProvider sets the mount state provider, letting
+// OpenEntityContainer confirm the mount actually completed (via the
+// server's ClientboundSetPassengers) before sending OPEN_INVENTORY, instead
+// of guessing with a fixed sleep. See the comment at its use for why this
+// matters.
+func (ch *ContainerHelper) SetMountStateProvider(provider MountStateProvider) {
+	ch.mountStateProvider = provider
+}
+
+// isDirectOpenContainerEntity reports whether interacting with an entity opens
+// its storage UI immediately, rather than mounting the player first.
+//
+// Horses/donkeys/mules/llamas require mounting before an explicit
+// OPEN_INVENTORY player command can request the saddlebag GUI. Boats and
+// minecarts have no such command: a plain interact either rides them (boats)
+// or is a no-op (storage minecarts), while sneaking suppresses the ride and
+// opens the container directly instead.
+func (ch *ContainerHelper) isDirectOpenContainerEntity(entityID int32) bool {
+	if ch.entityTypeProvider == nil {
+		return false
+	}
+
+	name := string(ch.entityTypeProvider.GetEntityType(entityID))
+	if idx := strings.LastIndexByte(name, ':'); idx >= 0 {
+		name = name[idx+1:]
+	}
+
+	return name == "boat" || strings.HasSuffix(name, "_boat") ||
+		name == "minecart" || strings.HasSuffix(name, "_minecart")
 }
 
 // OpenContainer opens a container at the specified position and waits for the server to respond.
@@ -174,7 +214,8 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 	screenSnapshotBefore := ch.screenMgr.Screens()
 	screensBefore := len(screenSnapshotBefore)
 
-	fmt.Printf("[OpenEntityContainer] → Opening container for entity ID %d\n", entityID)
+	directOpen := ch.isDirectOpenContainerEntity(entityID)
+	fmt.Printf("[OpenEntityContainer] → Opening container for entity ID %d (directOpen=%v)\n", entityID, directOpen)
 
 	// Get the player's own entity ID (required for ServerboundPlayerCommand)
 	if ch.entityIDProvider == nil {
@@ -185,32 +226,85 @@ func (ch *ContainerHelper) OpenEntityContainer(entityID int32, timeout time.Dura
 		return 0, errors.New("player entity ID not yet initialized")
 	}
 
-	// STEP 1: Interact with the entity to mount it (for horses/rideable entities)
-	// This sends the 3-packet sequence: InteractWith + InteractAt + Swing
-	fmt.Printf("[OpenEntityContainer] → Step 1: Mounting entity %d\n", entityID)
-	if err := ch.itemUsage.UseItemOnEntity(entityID, models.MainHand, false); err != nil {
-		return 0, fmt.Errorf("mount entity: %w", err)
-	}
+	if directOpen {
+		// Boats and minecarts have no OPEN_INVENTORY player command: a plain
+		// interact either rides them (boats) or is a no-op (storage minecarts).
+		// What suppresses the ride and opens the container instead is the
+		// player's actual server-tracked sneak state at the time the interact
+		// is processed — the "sneaking" flag on the interact packet itself is
+		// not enough, so this has to toggle real sneak state around the click,
+		// the same way a real client does when you hold shift and right-click.
+		if ch.movementHandler == nil {
+			return 0, common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
+		}
+		if err := ch.movementHandler.SendPlayerCommand(ch.client.Conn(), playerEntityID, common.ActionStartSneaking); err != nil {
+			return 0, fmt.Errorf("start sneaking: %w", err)
+		}
+		time.Sleep(100 * time.Millisecond)
 
-	// STEP 2: Wait for mount confirmation (teleportation packet indicates mounting)
-	// Protocol analysis showed ~2 second delay in real client, but we'll use shorter delay
-	fmt.Printf("[OpenEntityContainer] → Step 2: Waiting for mount confirmation\n")
-	time.Sleep(500 * time.Millisecond)
+		fmt.Printf("[OpenEntityContainer] → Sneak-interacting with entity %d to open its container directly\n", entityID)
+		interactErr := ch.itemUsage.UseItemOnEntity(entityID, models.MainHand, true)
 
-	// STEP 3: Send ServerboundPlayerCommand with OPEN_INVENTORY action (type 7)
-	// This is what the real Minecraft client does for horse/llama inventories
-	// NOTE: The packet uses the PLAYER's entity ID, not the horse's!
-	fmt.Printf("[OpenEntityContainer] → Step 3: Sending OPEN_INVENTORY command\n")
-	const OpenInventoryAction = 7 // OPEN_INVENTORY command type
+		time.Sleep(100 * time.Millisecond)
+		if err := ch.movementHandler.SendPlayerCommand(ch.client.Conn(), playerEntityID, common.ActionStopSneaking); err != nil {
+			return 0, fmt.Errorf("stop sneaking: %w", err)
+		}
 
-	if ch.movementHandler == nil {
-		return 0, common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
-	}
+		if interactErr != nil {
+			return 0, fmt.Errorf("interact with entity: %w", interactErr)
+		}
+	} else {
+		// STEP 1: Interact with the entity to mount it (for horses/rideable entities)
+		// This sends the 3-packet sequence: InteractWith + InteractAt + Swing
+		fmt.Printf("[OpenEntityContainer] → Step 1: Mounting entity %d\n", entityID)
+		if err := ch.itemUsage.UseItemOnEntity(entityID, models.MainHand, false); err != nil {
+			return 0, fmt.Errorf("mount entity: %w", err)
+		}
 
-	fmt.Printf("[OpenEntityContainer] → Sending ServerboundPlayerCommand (action=OPEN_INVENTORY) player_id=%d (horse_id=%d)\n",
-		playerEntityID, entityID)
-	if err := ch.movementHandler.SendPlayerCommand(ch.client.Conn(), playerEntityID, OpenInventoryAction); err != nil {
-		return 0, fmt.Errorf("send player command: %w", err)
+		// STEP 2: Wait for mount confirmation.
+		//
+		// The real client only sends OPEN_INVENTORY once it has actually seen
+		// itself become a passenger (ClientboundSetPassengers); it doesn't just
+		// wait a fixed amount of time and hope. If we send OPEN_INVENTORY before
+		// that packet arrives, the server has no vehicle-with-a-container to open
+		// for this player and the request is silently dropped — which then reads
+		// as an entity-container-open timeout, indistinguishable from every other
+		// cause of that timeout, unless someone thinks to check whether the mount
+		// had actually landed.
+		//
+		// mountStateProvider is optional (test/mock construction may not wire it);
+		// fall back to the old fixed delay if it isn't set rather than sending
+		// OPEN_INVENTORY with zero wait.
+		fmt.Printf("[OpenEntityContainer] → Step 2: Waiting for mount confirmation\n")
+		const mountConfirmTimeout = 3 * time.Second
+		if ch.mountStateProvider != nil {
+			mountDeadline := time.Now().Add(mountConfirmTimeout)
+			for !ch.mountStateProvider.IsMounted() && time.Now().Before(mountDeadline) {
+				time.Sleep(20 * time.Millisecond)
+			}
+			if !ch.mountStateProvider.IsMounted() {
+				fmt.Printf("[OpenEntityContainer] ⚠ Mount not confirmed for entity %d after %s; sending OPEN_INVENTORY anyway\n",
+					entityID, mountConfirmTimeout)
+			}
+		} else {
+			time.Sleep(1000 * time.Millisecond)
+		}
+
+		// STEP 3: Send ServerboundPlayerCommand with OPEN_INVENTORY action (type 7)
+		// This is what the real Minecraft client does for horse/llama inventories
+		// NOTE: The packet uses the PLAYER's entity ID, not the horse's!
+		fmt.Printf("[OpenEntityContainer] → Step 3: Sending OPEN_INVENTORY command\n")
+		const OpenInventoryAction = 7 // OPEN_INVENTORY command type
+
+		if ch.movementHandler == nil {
+			return 0, common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
+		}
+
+		fmt.Printf("[OpenEntityContainer] → Sending ServerboundPlayerCommand (action=OPEN_INVENTORY) player_id=%d (horse_id=%d)\n",
+			playerEntityID, entityID)
+		if err := ch.movementHandler.SendPlayerCommand(ch.client.Conn(), playerEntityID, OpenInventoryAction); err != nil {
+			return 0, fmt.Errorf("send player command: %w", err)
+		}
 	}
 
 	// Wait for the screen manager to receive ClientboundOpenHorseScreen or ClientboundOpenScreen packet

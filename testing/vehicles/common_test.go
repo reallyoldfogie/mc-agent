@@ -395,23 +395,6 @@ func (vh *VehicleTestHelper) SummonLlama(ctx context.Context, x, y, z, yaw float
 	return entityID, nil
 }
 
-// SupportsSaddleEquipmentSlot reports whether the server under test carries the
-// saddle in the equipment packet (1.21.5+). Before that the saddle lived in the
-// mount's NBT inventory and never reached the client, so the agent cannot tell
-// saddled from unsaddled and tests that depend on it must skip.
-// See docs/horse-nbt-data.md.
-func (vh *VehicleTestHelper) SupportsSaddleEquipmentSlot() bool {
-	parsed, err := semver.Parse(vh.Instance.Server.Version)
-	if err != nil {
-		return false
-	}
-	constraint, err := semver.NewConstraints(">= " + models.MinSaddleSlotVersion)
-	if err != nil {
-		return false
-	}
-	return constraint.Check(parsed)
-}
-
 // SummonOption customizes the NBT applied when summoning an entity.
 type SummonOption func(*summonOptions)
 

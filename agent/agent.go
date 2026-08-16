@@ -178,6 +178,15 @@ type agent struct {
 	// Entries are added when an entity container is opened and removed when it
 	// closes.
 	entityWindows map[byte]int32
+	// pendingEntityContainerID is the entity whose container we are in the middle
+	// of opening, or -1 when no open is in flight.
+	//
+	// The window ID is only known once the server has assigned it, but the server
+	// sends the window's contents as part of opening it — so the contents can
+	// arrive before we could possibly have recorded the mapping. Noting the
+	// entity up front lets a content packet for an as-yet-unmapped window bind
+	// itself to the right entity instead of being dropped.
+	pendingEntityContainerID int32
 
 	// e.g., player, playerList, world, movement, pathfinding, registries, etc.
 	// registries
@@ -321,15 +330,16 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 	}
 
 	a := &agent{
-		cfg:                   cfg,
-		packetLogWriter:       cfg.LogWriter,
-		chatEvents:            make(chan string, 64),
-		commandRegistry:       actions.NewRegistry(),
-		pendingProjectiles:    []pendingProjectileInfo{},
-		activeProjectiles:     map[int32]*activeProjectileInfo{},
-		entityRegistry:        models.NewEntityRegistry(),
-		mountedEntityID:       -1, // -1 indicates not mounted
-		mountedPassengerIndex: -1,
+		cfg:                      cfg,
+		packetLogWriter:          cfg.LogWriter,
+		chatEvents:               make(chan string, 64),
+		commandRegistry:          actions.NewRegistry(),
+		pendingProjectiles:       []pendingProjectileInfo{},
+		activeProjectiles:        map[int32]*activeProjectileInfo{},
+		entityRegistry:           models.NewEntityRegistry(),
+		mountedEntityID:          -1, // -1 indicates not mounted
+		mountedPassengerIndex:    -1,
+		pendingEntityContainerID: -1, // -1 indicates no container open in flight
 	}
 	a.planRunner = plan.NewRunner(a)
 
@@ -1621,6 +1631,8 @@ func (a *agent) initializeContainerHelper() {
 	a.containerHelper = containerHelper
 	if containerHelper != nil {
 		containerHelper.SetEntityIDProvider(a)
+		containerHelper.SetEntityTypeProvider(a.entityRegistry)
+		containerHelper.SetMountStateProvider(a)
 
 		// Set movement handler (for SendPlayerCommand packets)
 		if a.versionHandler != nil {
