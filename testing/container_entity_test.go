@@ -2,14 +2,29 @@ package testing
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
+	semver "github.com/aquasecurity/go-version/pkg/version"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/require"
 )
+
+// Minecraft is expected to move from the "1.MINOR.PATCH" versioning scheme
+// (through 1.21.11) to a "<year>.<version>.<patch>" scheme afterward (e.g.
+// 26.1.0, 27.2.3). All version comparisons below use semver.Parse/Constraints
+// (the same library agent/adapters.go::saddleSlotSupported already uses) rather
+// than hand-parsing "the second dot-separated component", specifically because
+// hand-parsing breaks silently on that scheme change: splitting "26.1.0" on "."
+// and reading index 1 gives "1", which a naive `minor >= 21` check reads as an
+// *ancient* pre-1.21 version rather than the newest one there is. Real semver
+// comparison orders by major first, so "26.1.0" correctly sorts above any
+// "1.x.y" threshold without needing to special-case the scheme switch at all —
+// verified for 26.1.0 and 27.2.3 against every threshold used in this file.
+//
+// None of this repo's dependencies support the year-based scheme yet, so nothing
+// here has been exercised against a real such server; it only needs to not be
+// silently wrong once one becomes available.
 
 // getHorseNBT returns the appropriate NBT format for spawning a tamed horse with saddle
 // based on the Minecraft version.
@@ -18,30 +33,13 @@ import (
 //   - 1.20.4 - 1.21.4: {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}
 //   - 1.21.5+:         {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}
 func getHorseNBT(version string) string {
-	// Parse version (e.g., "1.21.5" -> major=1, minor=21, patch=5)
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
-		// Default to old format if version is malformed
-		return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`
-	}
+	const oldFormat = `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`
+	const newFormat = `{Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`
 
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`
+	if !mcVersionAtLeastSemver(version, ">= "+models.MinSaddleSlotVersion) {
+		return oldFormat
 	}
-
-	patch := 0
-	if len(parts) >= 3 {
-		patch, _ = strconv.Atoi(parts[2])
-	}
-
-	// Version 1.21.5+ uses new equipment format
-	if minor > 21 || (minor == 21 && patch >= 5) {
-		return `{Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`
-	}
-
-	// Version 1.21.4 and earlier use old SaddleItem format
-	return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`
+	return newFormat
 }
 
 // chestBoatEntityID returns the entity type (without the "minecraft:" prefix)
@@ -54,57 +52,35 @@ func getHorseNBT(version string) string {
 //   - 1.21.2+: per-species entity types (oak_chest_boat, birch_chest_boat, ...)
 //     with no Type tag needed.
 func chestBoatEntityID(version string) (entityType string, spawnNBT string) {
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
-		return "oak_chest_boat", ""
+	if !mcVersionAtLeastSemver(version, ">= 1.21.2") {
+		return "chest_boat", `{Type:"oak"}`
 	}
-
-	minor, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return "oak_chest_boat", ""
-	}
-
-	patch := 0
-	if len(parts) >= 3 {
-		patch, _ = strconv.Atoi(parts[2])
-	}
-
-	// Version 1.21.2+ uses per-species entity types
-	if minor > 21 || (minor == 21 && patch >= 2) {
-		return "oak_chest_boat", ""
-	}
-
-	// Version 1.21.1 and earlier use the single chest_boat type with a Type tag
-	return "chest_boat", `{Type:"oak"}`
+	return "oak_chest_boat", ""
 }
 
-// mcMinorPatch parses a Minecraft version string like "1.21.5" into its minor
-// and patch components. ok is false if the string can't be parsed.
-func mcMinorPatch(version string) (minor, patch int, ok bool) {
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
-		return 0, 0, false
-	}
-	var err error
-	minor, err = strconv.Atoi(parts[1])
+// mcVersionAtLeastSemver reports whether version satisfies constraint (e.g.
+// ">= 1.21.5"), using real semver comparison so the ordering stays correct
+// across Minecraft's pending 1.MINOR.PATCH -> year.version.patch scheme change
+// (see the package-level comment above). An unparseable version or constraint
+// reports false, so callers that gate a feature behind this skip rather than
+// risk running against a version that doesn't have it.
+func mcVersionAtLeastSemver(version, constraint string) bool {
+	parsed, err := semver.Parse(version)
 	if err != nil {
-		return 0, 0, false
+		return false
 	}
-	if len(parts) >= 3 {
-		patch, _ = strconv.Atoi(parts[2])
+	c, err := semver.NewConstraints(constraint)
+	if err != nil {
+		return false
 	}
-	return minor, patch, true
+	return c.Check(parsed)
 }
 
 // mcVersionAtLeast reports whether version is at or above 1.<minMinor>.<minPatch>.
 // An unparseable version reports false, so callers that gate a feature behind
 // this skip rather than risk running against a version that doesn't have it.
 func mcVersionAtLeast(version string, minMinor, minPatch int) bool {
-	minor, patch, ok := mcMinorPatch(version)
-	if !ok {
-		return false
-	}
-	return minor > minMinor || (minor == minMinor && patch >= minPatch)
+	return mcVersionAtLeastSemver(version, fmt.Sprintf(">= 1.%d.%d", minMinor, minPatch))
 }
 
 // getChestedMountNBT returns the NBT for a tamed, saddled, chest-equipped
@@ -116,12 +92,22 @@ func mcVersionAtLeast(version string, minMinor, minPatch int) bool {
 // 1.21.5 split applies:
 //   - 1.21.1 - 1.21.4: {Tame:1b,SaddleItem:{...},ChestedHorse:1b}
 //   - 1.21.5+:         {Tame:1b,equipment:{saddle:{...}},ChestedHorse:1b}
+//
+// Unlike getHorseNBT, an unparseable version fails open to the modern format
+// here, matching the original behaviour this preserves.
 func getChestedMountNBT(version string) string {
-	minor, patch, ok := mcMinorPatch(version)
-	if !ok || minor > 21 || (minor == 21 && patch >= 5) {
-		return `{Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}},ChestedHorse:1b}`
+	const oldFormat = `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},ChestedHorse:1b}`
+	const newFormat = `{Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}},ChestedHorse:1b}`
+
+	parsed, err := semver.Parse(version)
+	if err != nil {
+		return newFormat
 	}
-	return `{Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1},ChestedHorse:1b}`
+	constraint, err := semver.NewConstraints(">= " + models.MinSaddleSlotVersion)
+	if err != nil || constraint.Check(parsed) {
+		return newFormat
+	}
+	return oldFormat
 }
 
 // llamaChestNBT is the NBT for a tamed llama with maximum chest capacity
@@ -131,6 +117,51 @@ func getChestedMountNBT(version string) string {
 // testing/vehicles/common_test.go — so unlike the other mounts here there is
 // no version split: the same NBT applies across all tested versions.
 const llamaChestNBT = `{Tame:1b,ChestedHorse:1b,Strength:5,DecorItem:{id:"minecraft:white_carpet",count:1}}`
+
+// TestVersionGatingSurvivesSchemeChange pins the exact regression the semver
+// switch above exists to prevent: a hand-rolled "split on '.', read index 1"
+// parser reads "26.1.0" as minor=1 — an ancient pre-1.21 version — because it
+// silently discards index 0. That would make every gate in this file (saddle
+// NBT format, chest boat entity naming, and any minMinor/minPatch skip in
+// testSaddledMountInventoryCache) misclassify the *newest* version as the
+// *oldest*. No live server involved; this is pure function logic.
+func TestVersionGatingSurvivesSchemeChange(t *testing.T) {
+	const futureYearScheme = "26.1.0" // hypothetical post-1.21.11 version
+
+	t.Run("mcVersionAtLeast treats a year-scheme version as newer than any 1.x threshold", func(t *testing.T) {
+		require.True(t, mcVersionAtLeast(futureYearScheme, 21, 11),
+			"%s should satisfy >= 1.21.11", futureYearScheme)
+		require.True(t, mcVersionAtLeast(futureYearScheme, 21, 5),
+			"%s should satisfy >= 1.21.5", futureYearScheme)
+	})
+
+	t.Run("mcVersionAtLeast still orders old-scheme versions correctly", func(t *testing.T) {
+		require.True(t, mcVersionAtLeast("1.21.11", 21, 11))
+		require.False(t, mcVersionAtLeast("1.21.10", 21, 11))
+		require.False(t, mcVersionAtLeast("1.21.4", 21, 5))
+		require.True(t, mcVersionAtLeast("1.21.5", 21, 5))
+	})
+
+	t.Run("getHorseNBT uses the modern equipment format on a year-scheme version", func(t *testing.T) {
+		require.Contains(t, getHorseNBT(futureYearScheme), "equipment:{saddle:")
+		require.Contains(t, getHorseNBT("1.21.4"), "SaddleItem:")
+	})
+
+	t.Run("chestBoatEntityID uses per-species naming on a year-scheme version", func(t *testing.T) {
+		entityType, spawnNBT := chestBoatEntityID(futureYearScheme)
+		require.Equal(t, "oak_chest_boat", entityType)
+		require.Empty(t, spawnNBT)
+
+		entityType, spawnNBT = chestBoatEntityID("1.21.1")
+		require.Equal(t, "chest_boat", entityType)
+		require.Contains(t, spawnNBT, `Type:"oak"`)
+	})
+
+	t.Run("getChestedMountNBT uses the modern equipment format on a year-scheme version", func(t *testing.T) {
+		require.Contains(t, getChestedMountNBT(futureYearScheme), "equipment:{saddle:")
+		require.Contains(t, getChestedMountNBT("1.21.4"), "SaddleItem:")
+	})
+}
 
 // TestHorseInventoryCache verifies that a horse's saddle/armour inventory
 // snapshot is cached after its container is opened and closed.
@@ -208,7 +239,7 @@ func TestHorseInventoryCache(t *testing.T) {
 			// A plain horse has no chest, so its window carries only the saddle and
 			// armour slots. Nothing was seeded, so only the snapshot contract is
 			// checked: the contents survived the close and are flagged not-live.
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, horseID, 0)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, horseID, 0, "")
 
 			t.Log("✓ Horse container test passed")
 		})
@@ -295,7 +326,7 @@ func TestChestBoatInventoryCache(t *testing.T) {
 
 			// The seeded stack must still be readable now the window is gone — that
 			// is the whole point of caching it against the entity.
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, boatID, seededDiamonds)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, boatID, seededDiamonds, "minecraft:diamond")
 
 			t.Log("✓ Chest boat container test passed")
 		})
@@ -374,7 +405,7 @@ func TestChestMinecartInventoryCache(t *testing.T) {
 			err = env.Agent.Agent.CloseContainer()
 			require.NoError(t, err, "close chest minecart container")
 
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, minecartID, seededEmeralds)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, minecartID, seededEmeralds, "minecraft:emerald")
 
 			t.Log("✓ Chest minecart container test passed")
 		})
@@ -450,7 +481,7 @@ func testSaddledMountInventoryCache(t *testing.T, entityType, testDirName string
 			// slot. Nothing was seeded, so only the snapshot contract is
 			// checked (see TestHorseInventoryCache for the seeded-content
 			// variant, used on entities that carry a real chest).
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0, "")
 
 			t.Logf("✓ %s container test passed", entityType)
 		})
@@ -553,7 +584,7 @@ func testChestedMountInventoryCache(t *testing.T, entityType, testDirName string
 			// (unchested) horse case; the slot dump assertEntityInventoryCachedAfterClose
 			// logs on the first real run is what to check that index against
 			// before adding a seeded-content assertion here.
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, mountID, 0, "")
 
 			t.Logf("✓ %s container test passed", entityType)
 		})
@@ -644,7 +675,7 @@ func TestLlamaInventoryCache(t *testing.T) {
 			// index for the decoration and chest slots hasn't been confirmed
 			// against a live server, so this checks only the open/close/cache
 			// round-trip; see testChestedMountInventoryCache for why.
-			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, llamaID, 0)
+			assertEntityInventoryCachedAfterClose(t, env.Agent.Agent, llamaID, 0, "")
 
 			t.Log("✓ Llama container test passed")
 		})

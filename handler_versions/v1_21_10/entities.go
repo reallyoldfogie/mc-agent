@@ -246,7 +246,7 @@ func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equip
 		// Convert protocol Slot to common Slot format
 		item := models.InventorySlot{
 			Present: int32(entry.Item.ItemCount) != 0,
-			ItemID:  0, // TODO: Extract from entry.Item complex structure
+			ItemID:  slotItemID(entry.Item),
 			Count:   int32(entry.Item.ItemCount),
 			NBT:     nil, // TODO: Extract from entry.Item complex structure
 		}

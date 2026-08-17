@@ -129,11 +129,17 @@ func seedEntityContainerSlot(t *testing.T, env *StandaloneTestEnv, entitySelecto
 //
 // wantSlotZeroCount > 0 additionally asserts the contents. Pass 0 to check only
 // the snapshot contract, for containers where nothing was seeded.
+//
+// wantSlotZeroItem, when non-empty, additionally asserts ItemID against the item
+// registry's ID for that name (e.g. "minecraft:diamond") — the same name passed
+// to seedEntityContainerSlot, so the seed and the assertion can't drift apart.
+// Only meaningful alongside wantSlotZeroCount > 0; pass "" otherwise.
 func assertEntityInventoryCachedAfterClose(
 	t *testing.T,
 	agent models.Agent,
 	entityID int32,
 	wantSlotZeroCount int32,
+	wantSlotZeroItem string,
 ) {
 	t.Helper()
 
@@ -170,5 +176,18 @@ func assertEntityInventoryCachedAfterClose(
 		assert.EqualValues(t, wantSlotZeroCount, inventory.Slots[0].Count,
 			"slot 0 should hold the stack we seeded before opening the container")
 		assert.True(t, inventory.Slots[0].Present, "seeded slot should be marked present")
+
+		if wantSlotZeroItem != "" {
+			itemReg := agent.GetRegistry("minecraft:item")
+			require.NotNil(t, itemReg, "item registry should be loaded by the time a container is opened")
+			wantItemID, ok := itemReg.GetIDByName(wantSlotZeroItem)
+			require.True(t, ok, "item %q should resolve in the minecraft:item registry", wantSlotZeroItem)
+
+			// This is what the fix (slotItemID, shared by
+			// convertSlotFromProtocol and ParseEntityEquipment) is actually for:
+			// distinguishing which item is in the slot, not just that something is.
+			assert.EqualValues(t, wantItemID, inventory.Slots[0].ItemID,
+				"slot 0 should report the registry ID for %s, not just its count", wantSlotZeroItem)
+		}
 	}
 }

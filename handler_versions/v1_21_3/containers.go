@@ -174,6 +174,15 @@ func (c *containerHandler) ParseContainerSetSlot(p pk.Packet) (windowID int8, st
 	return windowID, stateID, slot, item, nil
 }
 
+// slotItemID extracts the item ID from a protocol Slot's non-empty case.
+// Returns 0 for an empty slot (ItemCount == 0, UnnamedType0001 is *models.Void).
+func slotItemID(slot basetypes.Slot) int32 {
+	if unnamed, ok := slot.UnnamedType0001.(*basetypes.SlotUnnamedType0001Default); ok {
+		return int32(unnamed.ItemId)
+	}
+	return 0
+}
+
 // convertSlotFromProtocol converts a protocol Slot to models.InventorySlot.
 func convertSlotFromProtocol(slot basetypes.Slot) models.InventorySlot {
 	if slot.ItemCount <= 0 {
@@ -182,16 +191,11 @@ func convertSlotFromProtocol(slot basetypes.Slot) models.InventorySlot {
 
 	// The slot structure in 1.21.3 uses ItemCount > 0 to indicate presence
 	// and has a complex switch for item details
-	result := models.InventorySlot{
+	return models.InventorySlot{
 		Present: true,
+		ItemID:  slotItemID(slot),
 		Count:   int32(slot.ItemCount),
 	}
-
-	// The item ID is stored in a switch field that's harder to access directly
-	// For now, we mark it as present with the count
-	// TODO: Extract itemId from the switch field properly
-
-	return result
 }
 
 // ParseHeldItemSlot parses a held item slot packet.
