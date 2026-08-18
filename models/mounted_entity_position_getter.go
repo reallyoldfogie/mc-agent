@@ -52,6 +52,21 @@ type MountedEntityPositionGetter interface {
 	// Common attributes: "generic.movement_speed", "generic.max_health", etc.
 	GetEntityAttribute(entityID int32, attributeName string) (float64, bool)
 
+	// GetEntityAttributeDefault retrieves the data-driven vanilla default for
+	// an attribute, keyed by the entity's actual type (e.g. a donkey gets
+	// donkey's default, not horse's) rather than a hardcoded per-handler
+	// constant. Returns (value, found) - found is false if the entity isn't
+	// tracked, its type isn't in the loaded mc-data-gen export, or the
+	// attribute isn't one that entity type carries.
+	//
+	// This is a fallback of a fallback: callers should still prefer
+	// GetEntityAttribute's live, server-sourced value whenever it's found,
+	// and only fall through here (then to their own hardcoded literal) when
+	// it isn't — e.g. the brief window before the server's first
+	// ClientboundEntityUpdateAttributes packet for a freshly-mounted entity
+	// arrives. See PHASE_7_PLAN.md.
+	GetEntityAttributeDefault(entityID int32, attributeName string) (float64, bool)
+
 	// GetEntityVelocity returns the current velocity of an entity by ID.
 	// Returns (velX, velY, velZ, found) in Minecraft protocol units (×8000 blocks/tick).
 	// found is false if the entity is not tracked.

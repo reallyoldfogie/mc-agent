@@ -136,12 +136,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	)
 
 	// (4) Movement speed with camel sprint bonus
-	movementAcceleration := models.CamelDefaultMovementSpeed
-	if entityGetter != nil {
-		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
-			movementAcceleration = movementSpeed
-		}
-	}
+	movementAcceleration := resolveMountMovementSpeed(entityGetter, mountedEntityID, "generic.movement_speed", models.CamelDefaultMovementSpeed)
 	if inputs.Sprint && camelSt.GetDashCooldownTicks() <= 0 {
 		movementAcceleration += models.CamelSprintBonus
 	}

@@ -287,9 +287,10 @@ type agent struct {
 	activeProjectiles    map[int32]*activeProjectileInfo
 
 	// entity metadata handling
-	entityRegistry  *models.EntityRegistry
-	metadataHandler models.MetadataHandler
-	poseRegistry    *models.EntityPoseRegistry
+	entityRegistry    *models.EntityRegistry
+	metadataHandler   models.MetadataHandler
+	poseRegistry      *models.EntityPoseRegistry
+	attributeDefaults *models.EntityAttributeDefaultsRegistry
 
 	// critical error handling
 	criticalErrorMu sync.Mutex
@@ -604,6 +605,18 @@ func (a *agent) Init(ctx context.Context) error {
 			}
 			if bmp, ok := a.metadataHandler.(*models.BasicMetadataProcessor); ok && a.poseRegistry != nil {
 				bmp.SetPoseRegistry(a.poseRegistry)
+			}
+
+			if attrDefaults, aerr := models.LoadEntityAttributeDefaultsRegistry(dataBasePath, a.cfg.Version); aerr == nil {
+				a.attributeDefaults = attrDefaults
+				if attrDefaults.UsedFallback() {
+					log.Printf("[Agent %s] entity attribute data missing for %s, using built-in fallback defaults", a.cfg.Name, a.cfg.Version)
+				} else {
+					log.Printf("[Agent %s] Loaded entity attribute defaults: %d entity types", a.cfg.Name, attrDefaults.Count())
+				}
+			} else {
+				a.attributeDefaults = models.NewEntityAttributeDefaultsRegistryFromFallback()
+				log.Printf("[Agent %s] Warning: failed to load entity attribute defaults (%v); using fallback table", a.cfg.Name, aerr)
 			}
 		} else {
 			log.Printf("[Agent %s] Warning: failed to resolve data path: %v", a.cfg.Name, err)

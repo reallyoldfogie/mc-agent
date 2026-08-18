@@ -538,22 +538,9 @@ func saddleSlotSupported(version string) (usesEquipmentSlot bool, versionKnown b
 // reach it through AbstractDonkeyEntity. Llamas are included because they do
 // carry the flags byte even though they can never be saddled.
 func (a *agent) isSaddleableMountType(entityTypeID int32) bool {
-	a.regMu.RLock()
-	defer a.regMu.RUnlock()
-
-	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
-	if entityTypeReg == nil || !entityTypeReg.IsReady() {
-		return false
-	}
-
-	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	localName, ok := a.entityTypeLocalName(entityTypeID)
 	if !ok {
 		return false
-	}
-
-	localName := entityTypeName
-	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
-		localName = localName[idx+1:]
 	}
 
 	switch localName {
@@ -565,6 +552,34 @@ func (a *agent) isSaddleableMountType(entityTypeID int32) bool {
 	default:
 		return false
 	}
+}
+
+// entityTypeLocalName resolves an entity type ID (as carried on spawn/equipment
+// packets) to its bare registry name with the namespace stripped (e.g.
+// "minecraft:camel" -> "camel"). ok is false when the entity-type registry
+// isn't ready yet or the ID isn't in it.
+//
+// Extracted from isSaddleableMountType, which needed this exact resolution
+// before GetEntityAttributeDefault needed it too — see PHASE_7_PLAN.md §4.4's
+// note on avoiding a second copy of this lookup.
+func (a *agent) entityTypeLocalName(entityTypeID int32) (string, bool) {
+	a.regMu.RLock()
+	defer a.regMu.RUnlock()
+
+	entityTypeReg := a.registries[RegistryID("minecraft:entity_type")]
+	if entityTypeReg == nil || !entityTypeReg.IsReady() {
+		return "", false
+	}
+
+	entityTypeName, ok := entityTypeReg.GetNameByID(entityTypeID)
+	if !ok {
+		return "", false
+	}
+
+	if idx := strings.IndexByte(entityTypeName, ':'); idx >= 0 {
+		entityTypeName = entityTypeName[idx+1:]
+	}
+	return entityTypeName, true
 }
 
 // equipmentHasSaddle reports whether an equipment map has an occupied saddle
@@ -595,6 +610,29 @@ func (a *agent) GetEntityAttribute(entityID int32, attributeName string) (float6
 
 	value, ok := entity.Attributes[attributeName]
 	return value, ok
+}
+
+// GetEntityAttributeDefault retrieves the data-driven vanilla default for an
+// attribute, keyed by the entity's actual type rather than a hardcoded
+// per-handler constant. See
+// models.MountedEntityPositionGetter.GetEntityAttributeDefault for the
+// fallback-of-a-fallback contract.
+func (a *agent) GetEntityAttributeDefault(entityID int32, attributeName string) (float64, bool) {
+	a.entitiesMu.RLock()
+	entity, exists := a.entities[entityID]
+	a.entitiesMu.RUnlock()
+	if !exists {
+		return 0, false
+	}
+
+	localName, ok := a.entityTypeLocalName(entity.EntityType)
+	if !ok {
+		return 0, false
+	}
+
+	// a.attributeDefaults may be nil if agent startup hasn't wired it yet
+	// (e.g. in tests); EntityAttributeDefaultsRegistry.Get is nil-safe.
+	return a.attributeDefaults.Get(models.EntityType(localName), attributeName)
 }
 
 // GetEntityVelocity returns the current velocity of an entity.

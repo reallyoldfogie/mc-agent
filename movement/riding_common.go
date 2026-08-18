@@ -54,11 +54,11 @@ const groundProbeDistance = 0.1
 // ridden entity at a specific position. Used by both the horse and camel handlers
 // to avoid duplicating the version-gated sinking/floating logic.
 type ridingWaterPhysicsParams struct {
-	IsInWater                   bool
+	IsInWater                     bool
 	ShouldApplyOldSinkingBehavior bool
-	VelocityDrag                float64
-	GravityDelta                float64
-	BlockBelowEntity            uint32
+	VelocityDrag                  float64
+	GravityDelta                  float64
+	BlockBelowEntity              uint32
 }
 
 // ridingLavaPhysicsParams holds the computed lava physics parameters for a
@@ -174,8 +174,8 @@ func computeRidingLavaPhysics(pe *PhysicsMovementExecutor, currentPos models.V3)
 // The lava-warmth case is also covered by the lavaParams.IsOnLava/IsSubmergedInLava
 // path in computeStriderColdState, but this map provides the block-at-position check.
 var striderWarmBlockNames = map[string]struct{}{
-	"minecraft:lava":          {},
-	"minecraft:flowing_lava":  {},
+	"minecraft:lava":         {},
+	"minecraft:flowing_lava": {},
 }
 
 // isStriderWarmBlock checks if a block state is a warm block for striders.
@@ -189,9 +189,10 @@ func isStriderWarmBlock(shapeProvider models.BlockShapeManager, blockStateID uin
 }
 
 // computeStriderColdState mirrors Java StriderEntity.tick() cold-state logic:
-//   bl = blockState.isIn(STRIDER_WARM_BLOCKS) || landing.isIn(STRIDER_WARM_BLOCKS) || fluidHeight(LAVA) > 0
-//   bl2 = getVehicle() instanceof StriderEntity && striderEntity.isCold()
-//   setCold(!bl || bl2)
+//
+//	bl = blockState.isIn(STRIDER_WARM_BLOCKS) || landing.isIn(STRIDER_WARM_BLOCKS) || fluidHeight(LAVA) > 0
+//	bl2 = getVehicle() instanceof StriderEntity && striderEntity.isCold()
+//	setCold(!bl || bl2)
 func computeStriderColdState(
 	pe *PhysicsMovementExecutor,
 	currentPos models.V3,
@@ -266,6 +267,37 @@ func sendRidingInput(pe *PhysicsMovementExecutor, versionHandler models.VersionH
 	); err != nil {
 		log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
 	}
+}
+
+// resolveMountMovementSpeed returns the effective generic.movement_speed (or
+// any other attribute passed as attributeName) to use for a ridden entity
+// this tick, in priority order:
+//
+//  1. The live, server-sourced value (GetEntityAttribute) — always preferred
+//     when known, since it's per-entity and authoritative.
+//  2. The data-driven vanilla default for this entity's actual type
+//     (GetEntityAttributeDefault), sourced from mc-data-gen rather than
+//     hand-transcribed from decompiled source.
+//  3. hardcodedFallback, the caller's pre-existing literal — the
+//     fallback-of-a-fallback for when even the data-driven default is
+//     unavailable (e.g. mc-data-gen's directory wasn't found at startup).
+//
+// Every riding handler that reads a movement-speed-shaped attribute followed
+// this exact three-tier pattern inline before this helper existed; factoring
+// it out means the pattern can't drift between handlers. See
+// PHASE_7_PLAN.md.
+func resolveMountMovementSpeed(entityGetter models.MountedEntityPositionGetter, mountedEntityID int32, attributeName string, hardcodedFallback float64) float64 {
+	speed := hardcodedFallback
+	if entityGetter == nil {
+		return speed
+	}
+	if defaultSpeed, ok := entityGetter.GetEntityAttributeDefault(mountedEntityID, attributeName); ok {
+		speed = defaultSpeed
+	}
+	if liveSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, attributeName); ok {
+		speed = liveSpeed
+	}
+	return speed
 }
 
 // sendRidingJumpCommand sends PlayerCommand(START_RIDING_JUMP, strengthPercent)

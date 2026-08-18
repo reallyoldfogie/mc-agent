@@ -117,12 +117,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 
 	// ── getSaddledSpeed: compute the saddled movement speed ──
 	// Java: getAttributeValue(MOVEMENT_SPEED) * (cold ? 0.35 : 0.55) * saddledComponent.getMovementSpeedMultiplier()
-	attributeSpeed := physics.StriderBaseMovementSpeed
-	if entityGetter != nil {
-		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
-			attributeSpeed = movementSpeed
-		}
-	}
+	attributeSpeed := resolveMountMovementSpeed(entityGetter, mountedEntityID, "generic.movement_speed", physics.StriderBaseMovementSpeed)
 
 	// Apply the SaddledComponent boost multiplier, the cold SUFFOCATING_MODIFIER
 	// and the cold/warm speed multiplier.

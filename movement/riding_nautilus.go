@@ -93,13 +93,10 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNautilus(
 	inWater := pe.shapeProvider != nil && (pe.shapeProvider.IsWater(occupantBlock) || pe.shapeProvider.IsWater(belowBlock))
 
 	// getSaddledSpeed(): movement_speed attribute when the server provides it,
-	// otherwise the per-type default (1.0 nautilus / 1.1 zombie) from the state.
-	movementSpeed := nautilusState.DefaultMovementSpeed()
-	if entityGetter != nil {
-		if attrSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
-			movementSpeed = attrSpeed
-		}
-	}
+	// otherwise the per-type default (1.0 nautilus / 1.1 zombie) from the
+	// state — nautilusState.DefaultMovementSpeed() is itself the ultimate
+	// fallback-of-fallback passed through here, ahead of the data-driven tier.
+	movementSpeed := resolveMountMovementSpeed(entityGetter, mountedEntityID, "generic.movement_speed", nautilusState.DefaultMovementSpeed())
 
 	// getControlledMovementInput(): build the 3D pitch-based input (normalized).
 	sideways, vertical, forwardComponent := nautilusMovementInput(inputs.ThrottleX, inputs.ThrottleZ, agentPitch)

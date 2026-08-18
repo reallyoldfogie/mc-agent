@@ -74,13 +74,12 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 		physics.GetBlockSlipperiness(waterParams.BlockBelowEntity),
 	)
 
-	// (4) Movement speed from entity attribute
-	movementAcceleration := 0.225 // Default: vanilla horse movement speed
-	if entityGetter != nil {
-		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
-			movementAcceleration = movementSpeed
-		}
-	}
+	// (4) Movement speed from entity attribute. This handler also serves
+	// donkey and mule (delegated from riding_donkey.go/riding_mule.go), so
+	// the 0.225 literal below is specifically the horse fallback-of-fallback;
+	// resolveMountMovementSpeed's data-driven tier resolves each species'
+	// own default via mountedEntityID's actual entity type.
+	movementAcceleration := resolveMountMovementSpeed(entityGetter, mountedEntityID, "generic.movement_speed", 0.225)
 
 	// (5) Jump charge-on-hold / release-to-fire state machine.
 	// Mirrors ClientPlayerEntity.tickMovement: rising edge starts charging, hold

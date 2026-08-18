@@ -96,12 +96,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 
 	// (6) Compute saddled movement speed.
 	// Java: getSaddledSpeed = attribute * 0.225 * saddledComponent.getMovementSpeedMultiplier()
-	attributeSpeed := physics.PigBaseMovementSpeed
-	if entityGetter != nil {
-		if movementSpeed, ok := entityGetter.GetEntityAttribute(mountedEntityID, "generic.movement_speed"); ok {
-			attributeSpeed = movementSpeed
-		}
-	}
+	attributeSpeed := resolveMountMovementSpeed(entityGetter, mountedEntityID, "generic.movement_speed", physics.PigBaseMovementSpeed)
 	saddledSpeed := attributeSpeed * physics.PigSaddledSpeedMultiplier
 
 	// Apply sinusoidal carrot_on_a_stick boost.
