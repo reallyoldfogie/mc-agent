@@ -395,6 +395,84 @@ func (vh *VehicleTestHelper) SummonLlama(ctx context.Context, x, y, z, yaw float
 	return entityID, nil
 }
 
+// SummonHappyGhast summons a happy ghast wearing a harness (white) at the
+// specified location and returns its entity ID. Happy ghast was added in
+// Minecraft 1.21.6.
+//
+// Unlike every AbstractHorseEntity-family mount, HappyGhastEntity.interactMob
+// has no taming check at all — mounting is gated purely on
+// isWearingBodyArmor() (the harness), so there is no Tame:1b/Owner NBT here,
+// unlike SummonHorse/SummonCamel/SummonNautilus.
+//
+// Summoned with NoAI so FlyRandomlyGoal cannot carry it out of interact range
+// before the caller mounts it (the same reason SummonPig does this) — call
+// EnableEntityAI(ctx, "minecraft:happy_ghast") after mounting to restore
+// rider-steering, since a NoAI entity does not run travel() either.
+func (vh *VehicleTestHelper) SummonHappyGhast(ctx context.Context, x, y, z, yaw float64) (int32, error) {
+	cmd := fmt.Sprintf(
+		`summon minecraft:happy_ghast %f %f %f {Rotation:[%ff,0f],NoAI:1b,equipment:{body:{id:"minecraft:white_harness",count:1}}}`,
+		x, y, z, yaw,
+	)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon happy ghast: %w", err)
+	}
+
+	// Equip the harness via item replace for reliability, the same reasoning
+	// SummonHorse/SummonCamel already document for the saddle equivalent.
+	harnessResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:happy_ghast,limit=1] body with minecraft:white_harness")
+	log.Printf("[VehicleTestHelper] happy ghast harness equip => %s", harnessResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip happy ghast harness: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	happyGhastTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:happy_ghast")
+	if !ok {
+		return 0, fmt.Errorf("happy ghast entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("happy ghast entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonUnharnessedHappyGhast summons a happy ghast with no harness equipped
+// — the negative case for harness detection. Vanilla refuses to make the
+// rider the controlling passenger of an unharnessed happy ghast
+// (HappyGhastEntity.getControllingPassenger gates on isWearingBodyArmor()),
+// so this is the happy-ghast equivalent of SummonUnsaddledHorse.
+func (vh *VehicleTestHelper) SummonUnharnessedHappyGhast(ctx context.Context, x, y, z, yaw float64) (int32, error) {
+	cmd := fmt.Sprintf(
+		`summon minecraft:happy_ghast %f %f %f {Rotation:[%ff,0f],NoAI:1b}`,
+		x, y, z, yaw,
+	)
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon unharnessed happy ghast: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	happyGhastTypeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:happy_ghast")
+	if !ok {
+		return 0, fmt.Errorf("happy ghast entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("unharnessed happy ghast not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
 // SummonOption customizes the NBT applied when summoning an entity.
 type SummonOption func(*summonOptions)
 
