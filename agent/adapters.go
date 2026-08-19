@@ -457,6 +457,62 @@ func (a *agent) IsMountedEntityLlama(entityTypeID int32) bool {
 	return rval
 }
 
+// IsMountedEntityHappyGhast checks if a mounted entity is a happy ghast
+// (1.21.6+) by type ID.
+func (a *agent) IsMountedEntityHappyGhast(entityTypeID int32) bool {
+	localName, ok := a.entityTypeLocalName(entityTypeID)
+	return ok && localName == "happy_ghast"
+}
+
+// IsMountedEntityHappyGhastStayingStill reports whether the given happy
+// ghast currently has no controlling passenger because it's "staying still"
+// (metadata key 18). See models.MountedEntityPositionGetter's doc comment
+// for why this matters.
+func (a *agent) IsMountedEntityHappyGhastStayingStill(entityID int32) (stayingStill bool, known bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	entity, exists := a.entities[entityID]
+	if !exists {
+		return false, false
+	}
+	return entity.HappyGhastStayingStill, entity.HasHappyGhastStayingStill
+}
+
+// IsMountedEntityHarnessed reports whether the given happy ghast has a
+// harness equipped in the body slot. Slot occupancy alone isn't sufficient
+// evidence (see the interface doc comment), so this also resolves the
+// equipped item's registry name and checks it ends in "harness" — matching
+// every one of the sixteen dyed harness items without hardcoding all sixteen
+// names.
+func (a *agent) IsMountedEntityHarnessed(entityID int32) (harnessed bool, known bool) {
+	a.entitiesMu.RLock()
+	entity, exists := a.entities[entityID]
+	a.entitiesMu.RUnlock()
+	if !exists {
+		return false, false
+	}
+
+	bodySlot, hasBodySlot := entity.Equipment[models.EquipmentSlotBody]
+	if !hasBodySlot || bodySlot.Count <= 0 {
+		return false, true
+	}
+
+	itemReg := a.GetRegistry("minecraft:item")
+	if itemReg == nil || !itemReg.IsReady() {
+		return false, false
+	}
+	itemName, ok := itemReg.GetNameByID(bodySlot.ItemID)
+	if !ok {
+		return false, false
+	}
+	localName := itemName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+	return strings.HasSuffix(localName, "harness"), true
+}
+
 // IsMountedEntitySaddled reports whether a mount has a saddle equipped.
 //
 // This mirrors how the vanilla client decides, which differs by version but

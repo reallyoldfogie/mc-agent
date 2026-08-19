@@ -21,6 +21,7 @@ const (
 	VehicleTypeZombieNautilus
 	VehicleTypeLlama
 	VehicleTypeTraderLlama
+	VehicleTypeHappyGhast
 )
 
 // GetVehicleType returns what kind of vehicle an entity type represents.
@@ -59,6 +60,8 @@ func GetVehicleType(entityType EntityType) VehicleType {
 		return VehicleTypeLlama
 	case EntityTypeTraderLlama:
 		return VehicleTypeTraderLlama
+	case EntityTypeHappyGhast:
+		return VehicleTypeHappyGhast
 	default:
 		return VehicleTypeNone
 	}
@@ -101,6 +104,8 @@ func (v VehicleType) String() string {
 		return "llama"
 	case VehicleTypeTraderLlama:
 		return "trader_llama"
+	case VehicleTypeHappyGhast:
+		return "happy_ghast"
 	default:
 		return "unknown"
 	}

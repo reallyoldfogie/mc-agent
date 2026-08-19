@@ -193,6 +193,10 @@ type PhysicsMovementExecutor struct {
 	// Non-nil only when mounted on a nautilus or zombie_nautilus; nil otherwise.
 	nautilusState *models.NautilusState
 
+	// happyGhastState holds the happy-ghast-specific eased vehicle yaw.
+	// Non-nil only when mounted on a happy ghast; nil otherwise.
+	happyGhastState *models.HappyGhastState
+
 	// onDashReady is an optional callback invoked when the camel's dash cooldown
 	// reaches zero and a new dash can be initiated. Clients use this to know
 	// when they can trigger a lunge/jump again.
@@ -401,6 +405,26 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 		}
 	}
 
+	// Initialize happy ghast state if mounted on one. Its own yaw is seeded
+	// from the tracked entity yaw the same way nautilus's is; it has no
+	// dash/charge state to seed.
+	pe.happyGhastState = nil
+	if pe.entityPositionGetter != nil {
+		if entityTypeID, found := pe.entityPositionGetter.GetMountedEntityType(vehicleEntityID); found {
+			if pe.entityPositionGetter.IsMountedEntityHappyGhast(entityTypeID) {
+				var initialYaw float64
+				if entYaw, yawFound := pe.entityPositionGetter.GetMountedEntityYaw(vehicleEntityID); yawFound {
+					initialYaw = entYaw
+				} else {
+					_, stateYaw, _, _ := pe.physicsState.GetPosition()
+					initialYaw = stateYaw
+				}
+				pe.happyGhastState = models.NewHappyGhastState(initialYaw)
+				log.Printf("[SetMounted] Happy ghast state initialized (yaw=%.1f) for entity %d", initialYaw, vehicleEntityID)
+			}
+		}
+	}
+
 	log.Printf("[SetMounted] Agent mounted on entity %d (mode stays %s)", vehicleEntityID, pe.GetMode())
 	return nil
 }
@@ -470,6 +494,7 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.clearSentVehicleMoves()     // Clear echo-detection history on dismount
 	pe.camelState = nil            // Clear camel state on dismount
 	pe.nautilusState = nil         // Clear nautilus state on dismount
+	pe.happyGhastState = nil       // Clear happy ghast state on dismount
 	pe.saddleBoosted = false       // Clear boost state on dismount
 	pe.saddleBoostTime = 0
 	pe.saddleBoostTotal = 0
@@ -2061,7 +2086,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	}
 
 	// Determine vehicle type to dispatch to the appropriate handler.
-	var isBoat, isMinecart, isCamel, isNautilus, isPig, isStrider, isDonkey, isMule, isLlama bool
+	var isBoat, isMinecart, isCamel, isNautilus, isPig, isStrider, isDonkey, isMule, isLlama, isHappyGhast bool
 	if et, found := pe.entityPositionGetter.GetMountedEntityType(mountedEntityID); found {
 		isBoat = pe.entityPositionGetter.IsMountedEntityBoat(et)
 		isMinecart = pe.entityPositionGetter.IsMountedEntityMinecart(et)
@@ -2072,6 +2097,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 		isDonkey = pe.entityPositionGetter.IsMountedEntityDonkey(et)
 		isMule = pe.entityPositionGetter.IsMountedEntityMule(et)
 		isLlama = pe.entityPositionGetter.IsMountedEntityLlama(et)
+		isHappyGhast = pe.entityPositionGetter.IsMountedEntityHappyGhast(et)
 	}
 
 	// Only the passenger at index 0 is the controlling passenger. On a
@@ -2093,11 +2119,44 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	// mount's NBT inventory rather than an equipment slot. IsMountedEntitySaddled
 	// reports that as known=false and we keep driving, preserving the previous
 	// behaviour on those versions instead of losing control of every mount.
-	needsSaddle := isCamel || isDonkey || isMule || (!isBoat && !isMinecart && !isNautilus && !isPig && !isStrider && !isLlama)
+	//
+	// The happy ghast never carries a saddle at all (it needs a harness in
+	// the body slot instead, checked separately below), so it must be
+	// excluded here — leaving it in would make IsMountedEntitySaddled report
+	// "known, not saddled" for every happy ghast and silently route every
+	// one of them, harnessed or not, to the passive-rider handler. This is
+	// the exact bug class the 2026-08-02 unsaddled-horse fix caught for a
+	// different vehicle; see PHASE_6_PLAN.md §4.5.
+	needsSaddle := isCamel || isDonkey || isMule || (!isBoat && !isMinecart && !isNautilus && !isPig && !isStrider && !isLlama && !isHappyGhast)
 	unsaddled := false
 	if needsSaddle {
 		if saddled, known := pe.entityPositionGetter.IsMountedEntitySaddled(mountedEntityID); known && !saddled {
 			unsaddled = true
+		}
+	}
+
+	// A happy ghast needs a harness (body equipment slot) instead of a
+	// saddle. An unharnessed happy ghast cannot normally be mounted at all
+	// (vanilla refuses the interaction server-side), so this is a
+	// defense-in-depth backstop for edge cases like the /ride command,
+	// mirroring the saddle check's shape rather than the primary gate.
+	unharnessed := false
+	if isHappyGhast {
+		if harnessed, known := pe.entityPositionGetter.IsMountedEntityHarnessed(mountedEntityID); known && !harnessed {
+			unharnessed = true
+		}
+	}
+
+	// A happy ghast has NO controlling passenger at all — not even the
+	// pilot in seat 0 — while it's "staying still" (a player standing on
+	// top of it, or the settle window after a mount/dismount change). The
+	// client must not predict movement or send VehicleMove during that
+	// window, so this routes through the same passive-rider path as an
+	// unsaddled mount. See models.EntityMetadataKeyHappyGhastStayingStill.
+	happyGhastStayingStill := false
+	if isHappyGhast {
+		if stayingStill, known := pe.entityPositionGetter.IsMountedEntityHappyGhastStayingStill(mountedEntityID); known && stayingStill {
+			happyGhastStayingStill = true
 		}
 	}
 
@@ -2144,6 +2203,13 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	case unsaddled:
 		// Saddleable mount with no saddle: the server ignores our input.
 		result = pe.handleRidingModePassiveRider(versionHandler, mountedEntityID, "mount is not saddled", forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case unharnessed:
+		// Happy ghast with no harness: the server ignores our input.
+		result = pe.handleRidingModePassiveRider(versionHandler, mountedEntityID, "happy ghast has no harness", forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case happyGhastStayingStill:
+		// Happy ghast is "staying still": vanilla has no controlling
+		// passenger at all in this state, not even seat 0.
+		result = pe.handleRidingModePassiveRider(versionHandler, mountedEntityID, "happy ghast is staying still", forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isBoat:
 		result = pe.handleRidingModeBoat(versionHandler, forward, backward, left, right, sneak)
 	case isMinecart:
@@ -2162,6 +2228,8 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 		result = pe.handleRidingModeMule(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	case isLlama:
 		result = pe.handleRidingModeLlama(versionHandler, mountedEntityID, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
+	case isHappyGhast:
+		result = pe.handleRidingModeHappyGhast(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)
 	default:
 		// Horse and any unknown rideable entity
 		result = pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, pe.entityPositionGetter)

@@ -1328,6 +1328,19 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if paddleVal, ok := entry.Value.(bool); ok {
 					e.BoatPaddleRight = paddleVal
 				}
+			case int(models.EntityMetadataKeyHappyGhastStayingStill):
+				// Key 18 is only HappyGhastEntity's STAYING_STILL flag on
+				// that entity type; other entity types register a different
+				// (or no) field at this index, so it has to be gated the
+				// same way HORSE_FLAGS is.
+				if !a.IsMountedEntityHappyGhast(e.EntityType) {
+					continue
+				}
+				if stillVal, ok := entry.Value.(bool); ok {
+					e.HappyGhastStayingStill = stillVal
+					e.HasHappyGhastStayingStill = true
+					log.Printf("[onSetEntityMetadata] Entity %d happy ghast staying_still=%v", entityID, stillVal)
+				}
 			case int(models.EntityMetadataKeyHorseFlags):
 				// Key 17 is only the horse flags byte on AbstractHorseEntity
 				// subclasses; on a player it is the score VarInt, so the entity

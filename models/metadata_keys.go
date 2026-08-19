@@ -61,6 +61,35 @@ const (
 	// real equipment slot and AbstractHorseEntity.isSaddled() was replaced by
 	// MobEntity.hasSaddleEquipped(), which reads equipment instead.
 	EntityMetadataKeyHorseFlags EntityMetadataKeyType = 17
+
+	// EntityMetadataKeyHappyGhastStayingStill is the boolean STAYING_STILL
+	// flag HappyGhastEntity itself registers (1.21.6+). The same seventeen
+	// ancestor entries as HORSE_FLAGS are registered ahead of it (HappyGhastEntity
+	// extends AnimalEntity directly, the same hierarchy depth as AbstractHorseEntity),
+	// but HappyGhastEntity registers two fields of its own — HAS_ROPES at
+	// index 17, then STAYING_STILL at index 18 — rather than one. Verified
+	// identical across every version happy ghast exists in (1.21.6-1.21.11)
+	// by counting DataTracker.registerData calls in the decompiled source.
+	//
+	// True whenever HappyGhastEntity.getControllingPassenger() has no
+	// controller at all — not even the pilot in seat 0 — either because a
+	// player is standing on top of it or because it's within the few-tick
+	// settle window after a mount/dismount change. The client must not
+	// predict movement or send VehicleMove while this is set.
+	EntityMetadataKeyHappyGhastStayingStill EntityMetadataKeyType = 18
+
+	// EntityMetadataKeyPassiveChild is the boolean CHILD flag PassiveEntity
+	// itself registers, shared by every entity in the AnimalEntity/PassiveEntity
+	// hierarchy (horse, donkey, mule, llama, camel, happy ghast, ...) — the
+	// entry immediately before HORSE_FLAGS/STAYING_STILL, at index 16 rather
+	// than 17. True for the baby form of the entity. Not currently captured
+	// by any handler: vanilla already refuses to mount a baby happy ghast
+	// (HappyGhastEntity.interactMob falls through to the default breeding
+	// interaction when isBaby()), so client-side rejection is an optional
+	// diagnostic rather than a correctness requirement — see
+	// PHASE_6_PLAN.md §1.8. Recorded here so the index doesn't need
+	// re-deriving if that changes.
+	EntityMetadataKeyPassiveChild EntityMetadataKeyType = 16
 )
 
 // HorseFlagMask is a bit within the AbstractHorseEntity flags byte

@@ -438,6 +438,68 @@ const (
 	NautilusWaterDrag = 0.9
 )
 
+// Happy ghast riding constants (Java HappyGhastEntity, 1.21.6+). Source:
+// net/minecraft/entity/passive/HappyGhastEntity.java, decompiled and read
+// directly (mc-data-gen/extractedSrc/<version>/...) rather than inferred —
+// see docs/plans/physics_and_movement_engine_enhancement/PHASE_6_PLAN.md §3.
+const (
+	// HappyGhastControlledMovementMultiplier is getControlledMovementInput's
+	// fixed scale factor applied to the raw (sideways, vertical, forward)
+	// input vector, alongside the flying_speed attribute. Note this input is
+	// NOT clamped to unit length before this multiply — the clamp happens
+	// later, inside movementInputToVelocity, on the already-scaled vector.
+	// Java: return new Vec3d(f, h, g).multiply(3.9F * getAttributeValue(FLYING_SPEED));
+	HappyGhastControlledMovementMultiplier = 3.9
+
+	// HappyGhastJumpVerticalBoost is added to the vertical input component
+	// while the pilot holds jump, before the 3.9*flying_speed scale — not a
+	// separate "ascend" branch, just an offset stacked on whatever the
+	// pitch-driven vertical component already was.
+	// Java: if (controllingPlayer.isJumping()) { h += 0.5F; }
+	HappyGhastJumpVerticalBoost = 0.5
+
+	// HappyGhastTravelSpeedFactor converts the flying_speed attribute into
+	// the speed argument travel() passes to travelFlying.
+	// Java travel(): float f = flying_speed * 5.0F / 3.0F;
+	HappyGhastTravelSpeedFactor = 5.0 / 3.0
+
+	// HappyGhastFlightDrag is travelFlying's per-tick velocity multiplier in
+	// the "not touching water or lava" branch — the only branch that ever
+	// applies here, since the happy ghast dismounts its rider on submersion
+	// (server-side, EntityTypeTags.DISMOUNTS_UNDERWATER + LivingEntity's
+	// tickWaterBreathing dismount check) rather than the ridden ghast itself
+	// ever running the water/lava travel math.
+	// Java: this.setVelocity(this.getVelocity().multiply(0.91F));
+	//
+	// Notably absent from this branch: any gravity term at all. Flight is
+	// genuinely zero-gravity, not "reduced gravity" — confirmed by its
+	// absence in travelFlying's source, not inferred from behavior.
+	HappyGhastFlightDrag = 0.91
+
+	// HappyGhastDefaultFlyingSpeed is the vanilla flying_speed attribute
+	// default, used as the fallback-of-fallback when neither the live server
+	// value nor Phase 7's data-driven default is available.
+	// Java createHappyGhastAttributes(): .add(EntityAttributes.FLYING_SPEED, 0.05)
+	HappyGhastDefaultFlyingSpeed = 0.05
+
+	// HappyGhastYawEaseFactor is how far the ghast's own yaw closes the gap
+	// toward the pilot's look yaw each tick — much slower than the
+	// equivalent nautilus factor (0.5).
+	// Java tickControlled: f += MathHelper.wrapDegrees(pilotYaw - f) * 0.08F;
+	HappyGhastYawEaseFactor = 0.08
+
+	// HappyGhastPitchFactor halves the pilot's look pitch for the ghast's
+	// own pitch (used only in the VehicleMove packet, like nautilus).
+	// Java getGhastRotation(): new Vec2f(controllingEntity.getPitch() * 0.5F, ...)
+	HappyGhastPitchFactor = 0.5
+
+	// HappyGhastWidth and HappyGhastHeight are the adult hitbox dimensions.
+	// Java: default_dimensions width=4, height=4 (also confirmed directly
+	// against mc-data-gen's extracted entity JSON).
+	HappyGhastWidth  = 4.0
+	HappyGhastHeight = 4.0
+)
+
 // HorseLandFriction computes the per-tick velocity multiplier for a ridden entity
 // on land, based on the block's slipperiness. Mirrors the vanilla formula from
 // LivingEntity.travelControlled → Entity.applyMovementInput → friction path:

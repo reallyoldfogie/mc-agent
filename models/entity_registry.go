@@ -40,6 +40,11 @@ const (
 	EntityTypeCamelHusk      EntityType = "camel_husk"
 	EntityTypeNautilus       EntityType = "nautilus"
 	EntityTypeZombieNautilus EntityType = "zombie_nautilus"
+	// EntityTypeHappyGhast is 1.21.6+ only. There is no separate "ghastling"
+	// entity type — the baby form is the same entity type with the CHILD
+	// tracked-data flag set (metadata index 16, shared with every other
+	// AnimalEntity-chain mount); see PHASE_6_PLAN.md §3.4.
+	EntityTypeHappyGhast EntityType = "happy_ghast"
 	EntityTypeBoat           EntityType = "boat"
 	EntityTypeChestBoat      EntityType = "chest_boat"
 	EntityTypePig            EntityType = "pig"
@@ -164,7 +169,7 @@ func (t EntityType) IsLivingEntity() bool {
 		EntityTypeVillager, EntityTypeIronGolem, EntityTypeSnowGolem, EntityTypeArmorStand,
 		EntityTypeHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeCamel, EntityTypeCamelHusk,
 		EntityTypeLlama, EntityTypeTraderLlama,
-		EntityTypeNautilus, EntityTypeZombieNautilus:
+		EntityTypeNautilus, EntityTypeZombieNautilus, EntityTypeHappyGhast:
 		return true
 	default:
 		return false
@@ -203,7 +208,7 @@ func (t EntityType) IsRideable() bool {
 	case EntityTypeHorse, EntityTypeSkeletonHorse, EntityTypeZombieHorse, EntityTypeDonkey, EntityTypeMule, EntityTypeBoat,
 		EntityTypeChestBoat, EntityTypePig, EntityTypeStrider, EntityTypeCamel, EntityTypeCamelHusk,
 		EntityTypeLlama, EntityTypeTraderLlama,
-		EntityTypeNautilus, EntityTypeZombieNautilus:
+		EntityTypeNautilus, EntityTypeZombieNautilus, EntityTypeHappyGhast:
 		return true
 	default:
 		return false

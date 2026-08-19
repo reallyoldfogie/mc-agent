@@ -262,6 +262,80 @@ func saddledBoostMultiplier(boosted bool, boostTicks, boostTotalTicks int, ampli
 	return 1.0 + amplitude*math.Sin(float64(boostTicks)/float64(boostTotalTicks)*math.Pi)
 }
 
+// movementInputToVelocity rotates and scales a movement input vector by yaw,
+// mirroring Java Entity.movementInputToVelocity (used by
+// LivingEntity.updateVelocity, in turn used by travelFlying — see
+// happyGhastControlledMovementInput's caller). The input's magnitude is
+// clamped to 1 before scaling by speed if it exceeds 1; a zero-length input
+// (or one below the epsilon Java also uses) returns zero rather than
+// dividing by a near-zero length.
+//
+// This is deliberately separate from nautilus's nautilusInputToVelocity,
+// which does not perform this clamp: nautilus's caller
+// (nautilusMovementInput) already clamps upstream before scaling, matching
+// AbstractNautilusEntity's own getControlledMovementInput. HappyGhastEntity's
+// equivalent does not clamp upstream (see happyGhastControlledMovementInput),
+// so the clamp has to happen here instead, exactly where Java's own
+// movementInputToVelocity puts it. Forcing both mounts through one shared,
+// pre-clamped helper would misrepresent one of the two sources.
+func movementInputToVelocity(input models.V3, speed, yawDegrees float64) models.V3 {
+	lengthSquared := input.X*input.X + input.Y*input.Y + input.Z*input.Z
+	if lengthSquared < 1e-7 {
+		return models.V3{}
+	}
+
+	scaled := input
+	if lengthSquared > 1.0 {
+		length := math.Sqrt(lengthSquared)
+		scaled = models.V3{X: input.X / length, Y: input.Y / length, Z: input.Z / length}
+	}
+	scaled = scaled.Mul(speed)
+
+	yawRadians := yawDegrees * math.Pi / 180.0
+	sinYaw := math.Sin(yawRadians)
+	cosYaw := math.Cos(yawRadians)
+	return models.V3{
+		X: scaled.X*cosYaw - scaled.Z*sinYaw,
+		Y: scaled.Y,
+		Z: scaled.Z*cosYaw + scaled.X*sinYaw,
+	}
+}
+
+// happyGhastControlledMovementInput builds the raw (sideways, vertical,
+// forward) input vector for a ridden happy ghast's pilot, mirroring Java
+// HappyGhastEntity.getControlledMovementInput. The result is NOT
+// normalized/clamped here — that happens later, in movementInputToVelocity,
+// after this vector has already been scaled by 3.9*flyingSpeed, matching the
+// exact order of operations in the decompiled source.
+//
+// sidewaysSpeed and forwardSpeed follow vanilla's PlayerEntity convention
+// (the same ThrottleX/ThrottleZ values every other riding handler already
+// passes through), pitchDegrees is the pilot's current look pitch, and
+// flyingSpeed is the FLYING_SPEED attribute value (not MOVEMENT_SPEED).
+func happyGhastControlledMovementInput(sidewaysSpeed, forwardSpeed, pitchDegrees float64, jumping bool, flyingSpeed float64) models.V3 {
+	sideways := sidewaysSpeed
+	vertical := 0.0
+	forward := 0.0
+	if forwardSpeed != 0 {
+		pitchRadians := pitchDegrees * math.Pi / 180.0
+		forwardComponent := math.Cos(pitchRadians)
+		verticalComponent := -math.Sin(pitchRadians)
+		if forwardSpeed < 0 {
+			forwardComponent *= -0.5
+			verticalComponent *= -0.5
+		}
+		vertical = verticalComponent
+		forward = forwardComponent
+	}
+
+	if jumping {
+		vertical += physics.HappyGhastJumpVerticalBoost
+	}
+
+	scale := physics.HappyGhastControlledMovementMultiplier * flyingSpeed
+	return models.V3{X: sideways * scale, Y: vertical * scale, Z: forward * scale}
+}
+
 // striderSaddledSpeed mirrors Java StriderEntity.getSaddledSpeed():
 //
 //	movementSpeed * (cold ? 0.35 : 0.55) * saddledComponent.getMovementSpeedMultiplier()

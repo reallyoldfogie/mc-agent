@@ -34,8 +34,13 @@ func (f *fakeAttributeGetter) IsMountedEntityStrider(int32) bool         { retur
 func (f *fakeAttributeGetter) IsMountedEntityDonkey(int32) bool          { return false }
 func (f *fakeAttributeGetter) IsMountedEntityMule(int32) bool            { return false }
 func (f *fakeAttributeGetter) IsMountedEntityLlama(int32) bool           { return false }
-func (f *fakeAttributeGetter) GetMountedPassengerIndex() int             { return -1 }
-func (f *fakeAttributeGetter) IsMountedEntitySaddled(int32) (bool, bool) { return false, false }
+func (f *fakeAttributeGetter) IsMountedEntityHappyGhast(int32) bool      { return false }
+func (f *fakeAttributeGetter) IsMountedEntityHappyGhastStayingStill(int32) (bool, bool) {
+	return false, false
+}
+func (f *fakeAttributeGetter) IsMountedEntityHarnessed(int32) (bool, bool) { return false, false }
+func (f *fakeAttributeGetter) GetMountedPassengerIndex() int               { return -1 }
+func (f *fakeAttributeGetter) IsMountedEntitySaddled(int32) (bool, bool)   { return false, false }
 func (f *fakeAttributeGetter) GetEntityVelocity(int32) (float64, float64, float64, bool) {
 	return 0, 0, 0, false
 }

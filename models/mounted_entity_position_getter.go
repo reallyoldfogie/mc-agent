@@ -27,6 +27,33 @@ type MountedEntityPositionGetter interface {
 	// passive-passenger handler rather than a controlling-passenger one.
 	IsMountedEntityLlama(int32) bool
 
+	// IsMountedEntityHappyGhast reports whether the mounted entity is a
+	// happy ghast (1.21.6+).
+	IsMountedEntityHappyGhast(int32) bool
+
+	// IsMountedEntityHappyGhastStayingStill reports whether the mounted
+	// happy ghast currently has no controlling passenger because it's
+	// "staying still" (Java HappyGhastEntity.method_72227): either a player
+	// is standing on top of it, or it's within the settle window after a
+	// mount/dismount change. While true, not even the pilot in seat 0 is the
+	// controlling passenger, so the client must not predict movement or send
+	// VehicleMove — see PHASE_6_PLAN.md §3.2/§3.5.
+	//
+	// known is false before the server's first SetEntityMetadata for this
+	// field arrives.
+	IsMountedEntityHappyGhastStayingStill(entityID int32) (stayingStill bool, known bool)
+
+	// IsMountedEntityHarnessed reports whether the given happy ghast has a
+	// harness equipped in the body slot. Unlike IsMountedEntitySaddled,
+	// presence in the slot alone is not sufficient evidence — slot 6
+	// ("body") has no harness-specific protocol semantics on its own, so
+	// this also checks the equipped item's registry name ends in "harness".
+	//
+	// known is false when the entity isn't tracked or the item registry
+	// isn't ready yet — not when the slot is simply empty (that's a
+	// confident "not harnessed").
+	IsMountedEntityHarnessed(entityID int32) (harnessed bool, known bool)
+
 	// GetMountedPassengerIndex returns our seat index in the mounted vehicle's
 	// passenger list, or -1 when not mounted. Index 0 is the controlling
 	// passenger; every later index is a passive rider that must not predict the

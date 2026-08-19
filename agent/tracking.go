@@ -73,6 +73,14 @@ type trackedEntity struct {
 	// which is exactly how the vanilla client reads it.
 	HorseFlags    uint8
 	HasHorseFlags bool
+
+	// HappyGhastStayingStill mirrors HappyGhastEntity's STAYING_STILL tracked
+	// boolean (metadata key 18). True whenever the ghast has no controlling
+	// passenger at all — see models.EntityMetadataKeyHappyGhastStayingStill.
+	// HasHappyGhastStayingStill stays false until the server's first update
+	// for this field arrives.
+	HappyGhastStayingStill    bool
+	HasHappyGhastStayingStill bool
 }
 
 // GetPosition returns the current bot position and rotation.
