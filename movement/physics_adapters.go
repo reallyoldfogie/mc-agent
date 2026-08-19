@@ -19,6 +19,13 @@ type EntitySnapshot struct {
 	Pos        models.V3         // Position
 	Vel        models.V3         // Velocity
 	EntityType models.EntityType // Entity type name (for dimension lookup)
+
+	// IsStandableSurface mirrors models.EntityBounds.Standable — true when
+	// this entity currently behaves as a solid, walkable surface (e.g. a
+	// happy ghast while staying still). Computed by whatever populates the
+	// snapshot (agent.GetEntitiesSnapshot), since only that layer has the
+	// tracked-entity state (HappyGhastStayingStill, IsBaby) needed to decide.
+	IsStandableSurface bool
 }
 
 // EntityDimensions represents a mob/entity's collision box dimensions.
@@ -94,6 +101,12 @@ func (pw *physicsWorldAdapter) GetEntityDimensions(entityType models.EntityType)
 	case models.EntityTypeNautilus, models.EntityTypeZombieNautilus:
 		return EntityDimensions{Width: 1.4, Height: 1.6}
 
+	// Happy ghast (1.21.6+): 4x4, confirmed directly against the decompiled
+	// source and mc-data-gen's extracted entity JSON — see
+	// physics.HappyGhastWidth/HappyGhastHeight.
+	case models.EntityTypeHappyGhast:
+		return EntityDimensions{Width: physics.HappyGhastWidth, Height: physics.HappyGhastHeight}
+
 	// Iron golem (large: 1.4 wide x 2.7 tall)
 	case models.EntityTypeIronGolem:
 		return EntityDimensions{Width: 1.4, Height: 2.7}
@@ -157,9 +170,10 @@ func (pw *physicsWorldAdapter) GetEntitiesInRange(queryBB models.AABB) []models.
 			queryBB.Y.Min < entityBB.Y.Max && queryBB.Y.Max > entityBB.Y.Min &&
 			queryBB.Z.Min < entityBB.Z.Max && queryBB.Z.Max > entityBB.Z.Min {
 			result = append(result, models.EntityBounds{
-				EntityID: entityID,
-				AABB:     entityBB,
-				Velocity: snapshot.Vel,
+				EntityID:  entityID,
+				AABB:      entityBB,
+				Velocity:  snapshot.Vel,
+				Standable: snapshot.IsStandableSurface,
 			})
 		}
 	}

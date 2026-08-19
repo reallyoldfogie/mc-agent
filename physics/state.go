@@ -594,8 +594,13 @@ func (s *state) tickPosition(w World) {
 		adjustedVel.X, adjustedVel.Z = s.adjustMovementForSneaking(playerBB, s.Vel.X, s.Vel.Z, w)
 	}
 
-	// Compute collision with YXZ order (Y first, then X, then Z) using adjusted velocity
-	newPlayerBB, newVel := s.computeCollisionYXZ(playerBB, adjustedVel, w)
+	// Compute collision with YXZ order (Y first, then X, then Z) using adjusted velocity.
+	// Unlike the generic computeCollisionYXZ (also used by ResolveCollision for
+	// ridden-vehicle physics), the walking player's own tick additionally
+	// collides against "standable" entities — e.g. a happy ghast while
+	// staying still — so the player can rest on top of one instead of only
+	// being pushed away from it. See computeCollisionYXZWithStandableEntities.
+	newPlayerBB, newVel := s.computeCollisionYXZWithStandableEntities(playerBB, adjustedVel, w)
 
 	// Check if step-up is possible
 	// Step-up is attempted if:
@@ -774,6 +779,20 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 func (s *state) handleEntityCollisions(playerBB AABB, newVel *models.V3, w World) {
 	entities := w.GetEntitiesInRange(playerBB)
 	for _, entity := range entities {
+		// Standable entities (e.g. a happy ghast while staying still) are
+		// already handled as block-like obstacles by
+		// computeCollisionYXZWithStandableEntities, which gives proper
+		// vertical support in addition to horizontal clipping. Also running
+		// this softer separation-impulse push on them would double-handle
+		// the same contact and fight the harder collision's result — matches
+		// vanilla, where a genuinely collidable entity is resolved by the
+		// same box-adjustment algorithm as blocks and never additionally
+		// nudged by the softer per-tick separation vanilla uses for merely
+		// overlappable entities.
+		if entity.Standable {
+			continue
+		}
+
 		entityCenterX := (entity.AABB.X.Min + entity.AABB.X.Max) / 2
 		entityCenterZ := (entity.AABB.Z.Min + entity.AABB.Z.Max) / 2
 		playerCenterX := (playerBB.X.Min + playerBB.X.Max) / 2
@@ -979,6 +998,67 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 		}
 	}
 
+	return boxes
+}
+
+// computeCollisionYXZWithStandableEntities is computeCollisionYXZ's walking-player
+// counterpart: the same Y-then-X-then-Z box-adjustment sweep, but the box list
+// also includes any "standable" entities in range (see models.EntityBounds.Standable) —
+// a happy ghast while staying still, for example — merged in alongside the
+// ordinary block boxes so the sweep gives them the same support-from-above
+// treatment blocks already get, not just horizontal separation.
+//
+// This is deliberately NOT folded into computeCollisionYXZ/ResolveCollision.
+// Those are also used by every riding handler's own collision resolution
+// (via resolveEntityCollision), and neither function nor its callers carry
+// the moving entity's own ID — so a ridden entity querying "standable
+// entities near me" would have no way to exclude itself and could collide
+// against its own bounding box. The walking player's own entity list
+// (World.GetEntitiesInRange, backed by agent.GetEntitiesSnapshot) already
+// excludes the player's own ID, so this variant is safe to use for that one
+// call site without needing to thread an exclusion ID through the whole
+// shared collision API for a feature that, for now, is scoped to a walking
+// player standing on a stationary happy ghast — not vehicles resting on one
+// another. See PHASE_6_PLAN.md §5.
+func (s *state) computeCollisionYXZWithStandableEntities(playerBB AABB, vel models.V3, w World) (AABB, models.V3) {
+	queryBB := playerBB.Offset(vel.X, vel.Y, vel.Z)
+	surroundings := s.getSurroundingBoxes(queryBB, w)
+	surroundings = append(surroundings, s.getStandableEntityBoxes(queryBB, w)...)
+
+	outVel := vel
+
+	// Y-axis collision (vertical)
+	for _, box := range surroundings {
+		outVel.Y = box.YOffset(playerBB, outVel.Y)
+	}
+	playerBB = playerBB.Offset(0, outVel.Y, 0)
+
+	// X-axis collision (horizontal)
+	for _, box := range surroundings {
+		outVel.X = box.XOffset(playerBB, outVel.X)
+	}
+	playerBB = playerBB.Offset(outVel.X, 0, 0)
+
+	// Z-axis collision (horizontal)
+	for _, box := range surroundings {
+		outVel.Z = box.ZOffset(playerBB, outVel.Z)
+	}
+	playerBB = playerBB.Offset(0, 0, outVel.Z)
+
+	return playerBB, outVel
+}
+
+// getStandableEntityBoxes returns the AABBs of entities in range that are
+// currently flagged Standable (see models.EntityBounds.Standable) — the
+// entity-sourced counterpart to getSurroundingBoxes's block-sourced boxes.
+func (s *state) getStandableEntityBoxes(queryBB AABB, w World) []AABB {
+	entities := w.GetEntitiesInRange(queryBB)
+	var boxes []AABB
+	for _, entity := range entities {
+		if entity.Standable {
+			boxes = append(boxes, entity.AABB)
+		}
+	}
 	return boxes
 }
 

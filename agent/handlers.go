@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -310,8 +311,17 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 		reg := a.GetRegistry("minecraft:entity_type")
 		if reg != nil && reg.IsReady() {
 			if name, ok := reg.GetNameByID(entityType); ok {
-				// Map registry name to EntityType (e.g., "minecraft:player" -> EntityTypePlayer)
-				entityTypeStr = models.EntityType(name)
+				// Map registry name to EntityType (e.g., "minecraft:player" -> EntityTypePlayer).
+				// GetNameByID returns the full namespaced registry name; models.EntityType
+				// constants are all bare (no "minecraft:" prefix, see entity_registry.go),
+				// so the prefix has to be stripped here for this to ever match one — this
+				// was previously cast through unstripped, so entityRegistry.GetEntityType()
+				// never matched any EntityType constant for any entity.
+				localName := name
+				if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+					localName = localName[idx+1:]
+				}
+				entityTypeStr = models.EntityType(localName)
 			}
 		} else {
 			log.Printf("[onAddEntity] Warning: Entity type registry not ready when registering entity %d. Type ID: %d", entityID, entityType)
@@ -1327,6 +1337,21 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			case int(models.EntityMetadataKeyBoatPaddleRight):
 				if paddleVal, ok := entry.Value.(bool); ok {
 					e.BoatPaddleRight = paddleVal
+				}
+			case int(models.EntityMetadataKeyPassiveChild):
+				// Key 16 is CHILD on every PassiveEntity-chain mount, but is
+				// only captured for happy ghasts right now (needed for the
+				// standable-surface isBaby() gate) — gate the same way
+				// STAYING_STILL is, so this doesn't misread key 16 on a
+				// different entity type where it means something else, or
+				// hasn't even been derived for.
+				if !a.IsMountedEntityHappyGhast(e.EntityType) {
+					continue
+				}
+				if babyVal, ok := entry.Value.(bool); ok {
+					e.IsBaby = babyVal
+					e.HasIsBaby = true
+					log.Printf("[onSetEntityMetadata] Entity %d happy ghast is_baby=%v", entityID, babyVal)
 				}
 			case int(models.EntityMetadataKeyHappyGhastStayingStill):
 				// Key 18 is only HappyGhastEntity's STAYING_STILL flag on

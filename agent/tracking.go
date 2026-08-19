@@ -81,6 +81,17 @@ type trackedEntity struct {
 	// for this field arrives.
 	HappyGhastStayingStill    bool
 	HasHappyGhastStayingStill bool
+
+	// IsBaby mirrors PassiveEntity's CHILD tracked boolean (metadata key 16,
+	// see models.EntityMetadataKeyPassiveChild). Currently only captured for
+	// happy ghasts (gated the same way HappyGhastStayingStill is), where it
+	// determines standable-surface eligibility: HappyGhastEntity.isCollidable
+	// requires !isBaby(). Like HorseFlags, absence of a positive signal is
+	// the answer — vanilla's default is "not baby" and an unchanged tracked
+	// value is never sent — so HasIsBaby staying false is read as adult, not
+	// unknown.
+	IsBaby    bool
+	HasIsBaby bool
 }
 
 // GetPosition returns the current bot position and rotation.

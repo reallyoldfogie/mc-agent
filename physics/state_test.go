@@ -11,7 +11,8 @@ import (
 
 // mockWorld is a simple grid-based world for testing
 type mockWorld struct {
-	blocks map[[3]int]uint32
+	blocks   map[[3]int]uint32
+	entities []models.EntityBounds
 }
 
 func newMockWorld() *mockWorld {
@@ -29,9 +30,21 @@ func (m *mockWorld) GetBlockStatus(x, y, z int) (uint32, bool) {
 	return val, exists // m.blocks[[3]int{x, y, z}]
 }
 
-// GetEntitiesInRange returns empty slice (no entity collision in tests)
+// AddEntity registers an entity for GetEntitiesInRange to return. Tests that
+// need entity collision (standable-surface tests, entity-separation tests)
+// call this explicitly; every other existing test leaves m.entities nil, so
+// GetEntitiesInRange keeps returning empty exactly as before this field was
+// added.
+func (m *mockWorld) AddEntity(e models.EntityBounds) {
+	m.entities = append(m.entities, e)
+}
+
+// GetEntitiesInRange returns every entity added via AddEntity, unfiltered by
+// queryBB — tests position entities meaningfully themselves, so the mock
+// doesn't need to replicate the real overlap-filtering geometry the
+// production physicsWorldAdapter does.
 func (m *mockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBounds {
-	return []models.EntityBounds{} // No entities in mock world for tests
+	return m.entities
 }
 
 // mockShapeProvider provides simple block collision data
