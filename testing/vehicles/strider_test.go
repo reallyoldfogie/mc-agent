@@ -588,13 +588,22 @@ func TestStriderControllability(t *testing.T) {
 			t.Logf("Movement without fungus: %.2f blocks", movementWithoutFungus)
 			t.Logf("Movement with fungus: %.2f blocks", movementWithFungus)
 
-			if movementWithoutFungus > 0 {
+			// controllabilityBaselineEpsilon (pig_test.go), not a strict > 0
+			// check: verification data recorded up to 0.43 blocks of noise
+			// without the fungus even after the riding_strider.go gate was
+			// fixed (docs/bugs/pig_carrot_boost_test_needs_rework/FINDINGS.md),
+			// which would otherwise produce a wildly unstable ratio here.
+			if movementWithoutFungus < controllabilityBaselineEpsilon {
+				// Expected: without the fungus, the strider isn't controllable
+				// at all (residual noise, not a meaningful slower baseline).
+				require.Greater(t, movementWithFungus, 0.5, "strider should move when fungus is equipped")
+			} else {
+				// Unexpectedly high baseline — fall back to the ratio check
+				// so this still catches a real regression instead of masking
+				// it behind the epsilon branch.
 				actualRatio := movementWithFungus / movementWithoutFungus
 				t.Logf("Speed ratio (with/without): %.2f", actualRatio)
 				require.Greater(t, actualRatio, 1.0, "fungus should enable or increase movement")
-			} else {
-				// Without fungus the strider was not controllable at all (expected)
-				require.Greater(t, movementWithFungus, 0.5, "strider should move when fungus is equipped")
 			}
 
 			err = helper.ExitManualMode()
