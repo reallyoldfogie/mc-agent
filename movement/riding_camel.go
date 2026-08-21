@@ -181,17 +181,14 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 			// Tell the server about the released jump so the server-side camel
 			// dashes too (vanilla LocalPlayer.sendRidingJump on key release).
 			sendRidingJumpCommand(pe, versionHandler, strengthPercent)
-			velocityMultiplier := 1.0
-			deltaVelX, deltaVelY, deltaVelZ := models.DashImpulse(yaw, strength, movementAcceleration, velocityMultiplier)
+			newRidingVelZ, deltaVelY := camelDashForwardVelocity(pe.ridingVelZ, yaw, strength, movementAcceleration)
 
 			ridingVelY += deltaVelY
-			yawRad := yaw * math.Pi / 180.0
-			forwardImpulse := -math.Sin(yawRad)*deltaVelX + math.Cos(yawRad)*deltaVelZ
-			ridingVelZ = pe.ridingVelZ + forwardImpulse
+			ridingVelZ = newRidingVelZ
 
 			camelSt.ApplyDash()
-			log.Printf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d strengthPercent=%d impulse=(%.3f,%.3f,%.3f) forwardVel=%.4f",
-				strength, jumpTicks, strengthPercent, deltaVelX, deltaVelY, deltaVelZ, ridingVelZ)
+			log.Printf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d strengthPercent=%d deltaVelY=%.3f forwardVel=%.4f",
+				strength, jumpTicks, strengthPercent, deltaVelY, ridingVelZ)
 		}
 	}
 
@@ -255,4 +252,26 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		PacketYaw:   yaw,
 		PacketPitch: pitch,
 	}
+}
+
+// camelDashForwardVelocity composes models.DashImpulse's raw impulse vector
+// into the scalar forward velocity a dash actually applies, mirroring the
+// handler's call site exactly: DashImpulse returns a delta in world axes
+// (already yaw-rotated), which is re-projected onto the camel's
+// forward-facing direction via a dot product with the facing unit vector,
+// then added to baseForwardVelocity — the rider's forward velocity from
+// *before* this tick's step-5 velocity update (pe.ridingVelZ at the time the
+// dash fires), not the value computed earlier in the same tick. This
+// pre-step-5 base is what the handler actually adds to; matching it here
+// keeps this a faithful extraction rather than an approximation.
+//
+// The camel's own velocityMultiplier is always 1.0 at this call site
+// (unlike the nautilus's dash, which varies), so it isn't a parameter here.
+func camelDashForwardVelocity(baseForwardVelocity, yawDegrees, dashStrength, movementAcceleration float64) (newForwardVelocity, verticalDelta float64) {
+	const velocityMultiplier = 1.0
+	deltaVelX, deltaVelY, deltaVelZ := models.DashImpulse(yawDegrees, dashStrength, movementAcceleration, velocityMultiplier)
+
+	yawRad := yawDegrees * math.Pi / 180.0
+	forwardImpulse := -math.Sin(yawRad)*deltaVelX + math.Cos(yawRad)*deltaVelZ
+	return baseForwardVelocity + forwardImpulse, deltaVelY
 }

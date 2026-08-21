@@ -71,6 +71,34 @@ type ridingLavaPhysicsParams struct {
 	VelocityDrag      float64
 }
 
+// shouldApplyOldWaterSinkingBehavior reports whether a ridden entity in water
+// should use the pre-1.21.11 sinking behavior (true) or the 1.21.11+ floating
+// behavior (false), given the server's version string. Defaults to the old
+// (sinking) behavior when the version string can't be parsed, preserving the
+// previous default rather than silently changing behavior on a parse failure.
+func shouldApplyOldWaterSinkingBehavior(versionStr string) bool {
+	v, err := semver.Parse(versionStr)
+	if err != nil {
+		return true
+	}
+	c, err := semver.NewConstraints(">= 1.21.11")
+	if err != nil {
+		return true
+	}
+	return !c.Check(v)
+}
+
+// ridingWaterDragAndGravity returns the velocity drag and gravity delta for a
+// ridden entity in water, selected by shouldApplyOldSinkingBehavior.
+func ridingWaterDragAndGravity(shouldApplyOldSinkingBehavior bool) (velocityDrag, gravityDelta float64) {
+	if shouldApplyOldSinkingBehavior {
+		// Pre-1.21.11: Apply full gravity to make entity sink, and significant drag
+		return physics.RideableInWaterDragMultiplier, -physics.RideableInWaterGravity
+	}
+	// 1.21.11+: Float on water surface with slow movement
+	return 0.5, 0.0
+}
+
 // computeRidingWaterPhysics determines the water physics parameters for a ridden
 // entity based on its position and the server version. This extracts the shared
 // water detection + version-gated sinking/floating logic used by multiple handlers.
@@ -87,27 +115,12 @@ func computeRidingWaterPhysics(pe *PhysicsMovementExecutor, versionHandler model
 		}
 	}
 
-	// Determine version to decide sinking vs floating behavior
-	shouldApplyOldSinkingBehavior := true
+	versionStr := ""
 	if versionHandler != nil {
-		versionStr := versionHandler.Version()
-		if v, err := semver.Parse(versionStr); err == nil {
-			if c, err := semver.NewConstraints(">= 1.21.11"); err == nil && c.Check(v) {
-				shouldApplyOldSinkingBehavior = false
-			}
-		}
+		versionStr = versionHandler.Version()
 	}
-
-	var velocityDrag, gravityDelta float64
-	if shouldApplyOldSinkingBehavior {
-		// Pre-1.21.11: Apply full gravity to make entity sink, and significant drag
-		velocityDrag = physics.RideableInWaterDragMultiplier
-		gravityDelta = -physics.RideableInWaterGravity
-	} else {
-		// 1.21.11+: Float on water surface with slow movement
-		velocityDrag = 0.5
-		gravityDelta = 0.0
-	}
+	shouldApplyOldSinkingBehavior := shouldApplyOldWaterSinkingBehavior(versionStr)
+	velocityDrag, gravityDelta := ridingWaterDragAndGravity(shouldApplyOldSinkingBehavior)
 
 	return ridingWaterPhysicsParams{
 		IsInWater:                     true,
@@ -131,11 +144,7 @@ func computeRidingLavaPhysics(pe *PhysicsMovementExecutor, currentPos models.V3)
 	isLavaBelow := pe.shapeProvider != nil && pe.shapeProvider.IsLava(blockBelowEntity)
 
 	if !isLavaBelow {
-		// Not on lava at all: normal land physics
-		return ridingLavaPhysicsParams{
-			IsOnLava:          false,
-			IsSubmergedInLava: false,
-		}
+		return ridingLavaPhysicsParams{}
 	}
 
 	// Check if the block at the entity's feet is also lava (submerged)
@@ -151,21 +160,27 @@ func computeRidingLavaPhysics(pe *PhysicsMovementExecutor, currentPos models.V3)
 			blockAtEntity = state
 		}
 	}
-	isSubmerged := pe.shapeProvider != nil && pe.shapeProvider.IsLava(blockAtEntity)
+	isLavaAtEntity := pe.shapeProvider != nil && pe.shapeProvider.IsLava(blockAtEntity)
 
-	if isSubmerged {
-		// Submerged in lava: strider bobs up
-		return ridingLavaPhysicsParams{
-			IsOnLava:          false,
-			IsSubmergedInLava: true,
-		}
-	}
+	return classifyLavaSurface(isLavaBelow, isLavaAtEntity)
+}
 
-	// Floating on lava surface: strider walks on lava, onGround = true
-	return ridingLavaPhysicsParams{
-		IsOnLava:          true,
-		IsSubmergedInLava: false,
+// classifyLavaSurface determines whether a ridden entity is floating on a
+// lava surface or submerged within it, given whether lava was found at the
+// block below the entity and at the entity's own position. Mirrors Java
+// StriderEntity.updateFloating()'s distinction between "above the fluid" and
+// "inside the fluid". isLavaBelow=false returns the zero-value (no lava at
+// all: normal land physics).
+func classifyLavaSurface(isLavaBelow, isLavaAtEntity bool) ridingLavaPhysicsParams {
+	if !isLavaBelow {
+		return ridingLavaPhysicsParams{}
 	}
+	if isLavaAtEntity {
+		// Submerged in lava: strider bobs up.
+		return ridingLavaPhysicsParams{IsSubmergedInLava: true}
+	}
+	// Floating on lava surface: strider walks on lava, onGround = true.
+	return ridingLavaPhysicsParams{IsOnLava: true}
 }
 
 // striderWarmBlockNames contains the block names that keep striders warm.
@@ -222,6 +237,14 @@ func computeStriderColdState(
 	// We don't track the vehicle entity's cold state, so this always returns false.
 	parentIsCold := false
 
+	return striderIsCold(isWarm, parentIsCold)
+}
+
+// striderIsCold mirrors the final step of Java StriderEntity.tick()'s
+// cold-state formula (setCold(!bl || bl2)): a strider is cold whenever it
+// isn't standing in or on a warm block, or its parent vehicle strider (for a
+// baby strider riding an adult) was already cold.
+func striderIsCold(isWarm, parentIsCold bool) bool {
 	return !isWarm || parentIsCold
 }
 

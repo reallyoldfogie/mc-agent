@@ -152,28 +152,14 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 			speed = -speed
 		}
 
-		// Player input: nudge to break static inertia
-		unpoweredBraking := rail.isPowered && !rail.isEnergized
+		// Player input: nudge to break static inertia.
+		nudged := false
 		speedSq := ridingVelX*ridingVelX + ridingVelZ*ridingVelZ
 		if speedSq < physics.MinecartNudgeSpeedThreshold {
-			var inputDirX, inputDirZ float64
-			if forward || backward {
-				yawRad := yaw * math.Pi / 180.0
-				sinYaw := math.Sin(yawRad)
-				cosYaw := math.Cos(yawRad)
-				var forwardInput float64
-				if forward {
-					forwardInput = 1.0
-				} else {
-					forwardInput = -1.0
-				}
-				inputDirX = -sinYaw * forwardInput
-				inputDirZ = cosYaw * forwardInput
-			}
-			if inputDirX != 0 || inputDirZ != 0 {
-				ridingVelX += inputDirX * physics.MinecartNudgeImpulse
-				ridingVelZ += inputDirZ * physics.MinecartNudgeImpulse
-				unpoweredBraking = false
+			nudgedVelX, nudgedVelZ, didNudge := minecartRailNudge(ridingVelX, ridingVelZ, yaw, forward, backward)
+			if didNudge {
+				ridingVelX, ridingVelZ = nudgedVelX, nudgedVelZ
+				nudged = true
 				speed = math.Sqrt(ridingVelX*ridingVelX + ridingVelZ*ridingVelZ)
 				newDot := ridingVelX*dirX + ridingVelZ*dirZ
 				if newDot < 0 {
@@ -182,46 +168,12 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 			}
 		}
 
-		// Slope gravity
-		slopeGravity := physics.MinecartSlopeGravity
-		if inWater {
-			slopeGravity *= physics.MinecartWaterSlopeGravityFactor
-		}
-		if isSloped {
-			speed -= slopeGravity
-		}
-
-		// Unpowered braking
-		if unpoweredBraking {
-			absSpeed := math.Abs(speed)
-			if absSpeed < physics.MinecartUnpoweredBrakeThreshold {
-				speed = 0
-			} else {
-				speed *= 0.5
-			}
-		}
-
-		// Powered rail boost
-		if rail.isPowered && rail.isEnergized {
-			if speed > 0 {
-				speed += physics.MinecartPoweredRailBoost
-			} else if speed < 0 {
-				speed -= physics.MinecartPoweredRailBoost
-			} else {
-				speed = physics.MinecartPoweredRailBoost
-			}
-		}
-
-		// Cap speed
-		maxSpeed := physics.MinecartMaxSpeed
-		if inWater {
-			maxSpeed = physics.MinecartWaterMaxSpeed
-		}
-		if speed > maxSpeed {
-			speed = maxSpeed
-		} else if speed < -maxSpeed {
-			speed = -maxSpeed
-		}
+		// A nudge breaks the static inertia the unpowered-brake threshold exists
+		// to enforce, so it suppresses braking for this tick — mirrors the
+		// original inline logic, which cleared unpoweredBraking only inside the
+		// nudge-applied branch.
+		unpoweredBraking := rail.isPowered && !rail.isEnergized && !nudged
+		speed = minecartOnRailSpeed(speed, isSloped, unpoweredBraking, rail.isEnergized, inWater)
 
 		// Project speed back onto rail direction
 		newVelX = dirX * speed
@@ -368,6 +320,78 @@ func (pe *PhysicsMovementExecutor) detectRailBelow(x, y, z float64) minecartRail
 		}
 	}
 	return minecartRailInfo{}
+}
+
+// minecartRailNudge computes the velocity nudge applied to break a
+// stationary/near-stationary minecart's static inertia when the rider presses
+// forward or backward, mirroring vanilla's small forward-facing impulse
+// along the player's look direction. Returns the adjusted velocity and
+// whether a nudge was actually applied — false when neither forward nor
+// backward is held, in which case velX/velZ are returned unchanged.
+func minecartRailNudge(velX, velZ, yawDegrees float64, forward, backward bool) (newVelX, newVelZ float64, nudged bool) {
+	if !forward && !backward {
+		return velX, velZ, false
+	}
+	yawRad := yawDegrees * math.Pi / 180.0
+	sinYaw := math.Sin(yawRad)
+	cosYaw := math.Cos(yawRad)
+	forwardInput := 1.0
+	if !forward {
+		forwardInput = -1.0
+	}
+	inputDirX := -sinYaw * forwardInput
+	inputDirZ := cosYaw * forwardInput
+	return velX + inputDirX*physics.MinecartNudgeImpulse, velZ + inputDirZ*physics.MinecartNudgeImpulse, true
+}
+
+// minecartOnRailSpeed applies slope gravity, unpowered-rail braking, and
+// powered-rail boost to an on-rail minecart's scalar speed (signed, along the
+// rail direction), then clamps it to the surface's max speed. Mirrors
+// vanilla AbstractMinecartEntity's per-tick speed adjustments, applied after
+// the player-input nudge (see minecartRailNudge).
+//
+// isEnergized is expected to already imply the rail is powered (as
+// detectRailBelow computes it: isPowered && props["powered"]=="true"), so
+// there is no separate isPowered parameter — a powered-but-unenergized rail
+// is expressed as unpoweredBraking=true, isEnergized=false.
+func minecartOnRailSpeed(speed float64, isSloped, unpoweredBraking, isEnergized, inWater bool) float64 {
+	slopeGravity := physics.MinecartSlopeGravity
+	if inWater {
+		slopeGravity *= physics.MinecartWaterSlopeGravityFactor
+	}
+	if isSloped {
+		speed -= slopeGravity
+	}
+
+	if unpoweredBraking {
+		if math.Abs(speed) < physics.MinecartUnpoweredBrakeThreshold {
+			speed = 0
+		} else {
+			speed *= 0.5
+		}
+	}
+
+	if isEnergized {
+		switch {
+		case speed > 0:
+			speed += physics.MinecartPoweredRailBoost
+		case speed < 0:
+			speed -= physics.MinecartPoweredRailBoost
+		default:
+			speed = physics.MinecartPoweredRailBoost
+		}
+	}
+
+	maxSpeed := physics.MinecartMaxSpeed
+	if inWater {
+		maxSpeed = physics.MinecartWaterMaxSpeed
+	}
+	if speed > maxSpeed {
+		speed = maxSpeed
+	} else if speed < -maxSpeed {
+		speed = -maxSpeed
+	}
+	return speed
 }
 
 // railShapeDirection returns the horizontal direction (dx, dz) and vertical
