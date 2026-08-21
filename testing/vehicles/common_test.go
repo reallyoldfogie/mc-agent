@@ -1400,6 +1400,105 @@ func (vh *VehicleTestHelper) SummonZombieHorse(ctx context.Context, x, y, z floa
 	return entityID, nil
 }
 
+// SummonDonkey summons a tamed and saddled donkey at the specified location and returns its entity ID.
+// No ChestedHorse NBT here — the chest inventory is exercised separately by
+// TestDonkeyInventoryCache (testing/container_entity_test.go); this helper is
+// for tests that only need a rideable, saddled donkey.
+func (vh *VehicleTestHelper) SummonDonkey(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		cmd = fmt.Sprintf(
+			`summon minecraft:donkey %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		cmd = fmt.Sprintf(
+			`summon minecraft:donkey %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon donkey: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:donkey,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] donkey saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip donkey saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	typeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:donkey")
+	if !ok {
+		return 0, fmt.Errorf("donkey entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("donkey entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
+// SummonMule summons a tamed and saddled mule at the specified location and returns its entity ID.
+// Same reasoning as SummonDonkey: no ChestedHorse NBT, chest coverage lives
+// in TestMuleInventoryCache instead.
+func (vh *VehicleTestHelper) SummonMule(ctx context.Context, x, y, z float64) (int32, error) {
+	var cmd string
+	version := vh.Instance.Server.Version
+
+	v, _ := semver.Parse(version)
+	c, _ := semver.NewConstraints(("< 1.21.5"))
+
+	if c.Check(v) {
+		cmd = fmt.Sprintf(
+			`summon minecraft:mule %f %f %f {Tame:1b,SaddleItem:{id:"minecraft:saddle",count:1}}`,
+			x, y, z,
+		)
+	} else {
+		cmd = fmt.Sprintf(
+			`summon minecraft:mule %f %f %f {Tame:1b,equipment:{saddle:{id:"minecraft:saddle",count:1}}}`,
+			x, y, z,
+		)
+	}
+
+	resp, err := vh.Instance.RCON.Exec(ctx, cmd)
+	log.Printf("[VehicleTestHelper] %s => %s", cmd, resp)
+	if err != nil {
+		return 0, fmt.Errorf("summon mule: %w", err)
+	}
+
+	saddleResp, err := vh.Instance.RCON.Exec(ctx, "item replace entity @e[type=minecraft:mule,limit=1] saddle with minecraft:saddle")
+	log.Printf("[VehicleTestHelper] mule saddle equip => %s", saddleResp)
+	if err != nil {
+		return 0, fmt.Errorf("equip mule saddle: %w", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	typeID, ok := vh.ManagedAgent.Agent.GetEntityTypeID("minecraft:mule")
+	if !ok {
+		return 0, fmt.Errorf("mule entity type not found in registry")
+	}
+
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	if !found {
+		return 0, fmt.Errorf("mule entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
+	}
+
+	return entityID, nil
+}
+
 // SummonNautilus summons a tamed and saddled nautilus at the specified location (in water) and returns its entity ID
 func (vh *VehicleTestHelper) SummonNautilus(ctx context.Context, x, y, z float64) (int32, error) {
 	// The nautilus is a TameableEntity (like a wolf), so it is tamed via a valid
