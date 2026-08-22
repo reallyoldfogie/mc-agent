@@ -20,7 +20,7 @@ func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, bo
 		t.Logf("  Entity ID %d: type=%d, pos=(%.1f, %.1f, %.1f)", id, info.EntityType, info.X, info.Y, info.Z)
 	}
 
-	entityID, dist, found := agent.FindNearestEntityByType(entityType, botPos.X, botPos.Y, botPos.Z)
+	entityID, dist, found := agent.FindNearestEntityByType(entityType, botPos.X, botPos.Y, botPos.Z, false)
 	t.Logf("FindNearestEntityByType(%s) result: found=%v, entityID=%d, dist=%.2f", entityName, found, entityID, dist)
 	return entityID, dist, found
 }

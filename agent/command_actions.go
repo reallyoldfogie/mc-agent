@@ -51,14 +51,16 @@ func (a *agent) IsFollowing() bool {
 	return fm.IsActive()
 }
 
-// NearestPlayerInfo returns the nearest tracked player for commands.
-func (a *agent) NearestPlayerInfo(ctx context.Context) (models.NearestPlayerInfo, bool) {
+// NearestPlayerInfo returns the nearest tracked player for commands. See
+// models.CommandAgent.NearestPlayerInfo's doc comment for
+// honorPerceptionEffects' contract.
+func (a *agent) NearestPlayerInfo(ctx context.Context, honorPerceptionEffects bool) (models.NearestPlayerInfo, bool) {
 	select {
 	case <-ctx.Done():
 		return models.NearestPlayerInfo{}, false
 	default:
 	}
-	info, ok := a.findNearestPlayer()
+	info, ok := a.findNearestPlayer(honorPerceptionEffects)
 	if !ok {
 		return models.NearestPlayerInfo{}, false
 	}

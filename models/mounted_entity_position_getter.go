@@ -103,4 +103,14 @@ type MountedEntityPositionGetter interface {
 	// currently held item in their active hotbar slot. Returns ("", false) if no item found.
 	// The name has no namespace prefix.
 	GetRiderHeldItem() (itemName string, found bool)
+
+	// GetOwnActiveEffect reports whether the agent's own player entity
+	// currently has the named status effect active (e.g.
+	// "minecraft:slow_falling", "minecraft:levitation" — the full
+	// minecraft:mob_effect registry name, unlike GetRiderHeldItem's
+	// unprefixed item names, since effect names are resolved dynamically via
+	// CustomRegistry.GetNameByID rather than a stable client-side mapping).
+	// amplifier is zero-based (0 = level I) and only meaningful when found
+	// is true.
+	GetOwnActiveEffect(effectName string) (amplifier int32, found bool)
 }

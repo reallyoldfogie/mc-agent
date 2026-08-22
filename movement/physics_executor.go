@@ -1460,6 +1460,7 @@ func (pe *PhysicsMovementExecutor) tick() {
 			mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
 
 		pe.applyMovementState(inputs)
+		pe.syncActiveEffects()
 
 		if err := pe.physicsState.Tick(inputs, pe.world); err != nil {
 			log.Printf("[PhysicsExecutor] Physics tick error: %v", err)

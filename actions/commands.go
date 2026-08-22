@@ -335,7 +335,7 @@ func (Follow) Name() string  { return "follow" }
 func (Follow) Usage() string { return "follow [<player>]" }
 func (Follow) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
 	if len(args) < 1 {
-		nearest, ok := agent.NearestPlayerInfo(ctx)
+		nearest, ok := agent.NearestPlayerInfo(ctx, true)
 		if !ok {
 			_ = agent.SendChat("Failed to find nearest player")
 			return nil
@@ -457,7 +457,7 @@ func (FireBowAt) Execute(ctx context.Context, agent models.CommandAgent, args []
 	}
 	if len(args) == 1 {
 		if args[0] == "nearest" {
-			playerInfo, found := agent.NearestPlayerInfo(ctx)
+			playerInfo, found := agent.NearestPlayerInfo(ctx, true)
 			if found {
 				go func() {
 					if _, err := agent.FireBowAt(ctx, playerInfo.X, playerInfo.Y, playerInfo.Z); err != nil {

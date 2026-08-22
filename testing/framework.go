@@ -89,9 +89,12 @@ func (ma *ManagedAgent) GetTrackedEntities() map[int32]models.TrackedEntityInfo 
 	return ma.Agent.GetTrackedEntities()
 }
 
-// FindNearestEntityByType finds the nearest entity of a specific type to a position
-func (ma *ManagedAgent) FindNearestEntityByType(entityType int32, x, y, z float64) (int32, float64, bool) {
-	return ma.Agent.FindNearestEntityByType(entityType, x, y, z)
+// FindNearestEntityByType finds the nearest entity of a specific type to a
+// position. honorPerceptionEffects is passed straight through to
+// models.Agent.FindNearestEntityByType — test setup locating a just-spawned
+// entity should almost always pass false for deterministic results.
+func (ma *ManagedAgent) FindNearestEntityByType(entityType int32, x, y, z float64, honorPerceptionEffects bool) (int32, float64, bool) {
+	return ma.Agent.FindNearestEntityByType(entityType, x, y, z, honorPerceptionEffects)
 }
 
 // EquipItemByName equips an item from the hotbar by name

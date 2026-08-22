@@ -75,6 +75,10 @@ func (m *mockPhysicsState) SetFallDistance(distance float64) {
 	// no-op for mock
 }
 
+func (m *mockPhysicsState) SetActiveEffects(effects models.ActiveEffects) {
+	// no-op for mock
+}
+
 func (m *mockPhysicsState) GetDimensions() (width, height, eyeHeight float64) {
 	return 0, 0, 0
 }

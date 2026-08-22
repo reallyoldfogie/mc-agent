@@ -50,7 +50,15 @@ type Agent interface {
 	GetEntityID() int32
 	GetTrackedEntitiesForFollowing() map[int32]*TrackedEntity
 	GetTrackedEntities() map[int32]TrackedEntityInfo
-	FindNearestEntityByType(entityType int32, x, y, z float64) (entityID int32, distance float64, found bool)
+	// FindNearestEntityByType finds the nearest entity of a given type to a
+	// position. honorPerceptionEffects, when true, additionally excludes
+	// candidates beyond the agent's own effective vision range under
+	// Blindness/Darkness (see physics.PerceptionRadiusCap) — real
+	// agent decision-making that should behave as if the effect matters
+	// passes true; callers that need deterministic results regardless of
+	// incidental effect state (e.g. test setup locating a just-spawned
+	// entity) pass false.
+	FindNearestEntityByType(entityType int32, x, y, z float64, honorPerceptionEffects bool) (entityID int32, distance float64, found bool)
 
 	// Registry access (version-agnostic lookups)
 	GetRegistry(id string) CustomRegistry

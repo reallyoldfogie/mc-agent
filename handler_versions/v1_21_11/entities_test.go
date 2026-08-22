@@ -284,6 +284,64 @@ func TestEntityHandler_ParseEntityEvent(t *testing.T) {
 	}
 }
 
+func TestEntityHandler_ParseEntityEffect(t *testing.T) {
+	pkt := cb.NewEntityEffect()
+	pkt.EntityId = pk.VarInt(555)
+	pkt.EffectId = pk.VarInt(26) // e.g. levitation's registry ID in some versions - value is opaque to the parser
+	pkt.Amplifier = pk.VarInt(2)
+	pkt.Duration = pk.VarInt(400)
+	pkt.Flags = pk.UnsignedByte(0x02) // show particles only
+
+	handler := &entityHandler{}
+	marshaled := pkt.Marshal()
+	entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon, err := handler.ParseEntityEffect(marshaled)
+
+	if err != nil {
+		t.Fatalf("ParseEntityEffect failed: %v", err)
+	}
+	if entityID != 555 {
+		t.Errorf("Expected entityID 555, got %d", entityID)
+	}
+	if effectID != 26 {
+		t.Errorf("Expected effectID 26, got %d", effectID)
+	}
+	if amplifier != 2 {
+		t.Errorf("Expected amplifier 2, got %d", amplifier)
+	}
+	if durationTicks != 400 {
+		t.Errorf("Expected durationTicks 400, got %d", durationTicks)
+	}
+	if ambient {
+		t.Errorf("Expected ambient=false, got true")
+	}
+	if !showParticles {
+		t.Errorf("Expected showParticles=true, got false")
+	}
+	if showIcon {
+		t.Errorf("Expected showIcon=false, got true")
+	}
+}
+
+func TestEntityHandler_ParseRemoveEntityEffect(t *testing.T) {
+	pkt := cb.NewRemoveEntityEffect()
+	pkt.EntityId = pk.VarInt(777)
+	pkt.EffectId = pk.VarInt(26)
+
+	handler := &entityHandler{}
+	marshaled := pkt.Marshal()
+	entityID, effectID, err := handler.ParseRemoveEntityEffect(marshaled)
+
+	if err != nil {
+		t.Fatalf("ParseRemoveEntityEffect failed: %v", err)
+	}
+	if entityID != 777 {
+		t.Errorf("Expected entityID 777, got %d", entityID)
+	}
+	if effectID != 26 {
+		t.Errorf("Expected effectID 26, got %d", effectID)
+	}
+}
+
 func TestEntityHandler_PacketIDs(t *testing.T) {
 	// Verify packet IDs can be looked up dynamically for 1.21.11
 	packetMgr := v1_21_11.NewPackets()

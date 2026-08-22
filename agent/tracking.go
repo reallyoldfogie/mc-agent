@@ -51,6 +51,12 @@ type trackedEntity struct {
 	// container has been opened at least once. See models.EntityInventory for
 	// the staleness contract.
 	Inventory *models.EntityInventory
+	// Effects holds the entity's last-seen active status effects, keyed by
+	// the full minecraft:mob_effect registry name (e.g.
+	// "minecraft:slow_falling"). Populated from ClientboundEntityEffect,
+	// cleared per-key on ClientboundRemoveEntityEffect. Nil until the first
+	// effect packet for this entity arrives.
+	Effects map[string]models.ActiveEffect
 	// Boat-specific metadata (only populated for boat/chest-boat entity types)
 	BoatVariant     models.BoatVariant // Wood type (oak, spruce, birch, etc.)
 	BoatPaddleLeft  bool               // Left paddle turning
@@ -428,10 +434,16 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 
 // FindNearestEntityByType finds the nearest entity of a specific type to a position.
 // Returns entityID, distance, and whether found.
-// Excludes entities marked as Removed.
-func (a *agent) FindNearestEntityByType(entityType int32, x, y, z float64) (int32, float64, bool) {
+// Excludes entities marked as Removed. See models.Agent.FindNearestEntityByType's
+// doc comment for honorPerceptionEffects' contract.
+func (a *agent) FindNearestEntityByType(entityType int32, x, y, z float64, honorPerceptionEffects bool) (int32, float64, bool) {
 	a.entitiesMu.RLock()
 	defer a.entitiesMu.RUnlock()
+
+	maxDist := math.Inf(1)
+	if honorPerceptionEffects {
+		maxDist = a.perceptionRadiusCap(maxDist)
+	}
 
 	var nearestID int32
 	nearestDist := math.MaxFloat64
@@ -446,6 +458,10 @@ func (a *agent) FindNearestEntityByType(entityType int32, x, y, z float64) (int3
 		dy := e.Y - y
 		dz := e.Z - z
 		dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+
+		if dist > maxDist {
+			continue
+		}
 
 		if dist < nearestDist {
 			nearestDist = dist

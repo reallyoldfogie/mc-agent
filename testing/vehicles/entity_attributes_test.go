@@ -143,7 +143,7 @@ func TestMultipleEntityAttributes(t *testing.T) {
 					time.Sleep(500 * time.Millisecond)
 
 					// Find nearest entity of type
-					entityID, dist, found := helper.ManagedAgent.FindNearestEntityByType(et.entityType, x, y, z)
+					entityID, dist, found := helper.ManagedAgent.FindNearestEntityByType(et.entityType, x, y, z, false)
 
 					// Log results
 					if found {

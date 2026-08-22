@@ -36,6 +36,29 @@ func (pe *PhysicsMovementExecutor) applyMovementState(inputs physics.Inputs) {
 	}
 }
 
+// syncActiveEffects reads the agent's own currently-active status effects
+// (Phase 4a: Slow Falling, Levitation) via entityPositionGetter and pushes
+// them into physicsState before Tick() runs, mirroring how other
+// externally-sourced per-tick state (e.g. mounted-entity position) is synced
+// in rather than pulled by physics.State itself, which has no agent/registry
+// access.
+func (pe *PhysicsMovementExecutor) syncActiveEffects() {
+	if pe.entityPositionGetter == nil {
+		return
+	}
+
+	var effects models.ActiveEffects
+	if _, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:slow_falling"); found {
+		effects.HasSlowFalling = true
+	}
+	if amplifier, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:levitation"); found {
+		effects.HasLevitation = true
+		effects.LevitationAmplifier = amplifier
+	}
+
+	pe.physicsState.SetActiveEffects(effects)
+}
+
 // recordTelemetry records telemetry data if a recorder is set.
 func (pe *PhysicsMovementExecutor) recordTelemetry(inputs physics.Inputs) {
 	if pe.telemetryRecorder == nil {

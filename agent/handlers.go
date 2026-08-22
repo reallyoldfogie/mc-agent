@@ -126,6 +126,18 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onEntityEquipment,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundEntityEffect"),
+			Name:     "ClientboundEntityEffect",
+			Priority: 0,
+			F:        a.onEntityEffect,
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundRemoveEntityEffect"),
+			Name:     "ClientboundRemoveEntityEffect",
+			Priority: 0,
+			F:        a.onRemoveEntityEffect,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundEntityHeadRotation"),
 			Name:     "ClientboundEntityHeadRotation",
 			Priority: 0,
@@ -1584,6 +1596,109 @@ func (a *agent) onEntityEquipment(p pk.Packet) error {
 		log.Printf("[onEntityEquipment] Entity %d equipment slot %d (%s): itemID=%d, count=%d",
 			entityID, eq.InventorySlot, slot, eq.Item.ItemID, eq.Item.Count)
 	}
+	return nil
+}
+
+// effectNameByID resolves a minecraft:mob_effect registry ID to its full
+// namespaced name (e.g. "minecraft:slow_falling"), the same way
+// GetEntityTypeID resolves entity-type registry IDs elsewhere. Returns
+// ("", false) if the registry isn't loaded/ready yet or the ID isn't found —
+// registry IDs are not guaranteed stable across versions, so this must never
+// be replaced with a hardcoded numeric comparison.
+func (a *agent) effectNameByID(effectID int32) (string, bool) {
+	reg := a.GetRegistry("minecraft:mob_effect")
+	if reg == nil || !reg.IsReady() {
+		return "", false
+	}
+	return reg.GetNameByID(effectID)
+}
+
+// onEntityEffect handles a status effect being applied to (or updated on) an
+// entity. Effects are recorded per-entity like Attributes/Equipment, and
+// additionally cached separately for the agent's own entity (ownEffects),
+// since the bot's own player entity is never present in a.entities — the
+// server never sends us an AddEntity spawn packet for ourselves. See
+// GetOwnActiveEffect, which is what movement/physics_executor.go's walking
+// tick reads to apply Slow Falling/Levitation physics (Phase 4a).
+func (a *agent) onEntityEffect(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon, err := a.versionHandler.Play().Entities().ParseEntityEffect(p)
+	if err != nil {
+		return err
+	}
+
+	effectName, ok := a.effectNameByID(effectID)
+	if !ok {
+		log.Printf("[onEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
+		return nil
+	}
+
+	effect := models.ActiveEffect{
+		Amplifier:     amplifier,
+		DurationTicks: durationTicks,
+		Ambient:       ambient,
+		ShowParticles: showParticles,
+		ShowIcon:      showIcon,
+	}
+
+	if entityID == a.GetEntityID() {
+		a.ownEffectsMu.Lock()
+		if a.ownEffects == nil {
+			a.ownEffects = make(map[string]models.ActiveEffect)
+		}
+		a.ownEffects[effectName] = effect
+		a.ownEffectsMu.Unlock()
+	}
+
+	a.entitiesMu.Lock()
+	if entity, ok := a.entities[entityID]; ok {
+		if entity.Effects == nil {
+			entity.Effects = make(map[string]models.ActiveEffect)
+		}
+		entity.Effects[effectName] = effect
+	}
+	a.entitiesMu.Unlock()
+
+	log.Printf("[onEntityEffect] entity=%d effect=%s amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
+		entityID, effectName, amplifier, durationTicks, ambient, showParticles, showIcon)
+	return nil
+}
+
+// onRemoveEntityEffect handles a status effect being removed from an entity,
+// clearing it from both a.entities and (if applicable) ownEffects — see
+// onEntityEffect.
+func (a *agent) onRemoveEntityEffect(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	entityID, effectID, err := a.versionHandler.Play().Entities().ParseRemoveEntityEffect(p)
+	if err != nil {
+		return err
+	}
+
+	effectName, ok := a.effectNameByID(effectID)
+	if !ok {
+		log.Printf("[onRemoveEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
+		return nil
+	}
+
+	if entityID == a.GetEntityID() {
+		a.ownEffectsMu.Lock()
+		delete(a.ownEffects, effectName)
+		a.ownEffectsMu.Unlock()
+	}
+
+	a.entitiesMu.Lock()
+	if entity, ok := a.entities[entityID]; ok && entity.Effects != nil {
+		delete(entity.Effects, effectName)
+	}
+	a.entitiesMu.Unlock()
+
+	log.Printf("[onRemoveEntityEffect] entity=%d effect=%s", entityID, effectName)
 	return nil
 }
 

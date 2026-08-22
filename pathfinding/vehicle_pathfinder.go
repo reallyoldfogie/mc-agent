@@ -18,7 +18,12 @@ type RideableEntity struct {
 
 // VehicleProvider interface allows querying for nearby rideable entities.
 type VehicleProvider interface {
-	FindRideableEntitiesNear(center models.V3, radius float64) []RideableEntity
+	// FindRideableEntitiesNear returns rideable entities within radius of
+	// center. honorPerceptionEffects, when true, additionally excludes
+	// candidates beyond the agent's own effective vision range under
+	// Blindness/Darkness (see physics.PerceptionRadiusCap) — real
+	// pathfinding decisions should behave as if the effect matters.
+	FindRideableEntitiesNear(center models.V3, radius float64, honorPerceptionEffects bool) []RideableEntity
 }
 
 // VehicleAwarePathFinder wraps any PathFinder and considers vehicle paths as well as foot paths.
@@ -67,8 +72,10 @@ func (vap *VehicleAwarePathFinder) FindPath(
 		return footPath, nil // No foot path found; return empty
 	}
 
-	// Check for nearby vehicles
-	vehicles := vap.vehicleProvider.FindRideableEntitiesNear(start, vap.searchRadius)
+	// Check for nearby vehicles. Real path-planning should behave as if
+	// Blindness/Darkness matters — an agent that can't see past 5-15 blocks
+	// shouldn't detour to a mount outside its own vision.
+	vehicles := vap.vehicleProvider.FindRideableEntitiesNear(start, vap.searchRadius, true)
 	if len(vehicles) == 0 {
 		return footPath, nil // No vehicles nearby; use foot path
 	}

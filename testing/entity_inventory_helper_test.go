@@ -86,7 +86,7 @@ func pollForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityType
 
 	deadline := time.Now().Add(timeout)
 	for {
-		entityID, distance, found := env.Agent.FindNearestEntityByType(entityTypeID, x, y, z)
+		entityID, distance, found := env.Agent.FindNearestEntityByType(entityTypeID, x, y, z, false)
 		if found && distance <= maxEntitySearchDistance {
 			t.Logf("Found entity type %d as ID %d at distance %.2f blocks", entityTypeID, entityID, distance)
 			return entityID, true

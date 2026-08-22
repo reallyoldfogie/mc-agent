@@ -9,6 +9,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
+	"github.com/reallyoldfogie/mc-agent/physics"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -747,9 +748,42 @@ func (a *agent) GetRiderHeldItem() (string, bool) {
 	return localName, true
 }
 
-// FindRideableEntitiesNear returns all rideable entities within a given radius of a center position.
-func (a *agent) FindRideableEntitiesNear(center models.V3, radius float64) []pathfinding.RideableEntity {
+// GetOwnActiveEffect reports whether the agent's own player entity currently
+// has the named status effect active. See
+// models.MountedEntityPositionGetter.GetOwnActiveEffect for the naming
+// convention (full "minecraft:xxx" registry name, unlike GetRiderHeldItem).
+func (a *agent) GetOwnActiveEffect(effectName string) (int32, bool) {
+	a.ownEffectsMu.RLock()
+	defer a.ownEffectsMu.RUnlock()
+
+	if a.ownEffects == nil {
+		return 0, false
+	}
+	effect, ok := a.ownEffects[effectName]
+	if !ok {
+		return 0, false
+	}
+	return effect.Amplifier, true
+}
+
+// perceptionRadiusCap clamps radius to the agent's own effective vision
+// range under Blindness/Darkness (see physics.PerceptionRadiusCap). Shared
+// by every search function's honorPerceptionEffects=true path.
+func (a *agent) perceptionRadiusCap(radius float64) float64 {
+	_, hasBlindness := a.GetOwnActiveEffect("minecraft:blindness")
+	_, hasDarkness := a.GetOwnActiveEffect("minecraft:darkness")
+	return physics.PerceptionRadiusCap(radius, hasBlindness, hasDarkness)
+}
+
+// FindRideableEntitiesNear returns all rideable entities within a given
+// radius of a center position. See models.Agent.FindNearestEntityByType's
+// doc comment for honorPerceptionEffects' contract.
+func (a *agent) FindRideableEntitiesNear(center models.V3, radius float64, honorPerceptionEffects bool) []pathfinding.RideableEntity {
 	result := make([]pathfinding.RideableEntity, 0)
+
+	if honorPerceptionEffects {
+		radius = a.perceptionRadiusCap(radius)
+	}
 
 	a.entitiesMu.RLock()
 	entities := a.entities
@@ -767,8 +801,18 @@ func (a *agent) FindRideableEntitiesNear(center models.V3, radius float64) []pat
 			continue
 		}
 
-		// Check if entity type is rideable
-		entityTypeID := models.EntityType(tracked.EntityType)
+		// Check if entity type is rideable. tracked.EntityType is the raw
+		// numeric protocol registry ID, not a models.EntityType string, so it
+		// must be resolved through entityRegistry (populated by onAddEntity
+		// from the minecraft:entity_type registry) rather than converted
+		// directly — models.EntityType(tracked.EntityType) would silently
+		// convert the int32 to a one-rune string via Go's int-to-string
+		// conversion, which can never equal a real type name like "horse",
+		// making every entity look non-rideable regardless of its actual type.
+		if a.entityRegistry == nil {
+			continue
+		}
+		entityTypeID := a.entityRegistry.GetEntityType(entityID)
 		if !entityTypeID.IsRideable() {
 			continue
 		}

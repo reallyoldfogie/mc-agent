@@ -43,6 +43,43 @@ const (
 	JumpVelocity = 0.42 // Initial upward velocity when jumping
 )
 
+// Status effect constants (Phase 4a). Cited directly from decompiled
+// LivingEntity.java (getEffectiveGravity/travelMidAir) rather than the
+// wiki's amplifier-scaled approximation for Slow Falling — vanilla does not
+// scale the gravity cap by effect level.
+const (
+	// SlowFallingMaxGravity is the gravity cap while Slow Falling is active
+	// and the entity is not rising (Vel.Y <= 0): getEffectiveGravity()
+	// returns Math.min(getFinalGravity(), SlowFallingMaxGravity) rather than
+	// the normal Gravity constant. Not amplifier-scaled — every level of
+	// Slow Falling caps gravity at exactly this value.
+	SlowFallingMaxGravity = 0.01
+
+	// LevitationBaseVelocityPerLevel is the target vertical velocity per
+	// effect level (0-indexed amplifier + 1) that Levitation eases the
+	// entity's Y velocity toward, replacing gravity entirely while active:
+	// travelMidAir's `d += (LevitationBaseVelocityPerLevel * (amplifier+1) - d) * LevitationLerpFactor`.
+	LevitationBaseVelocityPerLevel = 0.05
+
+	// LevitationLerpFactor is the fraction of the distance to the target
+	// velocity closed each tick (an exponential approach, not an instant
+	// snap or a constant acceleration).
+	LevitationLerpFactor = 0.2
+
+	// BlindnessVisionRadius is the flat visible-range cap while Blindness is
+	// active, cited from BlindnessEffectFogModifier.java: `environmentalEnd`
+	// (the distance fog becomes fully opaque) ramps to exactly 5 blocks once
+	// fully faded in. Not amplifier-scaled.
+	BlindnessVisionRadius = 5.0
+
+	// DarknessVisionRadius is the flat visible-range cap at Darkness's
+	// darkest point, cited from DarknessEffectFogModifier.java: pulses via
+	// getFadeFactor rather than holding a constant radius, but 15 blocks is
+	// the cap once fully faded in. Not amplifier-scaled. Used as a flat cap
+	// for the whole active duration rather than modeling the pulse.
+	DarknessVisionRadius = 15.0
+)
+
 // Tick rate constants
 const (
 	TicksPerSecond = 20                    // Minecraft runs at 20 TPS
@@ -176,7 +213,7 @@ const (
 	BoatUnderWaterGravity            = -0.04 // Same gravity as in water
 
 	// Boat under flowing water (stronger current effect)
-	BoatUnderFlowingWaterVelocityMultiplier = 0.9   // Same as standard water
+	BoatUnderFlowingWaterVelocityMultiplier = 0.9     // Same as standard water
 	BoatUnderFlowingWaterGravity            = -0.0007 // Reduced gravity in flowing water
 
 	// Boat on land surfaces (these are the block slipperiness values)
@@ -207,7 +244,8 @@ const (
 
 // Minecart physics constants
 // Source: net/minecraft/entity/vehicle/DefaultMinecartController.java (1.21.2+)
-//         net/minecraft/entity/vehicle/AbstractMinecartEntity.java (1.21.1)
+//
+//	net/minecraft/entity/vehicle/AbstractMinecartEntity.java (1.21.1)
 const (
 	// MinecartRailDrag is the per-tick velocity multiplier when on a rail with a passenger.
 	// Java DefaultMinecartController.getSpeedRetention(): 0.997 with passengers, 0.96 empty.

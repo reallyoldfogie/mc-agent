@@ -319,6 +319,21 @@ type EntityHandler interface {
 	// Each entry contains a InventorySlot index (0=main hand, 1=off hand, 2-5=armor) and the item data
 	ParseEntityEquipment(p pk.Packet) (entityID int32, equipment []EquipmentEntry, err error)
 
+	// ParseEntityEffect parses a status-effect-applied packet
+	// (ClientboundEntityEffect, aliased ClientboundUpdateMobEffect). effectID
+	// is the minecraft:mob_effect registry ID — resolve to a name via
+	// CustomRegistry.GetNameByID the same way entity/item type IDs are
+	// resolved elsewhere, not a hardcoded numeric comparison, since registry
+	// IDs are not guaranteed stable across versions. amplifier is zero-based
+	// (0 = level I). durationTicks is the remaining duration in ticks exactly
+	// as sent by the server, not normalized (e.g. infinite-duration effects
+	// use a very large tick count on the wire, not a sentinel).
+	ParseEntityEffect(p pk.Packet) (entityID, effectID, amplifier, durationTicks int32, ambient, showParticles, showIcon bool, err error)
+
+	// ParseRemoveEntityEffect parses a status-effect-removed packet
+	// (ClientboundRemoveEntityEffect, aliased ClientboundRemoveMobEffect).
+	ParseRemoveEntityEffect(p pk.Packet) (entityID, effectID int32, err error)
+
 	// ParseEntityHeadRotation parses an entity head rotation packet
 	// Returns entityID and head yaw (in 1/256ths of a full turn)
 	ParseEntityHeadRotation(p pk.Packet) (entityID int32, headYaw int8, err error)

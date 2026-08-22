@@ -373,7 +373,7 @@ func (a *agent) cmdStartTracking() {
 				_ = a.SendChat(msg)
 				log.Println(msg)
 			case <-tick.C:
-				nearest, ok := a.findNearestPlayer()
+				nearest, ok := a.findNearestPlayer(true)
 				if !ok {
 					now := time.Now()
 					if now.Sub(a.lastNoPlayersMsg) >= trackingNoPlayersInterval {
@@ -432,13 +432,23 @@ type nearestInfo struct {
 	X, Y, Z  float64
 }
 
-func (a *agent) findNearestPlayer() (nearestInfo, bool) {
+// findNearestPlayer finds the nearest tracked player. honorPerceptionEffects,
+// when true, additionally excludes candidates beyond the agent's own
+// effective vision range under Blindness/Darkness — see
+// models.Agent.FindNearestEntityByType's doc comment for the same contract
+// applied here.
+func (a *agent) findNearestPlayer(honorPerceptionEffects bool) (nearestInfo, bool) {
 	pos, ok := a.GetPositionSimple()
 	if !ok {
 		return nearestInfo{}, false
 	}
 	bx, by, bz := pos.X, pos.Y, pos.Z
 	ents := a.snapshotEntities()
+
+	maxDist := math.Inf(1)
+	if honorPerceptionEffects {
+		maxDist = a.perceptionRadiusCap(maxDist)
+	}
 
 	// Snapshot the resolver to avoid repeated lock acquisitions
 	a.playerResolversMu.RLock()
@@ -457,6 +467,9 @@ func (a *agent) findNearestPlayer() (nearestInfo, bool) {
 		}
 		dx, dy, dz := e.X-bx, e.Y-by, e.Z-bz
 		d := math.Sqrt(dx*dx + dy*dy + dz*dz)
+		if d > maxDist {
+			continue
+		}
 		if d < min {
 			min = d
 			res = nearestInfo{EntityID: e.EntityID, UUID: e.UUID, Distance: d, X: e.X, Y: e.Y, Z: e.Z}
@@ -495,9 +508,12 @@ func (a *agent) formatEntityStats(stats map[string]int) string {
 	return fmt.Sprintf("Entities (Total: %d) - %s", total, strings.Join(parts, ", "))
 }
 
-// follow nearest: legacy behavior prints messages without starting follow
+// follow nearest: legacy behavior prints messages without starting follow.
+// Dead code — never called from anywhere; the real "follow with no name"
+// path is actions/commands.go's Follow.Execute via NearestPlayerInfo, not
+// this function. Kept only because removing it is out of scope here.
 func (a *agent) cmdStartFollowingNearest() {
-	n, ok := a.findNearestPlayer()
+	n, ok := a.findNearestPlayer(true)
 	if !ok {
 		_ = a.SendChat("Failed to find nearest player")
 		return

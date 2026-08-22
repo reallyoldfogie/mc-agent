@@ -23,6 +23,11 @@ type PhysicsState interface {
 	SetOnGround(onGround bool)
 	SetSneaking(sneaking bool)
 	SetFallDistance(distance float64)
+	// SetActiveEffects updates the walking player's own status-effect state
+	// consulted by Tick() (Slow Falling gravity cap, Levitation). Callers
+	// should call this once per tick, before Tick(), the same way other
+	// externally-sourced per-tick state is synced in. See ActiveEffects.
+	SetActiveEffects(effects ActiveEffects)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

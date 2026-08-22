@@ -182,7 +182,7 @@ func (vh *VehicleTestHelper) SummonBoat(ctx context.Context, x, y, z float64, va
 	}
 
 	// Find the boat by searching for nearest boat entity
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(boatTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(boatTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("boat entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -299,7 +299,7 @@ func (vh *VehicleTestHelper) SummonHorse(ctx context.Context, x, y, z, yaw float
 	}
 
 	// Find the horse by searching for nearest horse entity
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(horseTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(horseTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("horse entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -346,7 +346,7 @@ func (vh *VehicleTestHelper) SummonUnsaddledHorse(ctx context.Context, x, y, z, 
 		return 0, fmt.Errorf("horse entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(horseTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(horseTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("unsaddled horse not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -387,7 +387,7 @@ func (vh *VehicleTestHelper) SummonLlama(ctx context.Context, x, y, z, yaw float
 		return 0, fmt.Errorf("llama entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(llamaTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(llamaTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("llama not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -434,7 +434,7 @@ func (vh *VehicleTestHelper) SummonHappyGhast(ctx context.Context, x, y, z, yaw 
 		return 0, fmt.Errorf("happy ghast entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("happy ghast entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -465,7 +465,7 @@ func (vh *VehicleTestHelper) SummonUnharnessedHappyGhast(ctx context.Context, x,
 		return 0, fmt.Errorf("happy ghast entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(happyGhastTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("unharnessed happy ghast not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -548,7 +548,7 @@ func (vh *VehicleTestHelper) SummonCamel(ctx context.Context, x, y, z, yaw float
 	}
 
 	// Find the camel by searching for nearest camel entity
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("camel entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -597,7 +597,7 @@ func (vh *VehicleTestHelper) SummonCamelHusk(ctx context.Context, x, y, z, yaw f
 	}
 
 	// Find the camel husk by searching for nearest camel husk entity
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelHuskTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(camelHuskTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("camel husk entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -884,7 +884,7 @@ func (vh *VehicleTestHelper) SummonMinecart(ctx context.Context, x, y, z float64
 		return 0, fmt.Errorf("minecart entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.Agent.FindNearestEntityByType(minecartTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.Agent.FindNearestEntityByType(minecartTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("minecart entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1180,7 +1180,7 @@ func (vh *VehicleTestHelper) SummonPig(ctx context.Context, x, y, z float64, opt
 		return 0, fmt.Errorf("pig entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(pigTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(pigTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("pig entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1237,7 +1237,7 @@ func (vh *VehicleTestHelper) SummonStrider(ctx context.Context, x, y, z float64)
 		return 0, fmt.Errorf("strider entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(striderTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(striderTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("strider entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1345,7 +1345,7 @@ func (vh *VehicleTestHelper) SummonSkeletonHorse(ctx context.Context, x, y, z fl
 		return 0, fmt.Errorf("skeleton horse entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("skeleton horse entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1392,7 +1392,7 @@ func (vh *VehicleTestHelper) SummonZombieHorse(ctx context.Context, x, y, z floa
 		return 0, fmt.Errorf("zombie horse entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("zombie horse entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1442,7 +1442,7 @@ func (vh *VehicleTestHelper) SummonDonkey(ctx context.Context, x, y, z float64) 
 		return 0, fmt.Errorf("donkey entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("donkey entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1491,7 +1491,7 @@ func (vh *VehicleTestHelper) SummonMule(ctx context.Context, x, y, z float64) (i
 		return 0, fmt.Errorf("mule entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("mule entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1544,7 +1544,7 @@ func (vh *VehicleTestHelper) SummonNautilus(ctx context.Context, x, y, z float64
 		return 0, fmt.Errorf("nautilus entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(nautilusTypeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(nautilusTypeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("nautilus entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}
@@ -1597,7 +1597,7 @@ func (vh *VehicleTestHelper) SummonZombieNautilus(ctx context.Context, x, y, z f
 		return 0, fmt.Errorf("zombie nautilus entity type not found in registry")
 	}
 
-	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z)
+	entityID, _, found := vh.ManagedAgent.FindNearestEntityByType(typeID, x, y, z, false)
 	if !found {
 		return 0, fmt.Errorf("zombie nautilus entity not found after summoning at (%.1f, %.1f, %.1f)", x, y, z)
 	}

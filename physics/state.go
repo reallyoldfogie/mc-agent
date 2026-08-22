@@ -50,6 +50,11 @@ type state struct {
 
 	// Block shape provider for collision detection
 	shapeProvider BlockShapeProvider
+
+	// activeEffects holds the walking player's own status effects relevant
+	// to physics (Slow Falling, Levitation), set externally once per tick
+	// via SetActiveEffects before Tick() runs.
+	activeEffects models.ActiveEffects
 }
 
 // NewState creates a new physics state with default player dimensions.
@@ -245,6 +250,15 @@ func (s *state) SetFallDistance(distance float64) {
 	s.fallDistance = distance
 }
 
+// SetActiveEffects updates the status-effect state Tick() consults for
+// Slow Falling/Levitation. Callers should call this once per tick, before
+// Tick(), the same way other externally-sourced per-tick state is synced in.
+func (s *state) SetActiveEffects(effects models.ActiveEffects) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.activeEffects = effects
+}
+
 // getAABBUnsafe computes the AABB without acquiring the mutex.
 // Must only be called while the write lock is already held (e.g., from within Tick()).
 func (s *state) getAABBUnsafe() AABB {
@@ -286,8 +300,11 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Detect water state FIRST so swim-up/down inputs work in applyMovementInputs
 	s.detectWaterState(w)
 
-	// Reset fall distance when in water (water negates all fall damage)
-	if s.isInWater {
+	// Reset fall distance when in water (water negates all fall damage).
+	// Slow Falling and Levitation do the same — Java calls onLanding() every
+	// tick while either is active (LivingEntity.tickMovement), which is what
+	// actually negates their fall damage, not a special-cased damage formula.
+	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation {
 		s.fallDistance = 0.0
 	}
 
@@ -381,8 +398,18 @@ func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
 		// Apply water flow current
 		s.applyWaterFlow(w)
 	} else {
-		// Normal physics (air)
-		s.Vel.Y -= Gravity
+		// Normal physics (air). Levitation replaces gravity entirely with an
+		// eased approach toward a fixed upward target velocity; Slow Falling
+		// instead caps how much gravity is subtracted. Both are walking-only
+		// for now — travelMidAir is the source function for this branch, and
+		// vanilla's fluid movement (the s.isInWater branch above) is a
+		// separate Java method this hasn't been researched against yet.
+		switch {
+		case s.activeEffects.HasLevitation:
+			s.Vel.Y = LevitationVerticalVelocity(s.Vel.Y, s.activeEffects.LevitationAmplifier)
+		default:
+			s.Vel.Y -= EffectiveGravity(Gravity, s.Vel.Y, s.activeEffects.HasSlowFalling)
+		}
 		s.Vel.Y *= Drag
 		s.Vel.X *= inertiaFactor
 		s.Vel.Z *= inertiaFactor

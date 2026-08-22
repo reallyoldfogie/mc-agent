@@ -170,6 +170,15 @@ type agent struct {
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
 
+	// ownEffectsMu guards ownEffects.
+	ownEffectsMu sync.RWMutex
+	// ownEffects holds the agent's own player entity's active status
+	// effects, keyed by full minecraft:mob_effect registry name. Tracked
+	// separately from entities (which never contains the bot's own entity
+	// — the server never sends us an AddEntity spawn packet for ourselves)
+	// so GetOwnActiveEffect has somewhere to actually read from.
+	ownEffects map[string]models.ActiveEffect
+
 	// entityWindowsMu guards entityWindows.
 	entityWindowsMu sync.RWMutex
 	// entityWindows maps an open container window ID to the entity whose

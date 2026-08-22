@@ -47,6 +47,8 @@ func (f *fakeAttributeGetter) GetEntityVelocity(int32) (float64, float64, float6
 }
 func (f *fakeAttributeGetter) GetRiderHeldItem() (string, bool) { return "", false }
 
+func (f *fakeAttributeGetter) GetOwnActiveEffect(string) (int32, bool) { return 0, false }
+
 func (f *fakeAttributeGetter) GetEntityAttribute(int32, string) (float64, bool) {
 	return f.liveValue, f.liveFound
 }

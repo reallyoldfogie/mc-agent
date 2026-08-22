@@ -304,6 +304,45 @@ func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equip
 	return entityID, equipment, nil
 }
 
+// ParseEntityEffect parses a status-effect-applied packet
+// (ClientboundEntityEffect, aliased ClientboundUpdateMobEffect).
+func (e *entityHandler) ParseEntityEffect(p pk.Packet) (entityID, effectID, amplifier, durationTicks int32, ambient, showParticles, showIcon bool, err error) {
+	pkt := cb.NewEntityEffect()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, 0, 0, false, false, false, common.ErrPacketParse{PacketName: "EntityEffect", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	effectID = int32(pkt.EffectId)
+	amplifier = int32(pkt.Amplifier)
+	durationTicks = int32(pkt.Duration)
+	flags := byte(pkt.Flags)
+	ambient = flags&0x01 != 0
+	showParticles = flags&0x02 != 0
+	showIcon = flags&0x04 != 0
+
+	log.Printf("[ParseEntityEffect] entityID=%d effectID=%d amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
+		entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon)
+
+	return entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon, nil
+}
+
+// ParseRemoveEntityEffect parses a status-effect-removed packet
+// (ClientboundRemoveEntityEffect, aliased ClientboundRemoveMobEffect).
+func (e *entityHandler) ParseRemoveEntityEffect(p pk.Packet) (entityID, effectID int32, err error) {
+	pkt := cb.NewRemoveEntityEffect()
+	if err = pkt.Scan(p); err != nil {
+		return 0, 0, common.ErrPacketParse{PacketName: "RemoveEntityEffect", Cause: err}
+	}
+
+	entityID = int32(pkt.EntityId)
+	effectID = int32(pkt.EffectId)
+
+	log.Printf("[ParseRemoveEntityEffect] entityID=%d effectID=%d", entityID, effectID)
+
+	return entityID, effectID, nil
+}
+
 // ParseEntityHeadRotation parses an entity head rotation packet.
 // Returns entity ID and head yaw (0-255, where 256 represents a full rotation).
 func (e *entityHandler) ParseEntityHeadRotation(p pk.Packet) (entityID int32, headYaw int8, err error) {

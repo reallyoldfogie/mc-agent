@@ -28,6 +28,11 @@ type CommandAgent interface {
 	DismountEntity() error
 	JumpVehicle(ctx context.Context, power int32) error
 
-	NearestPlayerInfo(ctx context.Context) (NearestPlayerInfo, bool)
+	// NearestPlayerInfo returns the nearest tracked player. honorPerceptionEffects,
+	// when true, additionally excludes candidates beyond the agent's own
+	// effective vision range under Blindness/Darkness (see
+	// physics.PerceptionRadiusCap) — real command paths (follow with no
+	// name, fireBowAt nearest) pass true.
+	NearestPlayerInfo(ctx context.Context, honorPerceptionEffects bool) (NearestPlayerInfo, bool)
 	FindPlayerByName(ctx context.Context, name string) (x, y, z float64, found bool, err error)
 }
