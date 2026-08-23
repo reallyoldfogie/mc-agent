@@ -195,3 +195,48 @@ func TestJumpBoostRaisesJumpHeight(t *testing.T) {
 		})
 	}
 }
+
+// TestBlindnessPreventsSprinting verifies that applying the Blindness status
+// effect (§4.9) both prevents starting a new sprint and cancels one already
+// in progress — end-to-end confirmation that physics.CanSprint is actually
+// wired into movement/physics_executor_helpers.go's applyMovementState
+// against a real server. Mirrors Java ClientPlayerEntity's
+// canStartSprinting()/shouldStopSprinting(), both of which key off the same
+// canSprint() check, so an in-progress sprint is force-stopped the instant
+// Blindness lands, not just blocked from (re)starting.
+func TestBlindnessPreventsSprinting(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "blindness_sprint_gate", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			require.NoError(t, env.Agent.Agent.EnterManualMode(), "enter manual movement mode")
+			defer func() { _ = env.Agent.Agent.ExitManualMode() }()
+
+			require.NoError(t, env.Agent.Agent.SetManualSprint(true))
+			assert.Eventually(t, env.Agent.Agent.IsSprinting, 3*time.Second, 100*time.Millisecond,
+				"should be able to start sprinting with no perception-restricting effect active")
+
+			_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:blindness 30 0", env.BotName))
+			require.NoError(t, err, "apply blindness effect")
+
+			assert.Eventually(t, func() bool { return !env.Agent.Agent.IsSprinting() }, 5*time.Second, 100*time.Millisecond,
+				"blindness should force-stop a sprint already in progress, not just block new ones")
+
+			// Sprint input is still held; blindness alone should keep
+			// rejecting it rather than only stopping the sprint once.
+			time.Sleep(500 * time.Millisecond)
+			assert.False(t, env.Agent.Agent.IsSprinting(), "should not be able to (re)start sprinting while blind")
+
+			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:blindness", env.BotName))
+			require.NoError(t, err, "clear blindness effect")
+
+			assert.Eventually(t, env.Agent.Agent.IsSprinting, 3*time.Second, 100*time.Millisecond,
+				"should regain the ability to sprint once blindness clears, with sprint input still held")
+
+			require.NoError(t, env.Agent.Agent.SetManualSprint(false))
+		})
+	}
+}

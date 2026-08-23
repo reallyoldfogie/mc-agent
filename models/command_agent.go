@@ -18,6 +18,11 @@ type CommandAgent interface {
 	HasFollowManager() bool
 	IsFollowing() bool
 
+	// IsSprinting reports whether the movement executor currently considers
+	// the agent to be sprinting. Returns false if no movement executor is
+	// available.
+	IsSprinting() bool
+
 	PlanStatus(ctx context.Context) PlanStatus
 	StopPlan(ctx context.Context) error
 

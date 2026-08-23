@@ -143,6 +143,10 @@ func (f *fakeMoveExec) SetManualJump(enabled bool) error {
 	return nil
 }
 
+func (f *fakeMoveExec) SetManualSprint(enabled bool) error {
+	return nil
+}
+
 // SetMounted is a no-op for the fake executor
 func (f *fakeMoveExec) SetMounted(vehicleEntityID int32) error {
 	return nil

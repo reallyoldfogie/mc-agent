@@ -51,6 +51,18 @@ func (a *agent) IsFollowing() bool {
 	return fm.IsActive()
 }
 
+// IsSprinting reports whether the movement executor currently considers the
+// agent to be sprinting. Returns false if no movement executor is available.
+func (a *agent) IsSprinting() bool {
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if moveExec == nil {
+		return false
+	}
+	return moveExec.IsSprinting()
+}
+
 // NearestPlayerInfo returns the nearest tracked player for commands. See
 // models.CommandAgent.NearestPlayerInfo's doc comment for
 // honorPerceptionEffects' contract.

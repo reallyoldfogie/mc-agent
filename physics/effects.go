@@ -50,6 +50,17 @@ func JumpBoostVelocityBonus(amplifier int32) float64 {
 	return JumpBoostVelocityPerLevel * float64(amplifier+1)
 }
 
+// CanSprint mirrors Java ClientPlayerEntity.canSprint()'s Blindness check:
+// hasBlindnessEffect() alone (ignoring the vehicle/flying/item-use branches,
+// which don't apply to the walking-player path this codebase models) is
+// enough to prevent sprinting outright, whether starting a new sprint or
+// continuing one already in progress — canSprint() is also the condition
+// shouldStopSprinting() negates, so vanilla actively cancels an in-progress
+// sprint the instant Blindness lands, not just refuses new ones.
+func CanSprint(hasBlindness bool) bool {
+	return !hasBlindness
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

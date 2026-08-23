@@ -86,6 +86,11 @@ func TestJumpBoostVelocityBonus(t *testing.T) {
 	}
 }
 
+func TestCanSprint(t *testing.T) {
+	assert.True(t, CanSprint(false), "should be able to sprint with no blindness")
+	assert.False(t, CanSprint(true), "should not be able to sprint while blind")
+}
+
 func TestPerceptionRadiusCap(t *testing.T) {
 	tests := []struct {
 		name                      string

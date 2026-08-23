@@ -13,12 +13,21 @@ import (
 
 // applyMovementState applies sprint/sneak state changes based on inputs.
 func (pe *PhysicsMovementExecutor) applyMovementState(inputs physics.Inputs) {
-	// Apply sprint state
-	if inputs.Sprint && !pe.IsSprinting() {
+	// Apply sprint state. canSprint gates both starting a new sprint and
+	// continuing one already in progress (Phase 4: Blindness, §4.9) —
+	// mirrors Java's canStartSprinting()/shouldStopSprinting(), both of
+	// which key off the same canSprint() check.
+	canSprint := true
+	if pe.entityPositionGetter != nil {
+		_, hasBlindness := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:blindness")
+		canSprint = physics.CanSprint(hasBlindness)
+	}
+
+	if inputs.Sprint && canSprint && !pe.IsSprinting() {
 		if err := pe.StartSprinting(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to start sprinting: %v", err)
 		}
-	} else if !inputs.Sprint && pe.IsSprinting() {
+	} else if (!inputs.Sprint || !canSprint) && pe.IsSprinting() {
 		if err := pe.StopSprinting(); err != nil {
 			log.Printf("[PhysicsExecutor] Failed to stop sprinting: %v", err)
 		}

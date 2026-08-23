@@ -55,6 +55,9 @@ type ManualMovementExecutor interface {
 	// SetManualJump sets whether the jump button is pressed.
 	// For camels, holding jump charges the dash; releasing fires the impulse.
 	SetManualJump(enabled bool) error
+
+	// SetManualSprint sets whether the sprint button is pressed.
+	SetManualSprint(enabled bool) error
 }
 
 // RidingPhysicsInspector provides read-only access to the riding (mounted
@@ -94,4 +97,7 @@ type ManualMovement interface {
 
 	// SetManualJump sets whether the jump button is pressed.
 	SetManualJump(enabled bool) error
+
+	// SetManualSprint sets whether the sprint button is pressed.
+	SetManualSprint(enabled bool) error
 }
