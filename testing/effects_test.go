@@ -130,3 +130,68 @@ func TestSlowFallingSlowsAgentDescent(t *testing.T) {
 		})
 	}
 }
+
+// TestJumpBoostRaisesJumpHeight verifies that applying the Jump Boost status
+// effect (§4.7) causes the agent's own predicted physics position to jump
+// higher than an unboosted baseline jump — end-to-end confirmation that
+// physics.JumpBoostVelocityBonus is actually wired into state.go's jump
+// velocity assignment against a real server, not just unit-tested in
+// isolation. See physics/effects_test.go's TestJumpBoostVelocityBonus and
+// physics/state_active_effects_test.go's TestState_JumpBoostRaisesJumpVelocity
+// for the formula-level coverage this builds on.
+func TestJumpBoostRaisesJumpHeight(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "jump_boost_height", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			require.NoError(t, env.Agent.Agent.EnterManualMode(), "enter manual movement mode")
+			defer func() { _ = env.Agent.Agent.ExitManualMode() }()
+
+			// jumpAndMeasurePeak triggers one jump via manual input and
+			// tracks the highest Y reached over the following window, then
+			// waits for the agent to land and settle before returning, so
+			// back-to-back calls on the same agent don't interfere.
+			jumpAndMeasurePeak := func() float64 {
+				startPos, ok := env.Agent.Agent.GetPositionSimple()
+				require.True(t, ok, "agent position should be initialized")
+				startY := startPos.Y
+
+				require.NoError(t, env.Agent.Agent.SetManualJump(true))
+				time.Sleep(100 * time.Millisecond)
+				require.NoError(t, env.Agent.Agent.SetManualJump(false))
+
+				peakY := startY
+				deadline := time.Now().Add(2 * time.Second)
+				for time.Now().Before(deadline) {
+					pos, _ := env.Agent.Agent.GetPositionSimple()
+					if pos.Y > peakY {
+						peakY = pos.Y
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+
+				// Let the agent finish landing/settling before the next jump.
+				time.Sleep(1 * time.Second)
+				return peakY - startY
+			}
+
+			baselineRise := jumpAndMeasurePeak()
+			t.Logf("baseline jump rise=%.4f", baselineRise)
+			assert.Greater(t, baselineRise, 0.0, "an ordinary jump should rise above the starting position")
+
+			_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:jump_boost 30 0", env.BotName))
+			require.NoError(t, err, "apply jump boost effect")
+			time.Sleep(300 * time.Millisecond)
+
+			boostedRise := jumpAndMeasurePeak()
+			t.Logf("jump-boosted rise=%.4f", boostedRise)
+
+			assert.Greater(t, boostedRise, baselineRise, "jump boost should raise the agent's jump height above the unboosted baseline")
+
+			_, _ = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:jump_boost", env.BotName))
+		})
+	}
+}

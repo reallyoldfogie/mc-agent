@@ -567,6 +567,9 @@ func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 		// On ground: normal jump with cooldown
 		s.lastJump = s.tick
 		s.Vel.Y = JumpVelocity
+		if s.activeEffects.HasJumpBoost {
+			s.Vel.Y += JumpBoostVelocityBonus(s.activeEffects.JumpBoostAmplifier)
+		}
 	}
 
 	// Calculate throttle magnitude

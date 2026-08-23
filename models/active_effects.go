@@ -36,4 +36,11 @@ type ActiveEffects struct {
 	// gravity being applied at all.
 	HasLevitation       bool
 	LevitationAmplifier int32
+
+	// HasJumpBoost and JumpBoostAmplifier mirror Java
+	// LivingEntity.getJumpBoostVelocityModifier(): a flat additive bonus to
+	// jump velocity, applied only at the moment of jumping (unlike
+	// Levitation/Slow Falling, which apply every tick).
+	HasJumpBoost       bool
+	JumpBoostAmplifier int32
 }

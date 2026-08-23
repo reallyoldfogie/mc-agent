@@ -68,6 +68,24 @@ func TestLevitationVerticalVelocity(t *testing.T) {
 	})
 }
 
+func TestJumpBoostVelocityBonus(t *testing.T) {
+	tests := []struct {
+		name      string
+		amplifier int32
+		expected  float64
+	}{
+		{name: "level I (amplifier 0)", amplifier: 0, expected: JumpBoostVelocityPerLevel},
+		{name: "level II (amplifier 1)", amplifier: 1, expected: JumpBoostVelocityPerLevel * 2},
+		{name: "level III (amplifier 2)", amplifier: 2, expected: JumpBoostVelocityPerLevel * 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := JumpBoostVelocityBonus(tt.amplifier)
+			assert.InDelta(t, tt.expected, got, 1e-9)
+		})
+	}
+}
+
 func TestPerceptionRadiusCap(t *testing.T) {
 	tests := []struct {
 		name                      string

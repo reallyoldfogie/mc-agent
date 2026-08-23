@@ -78,6 +78,15 @@ const (
 	// the cap once fully faded in. Not amplifier-scaled. Used as a flat cap
 	// for the whole active duration rather than modeling the pulse.
 	DarknessVisionRadius = 15.0
+
+	// JumpBoostVelocityPerLevel is the flat additive bonus to jump velocity
+	// per effect level, cited from LivingEntity.java's
+	// getJumpBoostVelocityModifier(): 0.1F * (amplifier + 1.0F). This is a
+	// direct addition bolted onto jump velocity in jump(), not a generic
+	// attribute modifier — StatusEffects.java only registers a
+	// SAFE_FALL_DISTANCE modifier for Jump Boost (fall-damage safety),
+	// unrelated to jump height.
+	JumpBoostVelocityPerLevel = 0.1
 )
 
 // Tick rate constants

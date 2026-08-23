@@ -42,6 +42,14 @@ func LevitationVerticalVelocity(currentVelocityY float64, amplifier int32) float
 	return currentVelocityY + (target-currentVelocityY)*LevitationLerpFactor
 }
 
+// JumpBoostVelocityBonus mirrors Java LivingEntity.getJumpBoostVelocityModifier():
+// a flat additive bonus to jump velocity, added on top of the normal
+// JumpVelocity assignment rather than scaling it. amplifier is zero-based
+// (0 = level I).
+func JumpBoostVelocityBonus(amplifier int32) float64 {
+	return JumpBoostVelocityPerLevel * float64(amplifier+1)
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

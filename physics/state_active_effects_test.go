@@ -108,6 +108,41 @@ func TestState_LevitationHigherAmplifierLiftsFaster(t *testing.T) {
 	assert.Greater(t, level3.Position().Y, level1.Position().Y, "a higher levitation level should lift the player higher in the same time")
 }
 
+func TestState_JumpBoostRaisesJumpVelocity(t *testing.T) {
+	world, shapes := createFlatWorld()
+
+	settle := func(s models.PhysicsState) {
+		s.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before jumping")
+	}
+
+	normal := NewState(shapes)
+	settle(normal)
+	require.NoError(t, normal.Tick(Inputs{Jump: true}, world))
+
+	boosted := NewState(shapes)
+	boosted.SetActiveEffects(models.ActiveEffects{HasJumpBoost: true, JumpBoostAmplifier: 0})
+	settle(boosted)
+	require.NoError(t, boosted.Tick(Inputs{Jump: true}, world))
+
+	t.Logf("normal jump velY=%.4f, jump-boosted velY=%.4f", normal.Velocity().Y, boosted.Velocity().Y)
+	assert.Greater(t, boosted.Velocity().Y, normal.Velocity().Y, "jump boost should raise jump velocity above normal")
+	// The jump-input tick also applies gravity/drag to the freshly-set
+	// velocity before the tick ends (Vel.Y = (JumpVelocity - Gravity) * Drag,
+	// not the raw JumpVelocity constant), so the bonus itself is scaled by
+	// Drag too — the meaningful check is the delta between the two states,
+	// not either one's absolute value against the raw constants.
+	assert.InDelta(t, JumpBoostVelocityBonus(0)*Drag, boosted.Velocity().Y-normal.Velocity().Y, 1e-9,
+		"jump boost's velocity delta should match the bonus formula scaled by the same tick's drag")
+}
+
 func TestState_SlowFallingAndLevitationNegateFallDamageAccumulation(t *testing.T) {
 	world, shapes := createFlatWorld()
 

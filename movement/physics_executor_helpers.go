@@ -55,6 +55,10 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 		effects.HasLevitation = true
 		effects.LevitationAmplifier = amplifier
 	}
+	if amplifier, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:jump_boost"); found {
+		effects.HasJumpBoost = true
+		effects.JumpBoostAmplifier = amplifier
+	}
 
 	pe.physicsState.SetActiveEffects(effects)
 }
