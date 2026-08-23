@@ -61,6 +61,33 @@ func CanSprint(hasBlindness bool) bool {
 	return !hasBlindness
 }
 
+// EffectSpeedMultiplier mirrors Java's Speed/Slowness ADD_MULTIPLIED_TOTAL
+// modifiers on generic.movement_speed (StatusEffects.java): each active
+// effect's amplifier-scaled amount is applied as its own separate multiply
+// against the running total (EntityAttributeInstance.computeValue's
+// ADD_MULTIPLIED_TOTAL stage), matching AttributeValue.Compute's stage-3
+// behavior. Not implemented by calling Compute directly since the walking
+// player's own Speed/Slowness state comes from GetOwnActiveEffect (the
+// player's own entity never receives a live AttributeValue — see
+// GetOwnActiveEffect's doc comment for why), not a wire-parsed
+// AttributeValue. Clamped at 0 minimum, matching generic.movement_speed's
+// ClampedEntityAttribute floor — high enough Slowness can drive the raw
+// product negative, but vanilla clamps the final speed at exactly zero
+// rather than reversing it.
+func EffectSpeedMultiplier(hasSpeed bool, speedAmplifier int32, hasSlowness bool, slownessAmplifier int32) float64 {
+	multiplier := 1.0
+	if hasSpeed {
+		multiplier *= 1.0 + SpeedAmountPerLevel*float64(speedAmplifier+1)
+	}
+	if hasSlowness {
+		multiplier *= 1.0 + SlownessAmountPerLevel*float64(slownessAmplifier+1)
+	}
+	if multiplier < 0 {
+		return 0
+	}
+	return multiplier
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

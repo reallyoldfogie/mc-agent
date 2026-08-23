@@ -91,6 +91,40 @@ func TestCanSprint(t *testing.T) {
 	assert.False(t, CanSprint(true), "should not be able to sprint while blind")
 }
 
+func TestEffectSpeedMultiplier(t *testing.T) {
+	tests := []struct {
+		name              string
+		hasSpeed          bool
+		speedAmplifier    int32
+		hasSlowness       bool
+		slownessAmplifier int32
+		expected          float64
+	}{
+		{name: "no effect: unchanged", expected: 1.0},
+		{name: "speed I (amplifier 0)", hasSpeed: true, speedAmplifier: 0, expected: 1.2},
+		{name: "speed II (amplifier 1)", hasSpeed: true, speedAmplifier: 1, expected: 1.4},
+		{name: "slowness I (amplifier 0)", hasSlowness: true, slownessAmplifier: 0, expected: 0.85},
+		{name: "slowness II (amplifier 1)", hasSlowness: true, slownessAmplifier: 1, expected: 0.7},
+		{
+			name:     "both active: multiplicative, not additive",
+			hasSpeed: true, speedAmplifier: 0, hasSlowness: true, slownessAmplifier: 0,
+			expected: 1.2 * 0.85,
+		},
+		{
+			name:        "high slowness clamps at zero, does not go negative",
+			hasSlowness: true, slownessAmplifier: 10, // 1 + (-0.15)*11 = -0.65, should clamp
+			expected: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectSpeedMultiplier(tt.hasSpeed, tt.speedAmplifier, tt.hasSlowness, tt.slownessAmplifier)
+			assert.InDelta(t, tt.expected, got, 1e-9)
+			assert.GreaterOrEqual(t, got, 0.0, "multiplier should never go negative")
+		})
+	}
+}
+
 func TestPerceptionRadiusCap(t *testing.T) {
 	tests := []struct {
 		name                      string

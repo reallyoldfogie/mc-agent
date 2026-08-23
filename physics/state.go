@@ -328,6 +328,12 @@ func (s *state) Tick(input Inputs, w World) error {
 		}
 	}
 
+	// Speed/Slowness scale movement_speed itself (Java's
+	// getMovementSpeed(slipperiness) multiplies the attribute's value into
+	// every branch above, on-ice or not), so apply the multiplier last,
+	// after accelFactor's base value is set by whichever branch ran.
+	accelFactor *= EffectSpeedMultiplier(s.activeEffects.HasSpeed, s.activeEffects.SpeedAmplifier, s.activeEffects.HasSlowness, s.activeEffects.SlownessAmplifier)
+
 	// Update velocity based on inputs (swim-up/down uses s.isInWater)
 	s.tickVelocity(input, inertiaFactor, accelFactor, w)
 

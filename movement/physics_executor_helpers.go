@@ -64,6 +64,14 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 		effects.HasLevitation = true
 		effects.LevitationAmplifier = amplifier
 	}
+	if amplifier, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:speed"); found {
+		effects.HasSpeed = true
+		effects.SpeedAmplifier = amplifier
+	}
+	if amplifier, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:slowness"); found {
+		effects.HasSlowness = true
+		effects.SlownessAmplifier = amplifier
+	}
 	if amplifier, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:jump_boost"); found {
 		effects.HasJumpBoost = true
 		effects.JumpBoostAmplifier = amplifier

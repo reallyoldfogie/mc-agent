@@ -143,6 +143,69 @@ func TestState_JumpBoostRaisesJumpVelocity(t *testing.T) {
 		"jump boost's velocity delta should match the bonus formula scaled by the same tick's drag")
 }
 
+func TestState_SpeedAndSlownessScaleGroundAcceleration(t *testing.T) {
+	world, shapes := createFlatWorld()
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, 0)
+
+	speedy := NewState(shapes)
+	speedy.SetActiveEffects(models.ActiveEffects{HasSpeed: true, SpeedAmplifier: 1}) // Speed II
+	settle(speedy, 10)
+
+	slow := NewState(shapes)
+	slow.SetActiveEffects(models.ActiveEffects{HasSlowness: true, SlownessAmplifier: 1}) // Slowness II
+	settle(slow, 20)
+
+	forward := Inputs{ThrottleZ: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, speedy.Tick(forward, world))
+		require.NoError(t, slow.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().Z)
+	speedyDist := math.Abs(speedy.Position().Z)
+	slowDist := math.Abs(slow.Position().Z)
+	t.Logf("after %d ticks: normal=%.4f, speed II=%.4f, slowness II=%.4f", ticks, normalDist, speedyDist, slowDist)
+
+	assert.Greater(t, speedyDist, normalDist, "Speed II should move the player further than normal in the same number of ticks")
+	assert.Less(t, slowDist, normalDist, "Slowness II should move the player less far than normal in the same number of ticks")
+}
+
+func TestState_HighSlownessClampsMovementToZero(t *testing.T) {
+	world, shapes := createFlatWorld()
+
+	frozen := NewState(shapes)
+	frozen.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
+	frozen.SetVelocity(models.V3{})
+	// Amplifier 10 (Slowness XI): 1 + (-0.15)*11 = -0.65, clamped to 0.
+	frozen.SetActiveEffects(models.ActiveEffects{HasSlowness: true, SlownessAmplifier: 10})
+	for range 5 {
+		require.NoError(t, frozen.Tick(Inputs{}, world))
+	}
+
+	forward := Inputs{ThrottleZ: 1.0}
+	for range 20 {
+		require.NoError(t, frozen.Tick(forward, world))
+	}
+
+	assert.InDelta(t, 0.0, frozen.Position().Z, 1e-9, "sufficiently high slowness should clamp movement_speed to zero, not reverse it")
+}
+
 func TestState_SlowFallingAndLevitationNegateFallDamageAccumulation(t *testing.T) {
 	world, shapes := createFlatWorld()
 

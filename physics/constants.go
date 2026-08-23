@@ -87,6 +87,22 @@ const (
 	// SAFE_FALL_DISTANCE modifier for Jump Boost (fall-damage safety),
 	// unrelated to jump height.
 	JumpBoostVelocityPerLevel = 0.1
+
+	// SpeedAmountPerLevel is Speed's ADD_MULTIPLIED_TOTAL modifier amount on
+	// generic.movement_speed per effect level, cited from
+	// StatusEffects.java's SPEED registration (+0.2F) and
+	// StatusEffect.EffectAttributeModifierCreator.createAttributeModifier's
+	// amplifier scaling (baseValue * (amplifier+1)).
+	SpeedAmountPerLevel = 0.2
+
+	// SlownessAmountPerLevel is Slowness's ADD_MULTIPLIED_TOTAL modifier
+	// amount on generic.movement_speed per effect level, cited from
+	// StatusEffects.java's SLOWNESS registration (-0.15F). Negative: high
+	// enough levels can drive the multiplier negative, but
+	// generic.movement_speed is a ClampedEntityAttribute with a 0.0 floor
+	// (EntityAttributes.java's MOVEMENT_SPEED registration), so the final
+	// speed clamps at exactly zero rather than reversing.
+	SlownessAmountPerLevel = -0.15
 )
 
 // Tick rate constants

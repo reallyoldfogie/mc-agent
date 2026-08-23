@@ -43,4 +43,15 @@ type ActiveEffects struct {
 	// Levitation/Slow Falling, which apply every tick).
 	HasJumpBoost       bool
 	JumpBoostAmplifier int32
+
+	// HasSpeed/SpeedAmplifier and HasSlowness/SlownessAmplifier mirror
+	// Java's Speed/Slowness ADD_MULTIPLIED_TOTAL modifiers on
+	// generic.movement_speed (StatusEffects.java). Read from
+	// GetOwnActiveEffect rather than the wire-parsed attribute system
+	// (§2.1's AttributeValue) since the walking player's own entity never
+	// receives a live attribute update the same way other entities do.
+	HasSpeed          bool
+	SpeedAmplifier    int32
+	HasSlowness       bool
+	SlownessAmplifier int32
 }

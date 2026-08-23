@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -192,6 +193,75 @@ func TestJumpBoostRaisesJumpHeight(t *testing.T) {
 			assert.Greater(t, boostedRise, baselineRise, "jump boost should raise the agent's jump height above the unboosted baseline")
 
 			_, _ = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:jump_boost", env.BotName))
+		})
+	}
+}
+
+// TestSpeedAndSlownessScaleGroundDistance verifies that applying Speed/
+// Slowness (§4.5/§4.6, PHASE_4_PLAN.md §2.1's prerequisite) changes how far
+// the agent's own predicted physics position moves for the same manual
+// throttle input over the same time window — end-to-end confirmation that
+// physics.EffectSpeedMultiplier is actually wired into state.go's ground
+// acceleration against a real server. See physics/effects_test.go's
+// TestEffectSpeedMultiplier and
+// physics/state_active_effects_test.go's
+// TestState_SpeedAndSlownessScaleGroundAcceleration for the formula-level
+// coverage this builds on.
+func TestSpeedAndSlownessScaleGroundDistance(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "speed_slowness_distance", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			require.NoError(t, env.Agent.Agent.EnterManualMode(), "enter manual movement mode")
+			defer func() { _ = env.Agent.Agent.ExitManualMode() }()
+
+			// moveForwardAndMeasureDistance holds forward throttle for a
+			// fixed window and returns the horizontal distance covered,
+			// then lets the agent coast to a stop before returning so
+			// back-to-back calls don't carry over momentum.
+			moveForwardAndMeasureDistance := func() float64 {
+				startPos, ok := env.Agent.Agent.GetPositionSimple()
+				require.True(t, ok, "agent position should be initialized")
+
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 1))
+				time.Sleep(1 * time.Second)
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 0))
+				time.Sleep(1 * time.Second)
+
+				endPos, _ := env.Agent.Agent.GetPositionSimple()
+				dx := endPos.X - startPos.X
+				dz := endPos.Z - startPos.Z
+				return math.Sqrt(dx*dx + dz*dz)
+			}
+
+			baselineDist := moveForwardAndMeasureDistance()
+			t.Logf("baseline distance=%.4f", baselineDist)
+			assert.Greater(t, baselineDist, 0.0, "ordinary forward movement should cover some distance")
+
+			_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:speed 30 1", env.BotName))
+			require.NoError(t, err, "apply speed II")
+			time.Sleep(300 * time.Millisecond)
+
+			speedDist := moveForwardAndMeasureDistance()
+			t.Logf("speed II distance=%.4f", speedDist)
+			assert.Greater(t, speedDist, baselineDist, "speed II should cover more distance than baseline in the same window")
+
+			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:speed", env.BotName))
+			require.NoError(t, err, "clear speed")
+			time.Sleep(300 * time.Millisecond)
+
+			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:slowness 30 1", env.BotName))
+			require.NoError(t, err, "apply slowness II")
+			time.Sleep(300 * time.Millisecond)
+
+			slownessDist := moveForwardAndMeasureDistance()
+			t.Logf("slowness II distance=%.4f", slownessDist)
+			assert.Less(t, slownessDist, baselineDist, "slowness II should cover less distance than baseline in the same window")
+
+			_, _ = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:slowness", env.BotName))
 		})
 	}
 }
