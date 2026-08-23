@@ -1549,7 +1549,7 @@ func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 	a.entitiesMu.Lock()
 	if entity, ok := a.entities[entityID]; ok {
 		if entity.Attributes == nil {
-			entity.Attributes = make(map[string]float64)
+			entity.Attributes = make(map[string]models.AttributeValue)
 		}
 		for key, value := range attrs {
 			entity.Attributes[key] = value

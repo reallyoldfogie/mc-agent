@@ -372,8 +372,13 @@ type EntityHandler interface {
 	ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, passengerEntityIDs []int32, err error)
 
 	// ParseEntityUpdateAttributes parses a ClientboundEntityUpdateAttributes packet.
-	// Returns the entity ID and a map of attribute names to their values.
-	ParseEntityUpdateAttributes(p pk.Packet) (entityID int32, attributes map[string]float64, err error)
+	// Returns the entity ID and a map of attribute names to their base value
+	// plus every currently active modifier — see AttributeValue.Compute for
+	// applying them. Modifiers were previously discarded here entirely (only
+	// the base value was read), silently breaking any effect implemented as
+	// an attribute modifier (Speed, Slowness) for every entity, not just the
+	// walking player, since Phase 3.
+	ParseEntityUpdateAttributes(p pk.Packet) (entityID int32, attributes map[string]AttributeValue, err error)
 }
 
 // ContainerHandler handles container/inventory packets.

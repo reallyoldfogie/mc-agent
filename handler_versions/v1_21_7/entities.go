@@ -417,16 +417,52 @@ func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, 
 }
 
 // ParseEntityUpdateAttributes parses an entity attributes update packet.
-func (e *entityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]float64, error) {
+func (e *entityHandler) ParseEntityUpdateAttributes(p pk.Packet) (int32, map[string]models.AttributeValue, error) {
 	pkt := cb.NewEntityUpdateAttributes()
 	if err := pkt.Scan(p); err != nil {
 		return 0, nil, common.ErrPacketParse{PacketName: "EntityUpdateAttributes", Cause: err}
 	}
-	attrs := make(map[string]float64)
-	// Extract attribute values from the properties array
+	attrs := make(map[string]models.AttributeValue)
+	// Extract each attribute's base value and live modifiers from the
+	// properties array. Modifiers were previously discarded here (only
+	// prop.Value was read) — see models.AttributeValue.Compute for applying
+	// them the way vanilla does.
 	for _, prop := range pkt.Properties.Get() {
-		// Key is the attribute name string, Value is the attribute value (float64)
-		attrs[prop.Key.Value] = float64(prop.Value)
+		modifiers := make([]models.AttributeModifier, 0, len(prop.Modifiers.Get()))
+		for _, mod := range prop.Modifiers.Get() {
+			modifiers = append(modifiers, models.AttributeModifier{
+				Amount:    float64(mod.Amount),
+				Operation: models.AttributeOperation(mod.Operation),
+			})
+		}
+		attrs[correctAttributeKey(prop.Key.Value)] = models.AttributeValue{
+			Base:      float64(prop.Value),
+			Modifiers: modifiers,
+		}
 	}
 	return int32(pkt.EntityId), attrs, nil
+}
+
+// correctAttributeKey works around a stale mc-protocol-go attribute-ID
+// mapping table for ClientboundEntityUpdateAttributes: this version's
+// generated EntityUpdateAttributesPropertiesArrayTypeKeyMappings table is
+// missing several attributes Mojang added over time (at minimum
+// player.mining_efficiency, generic.movement_efficiency,
+// generic.oxygen_bonus, and player.sneaking_speed for this version), which
+// shifts every later attribute's numeric wire ID and makes the parser
+// report the WRONG name for that ID — confirmed directly against decompiled
+// net/minecraft/entity/attribute/EntityAttributes.java's registration
+// order. See mc-protocol-go/docs/bugs for the full analysis with citations,
+// tracked for an eventual upstream fix via a PrismarineJS/minecraft-data
+// patch. TEMPORARY — delete this function and its call site once that
+// lands.
+//
+// Scoped to just generic.movement_speed, the one attribute this codebase
+// currently reads that's affected (Speed/Slowness, mount speed resolution),
+// not a full correction of every attribute the same corruption shifts.
+func correctAttributeKey(wireLabel string) string {
+	if wireLabel == "generic.scale" {
+		return "generic.movement_speed"
+	}
+	return wireLabel
 }

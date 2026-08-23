@@ -35,7 +35,7 @@ type trackedEntity struct {
 	lastServerUpdateTime                  time.Time // When lastServer position was received
 	currentServerUpdateTime               time.Time // When current (X, Y, Z) position was received
 	// Entity attributes (health, speed, etc.)
-	Attributes map[string]float64 // Entity attribute values (e.g. "generic.movement_speed")
+	Attributes map[string]models.AttributeValue // Entity attribute base values + modifiers (e.g. "generic.movement_speed"); see GetEntityAttribute for the computed final value
 	// Equipment holds the entity's last-seen equipment, keyed by slot, as
 	// reported by ClientboundEntityEquipment. Used to tell whether a mount is
 	// saddled (1.21.5+, where the saddle became a real equipment slot).

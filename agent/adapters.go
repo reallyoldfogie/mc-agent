@@ -651,8 +651,10 @@ func equipmentHasSaddle(equipment map[models.EquipmentSlotType]models.InventoryS
 	return hasSaddleSlot && saddleItem.Count > 0
 }
 
-// GetEntityAttribute retrieves an entity attribute value by name.
-// Returns the attribute value and a found flag. Common attributes include:
+// GetEntityAttribute retrieves an entity attribute's final value (base plus
+// every live modifier applied the way vanilla does — see
+// models.AttributeValue.Compute) by name. Returns the value and a found
+// flag. Common attributes include:
 // - "generic.movement_speed" (horse speed, etc.)
 // - "generic.max_health" (health cap)
 // - "generic.attack_damage" (etc.)
@@ -666,7 +668,10 @@ func (a *agent) GetEntityAttribute(entityID int32, attributeName string) (float6
 	}
 
 	value, ok := entity.Attributes[attributeName]
-	return value, ok
+	if !ok {
+		return 0, false
+	}
+	return value.Compute(), true
 }
 
 // GetEntityAttributeDefault retrieves the data-driven vanilla default for an

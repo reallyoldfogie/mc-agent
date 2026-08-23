@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
+	agentmodels "github.com/reallyoldfogie/mc-agent/models"
 	v1_21_4 "github.com/reallyoldfogie/mc-protocol-go/data/1.21.4"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.4/play/clientbound"
 	"github.com/reallyoldfogie/mc-protocol-go/models"
@@ -367,5 +368,81 @@ func TestEntityHandler_PacketIDs(t *testing.T) {
 				t.Errorf("%s: expected packet ID %d, got %d", tc.name, expectedID, pkt.PacketID())
 			}
 		})
+	}
+}
+
+// TestEntityHandler_ParseEntityUpdateAttributes verifies that modifiers are
+// parsed alongside the base value, not discarded — the prerequisite bug
+// found while scoping PHASE_4_PLAN.md's Speed/Slowness sub-phases (§2.1).
+// Uses ADD_MULTIPLIED_TOTAL with Speed II's exact modifier amount
+// (0.2 * (amplifier+1) = 0.4) as a concrete, realistic case rather than an
+// arbitrary number.
+func TestEntityHandler_ParseEntityUpdateAttributes(t *testing.T) {
+	speedModifier := cb.EntityUpdateAttributesPropertiesArrayTypeModifiersArrayType{
+		Amount:    pk.Double(0.4),
+		Operation: pk.Byte(2), // ADD_MULTIPLIED_TOTAL
+	}
+	var modifiers models.Array[pk.VarInt, cb.EntityUpdateAttributesPropertiesArrayTypeModifiersArrayType]
+	modifiers.Set([]cb.EntityUpdateAttributesPropertiesArrayTypeModifiersArrayType{speedModifier})
+
+	prop := cb.EntityUpdateAttributesPropertiesArrayType{
+		Key:       cb.EntityUpdateAttributesPropertiesArrayTypeKey{Value: "generic.movement_speed"},
+		Value:     pk.Double(0.1),
+		Modifiers: modifiers,
+	}
+	var props models.Array[pk.VarInt, cb.EntityUpdateAttributesPropertiesArrayType]
+	props.Set([]cb.EntityUpdateAttributesPropertiesArrayType{prop})
+
+	pkt := cb.NewEntityUpdateAttributes()
+	pkt.EntityId = pk.VarInt(999)
+	pkt.Properties = props
+
+	handler := &entityHandler{}
+	marshaled := pkt.Marshal()
+	entityID, attrs, err := handler.ParseEntityUpdateAttributes(marshaled)
+
+	if err != nil {
+		t.Fatalf("ParseEntityUpdateAttributes failed: %v", err)
+	}
+	if entityID != 999 {
+		t.Errorf("Expected entityID 999, got %d", entityID)
+	}
+
+	av, ok := attrs["generic.movement_speed"]
+	if !ok {
+		t.Fatalf("expected generic.movement_speed to be present")
+	}
+	if av.Base != 0.1 {
+		t.Errorf("Expected base 0.1, got %v", av.Base)
+	}
+	if len(av.Modifiers) != 1 {
+		t.Fatalf("Expected 1 modifier, got %d", len(av.Modifiers))
+	}
+	if av.Modifiers[0].Amount != 0.4 {
+		t.Errorf("Expected modifier amount 0.4, got %v", av.Modifiers[0].Amount)
+	}
+	if av.Modifiers[0].Operation != agentmodels.AttributeOperationAddMultipliedTotal {
+		t.Errorf("Expected ADD_MULTIPLIED_TOTAL operation, got %v", av.Modifiers[0].Operation)
+	}
+
+	got := av.Compute()
+	want := 0.1 * (1.0 + 0.4)
+	if got < want-1e-9 || got > want+1e-9 {
+		t.Errorf("Expected computed value %.6f (base * (1+modifier), vanilla's ADD_MULTIPLIED_TOTAL formula), got %.6f", want, got)
+	}
+}
+
+// TestCorrectAttributeKey_MovementSpeedWorkaround verifies the TEMPORARY
+// workaround for mc-protocol-go's stale attribute-ID mapping table (see
+// correctAttributeKey's doc comment and mc-protocol-go/docs/bugs). For this
+// version, real generic.movement_speed's wire ID collides with what the
+// stale table labels "generic.step_height" — confirmed against decompiled
+// EntityAttributes.java's registration order.
+func TestCorrectAttributeKey_MovementSpeedWorkaround(t *testing.T) {
+	if got := correctAttributeKey("generic.step_height"); got != "generic.movement_speed" {
+		t.Errorf("expected generic.step_height to be corrected to generic.movement_speed, got %q", got)
+	}
+	if got := correctAttributeKey("generic.armor"); got != "generic.armor" {
+		t.Errorf("expected an unrelated key to pass through unchanged, got %q", got)
 	}
 }
