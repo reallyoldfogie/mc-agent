@@ -28,7 +28,7 @@ func (c *chatHandler) SendChat(conn models.PacketWriter, message string) error {
 	pkt.Signature = protocol_models.Option[protocol_models.FixedBuffer256]{Has: false}
 	pkt.Offset = pk.VarInt(0)
 	pkt.Acknowledged = protocol_models.FixedBuffer3{}
-	pkt.Checksum = pk.Byte(0)
+	pkt.Checksum = pk.UnsignedByte(0)
 
 	return conn.WritePacket(pkt.Marshal())
 }

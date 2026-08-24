@@ -1,6 +1,6 @@
 module github.com/reallyoldfogie/mc-agent
 
-go 1.26.0
+go 1.27.0
 
 replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
 
@@ -15,6 +15,7 @@ require (
 	github.com/aquasecurity/go-version v0.0.1
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 	github.com/docker/go-connections v0.6.0
+	github.com/google/uuid v1.6.0
 	github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4
 	github.com/moby/moby/api v1.52.0
 	github.com/moby/moby/client v0.2.1
@@ -64,6 +65,7 @@ require (
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/gorcon/rcon v1.4.0 // indirect
+	github.com/iancoleman/strcase v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -110,9 +112,4 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
-)
-
-require (
-	github.com/google/uuid v1.6.0
-	github.com/iancoleman/strcase v0.2.0 // indirect
 )

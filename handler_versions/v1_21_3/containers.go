@@ -213,7 +213,7 @@ func (c *containerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 func (c *containerHandler) SendContainerButtonClick(conn models.PacketWriter, windowID int8, buttonID int8) error {
 	pkt := sb.NewEnchantItem()
 	pkt.WindowId = basetypes.ContainerID(windowID)
-	pkt.Enchantment = pk.Byte(buttonID)
+	pkt.Enchantment = pk.VarInt(buttonID)
 	log.Printf("[v1.21.3 Container] SendContainerButtonClick: windowID=%d buttonID=%d", windowID, buttonID)
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "EnchantItem", Cause: err}
