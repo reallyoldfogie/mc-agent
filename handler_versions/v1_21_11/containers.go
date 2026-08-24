@@ -213,14 +213,25 @@ func (c *containerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 }
 
 // SendContainerButtonClick sends a container button click packet.
+//
+// TEMPORARY WORKAROUND: mc-protocol-go's 1.21.11 protocol.json incorrectly
+// declares EnchantItem.Enchantment (the button ID field) as "i8" instead of
+// "varint" -- every other supported version (1.21.1-1.21.10, plus 26.1) and
+// the decompiled ButtonClickC2SPacket.CODEC (PacketCodecs.VAR_INT, checked
+// directly against 1.21.11's own decompiled source) confirm the wire format
+// has always been varint. See
+// mc-protocol-go/docs/bugs/enchant-item-button-id-wrong-type-1-21-11.md.
+// Bypass the generated struct's mistyped field by hand-assembling the
+// packet with a VarInt in its place; revert to pkt.Marshal() once the
+// upstream protocol.json entry is fixed.
 func (c *containerHandler) SendContainerButtonClick(conn models.PacketWriter, windowID int8, buttonID int8) error {
 	pkt := sb.NewEnchantItem()
 	pkt.WindowId = basetypes.ContainerID(windowID)
-	pkt.Enchantment = pk.Byte(buttonID)
 
 	log.Printf("[v1.21.11 Container] SendContainerButtonClick: windowID=%d buttonID=%d", windowID, buttonID)
 
-	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+	data := pk.Marshal(pkt.PacketID(), &pkt.WindowId, pk.VarInt(buttonID))
+	if err := conn.WritePacket(data); err != nil {
 		return common.ErrPacketSend{PacketName: "EnchantItem", Cause: err}
 	}
 	return nil
