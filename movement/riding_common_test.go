@@ -103,6 +103,7 @@ func TestShouldApplyOldWaterSinkingBehavior(t *testing.T) {
 		{name: "pre-1.21.11 sinks", version: "1.21.10", expected: true},
 		{name: "well before the change", version: "1.21.1", expected: true},
 		{name: "1.21.11 floats", version: "1.21.11", expected: false},
+		{name: "26.1 floats", version: "26.1", expected: false},
 		{name: "future version floats", version: "1.22.0", expected: false},
 		{name: "unparseable version defaults to sinking", version: "not-a-version", expected: true},
 		{name: "empty version defaults to sinking", version: "", expected: true},

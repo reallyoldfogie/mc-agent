@@ -14,6 +14,7 @@ import (
 	v1_21_7 "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_7"
 	v1_21_8 "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_8"
 	v1_21_9 "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_9"
+	v26_1 "github.com/reallyoldfogie/mc-agent/handler_versions/v26_1"
 	"github.com/reallyoldfogie/mc-protocol-go/data/versions"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,6 +41,7 @@ func TestHandlerProtocolVersions(t *testing.T) {
 		{"1.21.9", "1.21.9", v1_21_9.NewHandler(nil)},
 		{"1.21.10", "1.21.10", v1_21_10.NewHandler(nil)},
 		{"1.21.11", "1.21.11", v1_21_11.NewHandler(nil)},
+		{"26.1", "26.1", v26_1.NewHandler(nil)},
 	}
 
 	for _, tt := range tests {

@@ -16,4 +16,5 @@ import (
 
 	_ "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_10"
 	_ "github.com/reallyoldfogie/mc-agent/handler_versions/v1_21_11"
+	_ "github.com/reallyoldfogie/mc-agent/handler_versions/v26_1"
 )

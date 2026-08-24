@@ -54,6 +54,7 @@ func TestSaddleSlotSupported(t *testing.T) {
 		{version: "1.21.9", usesEquipmentSlot: true},
 		{version: "1.21.10", usesEquipmentSlot: true},
 		{version: "1.21.11", usesEquipmentSlot: true},
+		{version: "26.1", usesEquipmentSlot: true},
 	}
 
 	for _, tt := range tests {
