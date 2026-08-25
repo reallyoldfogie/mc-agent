@@ -3,11 +3,10 @@
 package world
 
 import (
-	"fmt"
 	"math"
-	"strings"
 	"sync"
 
+	semver "github.com/aquasecurity/go-version/pkg/version"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -39,6 +38,11 @@ type Manager struct {
 	// is calculated, not sent as VarInt
 	useCalculatedDataLen bool
 
+	// hasFluidCount is true for 26.1+, where LevelChunkSection.write() gained
+	// a second short (fluidCount) after nonEmptyBlockCount, before the block
+	// states container. See versionHasFluidCount.
+	hasFluidCount bool
+
 	mu      sync.RWMutex
 	Columns map[ChunkPos]*ChunkData
 
@@ -62,14 +66,17 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener) *Ma
 	// Determine if we should use calculated data length based on version
 	// In 1.21.5+, the data array length is not sent as a VarInt but must be calculated
 	useCalculatedLen := false
+	hasFluidCount := false
 	if versionHandler != nil {
 		useCalculatedLen = versionRequiresCalculatedDataLen(versionHandler.Version())
+		hasFluidCount = versionHasFluidCount(versionHandler.Version())
 	}
 
 	return &Manager{
 		versionHandler:       versionHandler,
 		events:               events,
 		useCalculatedDataLen: useCalculatedLen,
+		hasFluidCount:        hasFluidCount,
 		Columns:              make(map[ChunkPos]*ChunkData),
 		blockOverrides:       make(map[blockPos]uint32),
 		worldAge:             -1, // Sentinel: not yet initialized
@@ -81,37 +88,34 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener) *Ma
 // requires calculating data array length instead of reading it as a VarInt.
 // This changed in 1.21.5.
 func versionRequiresCalculatedDataLen(version string) bool {
-	// Parse version string like "1.21.5" or "1.21.4"
-	parts := strings.Split(version, ".")
-	if len(parts) < 2 {
+	v, err := semver.Parse(version)
+	if err != nil {
 		return false // Unknown format, assume old behavior
 	}
+	c, err := semver.NewConstraints(">= 1.21.5")
+	if err != nil {
+		return false
+	}
+	return c.Check(v)
+}
 
-	// Parse major.minor.patch
-	var major, minor, patch int
-	if len(parts) >= 1 {
-		fmt.Sscanf(parts[0], "%d", &major)
+// versionHasFluidCount returns true if the Minecraft version's LevelChunkSection
+// wire format includes a second short (fluidCount) after nonEmptyBlockCount,
+// before the block states palette container. Confirmed present in 26.1's
+// LevelChunkSection.write() (/net/minecraft/
+// world/level/chunk/LevelChunkSection.java) and absent from 1.21.11's
+// equivalent ChunkSection.writePacket() (/net/minecraft/world/chunk/ChunkSection.java), which writes only
+// nonEmptyBlockCount.
+func versionHasFluidCount(version string) bool {
+	v, err := semver.Parse(version)
+	if err != nil {
+		return false // Unknown format, assume old behavior
 	}
-	if len(parts) >= 2 {
-		fmt.Sscanf(parts[1], "%d", &minor)
+	c, err := semver.NewConstraints(">= 26.1")
+	if err != nil {
+		return false
 	}
-	if len(parts) >= 3 {
-		fmt.Sscanf(parts[2], "%d", &patch)
-	}
-
-	// Version 1.21.5 and later require calculated data length
-	if major > 1 {
-		return true
-	}
-	if major == 1 {
-		if minor > 21 {
-			return true
-		}
-		if minor == 21 && patch >= 5 {
-			return true
-		}
-	}
-	return false
+	return c.Check(v)
 }
 
 // GetBlockAt returns the block state ID at the given world coordinates.
@@ -194,6 +198,7 @@ func (m *Manager) HandleChunkLoad(chunkX, chunkZ int32, data []byte) error {
 		Z:                    chunkZ,
 		RawData:              data,
 		UseCalculatedDataLen: m.useCalculatedDataLen,
+		HasFluidCount:        m.hasFluidCount,
 	}
 
 	// Store the chunk

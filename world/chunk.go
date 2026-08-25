@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"log"
 	"sync"
 )
 
@@ -34,15 +35,46 @@ type ChunkData struct {
 	// In 1.21.5+, the data array length is not sent in the packet.
 	UseCalculatedDataLen bool
 
+	// HasFluidCount indicates whether each section carries a second short
+	// (fluidCount) after nonEmptyBlockCount, before the block states
+	// container. True for 26.1+; false for all pre-26.1 versions. See
+	// versionHasFluidCount in manager.go.
+	HasFluidCount bool
+
 	// Cached decoded sections (lazy populated on first access)
 	sections     [SECTION_COUNT]*Section
 	sectionsLock sync.RWMutex
+}
+
+// Direct-palette bit thresholds, cited from PaletteProvider.forBlockStates /
+// forBiomes (decompiled via mc-data-gen/extractedSrc/<version>/net/minecraft/
+// world/chunk/PaletteProvider.java; confirmed identical in the 1.21.11 and
+// 26.1 trees, under Mojang's respective Strategy.java naming for 26.1):
+// blocks use an indirect (palette-array) container for bitsInStorage 0-8 and
+// switch to a direct/global container (bitsInMemory bits, no palette array on
+// the wire) for anything above that; biomes switch at 3. A section whose
+// local diversity needs more bits than its indirect cap (e.g. a section that
+// happens to reference many distinct global block states) is sent directly.
+const (
+	blockDirectPaletteBitsThreshold = 8
+	biomeDirectPaletteBitsThreshold = 3
+)
+
+// isDirectPalette reports whether a palette container with the given
+// bits-per-entry is in direct (global-ID, no palette array) form for a
+// container of the given sectionSize (BLOCK_SECTION_SIZE or BIOME_SECTION_SIZE).
+func isDirectPalette(bpe uint8, sectionSize int) bool {
+	if sectionSize == BIOME_SECTION_SIZE {
+		return int(bpe) > biomeDirectPaletteBitsThreshold
+	}
+	return int(bpe) > blockDirectPaletteBitsThreshold
 }
 
 // Section represents a 16x16x16 section of blocks.
 type Section struct {
 	BlockCount   int16    // Number of non-air blocks in section
 	BitsPerEntry uint8    // 0 = single-valued, >0 = palette-based
+	IsDirect     bool     // true: DataArray entries are the state IDs themselves (no Palette indirection)
 	Palette      []uint32 // Block state IDs (empty if BitsPerEntry == 0)
 	SingleValue  uint32   // Single state ID if BitsPerEntry == 0
 	DataArray    []uint64 // Packed block indices (empty if BitsPerEntry == 0)
@@ -109,14 +141,21 @@ func (c *ChunkData) loadSection(targetIdx int) *Section {
 
 	// Skip sections before target
 	for i := 0; i < targetIdx; i++ {
-		if err := skipSection(reader, c.UseCalculatedDataLen); err != nil {
+		if err := skipSection(reader, c.UseCalculatedDataLen, c.HasFluidCount); err != nil {
+			// A real decode error here silently falls back to treating the
+			// section as air, which previously made a corrupt/misaligned
+			// parse indistinguishable from a legitimately empty section. Log
+			// it so a stream desync is visible instead of manifesting only as
+			// "ground never detected".
+			log.Printf("[ChunkData.loadSection][WARN] chunk(%d,%d) targetIdx=%d: skipSection(%d) failed: %v (rawLen=%d useCalcLen=%v hasFluidCount=%v)", c.X, c.Z, targetIdx, i, err, len(c.RawData), c.UseCalculatedDataLen, c.HasFluidCount)
 			return &Section{BitsPerEntry: 0, SingleValue: 0}
 		}
 	}
 
 	// Parse target section
-	section, err := parseSection(reader, c.UseCalculatedDataLen)
+	section, err := parseSection(reader, c.UseCalculatedDataLen, c.HasFluidCount)
 	if err != nil {
+		log.Printf("[ChunkData.loadSection][WARN] chunk(%d,%d) targetIdx=%d: parseSection failed: %v (rawLen=%d useCalcLen=%v hasFluidCount=%v)", c.X, c.Z, targetIdx, err, len(c.RawData), c.UseCalculatedDataLen, c.HasFluidCount)
 		return &Section{BitsPerEntry: 0, SingleValue: 0}
 	}
 
@@ -131,6 +170,11 @@ func (s *Section) getBlockAt(blockIdx int) uint32 {
 	// Single-valued section
 	if s.BitsPerEntry == 0 {
 		return s.SingleValue
+	}
+
+	// Direct section: the packed entry IS the global state ID, no palette indirection
+	if s.IsDirect {
+		return s.getPaletteIndex(blockIdx)
 	}
 
 	// Palette-based section
@@ -161,11 +205,18 @@ func (s *Section) getPaletteIndex(blockIdx int) uint32 {
 
 // skipSection skips over a section in the reader.
 // useCalculatedLen: if true, calculate data array length (1.21.5+); if false, read as VarInt (pre-1.21.5)
-func skipSection(r *bytes.Reader, useCalculatedLen bool) error {
+// hasFluidCount: if true, a second short (fluidCount) follows nonEmptyBlockCount (26.1+)
+func skipSection(r *bytes.Reader, useCalculatedLen bool, hasFluidCount bool) error {
 	// Read and discard block count (Short)
 	var blockCount int16
 	if err := binary.Read(r, binary.BigEndian, &blockCount); err != nil {
 		return err
+	}
+	if hasFluidCount {
+		var fluidCount int16
+		if err := binary.Read(r, binary.BigEndian, &fluidCount); err != nil {
+			return err
+		}
 	}
 	// Skip block states container
 	if err := skipPaletteContainer(r, BLOCK_SECTION_SIZE, useCalculatedLen); err != nil {
@@ -180,12 +231,20 @@ func skipSection(r *bytes.Reader, useCalculatedLen bool) error {
 
 // parseSection parses a section from the reader.
 // useCalculatedLen: if true, calculate data array length (1.21.5+); if false, read as VarInt (pre-1.21.5)
-func parseSection(r *bytes.Reader, useCalculatedLen bool) (*Section, error) {
+// hasFluidCount: if true, a second short (fluidCount) follows nonEmptyBlockCount (26.1+)
+func parseSection(r *bytes.Reader, useCalculatedLen bool, hasFluidCount bool) (*Section, error) {
 	section := &Section{}
 
 	// Read block count (not used for block lookup but stored)
 	if err := binary.Read(r, binary.BigEndian, &section.BlockCount); err != nil {
 		return nil, err
+	}
+	if hasFluidCount {
+		// fluidCount (26.1+): not currently exposed, discarded like BlockCount.
+		var fluidCount int16
+		if err := binary.Read(r, binary.BigEndian, &fluidCount); err != nil {
+			return nil, err
+		}
 	}
 
 	// Parse block states palette container
@@ -230,19 +289,24 @@ func parsePaletteContainer(r *bytes.Reader, section *Section, sectionSize int, u
 		return nil
 	}
 
-	// Palette-based
-	paletteLen, err := readVarInt(r)
-	if err != nil {
-		return err
-	}
-
-	section.Palette = make([]uint32, paletteLen)
-	for i := 0; i < int(paletteLen); i++ {
-		val, err := readVarInt(r)
+	// Direct (global-ID) container: no palette array on the wire at all.
+	if isDirectPalette(bpe, sectionSize) {
+		section.IsDirect = true
+	} else {
+		// Indirect: palette-based
+		paletteLen, err := readVarInt(r)
 		if err != nil {
 			return err
 		}
-		section.Palette[i] = uint32(val)
+
+		section.Palette = make([]uint32, paletteLen)
+		for i := 0; i < int(paletteLen); i++ {
+			val, err := readVarInt(r)
+			if err != nil {
+				return err
+			}
+			section.Palette[i] = uint32(val)
+		}
 	}
 
 	// Determine data array length
@@ -297,14 +361,17 @@ func skipPaletteContainer(r *bytes.Reader, sectionSize int, useCalculatedLen boo
 		return nil
 	}
 
-	// Palette-based: skip palette entries
-	paletteLen, err := readVarInt(r)
-	if err != nil {
-		return err
-	}
-	for i := 0; i < int(paletteLen); i++ {
-		if _, err := readVarInt(r); err != nil {
+	// Indirect: palette-based, skip palette entries. Direct (global-ID)
+	// containers have no palette array on the wire at all.
+	if !isDirectPalette(bpe, sectionSize) {
+		paletteLen, err := readVarInt(r)
+		if err != nil {
 			return err
+		}
+		for i := 0; i < int(paletteLen); i++ {
+			if _, err := readVarInt(r); err != nil {
+				return err
+			}
 		}
 	}
 

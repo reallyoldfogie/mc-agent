@@ -243,11 +243,11 @@ func TestCamelSpeedAttribute(t *testing.T) {
 	}
 }
 
-// TestCamelJumping verifies that the camel dash/lunge works correctly.
+// TestCamelLunging verifies that the camel dash/lunge works correctly.
 // The camel charges a dash while standing still, then lunges forward when
 // the jump key is released. This tests the velocity-impulse mechanic, not
 // forward-movement physics (which TestCamelMovement covers).
-func TestCamelJumping(t *testing.T) {
+func TestCamelLunging(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
 			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "CamelJumpBot")

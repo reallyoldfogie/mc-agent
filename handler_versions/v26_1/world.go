@@ -117,9 +117,10 @@ func (w *worldHandler) ParseUnloadChunk(p pk.Packet) (chunkX, chunkZ int32, err 
 //
 // Protocol note: 26.1 replaced UpdateTime's single flat Time/TickDayTime fields
 // with a ClockUpdates array driven by Mojang's new registry-based "world clock"
-// system (see mc-data-gen/extractedSrc/26.1/net/minecraft/world/clock/{WorldClocks,
-// ClockManager,ClientClockManager}.java and DayTimeToClockFix.java, which documents
-// the old-dayTime-to-clock data migration). Each entry carries a registry ID for a
+// system (decompiled via mc-data-gen/extractedSrc/<version>/net/minecraft/
+// world/clock/{WorldClocks,ClockManager,ClientClockManager}.java and
+// DayTimeToClockFix.java, which documents the old-dayTime-to-clock data
+// migration). Each entry carries a registry ID for a
 // WorldClock (e.g. "overworld", "the_end" - see WorldClocks.java), plus TotalTicks/
 // PartialTick/Rate for that clock. Client-side, ClientClockManager.getTotalTicks()
 // resolves the correct clock via the current dimension's registered WorldClock
