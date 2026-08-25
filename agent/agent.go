@@ -379,6 +379,18 @@ func (a *agent) Init(ctx context.Context) error {
 		return err
 	}
 
+	// Ensure the version's data-generator reports (registries.json, etc.) exist
+	// before trying to load registries from file below. downloadJarsAndGenerateReports
+	// is idempotent (skips if the reports dir already exists), so this is a fast
+	// no-op for any version that's been used before. Without this, a brand-new
+	// version's first-ever Init() (called separately from Start(), which is the
+	// common case in tests) would race ahead of report generation and silently
+	// end up with no file-loaded registries (entity_type, block_entity_type,
+	// etc.) for the entire agent lifetime.
+	if err := a.downloadJarsAndGenerateReports(); err != nil {
+		return fmt.Errorf("failed to download jars and generate reports: %w", err)
+	}
+
 	log.Printf("[Agent %s] Trying to load registries from file (%s)", a.cfg.Name, a.cfg.RegistriesPath)
 	// Load client-side registries from file if available
 	// (server config packets will overwrite any registries loaded from file)
@@ -986,11 +998,6 @@ func (a *agent) Start(ctx context.Context) error {
 	a.lifecycleMu.RLock()
 	baseCtx := a.ctx
 	a.lifecycleMu.RUnlock()
-
-	// download jars and generate reports if needed
-	if err := a.downloadJarsAndGenerateReports(); err != nil {
-		return fmt.Errorf("failed to download jars and generate reports: %w", err)
-	}
 
 	if baseCtx == nil {
 		// Allow Start without explicit Init; initialize implicitly.
