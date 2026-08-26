@@ -88,6 +88,21 @@ func EffectSpeedMultiplier(hasSpeed bool, speedAmplifier int32, hasSlowness bool
 	return multiplier
 }
 
+// HorizontalWaterDrag returns the per-tick horizontal (X/Z) velocity
+// multiplier to apply while in water, mirroring Java LivingEntity.travelInWater's
+// `f` (vec3d.multiply(f, 0.8F, f)): normally WaterDrag (the non-sprinting
+// baseline, getBaseWaterMovementSpeedMultiplier()), but Dolphin's Grace
+// overrides it to a flat DolphinsGraceWaterDragMultiplier regardless of
+// sprint state or amplifier. The vertical (Y) multiplier is unaffected by
+// this effect in vanilla (always a fixed 0.8F) and is not this function's
+// concern — callers should keep applying WaterDrag to Y unconditionally.
+func HorizontalWaterDrag(hasDolphinsGrace bool) float64 {
+	if hasDolphinsGrace {
+		return DolphinsGraceWaterDragMultiplier
+	}
+	return WaterDrag
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

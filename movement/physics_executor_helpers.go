@@ -76,6 +76,9 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 		effects.HasJumpBoost = true
 		effects.JumpBoostAmplifier = amplifier
 	}
+	if _, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:dolphins_grace"); found {
+		effects.HasDolphinsGrace = true
+	}
 
 	pe.physicsState.SetActiveEffects(effects)
 }

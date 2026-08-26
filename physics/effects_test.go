@@ -151,3 +151,20 @@ func TestPerceptionRadiusCap(t *testing.T) {
 		})
 	}
 }
+
+func TestHorizontalWaterDrag(t *testing.T) {
+	tests := []struct {
+		name             string
+		hasDolphinsGrace bool
+		expected         float64
+	}{
+		{name: "no effect: normal water drag", hasDolphinsGrace: false, expected: WaterDrag},
+		{name: "dolphins grace: overrides to flat 0.96", hasDolphinsGrace: true, expected: DolphinsGraceWaterDragMultiplier},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HorizontalWaterDrag(tt.hasDolphinsGrace)
+			assert.InDelta(t, tt.expected, got, 1e-9)
+		})
+	}
+}

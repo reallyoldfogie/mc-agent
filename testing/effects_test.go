@@ -310,3 +310,90 @@ func TestBlindnessPreventsSprinting(t *testing.T) {
 		})
 	}
 }
+
+// TestDolphinsGraceIncreasesSwimSpeed verifies that applying the Dolphin's
+// Grace status effect increases how far the agent's own predicted physics
+// position moves for the same manual throttle input, while submerged in
+// water, over the same time window — end-to-end confirmation that
+// physics.HorizontalWaterDrag is actually wired into state.go's water drag
+// against a real server. See physics/effects_test.go's
+// TestHorizontalWaterDrag and physics/state_active_effects_test.go's
+// TestState_DolphinsGraceIncreasesHorizontalSwimSpeed for the formula-level
+// coverage this builds on.
+func TestDolphinsGraceIncreasesSwimSpeed(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "dolphins_grace_swim_speed", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			startPos, ok := env.Agent.Agent.GetPositionSimple()
+			require.True(t, ok, "agent position should be initialized")
+
+			// Fill a wide, deep water pool centered on the agent's spawn
+			// point (dynamically computed, matching water_flow_test.go's
+			// approach — not a hardcoded absolute Y, since flat-world
+			// ground height isn't a stable assumption to hardcode). Tall
+			// and wide enough that neither a settling swim nor several
+			// seconds of forward throttle in either direction reaches the
+			// floor, ceiling, or walls.
+			poolX := int(math.Floor(startPos.X))
+			poolY := int(math.Floor(startPos.Y))
+			poolZ := int(math.Floor(startPos.Z))
+			_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf(
+				"fill %d %d %d %d %d %d minecraft:water",
+				poolX-15, poolY, poolZ-15, poolX+15, poolY+6, poolZ+15))
+			require.NoError(t, err, "fill water pool")
+			time.Sleep(300 * time.Millisecond)
+
+			teleportCmd := fmt.Sprintf("teleport %s %.1f %.1f %.1f", env.BotName, float64(poolX)+0.5, float64(poolY)+3, float64(poolZ)+0.5)
+			_, err = env.Inst.RCON.Exec(ctx, teleportCmd)
+			require.NoError(t, err, "teleport agent into water pool")
+			time.Sleep(500 * time.Millisecond)
+
+			require.NoError(t, env.Agent.Agent.EnterManualMode(), "enter manual movement mode")
+			defer func() { _ = env.Agent.Agent.ExitManualMode() }()
+
+			// swimForwardAndMeasureDistance holds forward throttle for a
+			// fixed window and returns the horizontal distance covered,
+			// then lets the agent coast to a stop (water drag, not
+			// ground friction, brings it to rest) before returning so
+			// back-to-back calls don't carry over momentum.
+			swimForwardAndMeasureDistance := func() float64 {
+				pos, ok := env.Agent.Agent.GetPositionSimple()
+				require.True(t, ok, "agent position should be initialized")
+
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 1))
+				time.Sleep(1 * time.Second)
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 0))
+				time.Sleep(1 * time.Second)
+
+				endPos, _ := env.Agent.Agent.GetPositionSimple()
+				dx := endPos.X - pos.X
+				dz := endPos.Z - pos.Z
+				return math.Sqrt(dx*dx + dz*dz)
+			}
+
+			baselineDist := swimForwardAndMeasureDistance()
+			t.Logf("baseline swim distance=%.4f", baselineDist)
+			assert.Greater(t, baselineDist, 0.0, "ordinary forward swimming should cover some distance")
+
+			// Re-center between measurements so the second window has the
+			// same clearance from the pool walls as the first.
+			_, err = env.Inst.RCON.Exec(ctx, teleportCmd)
+			require.NoError(t, err, "re-center agent in water pool")
+			time.Sleep(500 * time.Millisecond)
+
+			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:dolphins_grace 30 0", env.BotName))
+			require.NoError(t, err, "apply dolphins grace")
+			time.Sleep(300 * time.Millisecond)
+
+			gracedDist := swimForwardAndMeasureDistance()
+			t.Logf("dolphins grace swim distance=%.4f", gracedDist)
+			assert.Greater(t, gracedDist, baselineDist, "dolphins grace should cover more distance swimming than baseline in the same window")
+
+			_, _ = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:dolphins_grace", env.BotName))
+		})
+	}
+}

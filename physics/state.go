@@ -396,10 +396,14 @@ func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
 		// Apply reduced gravity in water
 		s.Vel.Y -= Gravity * WaterGravityFactor
 
-		// Apply water drag (higher than air drag)
-		s.Vel.X *= WaterDrag
+		// Apply water drag (higher than air drag). Horizontal (X/Z) drag is
+		// the effect-dependent axis (Dolphin's Grace overrides it); vertical
+		// (Y) always uses the fixed WaterDrag baseline, matching Java
+		// travelInWater's vec3d.multiply(f, 0.8F, f).
+		horizontalDrag := HorizontalWaterDrag(s.activeEffects.HasDolphinsGrace)
+		s.Vel.X *= horizontalDrag
 		s.Vel.Y *= WaterDrag
-		s.Vel.Z *= WaterDrag
+		s.Vel.Z *= horizontalDrag
 
 		// Apply water flow current
 		s.applyWaterFlow(w)

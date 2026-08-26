@@ -219,7 +219,23 @@ const (
 
 	// Water resistance/drag when submerged
 	// Higher value = more drag (slower movement)
+	// Cited from Java LivingEntity.getBaseWaterMovementSpeedMultiplier()
+	// (returns 0.8F), the non-sprinting, non-Dolphin's-Grace horizontal drag
+	// baseline used by travelInWater. Vanilla applies this value to the
+	// horizontal axes only (vec3d.multiply(f, 0.8F, f)) and a separate,
+	// always-0.8F multiplier to the vertical axis regardless of f, which
+	// happens to be numerically identical to this constant — so applying
+	// WaterDrag uniformly to X/Y/Z (as this codebase already did before
+	// Dolphin's Grace existed) was already correct for Y; only the
+	// horizontal (X/Z) multiplier needs to become effect-dependent.
 	WaterDrag = 0.8 // Velocity multiplier per tick
+
+	// DolphinsGraceWaterDragMultiplier overrides the horizontal-only water
+	// drag multiplier (see WaterDrag) while Dolphin's Grace is active, cited
+	// from Java LivingEntity.travelInWater's `if (hasStatusEffect(DOLPHINS_GRACE)) { f = 0.96F; }`.
+	// Applies regardless of sprint state or amplifier; vertical drag is
+	// unaffected (vanilla's fixed 0.8F for Y is untouched by this branch).
+	DolphinsGraceWaterDragMultiplier = 0.96
 
 	// WaterGravityFactor is the fraction of normal gravity applied when in water.
 	// Vanilla Minecraft uses ~0.02 blocks/tick² underwater (25% of the normal 0.08).

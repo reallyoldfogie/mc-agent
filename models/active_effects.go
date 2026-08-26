@@ -54,4 +54,10 @@ type ActiveEffects struct {
 	SpeedAmplifier    int32
 	HasSlowness       bool
 	SlownessAmplifier int32
+
+	// HasDolphinsGrace mirrors Java LivingEntity.travelInWater's Dolphin's
+	// Grace branch: overrides the horizontal water-drag multiplier to a flat
+	// 0.96, regardless of sprint state or amplifier (not amplifier-scaled in
+	// vanilla — level has no effect).
+	HasDolphinsGrace bool
 }

@@ -239,3 +239,29 @@ func TestState_SlowFallingAndLevitationNegateFallDamageAccumulation(t *testing.T
 	assert.Less(t, slowFalling.FallDistance(), 1.0, "slow falling should keep fall distance pinned to about one tick's worth, never accumulating")
 	assert.Less(t, levitating.FallDistance(), 0.1, "levitation should keep fall distance pinned near zero every tick (it's rising, not falling, so nothing re-accumulates)")
 }
+
+func TestState_DolphinsGraceIncreasesHorizontalSwimSpeed(t *testing.T) {
+	world, shapes := createWaterPool(10)
+
+	normal := NewState(shapes)
+	normal.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
+	normal.SetVelocity(models.V3{})
+
+	graced := NewState(shapes)
+	graced.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
+	graced.SetVelocity(models.V3{})
+	graced.SetActiveEffects(models.ActiveEffects{HasDolphinsGrace: true})
+
+	forward := Inputs{ThrottleX: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, graced.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().X)
+	gracedDist := math.Abs(graced.Position().X)
+	t.Logf("after %d ticks swimming: normal=%.4f, dolphins grace=%.4f", ticks, normalDist, gracedDist)
+
+	assert.Greater(t, gracedDist, normalDist, "Dolphin's Grace should let the player swim horizontally further than normal in the same number of ticks")
+}
