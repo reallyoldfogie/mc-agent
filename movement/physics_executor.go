@@ -303,6 +303,12 @@ func (pe *PhysicsMovementExecutor) SetVelocity(x, y, z float64) error {
 	return nil
 }
 
+// GetVelocity returns the physics state's current velocity.
+func (pe *PhysicsMovementExecutor) GetVelocity() (x, y, z float64) {
+	vel := pe.physicsState.Velocity()
+	return vel.X, vel.Y, vel.Z
+}
+
 // SetMounted transitions the executor to mounted/riding mode.
 // The executor will then send vehicle movement packets instead of player position packets.
 func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {

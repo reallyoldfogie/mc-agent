@@ -483,6 +483,17 @@ type WorldHandler interface {
 	// This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
 	// The batchCount parameter is the cumulative number of batches received so far.
 	SendChunkBatchReceived(conn PacketWriter, batchCount float32) error
+
+	// ParseExplosion parses a ClientboundExplosion packet.
+	// hasKnockback reports whether the explosion pushed the receiving player;
+	// if true, (knockbackX, knockbackY, knockbackZ) is a velocity DELTA to
+	// ADD to the player's current velocity, not a replacement — mirroring
+	// Java's Entity.addVelocityInternal (this.setVelocity(this.getVelocity().add(velocity))).
+	// 1.21.1 sends an always-present PlayerMotionX/Y/Z triple instead of an
+	// optional field; hasKnockback is always true there (a (0,0,0) add is a
+	// harmless no-op, matching that version's own client, which applies it
+	// unconditionally).
+	ParseExplosion(p pk.Packet) (hasKnockback bool, knockbackX, knockbackY, knockbackZ float64, err error)
 }
 
 // BlockUpdate represents a single block update within a section.

@@ -14,14 +14,22 @@ import (
 )
 
 // velocityCaptureMoveExec captures SetVelocity calls for knockback testing.
+// startVelocity is a settable baseline GetVelocity returns, so tests can
+// verify additive knockback (e.g. explosions) sums correctly onto existing
+// motion rather than replacing it.
 type velocityCaptureMoveExec struct {
 	fakeMoveExec
 	velocityCalls [][3]float64
+	startVelocity [3]float64
 }
 
 func (v *velocityCaptureMoveExec) SetVelocity(x, y, z float64) error {
 	v.velocityCalls = append(v.velocityCalls, [3]float64{x, y, z})
 	return nil
+}
+
+func (v *velocityCaptureMoveExec) GetVelocity() (float64, float64, float64) {
+	return v.startVelocity[0], v.startVelocity[1], v.startVelocity[2]
 }
 
 // buildDamageEventPacket constructs a raw DamageEvent packet.
@@ -231,4 +239,32 @@ func TestOnDamageEvent_FallbackToCauseEntity(t *testing.T) {
 	// Agent at (0,0,0), cause at (0,0,10) → knockback in -Z direction
 	assert.InDelta(t, 0, vel[0], 0.01)
 	assert.InDelta(t, -physics.KnockbackHorizontalStrength, vel[2], 0.01, "knockback Z should be negative (away from cause at +Z)")
+}
+
+// TestApplyExplosionKnockback_AddsToExistingVelocity verifies that
+// explosion knockback (PHASE_4_PLAN.md §2.2, unblocking §4.12 Wind
+// Charged) is added onto the executor's current velocity rather than
+// replacing it — mirroring vanilla's Entity.addVelocityInternal, unlike
+// onDamageEvent's SetVelocity-style knockback above. Tested directly
+// against applyExplosionKnockback rather than through a real
+// ClientboundExplosion packet: that packet's trailing Particle/
+// ItemSoundHolder fields make a hand-built wire packet impractical, and
+// per-version ParseExplosion parsing already has its own coverage in each
+// handler_versions/*/world_test.go.
+func TestApplyExplosionKnockback_AddsToExistingVelocity(t *testing.T) {
+	velCapture := &velocityCaptureMoveExec{startVelocity: [3]float64{1.0, 0.2, -0.5}}
+
+	err := applyExplosionKnockback(velCapture, 0.4, 0.6, -1.0)
+	require.NoError(t, err)
+
+	require.Len(t, velCapture.velocityCalls, 1)
+	got := velCapture.velocityCalls[0]
+	assert.InDelta(t, 1.4, got[0], 1e-9, "X should be existing velocity plus knockback delta, not just the delta")
+	assert.InDelta(t, 0.8, got[1], 1e-9, "Y should be existing velocity plus knockback delta")
+	assert.InDelta(t, -1.5, got[2], 1e-9, "Z should be existing velocity plus knockback delta")
+}
+
+func TestApplyExplosionKnockback_NilExecutorIsNoop(t *testing.T) {
+	err := applyExplosionKnockback(nil, 1, 1, 1)
+	assert.NoError(t, err, "a nil executor should be a harmless no-op, not an error")
 }

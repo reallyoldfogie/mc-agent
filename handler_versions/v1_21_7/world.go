@@ -122,6 +122,22 @@ func (w *worldHandler) ParseUpdateTime(p pk.Packet) (worldAge, timeOfDay int64, 
 	return int64(pkt.Age), int64(pkt.Time), nil
 }
 
+// ParseExplosion parses a ClientboundExplosion packet.
+// Returns whether the explosion pushed the receiving player and, if so,
+// the velocity delta to add to their current velocity (not a replacement
+// — see models.WorldHandler's doc comment).
+func (w *worldHandler) ParseExplosion(p pk.Packet) (hasKnockback bool, knockbackX, knockbackY, knockbackZ float64, err error) {
+	pkt := cb.NewExplosion()
+	if err = pkt.Scan(p); err != nil {
+		return false, 0, 0, 0, common.ErrPacketParse{PacketName: "Explosion", Cause: err}
+	}
+	if !pkt.PlayerKnockback.Has || pkt.PlayerKnockback.Val == nil {
+		return false, 0, 0, 0, nil
+	}
+	kb := pkt.PlayerKnockback.Val
+	return true, float64(kb.X), float64(kb.Y), float64(kb.Z), nil
+}
+
 // SendChunkBatchReceived sends an acknowledgment for received chunk batches.
 // This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
 func (w *worldHandler) SendChunkBatchReceived(conn models.PacketWriter, batchCount float32) error {

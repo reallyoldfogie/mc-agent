@@ -96,6 +96,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onDamageEvent,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundExplosion"),
+			Name:     "ClientboundExplosion",
+			Priority: 0,
+			F:        a.onExplosion,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetPassengers"),
 			Name:     "ClientboundSetPassengers",
 			Priority: 0,
@@ -960,6 +966,61 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 
 	log.Printf("[onDamageEvent] Applied knockback: vel=(%.4f, %.4f, %.4f) dir=(%.2f, %.2f) from attacker at (%.2f, %.2f)",
 		knockbackX, knockbackY, knockbackZ, dirX, dirZ, attackerX, attackerZ)
+
+	return nil
+}
+
+// onExplosion handles ClientboundExplosion packets.
+// Applies player knockback as an ADDITIVE velocity delta (see
+// models.WorldHandler.ParseExplosion's doc comment) — mirrors vanilla's
+// Entity.addVelocityInternal, not a SetVelocity-style replacement of
+// existing motion. This is the only path that observes explosion-sourced
+// player knockback: vanilla delivers it via a dedicated field on this
+// packet (PlayerKnockback), not through the generic per-entity
+// ClientboundEntityVelocity path onEntityVelocityUpdate handles (that one
+// covers melee/enchantment knockback and projectile motion instead).
+//
+// Covers every effect/mechanic that triggers a knockback-only explosion —
+// Wind Charged (PHASE_4_PLAN.md §4.12) needs no code of its own beyond
+// this: it's entirely server-driven, gated on a status effect that only
+// matters to the entity that died, not to the surviving player's client.
+func (a *agent) onExplosion(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	hasKnockback, kbX, kbY, kbZ, err := a.versionHandler.Play().World().ParseExplosion(p)
+	if err != nil {
+		return err
+	}
+	if !hasKnockback {
+		return nil
+	}
+
+	return applyExplosionKnockback(a.moveExec, kbX, kbY, kbZ)
+}
+
+// applyExplosionKnockback adds an explosion's knockback delta onto the
+// executor's current velocity, mirroring vanilla's Entity.addVelocityInternal
+// (an addition, not a SetVelocity-style replacement of existing motion).
+// Split out from onExplosion so the additive-velocity behavior can be
+// tested directly, without needing a real (and, for this packet, fairly
+// elaborate — Particle/ItemSoundHolder trailing fields) wire-format packet.
+func applyExplosionKnockback(moveExec models.MovementExecutor, kbX, kbY, kbZ float64) error {
+	if moveExec == nil {
+		return nil
+	}
+
+	curX, curY, curZ := moveExec.GetVelocity()
+	newX, newY, newZ := curX+kbX, curY+kbY, curZ+kbZ
+
+	if err := moveExec.SetVelocity(newX, newY, newZ); err != nil {
+		log.Printf("[onExplosion] Error applying explosion knockback: %v", err)
+		return nil
+	}
+
+	log.Printf("[onExplosion] Applied explosion knockback delta=(%.4f, %.4f, %.4f) -> velocity=(%.4f, %.4f, %.4f)",
+		kbX, kbY, kbZ, newX, newY, newZ)
 
 	return nil
 }

@@ -122,6 +122,23 @@ func (w *worldHandler) ParseUpdateTime(p pk.Packet) (worldAge, timeOfDay int64, 
 	return int64(pkt.Age), int64(pkt.Time), nil
 }
 
+// ParseExplosion parses a ClientboundExplosion packet.
+//
+// 1.21.1 predates the optional PlayerKnockback field introduced in
+// 1.21.2+ — it always sends a PlayerMotionX/Y/Z triple (0,0,0) when the
+// receiving player wasn't pushed), matching this version's own vanilla
+// client, which adds it unconditionally
+// (ClientPlayNetworkHandler.onExplosion: `player.setVelocity(velocity.add(
+// motionX, motionY, motionZ))` with no presence check). hasKnockback is
+// therefore always true here; adding (0,0,0) is a harmless no-op.
+func (w *worldHandler) ParseExplosion(p pk.Packet) (hasKnockback bool, knockbackX, knockbackY, knockbackZ float64, err error) {
+	pkt := cb.NewExplosion()
+	if err = pkt.Scan(p); err != nil {
+		return false, 0, 0, 0, common.ErrPacketParse{PacketName: "Explosion", Cause: err}
+	}
+	return true, float64(pkt.PlayerMotionX), float64(pkt.PlayerMotionY), float64(pkt.PlayerMotionZ), nil
+}
+
 // SendChunkBatchReceived sends an acknowledgment for received chunk batches.
 // This is required in 1.20.2+ to signal the server that the client is ready for more chunks.
 func (w *worldHandler) SendChunkBatchReceived(conn models.PacketWriter, batchCount float32) error {

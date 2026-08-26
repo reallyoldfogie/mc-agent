@@ -164,3 +164,96 @@ func TestKnockback_AttackFromSourcePosition(t *testing.T) {
 		})
 	}
 }
+
+// TestWindChargedExplosionKnocksBackNearbyPlayer verifies PHASE_4_PLAN.md
+// §2.2/§4.12 end-to-end: an entity with Wind Charged dying nearby triggers
+// a knockback-only explosion (WindChargedStatusEffect.onEntityRemoval),
+// and the agent's own predicted position is pushed away from it — proving
+// the new ClientboundExplosion/PlayerKnockback handling
+// (models.WorldHandler.ParseExplosion, agent.onExplosion/
+// applyExplosionKnockback) is actually wired end-to-end against a real
+// server. Wind Charged itself needs no code of its own beyond this — see
+// agent/handlers_knockback_test.go's TestApplyExplosionKnockback_* for the
+// additive-velocity coverage this builds on.
+func TestWindChargedExplosionKnocksBackNearbyPlayer(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "wind_charged_explosion", "survival", false, tt.MCVersion, DifficultyNormal, true)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			platformY := int(math.Floor(env.ContainerPos.Y)) - 1
+			platformX := int(math.Floor(env.ContainerPos.X)) - 10
+			platformZ := int(math.Floor(env.ContainerPos.Z)) - 10
+
+			// Build a flat platform for the agent to stand on
+			BuildPlatform(ctx, env.Inst.RCON, platformX, platformY, platformZ, 20, 20, "minecraft:grass_block")
+
+			// Clear area above the platform so nothing blocks movement
+			if err := ClearArea(ctx, env.Inst.RCON,
+				platformX, platformY+1, platformZ,
+				platformX+20, platformY+5, platformZ+20); err != nil {
+				t.Logf("warning: failed to clear area: %v", err)
+			}
+
+			time.Sleep(2 * time.Second)
+
+			// Get the bot's current position
+			botPos, posInitialized := env.Agent.Agent.GetPositionSimple()
+			require.True(t, posInitialized, "bot position initialized")
+			t.Logf("Bot position: %s", botPos)
+
+			// Spawn a NoAI pig 2 blocks in the +X direction — close enough
+			// to guarantee it's within the explosion's 3-5 block blast
+			// radius regardless of the random roll, but far enough that the
+			// agent isn't standing exactly on the explosion's center.
+			pigOffsetX := 2.0
+			spawnX := botPos.X + pigOffsetX
+			spawnY := botPos.Y
+			spawnZ := botPos.Z
+			spawnCmd := fmt.Sprintf(`summon minecraft:pig %.1f %.1f %.1f {Health:10f,NoAI:1b}`, spawnX, spawnY, spawnZ)
+			resp, err := env.Inst.RCON.Exec(env.Ctx, spawnCmd)
+			require.NoError(t, err, "spawn pig")
+			t.Logf("Spawn pig at (+%.0fX): %s", pigOffsetX, resp)
+
+			time.Sleep(1 * time.Second)
+
+			// Apply Wind Charged to the pig
+			effectCmd := "effect give @e[type=minecraft:pig,limit=1,sort=nearest] minecraft:wind_charged 100 0"
+			resp, err = env.Inst.RCON.Exec(env.Ctx, effectCmd)
+			require.NoError(t, err, "apply wind charged to pig")
+			t.Logf("Effect command response: %s", resp)
+
+			time.Sleep(300 * time.Millisecond)
+
+			// Record the agent's position before the pig dies
+			beforePos, err := GetPlayerPosition(ctx, env.Inst.RCON, env.BotName)
+			require.NoError(t, err, "get position before explosion")
+			t.Logf("Position before explosion: (%.4f, %.4f, %.4f)", beforePos.X, beforePos.Y, beforePos.Z)
+
+			// Kill the pig — WindChargedStatusEffect.onEntityRemoval fires on
+			// RemovalReason.KILLED, creating a knockback-only explosion
+			// centered on it.
+			killCmd := "kill @e[type=minecraft:pig,limit=1,sort=nearest]"
+			resp, err = env.Inst.RCON.Exec(env.Ctx, killCmd)
+			require.NoError(t, err, "kill wind-charged pig")
+			t.Logf("Kill command response: %s", resp)
+
+			// Wait for the explosion packet and its knockback to take effect
+			time.Sleep(2 * time.Second)
+
+			// Record the agent's position after the explosion
+			afterPos, err := GetPlayerPosition(ctx, env.Inst.RCON, env.BotName)
+			require.NoError(t, err, "get position after explosion")
+			t.Logf("Position after explosion: (%.4f, %.4f, %.4f)", afterPos.X, afterPos.Y, afterPos.Z)
+
+			// The pig died at +X relative to the agent, so knockback should
+			// push the agent in the -X direction (away from the explosion).
+			xDisplacement := afterPos.X - beforePos.X
+			t.Logf("X displacement: %.4f", xDisplacement)
+			require.Less(t, xDisplacement, -0.01,
+				"agent should be knocked back in -X direction (away from the wind-charged explosion at +X)")
+		})
+	}
+}
