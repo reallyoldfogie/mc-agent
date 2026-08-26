@@ -265,3 +265,57 @@ func TestState_DolphinsGraceIncreasesHorizontalSwimSpeed(t *testing.T) {
 
 	assert.Greater(t, gracedDist, normalDist, "Dolphin's Grace should let the player swim horizontally further than normal in the same number of ticks")
 }
+
+func TestState_CobwebSlowsMovementAndWeavingHalvesSeverity(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetPassable(BlockCobweb, true)
+	shapes.SetCobweb(BlockCobweb, true)
+
+	// Cover a patch of the floor's surface (Y=1, the block cell just above
+	// the Y=0 stone floor) with cobwebs, wide enough that a correctly-slowed
+	// player never leaves it within the test's tick budget.
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 1, z, BlockCobweb)
+		}
+	}
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, -15) // far outside the cobweb patch
+
+	webbed := NewState(shapes)
+	settle(webbed, 0) // inside the cobweb patch, no Weaving
+
+	woven := NewState(shapes)
+	woven.SetActiveEffects(models.ActiveEffects{HasWeaving: true})
+	settle(woven, 0) // inside the same cobweb patch, with Weaving
+
+	forward := Inputs{ThrottleX: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, webbed.Tick(forward, world))
+		require.NoError(t, woven.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().X - (-15))
+	webbedDist := math.Abs(webbed.Position().X)
+	wovenDist := math.Abs(woven.Position().X)
+	t.Logf("after %d ticks: normal=%.4f, cobweb=%.4f, cobweb+weaving=%.4f", ticks, normalDist, webbedDist, wovenDist)
+
+	assert.Greater(t, normalDist, webbedDist, "plain cobweb should slow horizontal movement well below normal")
+	assert.Greater(t, wovenDist, webbedDist, "weaving should let the player move further than plain cobweb slowdown")
+	assert.Less(t, wovenDist, normalDist, "weaving should still not restore full normal speed")
+}

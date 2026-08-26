@@ -103,6 +103,19 @@ func HorizontalWaterDrag(hasDolphinsGrace bool) float64 {
 	return WaterDrag
 }
 
+// CobwebSlowdownMultiplier mirrors Java CobwebBlock.onEntityCollision /
+// WebBlock.entityInside: while overlapping a cobweb block, that tick's
+// attempted movement is scaled by a fixed per-axis multiplier (velocity is
+// separately reset to zero afterward by the caller — see
+// physics/state.go's isOverlappingCobweb doc comment). Weaving halves the
+// severity rather than bypassing the slowdown; not amplifier-scaled.
+func CobwebSlowdownMultiplier(hasWeaving bool) (x, y, z float64) {
+	if hasWeaving {
+		return WeavingCobwebSlowdownX, WeavingCobwebSlowdownY, WeavingCobwebSlowdownZ
+	}
+	return CobwebSlowdownX, CobwebSlowdownY, CobwebSlowdownZ
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

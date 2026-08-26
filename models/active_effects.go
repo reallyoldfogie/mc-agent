@@ -60,4 +60,9 @@ type ActiveEffects struct {
 	// 0.96, regardless of sprint state or amplifier (not amplifier-scaled in
 	// vanilla — level has no effect).
 	HasDolphinsGrace bool
+
+	// HasWeaving mirrors Java CobwebBlock.onEntityCollision/WebBlock.entityInside's
+	// Weaving branch: halves the severity of cobweb slowdown rather than
+	// bypassing it. Not amplifier-scaled.
+	HasWeaving bool
 }

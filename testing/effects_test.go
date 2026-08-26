@@ -397,3 +397,86 @@ func TestDolphinsGraceIncreasesSwimSpeed(t *testing.T) {
 		})
 	}
 }
+
+// TestWeavingReducesCobwebSlowdown verifies both halves of §4.11/§2.3
+// end-to-end against a real server: that walking into cobwebs slows
+// horizontal movement well below normal (the new Phase-5 baseline
+// mechanic, previously nonexistent in this codebase), and that Weaving
+// halves that slowdown's severity rather than restoring full speed. See
+// physics/effects_test.go's TestCobwebSlowdownMultiplier and
+// physics/state_active_effects_test.go's
+// TestState_CobwebSlowsMovementAndWeavingHalvesSeverity for the
+// formula-level coverage this builds on.
+func TestWeavingReducesCobwebSlowdown(t *testing.T) {
+	for _, tt := range models.StandardVersionTests {
+		t.Run(tt.Name, func(t *testing.T) {
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "weaving_cobweb_slowdown", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			defer env.Cancel()
+
+			ctx := context.Background()
+
+			startPos, ok := env.Agent.Agent.GetPositionSimple()
+			require.True(t, ok, "agent position should be initialized")
+
+			// Cover a patch of ground at the agent's own feet level with
+			// cobwebs (dynamically computed Y, matching the water pool
+			// tests' approach — not a hardcoded absolute height), wide
+			// enough that the slowed agent never walks out of it within the
+			// test's throttle windows.
+			webX := int(math.Floor(startPos.X))
+			webY := int(math.Floor(startPos.Y))
+			webZ := int(math.Floor(startPos.Z))
+			_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf(
+				"fill %d %d %d %d %d %d minecraft:cobweb",
+				webX-4, webY, webZ-4, webX+4, webY, webZ+4))
+			require.NoError(t, err, "fill cobweb patch")
+			time.Sleep(300 * time.Millisecond)
+
+			center := fmt.Sprintf("teleport %s %.1f %.1f %.1f", env.BotName, float64(webX)+0.5, float64(webY), float64(webZ)+0.5)
+			_, err = env.Inst.RCON.Exec(ctx, center)
+			require.NoError(t, err, "teleport agent onto cobweb patch")
+			time.Sleep(500 * time.Millisecond)
+
+			require.NoError(t, env.Agent.Agent.EnterManualMode(), "enter manual movement mode")
+			defer func() { _ = env.Agent.Agent.ExitManualMode() }()
+
+			// walkForwardAndMeasureDistance holds forward throttle for a
+			// fixed window and returns the horizontal distance covered.
+			// Unlike the water/ground tests, it does not wait to "coast to
+			// a stop" afterward — cobweb slowdown already zeroes velocity
+			// every tick on its own, so there is no momentum left to settle.
+			walkForwardAndMeasureDistance := func() float64 {
+				pos, ok := env.Agent.Agent.GetPositionSimple()
+				require.True(t, ok, "agent position should be initialized")
+
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 1))
+				time.Sleep(1 * time.Second)
+				require.NoError(t, env.Agent.Agent.SetManualThrottle(0, 0))
+
+				endPos, _ := env.Agent.Agent.GetPositionSimple()
+				dx := endPos.X - pos.X
+				dz := endPos.Z - pos.Z
+				return math.Sqrt(dx*dx + dz*dz)
+			}
+
+			cobwebDist := walkForwardAndMeasureDistance()
+			t.Logf("cobweb (no weaving) distance=%.4f", cobwebDist)
+			assert.Greater(t, cobwebDist, 0.0, "cobweb should still allow some crawl, not fully immobilize")
+			assert.Less(t, cobwebDist, 1.0, "cobweb should slow movement to a crawl well under a full walking pace in one second")
+
+			_, err = env.Inst.RCON.Exec(ctx, center)
+			require.NoError(t, err, "re-center agent on cobweb patch")
+			time.Sleep(500 * time.Millisecond)
+
+			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:weaving 30 0", env.BotName))
+			require.NoError(t, err, "apply weaving")
+			time.Sleep(300 * time.Millisecond)
+
+			wovenDist := walkForwardAndMeasureDistance()
+			t.Logf("cobweb + weaving distance=%.4f", wovenDist)
+			assert.Greater(t, wovenDist, cobwebDist, "weaving should let the agent crawl further than plain cobweb slowdown")
+
+			_, _ = env.Inst.RCON.Exec(ctx, fmt.Sprintf("effect clear %s minecraft:weaving", env.BotName))
+		})
+	}
+}

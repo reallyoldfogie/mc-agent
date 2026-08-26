@@ -370,6 +370,11 @@ func (bsm *blockShapeManager) IsPowderSnow(blockStateID uint32) bool {
 	return bsm.BlockName(blockStateID) == "minecraft:powder_snow"
 }
 
+// IsCobweb checks if block is a cobweb.
+func (bsm *blockShapeManager) IsCobweb(blockStateID uint32) bool {
+	return bsm.BlockName(blockStateID) == "minecraft:cobweb"
+}
+
 // GetWaterFlowSpeed returns the flow speed multiplier for water based on the block's age property.
 // Age 0 (source): returns 0.0 (no flow)
 // Age 1-7 (flowing): returns proportional speed where age 7 = 1.0

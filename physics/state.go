@@ -300,11 +300,18 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Detect water state FIRST so swim-up/down inputs work in applyMovementInputs
 	s.detectWaterState(w)
 
+	// Detect cobweb overlap at the pre-move position (see
+	// isOverlappingCobweb's doc comment for why pre-move rather than
+	// replicating vanilla's exact one-tick-delayed field).
+	inCobweb := s.isOverlappingCobweb(w)
+
 	// Reset fall distance when in water (water negates all fall damage).
 	// Slow Falling and Levitation do the same — Java calls onLanding() every
 	// tick while either is active (LivingEntity.tickMovement), which is what
 	// actually negates their fall damage, not a special-cased damage formula.
-	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation {
+	// Cobwebs do too (Entity.slowMovement/makeStuckInBlock also calls
+	// onLanding()/resetFallDistance()).
+	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation || inCobweb {
 		s.fallDistance = 0.0
 	}
 
@@ -337,8 +344,27 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Update velocity based on inputs (swim-up/down uses s.isInWater)
 	s.tickVelocity(input, inertiaFactor, accelFactor, w)
 
+	// Cobweb slowdown scales *this tick's* attempted movement (Java
+	// Entity.move()/travel: `movement = movement.multiply(movementMultiplier)`
+	// before collision resolution, then velocity is reset to zero
+	// afterward — see the zero-out below). Weaving halves the severity
+	// rather than bypassing it.
+	if inCobweb {
+		mx, my, mz := CobwebSlowdownMultiplier(s.activeEffects.HasWeaving)
+		s.Vel.X *= mx
+		s.Vel.Y *= my
+		s.Vel.Z *= mz
+	}
+
 	// Update position with collision detection
 	s.tickPosition(w)
+
+	// Zero velocity after moving while in a cobweb, matching Java's
+	// `this.setVelocity(Vec3d.ZERO)`/`setDeltaMovement(Vec3.ZERO)` — momentum
+	// does not carry into the next tick.
+	if inCobweb {
+		s.Vel = models.V3{}
+	}
 
 	// Check if player is on a ladder/vine and should climb
 	blockAtPlayer, _ := w.GetBlockStatus(
@@ -1039,6 +1065,40 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 	}
 
 	return boxes
+}
+
+// isOverlappingCobweb reports whether the player's current bounding box
+// intersects any cobweb block, mirroring Java's per-tick entityInside/
+// onEntityCollision dispatch — hitbox overlap, not a single point sample,
+// since a cobweb occupies the block's full outline shape even though it has
+// no collision boxes of its own (getSurroundingBoxes already skips it as
+// passable). Checked at the player's pre-move position, applied within the
+// same tick, rather than replicating vanilla's exact one-tick-delayed
+// movementMultiplier/stuckSpeedMultiplier field — the steady-state behavior
+// while continuously overlapping is the same either way, and every other
+// per-tick block check in this file (ladder, ice) already uses the
+// pre-move position the same way. Must only be called while the write lock
+// is held.
+func (s *state) isOverlappingCobweb(w World) bool {
+	bb := s.getAABBUnsafe()
+	minX := int(math.Floor(bb.X.Min))
+	maxX := int(math.Floor(bb.X.Max))
+	minY := int(math.Floor(bb.Y.Min))
+	maxY := int(math.Floor(bb.Y.Max))
+	minZ := int(math.Floor(bb.Z.Min))
+	maxZ := int(math.Floor(bb.Z.Max))
+
+	for y := minY; y <= maxY; y++ {
+		for z := minZ; z <= maxZ; z++ {
+			for x := minX; x <= maxX; x++ {
+				blockStateID, _ := w.GetBlockStatus(x, y, z)
+				if s.shapeProvider.IsCobweb(blockStateID) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // computeCollisionYXZWithStandableEntities is computeCollisionYXZ's walking-player

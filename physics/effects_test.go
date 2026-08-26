@@ -168,3 +168,23 @@ func TestHorizontalWaterDrag(t *testing.T) {
 		})
 	}
 }
+
+func TestCobwebSlowdownMultiplier(t *testing.T) {
+	tests := []struct {
+		name                      string
+		hasWeaving                bool
+		expectX, expectY, expectZ float64
+	}{
+		{name: "no weaving: normal cobweb slowdown", hasWeaving: false, expectX: CobwebSlowdownX, expectY: CobwebSlowdownY, expectZ: CobwebSlowdownZ},
+		{name: "weaving: halved severity, not bypassed", hasWeaving: true, expectX: WeavingCobwebSlowdownX, expectY: WeavingCobwebSlowdownY, expectZ: WeavingCobwebSlowdownZ},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			x, y, z := CobwebSlowdownMultiplier(tt.hasWeaving)
+			assert.InDelta(t, tt.expectX, x, 1e-9)
+			assert.InDelta(t, tt.expectY, y, 1e-9)
+			assert.InDelta(t, tt.expectZ, z, 1e-9)
+			assert.Less(t, x, 1.0, "cobweb slowdown should always be well below full speed, weaving or not")
+		})
+	}
+}

@@ -172,6 +172,10 @@ func (msp *MockShapeProvider) IsPowderSnow(blockStateID uint32) bool {
 	return false // No powder snow in mock
 }
 
+func (msp *MockShapeProvider) IsCobweb(blockStateID uint32) bool {
+	return false // No cobwebs in mock
+}
+
 func (msp *MockShapeProvider) BlockName(blockStateID uint32) string {
 	if blockStateID == 0 {
 		return "minecraft:air"

@@ -79,6 +79,9 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 	if _, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:dolphins_grace"); found {
 		effects.HasDolphinsGrace = true
 	}
+	if _, found := pe.entityPositionGetter.GetOwnActiveEffect("minecraft:weaving"); found {
+		effects.HasWeaving = true
+	}
 
 	pe.physicsState.SetActiveEffects(effects)
 }

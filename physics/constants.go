@@ -283,6 +283,28 @@ const (
 	SwimDownVelocity = 0.04
 )
 
+// Cobweb slowdown constants, cited from Java CobwebBlock.onEntityCollision
+// (Yarn, pre-26.1) / WebBlock.entityInside (Mojang, 26.1+) — identical
+// numeric values, confirmed against both mapping sets. Entity.slowMovement/
+// makeStuckInBlock scales *that tick's* attempted movement by these
+// per-axis multipliers, then resets velocity to zero entirely (not a
+// continuous per-tick drag the way water/gravity effects work — see
+// physics/state.go's isOverlappingCobweb for how this is applied).
+const (
+	// CobwebSlowdownX/Y/Z are the normal (no Weaving) per-axis multipliers.
+	CobwebSlowdownX = 0.25
+	CobwebSlowdownY = 0.05
+	CobwebSlowdownZ = 0.25
+
+	// WeavingCobwebSlowdownX/Y/Z apply instead of the above while Weaving is
+	// active: half the severity, not a full-speed bypass (correcting
+	// minecraft_movement_effects.md's "restores full walking speed" claim —
+	// vanilla's own multiplier is still well below 1.0 on every axis).
+	WeavingCobwebSlowdownX = 0.5
+	WeavingCobwebSlowdownY = 0.25
+	WeavingCobwebSlowdownZ = 0.5
+)
+
 // Minecart physics constants
 // Source: net/minecraft/entity/vehicle/DefaultMinecartController.java (1.21.2+)
 //

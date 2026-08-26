@@ -56,6 +56,7 @@ type mockShapeProvider struct {
 	honeyBlocks      map[uint32]bool
 	slimeBlocks      map[uint32]bool
 	powderSnowBlocks map[uint32]bool
+	cobwebBlocks     map[uint32]bool
 }
 
 func newMockShapeProvider() *mockShapeProvider {
@@ -67,6 +68,7 @@ func newMockShapeProvider() *mockShapeProvider {
 		honeyBlocks:      make(map[uint32]bool),
 		slimeBlocks:      make(map[uint32]bool),
 		powderSnowBlocks: make(map[uint32]bool),
+		cobwebBlocks:     make(map[uint32]bool),
 	}
 }
 
@@ -96,6 +98,10 @@ func (m *mockShapeProvider) SetSlimeBlock(blockID uint32, isSlime bool) {
 
 func (m *mockShapeProvider) SetPowderSnow(blockID uint32, isPowderSnow bool) {
 	m.powderSnowBlocks[blockID] = isPowderSnow
+}
+
+func (m *mockShapeProvider) SetCobweb(blockID uint32, isCobweb bool) {
+	m.cobwebBlocks[blockID] = isCobweb
 }
 
 func (m *mockShapeProvider) IsPassable(blockID uint32) bool {
@@ -181,6 +187,10 @@ func (m *mockShapeProvider) IsPowderSnow(blockStateID uint32) bool {
 	return m.powderSnowBlocks[blockStateID]
 }
 
+func (m *mockShapeProvider) IsCobweb(blockStateID uint32) bool {
+	return m.cobwebBlocks[blockStateID]
+}
+
 // GetWaterFlowDirection stub (returns no flow for tests)
 func (m *mockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
 	return models.V3{} // No flow in mock world
@@ -203,6 +213,8 @@ func (m *mockShapeProvider) BlockName(blockStateID uint32) string {
 		return "minecraft:ladder"
 	case BlockHalfSlab:
 		return "minecraft:oak_slab"
+	case BlockCobweb:
+		return "minecraft:cobweb"
 	default:
 		return "minecraft:unknown"
 	}
@@ -270,6 +282,7 @@ const (
 	BlockWater    uint32 = 2
 	BlockLadder   uint32 = 3
 	BlockHalfSlab uint32 = 4 // Custom for testing
+	BlockCobweb   uint32 = 5
 )
 
 // Test helper: create a simple flat world with a floor at Y=0
