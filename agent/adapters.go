@@ -771,6 +771,43 @@ func (a *agent) GetOwnActiveEffect(effectName string) (int32, bool) {
 	return effect.Amplifier, true
 }
 
+// GetOwnEquippedChestItem returns the local item name (unprefixed, e.g.
+// "elytra") in the agent's own chest armor slot. See
+// models.MountedEntityPositionGetter.GetOwnEquippedChestItem.
+func (a *agent) GetOwnEquippedChestItem() (string, bool) {
+	a.slotsMu.RLock()
+	slotResolver := a.slots
+	a.slotsMu.RUnlock()
+
+	a.itemMgrMu.RLock()
+	itemMgr := a.itemMgr
+	a.itemMgrMu.RUnlock()
+
+	if slotResolver == nil || itemMgr == nil {
+		return "", false
+	}
+
+	// Player inventory chest armor slot is index 6 (0=craft output,
+	// 1-4=craft grid, 5=head, 6=chest, 7=legs, 8=feet, 9-35=main, 36-44=hotbar).
+	itemID, _, ok := slotResolver.ResolveSlot(-2, 6)
+	if !ok {
+		return "", false
+	}
+
+	itemName := itemMgr.GetItemNameByID(itemID)
+	if itemName == "" {
+		return "", false
+	}
+
+	// Strip the namespace prefix (e.g., "minecraft:") to get local name
+	localName := itemName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	return localName, true
+}
+
 // perceptionRadiusCap clamps radius to the agent's own effective vision
 // range under Blindness/Darkness (see physics.PerceptionRadiusCap). Shared
 // by every search function's honorPerceptionEffects=true path.

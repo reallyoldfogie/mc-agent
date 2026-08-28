@@ -1836,7 +1836,7 @@ func (a *agent) onSetSlot(p pk.Packet) error {
 	// Offhand slot is index 45 in the player inventory (windowID 0 or -2)
 	const offhandSlotIndex int16 = 45
 	if slotIndex == offhandSlotIndex {
-		a.moveMirror.EmitEquipment(a.GetEntityID(), models.OffHand, item.ItemID, item.Count)
+		a.moveMirror.EmitEquipment(a.GetEntityID(), models.EquipmentSlotOffHand, item.ItemID, item.Count)
 	}
 
 	// Hotbar slots are 36-44. If the currently-held slot's contents changed,
@@ -1850,11 +1850,38 @@ func (a *agent) onSetSlot(p pk.Packet) error {
 		heldSlotSet := a.heldSlotSet
 		a.heldSlotMu.RUnlock()
 		if heldSlotSet && slotIndex == hotbarSlotStart+heldSlot {
-			a.moveMirror.EmitEquipment(a.GetEntityID(), models.MainHand, item.ItemID, item.Count)
+			a.moveMirror.EmitEquipment(a.GetEntityID(), models.EquipmentSlotMainHand, item.ItemID, item.Count)
 		}
 	}
 
+	// Armor slots (player inventory window 0/-2): 5=head, 6=chest, 7=legs,
+	// 8=feet. Missing before this fix — onSetSlot only ever handled hand
+	// slots, so equipping armor (including an elytra) never showed up in
+	// the agent's own replay, since the server never sends a player their
+	// own equipment broadcast (see EmitEquipment's doc comment).
+	if armorSlot, ok := armorEquipmentSlot(slotIndex); ok {
+		a.moveMirror.EmitEquipment(a.GetEntityID(), armorSlot, item.ItemID, item.Count)
+	}
+
 	return nil
+}
+
+// armorEquipmentSlot maps a player inventory (window 0/-2) armor slot index
+// to its EquipmentSlotType, for mirroring armor changes into the agent's own
+// replay the same way onSetSlot already does for hand slots.
+func armorEquipmentSlot(slotIndex int16) (models.EquipmentSlotType, bool) {
+	switch slotIndex {
+	case 5:
+		return models.EquipmentSlotHead, true
+	case 6:
+		return models.EquipmentSlotChest, true
+	case 7:
+		return models.EquipmentSlotLegs, true
+	case 8:
+		return models.EquipmentSlotFeet, true
+	default:
+		return 0, false
+	}
 }
 
 // onWindowItems handles container/window inventory updates (ClientboundContainerSetContent).

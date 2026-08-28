@@ -328,6 +328,28 @@ func (me *movementPacketSender) StopSprinting() error {
 	return err
 }
 
+// StartGliding sends the start_elytra_flying player-command packet,
+// confirming to the server the client-predicted transition into elytra
+// gliding physics (mirroring vanilla's ClientPlayerEntity.tick(), which
+// sends this the instant its own local checkGliding() succeeds). Callers
+// are expected to call this only on a false->true gliding transition.
+// Unlike sprint/sneak, there is no corresponding "stop gliding" packet —
+// gliding termination is a pure physics decision (landing, Levitation,
+// unequipping the elytra) with no protocol acknowledgement needed, so this
+// intentionally has no StopGliding counterpart or idempotency guard: the
+// caller (physics.State.IsGliding()'s before/after comparison) already
+// only calls this once per transition.
+func (me *movementPacketSender) StartGliding() error {
+	if me.client == nil {
+		return nil
+	}
+	entityID := me.getBotEntityID()
+	if me.movementHandler != nil {
+		return me.movementHandler.SendPlayerCommand(me.client.Conn(), entityID, versions_common.ActionStartFlyingElytra)
+	}
+	return versions_common.ErrHandlerNotSet{HandlerName: "MovementHandler"}
+}
+
 // StartSneaking sends a command to start sneaking
 func (me *movementPacketSender) StartSneaking() error {
 	me.stateMu.Lock()

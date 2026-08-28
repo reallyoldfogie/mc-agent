@@ -305,6 +305,40 @@ const (
 	WeavingCobwebSlowdownZ = 0.5
 )
 
+// Elytra gliding constants, cited from Java LivingEntity.calcGlidingVelocity
+// (Yarn, decompiled 1.21.11) — see physics/elytra.go for the full formula.
+const (
+	// GlideHorizontalDrag/GlideVerticalDrag are the final per-tick velocity
+	// multipliers applied after calcGlidingVelocity's other adjustments
+	// (Java: `oldVelocity.multiply(0.99F, 0.98F, 0.99F)`), replacing the
+	// normal air Drag/inertia constants entirely while gliding.
+	GlideHorizontalDrag = 0.99
+	GlideVerticalDrag   = 0.98
+
+	// GlideDiveFactor is the coefficient in calcGlidingVelocity's
+	// "diving accelerates you" term (Java: `oldVelocity.y * -0.1 * h`).
+	GlideDiveFactor = -0.1
+
+	// GlideDiveGravityBlend is calcGlidingVelocity's gravity blend factor
+	// (Java: `g * (-1.0 + h * 0.75)`) — at pitch 0 (looking level, h=1) this
+	// reduces effective gravity to -0.25g; looking straight up/down (h=0)
+	// applies the full -1.0g.
+	GlideDiveGravityBlend = 0.75
+
+	// GlideClimbFactor is the coefficient in calcGlidingVelocity's
+	// looking-upward vertical boost term (Java: `e * -sin(f) * 0.04`).
+	GlideClimbFactor = 0.04
+
+	// GlideClimbVerticalMultiplier scales GlideClimbFactor's vertical
+	// component specifically (Java: `i * 3.2`) — the upward push from
+	// pitching up is more than 3x the horizontal pull-back it costs.
+	GlideClimbVerticalMultiplier = 3.2
+
+	// GlideHorizontalEaseFactor is calcGlidingVelocity's final per-tick ease
+	// of horizontal velocity toward the look direction (Java: `... * 0.1`).
+	GlideHorizontalEaseFactor = 0.1
+)
+
 // Minecart physics constants
 // Source: net/minecraft/entity/vehicle/DefaultMinecartController.java (1.21.2+)
 //

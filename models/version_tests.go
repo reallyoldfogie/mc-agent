@@ -89,6 +89,9 @@ var minimalStandardVersionTests = []VersionTest{
 		MCVersion: "1.21.10",
 	},
 	{
+		Name:      "1.21.11",
+		MCVersion: "1.21.11",
+	}, {
 		Name:      "26.1",
 		MCVersion: "26.1",
 	},

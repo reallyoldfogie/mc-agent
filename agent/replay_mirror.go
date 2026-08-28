@@ -197,7 +197,7 @@ func (m *replayMovementMirror) NotifyLoginSeen() {
 
 // EmitEquipment synthesizes a ClientboundEntityEquipment packet for the agent's own
 // entity and records it into the replay stream.
-func (m *replayMovementMirror) EmitEquipment(entityID int32, hand models.Hand, itemID int32, count int32) {
+func (m *replayMovementMirror) EmitEquipment(entityID int32, slot models.EquipmentSlotType, itemID int32, count int32) {
 	if m == nil || m.rec == nil {
 		return
 	}
@@ -215,13 +215,13 @@ func (m *replayMovementMirror) EmitEquipment(entityID int32, hand models.Hand, i
 		return
 	}
 
-	packetID, packetData, err := m.versionHandler.Play().BuildEntityEquipmentPacket(entityID, hand, itemID, count)
+	packetID, packetData, err := m.versionHandler.Play().BuildEntityEquipmentPacket(entityID, slot, itemID, count)
 	if err != nil {
 		log.Printf("[ReplayMirror] EmitEquipment: failed to build packet: %v", err)
 		return
 	}
 
-	log.Printf("[ReplayMirror] EmitEquipment: entityID=%d hand=%s itemID=%d count=%d", entityID, hand, itemID, count)
+	log.Printf("[ReplayMirror] EmitEquipment: entityID=%d slot=%s itemID=%d count=%d", entityID, slot, itemID, count)
 	if err := m.rec.RecordNow(packetID, packetData); err != nil {
 		log.Printf("[ReplayMirror] EmitEquipment: failed to record packet: %v", err)
 	}

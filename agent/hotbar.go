@@ -231,7 +231,47 @@ func (a *agent) emitHeldItemEquipment(slot int16) {
 		itemID = 0
 		count = 0
 	}
-	a.moveMirror.EmitEquipment(a.GetEntityID(), models.MainHand, int32(itemID), int32(count))
+	a.moveMirror.EmitEquipment(a.GetEntityID(), models.EquipmentSlotMainHand, int32(itemID), int32(count))
+}
+
+// resyncHandEquipment re-emits main-hand and off-hand equipment to the
+// replay mirror based on current inventory state. Container-click
+// operations (ShiftClickSlot, LeftClickSlot, etc.) apply their predicted
+// result to the local screen state immediately, but vanilla servers often
+// skip sending a redundant ClientboundContainerSetSlot correction for a
+// prediction that was already correct — most commonly the *source* slot of
+// a shift-click, which the server assumes the client already knows became
+// empty. Since onSetSlot (the mirror's normal hook) only fires from
+// incoming packets, a hand-slot item moved away by a locally-predicted
+// click can end up never reported as cleared, leaving the replay showing
+// an item still held after it was actually moved elsewhere (e.g. shift-
+// clicking an item from the hotbar straight into an armor slot). Callers
+// should call this after any click operation that could plausibly affect
+// either hand slot, since it is a full re-read of current state rather
+// than a delta and is safe to call unconditionally.
+func (a *agent) resyncHandEquipment() {
+	if a.moveMirror == nil {
+		return
+	}
+
+	a.heldSlotMu.RLock()
+	heldSlot := a.heldSlot
+	heldSlotSet := a.heldSlotSet
+	a.heldSlotMu.RUnlock()
+	if heldSlotSet {
+		a.emitHeldItemEquipment(heldSlot)
+	}
+
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		return
+	}
+	const offhandSlotIndex int16 = 45
+	itemID, count, ok := slots.ResolveSlot(-2, offhandSlotIndex)
+	if !ok {
+		itemID, count = 0, 0
+	}
+	a.moveMirror.EmitEquipment(a.GetEntityID(), models.EquipmentSlotOffHand, int32(itemID), int32(count))
 }
 
 func (a *agent) resolveHotbarSlot(slots models.SlotResolver, itemMgr models.ItemManager, slot int16) (string, int) {

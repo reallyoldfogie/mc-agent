@@ -743,6 +743,12 @@ func (pe *PhysicsMovementExecutor) IsSprinting() bool {
 	return pe.movementPacketSender.IsSprinting()
 }
 
+// StartGliding sends the start_elytra_flying player-command packet. See
+// movementPacketSender.StartGliding.
+func (pe *PhysicsMovementExecutor) StartGliding() error {
+	return pe.movementPacketSender.StartGliding()
+}
+
 // StartSneaking sends a command to start sneaking.
 func (pe *PhysicsMovementExecutor) StartSneaking() error {
 	return pe.movementPacketSender.StartSneaking()
@@ -1467,10 +1473,23 @@ func (pe *PhysicsMovementExecutor) tick() {
 
 		pe.applyMovementState(inputs)
 		pe.syncActiveEffects()
+		pe.syncEquipment()
+
+		wasGliding := pe.physicsState.IsGliding()
 
 		if err := pe.physicsState.Tick(inputs, pe.world); err != nil {
 			log.Printf("[PhysicsExecutor] Physics tick error: %v", err)
 			return
+		}
+
+		// physics.State decides the glide-start transition internally
+		// (mirroring vanilla's client-predicted checkGliding()); confirm it
+		// to the server the instant it happens, matching
+		// ClientPlayerEntity.tick()'s own send-right-after-predicting order.
+		if !wasGliding && pe.physicsState.IsGliding() {
+			if err := pe.StartGliding(); err != nil {
+				log.Printf("[PhysicsExecutor] Failed to send start-gliding packet: %v", err)
+			}
 		}
 
 		pe.recordTelemetry(inputs)

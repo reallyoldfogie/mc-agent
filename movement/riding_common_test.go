@@ -49,6 +49,8 @@ func (f *fakeAttributeGetter) GetRiderHeldItem() (string, bool) { return "", fal
 
 func (f *fakeAttributeGetter) GetOwnActiveEffect(string) (int32, bool) { return 0, false }
 
+func (f *fakeAttributeGetter) GetOwnEquippedChestItem() (string, bool) { return "", false }
+
 func (f *fakeAttributeGetter) GetEntityAttribute(int32, string) (float64, bool) {
 	return f.liveValue, f.liveFound
 }

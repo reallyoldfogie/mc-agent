@@ -242,8 +242,7 @@ func TestOnDamageEvent_FallbackToCauseEntity(t *testing.T) {
 }
 
 // TestApplyExplosionKnockback_AddsToExistingVelocity verifies that
-// explosion knockback (PHASE_4_PLAN.md §2.2, unblocking §4.12 Wind
-// Charged) is added onto the executor's current velocity rather than
+// explosion knockback is added onto the executor's current velocity rather than
 // replacing it — mirroring vanilla's Entity.addVelocityInternal, unlike
 // onDamageEvent's SetVelocity-style knockback above. Tested directly
 // against applyExplosionKnockback rather than through a real

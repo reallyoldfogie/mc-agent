@@ -79,6 +79,14 @@ func (m *mockPhysicsState) SetActiveEffects(effects models.ActiveEffects) {
 	// no-op for mock
 }
 
+func (m *mockPhysicsState) SetElytraEquipped(equipped bool) {
+	// no-op for mock
+}
+
+func (m *mockPhysicsState) IsGliding() bool {
+	return false
+}
+
 func (m *mockPhysicsState) GetDimensions() (width, height, eyeHeight float64) {
 	return 0, 0, 0
 }

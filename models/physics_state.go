@@ -28,6 +28,18 @@ type PhysicsState interface {
 	// should call this once per tick, before Tick(), the same way other
 	// externally-sourced per-tick state is synced in. See ActiveEffects.
 	SetActiveEffects(effects ActiveEffects)
+	// SetElytraEquipped updates whether the player's chest slot currently
+	// holds a glide-capable item, consulted by Tick() to gate elytra
+	// gliding (Java canGlide()'s equipment check). Callers should call this
+	// once per tick, before Tick(), the same way SetActiveEffects is synced
+	// in — physics.State has no inventory access of its own.
+	SetElytraEquipped(equipped bool)
+	// IsGliding reports whether elytra-gliding physics are currently
+	// active. Callers compare this before/after Tick() to detect a
+	// start-gliding transition and send the corresponding
+	// start_elytra_flying EntityAction packet — physics.State has no
+	// packet access of its own.
+	IsGliding() bool
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

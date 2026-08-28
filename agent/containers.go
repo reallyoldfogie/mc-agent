@@ -320,42 +320,54 @@ func (a *agent) LeftClickSlot(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.LeftClickSlot(slot, slotItem)
+	err := a.invMgr.LeftClickSlot(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) RightClickSlot(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.RightClickSlot(slot, slotItem)
+	err := a.invMgr.RightClickSlot(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) ShiftClickSlot(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.ShiftClickSlot(slot, slotItem)
+	err := a.invMgr.ShiftClickSlot(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) SwapWithHotbar(slot int16, slotItem models.ItemStack, hotbarSlot int, hotbarItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.SwapWithHotbar(slot, slotItem, hotbarSlot, hotbarItem)
+	err := a.invMgr.SwapWithHotbar(slot, slotItem, hotbarSlot, hotbarItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) DropItem(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.DropItem(slot, slotItem)
+	err := a.invMgr.DropItem(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) DropStack(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.DropStack(slot, slotItem)
+	err := a.invMgr.DropStack(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) DoubleClick(slot int16, slotItem models.ItemStack) error {
@@ -390,28 +402,36 @@ func (a *agent) MoveItem(fromSlot, toSlot int16, fromItem, toItem models.ItemSta
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.MoveItem(fromSlot, toSlot, fromItem, toItem)
+	err := a.invMgr.MoveItem(fromSlot, toSlot, fromItem, toItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) MoveSingle(fromSlot, toSlot int16, fromItem, toItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.MoveSingle(fromSlot, toSlot, fromItem, toItem)
+	err := a.invMgr.MoveSingle(fromSlot, toSlot, fromItem, toItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) TransferItem(fromWindowID byte, fromSlot int16, toWindowID byte, toSlot int16, fromItem, toItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.TransferItem(fromWindowID, fromSlot, toWindowID, toSlot, fromItem, toItem)
+	err := a.invMgr.TransferItem(fromWindowID, fromSlot, toWindowID, toSlot, fromItem, toItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) TransferStack(slot int16, slotItem models.ItemStack) error {
 	if a.invMgr == nil {
 		return fmt.Errorf("inventory manager not initialized")
 	}
-	return a.invMgr.TransferStack(slot, slotItem)
+	err := a.invMgr.TransferStack(slot, slotItem)
+	a.resyncHandEquipment()
+	return err
 }
 
 func (a *agent) SplitStack(sourceSlot, destSlot int16, sourceItem, destItem models.ItemStack) error {

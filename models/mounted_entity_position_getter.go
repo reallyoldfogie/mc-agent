@@ -113,4 +113,11 @@ type MountedEntityPositionGetter interface {
 	// amplifier is zero-based (0 = level I) and only meaningful when found
 	// is true.
 	GetOwnActiveEffect(effectName string) (amplifier int32, found bool)
+
+	// GetOwnEquippedChestItem returns the local item name (unprefixed, e.g.
+	// "elytra") of whatever the agent's own player currently has equipped
+	// in its chest armor slot (player inventory slot index 6). Returns
+	// ("", false) if the slot is empty or not yet resolvable — mirrors
+	// GetRiderHeldItem's naming/resolution shape but for the chest slot.
+	GetOwnEquippedChestItem() (itemName string, found bool)
 }

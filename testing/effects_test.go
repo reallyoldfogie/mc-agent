@@ -23,7 +23,7 @@ import (
 func TestLevitationLiftsAgent(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "levitation_lift", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "levitation_lift", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -83,7 +83,7 @@ func TestLevitationLiftsAgent(t *testing.T) {
 func TestSlowFallingSlowsAgentDescent(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "slow_falling_descent", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "slow_falling_descent", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -143,7 +143,7 @@ func TestSlowFallingSlowsAgentDescent(t *testing.T) {
 func TestJumpBoostRaisesJumpHeight(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "jump_boost_height", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "jump_boost_height", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -210,7 +210,7 @@ func TestJumpBoostRaisesJumpHeight(t *testing.T) {
 func TestSpeedAndSlownessScaleGroundDistance(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "speed_slowness_distance", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "speed_slowness_distance", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -277,7 +277,7 @@ func TestSpeedAndSlownessScaleGroundDistance(t *testing.T) {
 func TestBlindnessPreventsSprinting(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "blindness_sprint_gate", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "blindness_sprint_gate", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -323,7 +323,7 @@ func TestBlindnessPreventsSprinting(t *testing.T) {
 func TestDolphinsGraceIncreasesSwimSpeed(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "dolphins_grace_swim_speed", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "dolphins_grace_swim_speed", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()
@@ -410,7 +410,7 @@ func TestDolphinsGraceIncreasesSwimSpeed(t *testing.T) {
 func TestWeavingReducesCobwebSlowdown(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "weaving_cobweb_slowdown", "survival", false, tt.MCVersion, DifficultyEasy, false)
+			env := setupStandaloneTestWithModeAndBlockPlacement(t, "weaving_cobweb_slowdown", "survival", false, tt.MCVersion, DifficultyEasy, true)
 			defer env.Cancel()
 
 			ctx := context.Background()

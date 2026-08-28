@@ -293,6 +293,18 @@ func (im *inventoryManager) shiftClickSlot(slot int16, slotItem models.ItemStack
 		{SlotIndex: slot, Item: models.ItemStack{}}, // Simplified - slot becomes empty (server will correct if needed)
 	}
 
+	// Apply the source-slot-becomes-empty prediction to local screen state,
+	// matching LeftClickSlot/RightClickSlot's applyPredictedClick. Without
+	// this, nothing ever clears the slot locally: vanilla servers commonly
+	// skip sending a ClientboundContainerSetSlot correction for a
+	// shift-click's source slot when the prediction is already correct
+	// (confirmed against a live server - no such packet ever arrives), so
+	// the local state would otherwise stay stale indefinitely, and anything
+	// reading it (item-in-hand tracking, the replay mirror) would too.
+	if setter, ok := im.screen.(screenSlotSetter); ok {
+		setter.SetSlotAt(int(im.windowID), int(slot), *slotFromItemStack(models.ItemStack{}))
+	}
+
 	return im.clickWithChanges(im.windowID, slot, byte(LeftButton), ClickModeShift, changedSlots, nil, false)
 }
 

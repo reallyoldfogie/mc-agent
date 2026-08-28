@@ -55,6 +55,20 @@ type state struct {
 	// to physics (Slow Falling, Levitation), set externally once per tick
 	// via SetActiveEffects before Tick() runs.
 	activeEffects models.ActiveEffects
+
+	// elytraEquipped mirrors whether the player's chest slot holds a
+	// glide-capable item, set externally once per tick via
+	// SetElytraEquipped before Tick() runs — physics.State has no inventory
+	// access of its own, the same reason activeEffects is synced in rather
+	// than looked up here.
+	elytraEquipped bool
+
+	// isGliding is this codebase's equivalent of Java's GLIDING_FLAG_INDEX
+	// entity flag: true while elytra-gliding physics (GlidingVelocity) is
+	// in effect instead of normal air gravity/drag. Transitions are decided
+	// in applyGlideStateTransition, mirroring
+	// PlayerEntity.checkGliding()/LivingEntity.tickGliding().
+	isGliding bool
 }
 
 // NewState creates a new physics state with default player dimensions.
@@ -259,6 +273,26 @@ func (s *state) SetActiveEffects(effects models.ActiveEffects) {
 	s.activeEffects = effects
 }
 
+// SetElytraEquipped updates whether the player's chest slot currently holds
+// a glide-capable item. Callers should call this once per tick, before
+// Tick(), the same way SetActiveEffects is synced in.
+func (s *state) SetElytraEquipped(equipped bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.elytraEquipped = equipped
+}
+
+// IsGliding reports whether elytra-gliding physics are currently active.
+// Callers (e.g. the movement executor) compare this before/after Tick() to
+// detect a start-gliding transition and send the corresponding
+// start_elytra_flying EntityAction packet — physics.State has no packet
+// access of its own.
+func (s *state) IsGliding() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isGliding
+}
+
 // getAABBUnsafe computes the AABB without acquiring the mutex.
 // Must only be called while the write lock is already held (e.g., from within Tick()).
 func (s *state) getAABBUnsafe() AABB {
@@ -304,6 +338,11 @@ func (s *state) Tick(input Inputs, w World) error {
 	// isOverlappingCobweb's doc comment for why pre-move rather than
 	// replicating vanilla's exact one-tick-delayed field).
 	inCobweb := s.isOverlappingCobweb(w)
+
+	// Decide elytra glide start/stop using this tick's pre-move onGround —
+	// matches Java's own ordering (tickGliding()/checkGliding() run before
+	// travel()/move() each tick, off the previous tick's ground state).
+	s.applyGlideStateTransition(input)
 
 	// Reset fall distance when in water (water negates all fall damage).
 	// Slow Falling and Levitation do the same — Java calls onLanding() every
@@ -433,6 +472,18 @@ func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
 
 		// Apply water flow current
 		s.applyWaterFlow(w)
+	} else if s.isGliding {
+		// Elytra gliding entirely replaces normal air gravity/drag — mirrors
+		// Java travel()'s dispatch order (fluid > gliding > mid-air): the
+		// isInWater branch above still takes priority over gliding, matching
+		// vanilla's own isTravellingInFluid() check running before
+		// isGliding() in LivingEntity.travel(). Slow Falling's gravity cap
+		// still applies (calcGlidingVelocity calls getEffectiveGravity()
+		// directly), but Levitation cannot coexist with gliding — canGlide()
+		// already excludes it, so applyGlideStateTransition will have
+		// cleared isGliding the instant Levitation lands.
+		gravity := EffectiveGravity(Gravity, s.Vel.Y, s.activeEffects.HasSlowFalling)
+		s.Vel.X, s.Vel.Y, s.Vel.Z = GlidingVelocity(s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, gravity)
 	} else {
 		// Normal physics (air). Levitation replaces gravity entirely with an
 		// eased approach toward a fixed upward target velocity; Slow Falling
@@ -588,6 +639,27 @@ func (s *state) applyLookInputs(input Inputs) {
 	s.pitch += deltaPitch
 }
 
+// applyGlideStateTransition mirrors Java PlayerEntity.checkGliding() (start)
+// and LivingEntity.tickGliding()'s per-tick canGlide() re-check (auto-stop):
+// starts gliding when jump is pressed while airborne with an elytra equipped
+// and not already gliding or touching water, and stops it the instant any
+// of canGlide's conditions no longer hold (landing, Levitation applied,
+// elytra unequipped). hasVehicle is always false here — this state models
+// only the unmounted walking player; riding physics live in a separate
+// handler entirely and never calls Tick().
+func (s *state) applyGlideStateTransition(input Inputs) {
+	canGlide := CanGlide(s.onGround, false, s.activeEffects.HasLevitation, s.elytraEquipped)
+	if s.isGliding {
+		if !canGlide {
+			s.isGliding = false
+		}
+		return
+	}
+	if input.Jump && CanStartGliding(s.isGliding, s.isInWater, canGlide) {
+		s.isGliding = true
+	}
+}
+
 // applyMovementInputs updates velocity based on throttle and jump inputs.
 func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 	// Handle jump / swim-up / swim-down
@@ -606,6 +678,14 @@ func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 		if s.activeEffects.HasJumpBoost {
 			s.Vel.Y += JumpBoostVelocityBonus(s.activeEffects.JumpBoostAmplifier)
 		}
+	}
+
+	if s.isGliding {
+		// While gliding, WASD throttle provides no thrust — only look
+		// direction (pitch/yaw) steers, applied via GlidingVelocity in
+		// applyEnvironmentForces. Matches Java travelGliding(), which never
+		// calls applyMovementInput/updateVelocity at all.
+		return
 	}
 
 	// Calculate throttle magnitude

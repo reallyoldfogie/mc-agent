@@ -86,6 +86,19 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 	pe.physicsState.SetActiveEffects(effects)
 }
 
+// syncEquipment reads the agent's own currently-equipped chest item via
+// entityPositionGetter and pushes elytra-equipped state into physicsState
+// before Tick() runs, mirroring syncActiveEffects's pattern — physics.State
+// has no inventory access of its own.
+func (pe *PhysicsMovementExecutor) syncEquipment() {
+	if pe.entityPositionGetter == nil {
+		return
+	}
+
+	itemName, _ := pe.entityPositionGetter.GetOwnEquippedChestItem()
+	pe.physicsState.SetElytraEquipped(itemName == "elytra")
+}
+
 // recordTelemetry records telemetry data if a recorder is set.
 func (pe *PhysicsMovementExecutor) recordTelemetry(inputs physics.Inputs) {
 	if pe.telemetryRecorder == nil {
