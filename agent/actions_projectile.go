@@ -721,6 +721,16 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 // because SendUseItem requires some rotation value, not because it steers
 // anything.
 func (a *agent) UseFireworkRocket() error {
+	return a.UseItem(context.Background(), models.MainHand)
+}
+
+// UseItem sends a plain "use item" interaction (a right-click) with
+// whatever is currently held in the given hand. This single generic action
+// covers firing a bow, triggering a firework's gliding boost, eating food,
+// drinking a potion, etc. - vanilla dispatches on the held item's own
+// use() implementation server-side, so the client-side packet is identical
+// regardless of what's actually held.
+func (a *agent) UseItem(ctx context.Context, hand models.Hand) error {
 	if a.versionHandler == nil {
 		return fmt.Errorf("missing version handler")
 	}
@@ -739,9 +749,9 @@ func (a *agent) UseFireworkRocket() error {
 		return err
 	}
 
-	log.Printf("[UseFireworkRocket] Sending use item packet, yaw=%.2f pitch=%.2f", yaw, pitch)
-	if err := actionHandler.SendUseItem(conn, models.MainHand, 0, yaw, pitch); err != nil {
-		return fmt.Errorf("error using firework rocket: %w", err)
+	log.Printf("[UseItem] Sending use item packet, hand=%v yaw=%.2f pitch=%.2f", hand, yaw, pitch)
+	if err := actionHandler.SendUseItem(conn, hand, 0, yaw, pitch); err != nil {
+		return fmt.Errorf("error using item: %w", err)
 	}
 	return nil
 }

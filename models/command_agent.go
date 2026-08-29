@@ -33,6 +33,33 @@ type CommandAgent interface {
 	DismountEntity() error
 	JumpVehicle(ctx context.Context, power int32) error
 
+	// Equip finds an item by name anywhere in the inventory and readies it
+	// for use: a shift-click lets the server's own quick-move logic decide
+	// where it goes, which auto-equips armor/elytra into the matching
+	// equipment slot exactly like a real player's shift-click would. If the
+	// item doesn't end up worn (i.e. it wasn't armor), it's instead
+	// selected into the hand via SwitchToItem, so "equip firework_rocket"
+	// readies it for UseItem the same way "equip elytra" wears it.
+	Equip(ctx context.Context, itemName string) error
+
+	// UseItem sends a plain "use item" interaction (a right-click) with
+	// whatever is currently held in the given hand - the same generic
+	// action that fires a bow, triggers a firework's gliding boost, eats
+	// food, or drinks a potion, depending on what's selected. Callers that
+	// need a specific item held first should call Equip (or SwitchToItem)
+	// beforehand.
+	UseItem(ctx context.Context, hand Hand) error
+
+	// FlyTo pilots an elytra flight to the given coordinates: taking off
+	// from the ground with a double-jump and firework boost if not already
+	// gliding, cruising toward the target by yaw while re-selecting and
+	// firing fireworks as each boost lapses, and descending to land once
+	// close. Requires an elytra already equipped (see Equip) and at least
+	// one firework rocket somewhere in the inventory to take off; runs out
+	// of fireworks gracefully by continuing as a plain glide-down instead
+	// of failing.
+	FlyTo(ctx context.Context, x, y, z float64) error
+
 	// NearestPlayerInfo returns the nearest tracked player. honorPerceptionEffects,
 	// when true, additionally excludes candidates beyond the agent's own
 	// effective vision range under Blindness/Darkness (see

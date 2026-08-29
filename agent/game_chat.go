@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Tnze/go-mc/chat"
 	pk "github.com/Tnze/go-mc/net/packet"
+	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -115,10 +117,23 @@ func (a *agent) SendChat(message string) error {
 	return nil
 }
 
-// OnSystemChat handles system chat messages from the server.
+// OnSystemChat handles system chat messages from the server. RCON's /say
+// broadcasts as a system chat message (ClientboundSystemChat), not a
+// disguised/profileless one - confirmed live: sending a chat command via
+// RCON /say only ever arrives here, never through OnDisguisedChat - so
+// this also extracts and dispatches bot commands the same way
+// OnPlayerChat/OnDisguisedChat do.
 func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 	log.Printf("System Chat: %#v, Overlay: %v", c, overlay)
 	a.emitChatEvent(c)
+
+	text, ok := a.extractCommandFromMessage(c)
+	if !ok {
+		return nil
+	}
+
+	_ = a.SendChat("Received: " + text)
+	a.handleChatCommand(text)
 	return nil
 }
 
@@ -198,6 +213,84 @@ func (a *agent) emitChatEvent(msg chat.Message) {
 	select {
 	case a.chatEvents <- text:
 	default:
+	}
+}
+
+// initChatCommandHandlers registers the clientbound chat packet types
+// (system, signed player, and disguised/profileless) so real chat messages
+// reach the >>>botName<<< command pipeline (extractCommandFromMessage /
+// handleChatCommand). Previously nothing registered these packet IDs at
+// all - onSystemChatPacket/onPlayerChatPacket/onDisguisedChatPacket had
+// working parse logic (covered by their own unit tests) but were never
+// wired to the live connection, so no in-game or RCON chat message could
+// ever trigger a bot command. Mirrors initClientInformationHandler's
+// AddListener pattern.
+//
+// Guarded by chatHandlersInitialized because the surrounding Init() setup
+// block can run more than once per agent (initHeldSlotTracking guards
+// itself the same way, via a.heldSlotUpdates != nil, for the same reason).
+//
+// Each handler is also wrapped with dedupeChatPacket: confirmed live via a
+// raw byte dump that a single RCON `say` can arrive at this client as two
+// separate ClientboundProfilelessChat packets, byte-for-byte identical,
+// milliseconds apart (a real server-side/RCON behavior, not a registration
+// bug - the packets have distinct addresses but identical payloads).
+// Deduping on the raw bytes rather than the decoded command text is what
+// makes this safe: a genuine chat message a player or test sends twice on
+// purpose is a new, distinct packet even when the text matches (a
+// different signature/timestamp at minimum), so this can never suppress a
+// real repeated command - only an exact repeat of the wire bytes, which a
+// legitimate second send can't produce. An earlier version of this fix
+// deduped on the decoded command text within a time window instead, which
+// broke tests that intentionally send the same no-op-safe command twice in
+// a row (e.g. stopFollow, to check both the normal and "not following"
+// responses) - text can legitimately repeat; these bytes can't.
+func (a *agent) initChatCommandHandlers() {
+	if a.client == nil || a.packetMgr == nil || a.chatHandlersInitialized {
+		return
+	}
+	a.chatHandlersInitialized = true
+
+	a.client.Events().AddListener(bot.PacketHandler{
+		ID: a.packetMgr.GetClientboundPacketID("ClientboundSystemChat"),
+		F:  a.dedupeChatPacket(a.onSystemChatPacket),
+	})
+	a.client.Events().AddListener(bot.PacketHandler{
+		ID: a.packetMgr.GetClientboundPacketID("ClientboundPlayerChat"),
+		F:  a.dedupeChatPacket(a.onPlayerChatPacket),
+	})
+	a.client.Events().AddListener(bot.PacketHandler{
+		ID: a.packetMgr.GetClientboundPacketID("ClientboundProfilelessChat"),
+		F:  a.dedupeChatPacket(a.onDisguisedChatPacket),
+	})
+}
+
+// chatPacketDedupWindow bounds how long an exact byte-for-byte repeat of
+// the immediately-preceding chat packet (of the same clientbound type) is
+// dropped as a duplicate delivery.
+const chatPacketDedupWindow = 2 * time.Second
+
+// dedupeChatPacket wraps a raw chat packet handler so an exact repeat of
+// the previous packet's bytes within chatPacketDedupWindow is dropped
+// before reaching it. See initChatCommandHandlers's doc comment for why
+// this operates on raw bytes rather than decoded text.
+func (a *agent) dedupeChatPacket(next func(pk.Packet) error) func(pk.Packet) error {
+	var mu sync.Mutex
+	var lastData string
+	var lastAt time.Time
+	return func(p pk.Packet) error {
+		data := string(p.Data)
+		mu.Lock()
+		now := time.Now()
+		if data == lastData && now.Sub(lastAt) < chatPacketDedupWindow {
+			mu.Unlock()
+			log.Printf("[handleChatCommand] Dropping duplicate chat packet (%d bytes) within dedup window", len(p.Data))
+			return nil
+		}
+		lastData = data
+		lastAt = now
+		mu.Unlock()
+		return next(p)
 	}
 }
 

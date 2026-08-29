@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID>, dismount, vehiclejump [power], planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -562,5 +562,71 @@ func (VehicleJump) Execute(ctx context.Context, agent models.CommandAgent, args 
 		return nil
 	}
 	_ = agent.SendChat(fmt.Sprintf("Jumping with power %d", power))
+	return nil
+}
+
+type Equip struct{}
+
+func (Equip) Name() string  { return "equip" }
+func (Equip) Usage() string { return "equip <item>" }
+func (Equip) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
+	if len(args) < 1 {
+		_ = agent.SendChat("Usage: equip <item>")
+		return nil
+	}
+	itemName := strings.Join(args, " ")
+	if err := agent.Equip(ctx, itemName); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Equip failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat("Equipped " + itemName)
+	return nil
+}
+
+type UseItem struct{}
+
+func (UseItem) Name() string  { return "useitem" }
+func (UseItem) Usage() string { return "useItem [offhand]" }
+func (UseItem) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
+	hand := models.MainHand
+	if len(args) > 0 && strings.EqualFold(args[0], "offhand") {
+		hand = models.OffHand
+	}
+	if err := agent.UseItem(ctx, hand); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Use item failed: %v", err))
+		return nil
+	}
+	return nil
+}
+
+type FlyTo struct{}
+
+func (FlyTo) Name() string  { return "flyto" }
+func (FlyTo) Usage() string { return "flyTo <x> <y> <z>" }
+func (FlyTo) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
+	if len(args) < 3 {
+		_ = agent.SendChat("Usage: flyTo <x> <y> <z>")
+		return nil
+	}
+	tx, err := parseFloat(args[0])
+	if err != nil {
+		_ = agent.SendChat("Invalid X coordinate")
+		return nil
+	}
+	ty, err := parseFloat(args[1])
+	if err != nil {
+		_ = agent.SendChat("Invalid Y coordinate")
+		return nil
+	}
+	tz, err := parseFloat(args[2])
+	if err != nil {
+		_ = agent.SendChat("Invalid Z coordinate")
+		return nil
+	}
+	go func() {
+		if err := agent.FlyTo(ctx, tx, ty, tz); err != nil {
+			_ = agent.SendChat(fmt.Sprintf("FlyTo failed: %v", err))
+		}
+	}()
 	return nil
 }

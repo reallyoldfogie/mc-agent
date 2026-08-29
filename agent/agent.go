@@ -289,6 +289,10 @@ type agent struct {
 	heldSlotSet     bool
 	heldSlotUpdates chan int16
 
+	// chatHandlersInitialized guards initChatCommandHandlers against the
+	// Init() setup block running more than once per agent.
+	chatHandlersInitialized bool
+
 	// projectile hit callbacks and tracking
 	pendingProjectilesMu sync.Mutex
 	pendingProjectiles   []pendingProjectileInfo
@@ -571,6 +575,7 @@ func (a *agent) Init(ctx context.Context) error {
 
 		a.initHeldSlotTracking()
 		a.initClientInformationHandler(customSettings)
+		a.initChatCommandHandlers()
 
 		var shapeMgr models.BlockShapeManager
 		var stateProps *pathfinding.StatePropertyLoader
