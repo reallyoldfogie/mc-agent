@@ -90,6 +90,23 @@ const (
 	// PHASE_6_PLAN.md §1.8. Recorded here so the index doesn't need
 	// re-deriving if that changes.
 	EntityMetadataKeyPassiveChild EntityMetadataKeyType = 16
+
+	// EntityMetadataKeyFireworkShooterEntityID is FireworkRocketEntity's own
+	// SHOOTER_ENTITY_ID tracked field (an "optional_unsigned_int" —
+	// HandlerOptionalInt, 0=absent/N=entity ID N-1). FireworkRocketEntity
+	// extends ProjectileEntity, which adds no fields of its own, so this is
+	// simply the second of FireworkRocketEntity's three own fields: 8 base
+	// Entity fields (0-7), then ITEM(8), SHOOTER_ENTITY_ID(9),
+	// SHOT_AT_ANGLE(10). Verified identical across 1.21.1, 1.21.11 (Yarn)
+	// and 26.1 (Mojang, renamed DATA_ATTACHED_TO_TARGET) by counting
+	// DataTracker/SynchedEntityData registration calls in the decompiled
+	// source.
+	//
+	// Collides numerically with EntityMetadataKeyHealth (also 9, on living
+	// entities) — callers MUST gate on entity type ==
+	// "minecraft:firework_rocket" before reading this, the same way
+	// HorseFlags/HappyGhastStayingStill are gated.
+	EntityMetadataKeyFireworkShooterEntityID EntityMetadataKeyType = 9
 )
 
 // HorseFlagMask is a bit within the AbstractHorseEntity flags byte

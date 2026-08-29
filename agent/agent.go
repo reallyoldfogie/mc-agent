@@ -1575,6 +1575,20 @@ func (a *agent) SetManualRotation(yaw, pitch float64) error {
 	return manual.SetManualRotation(yaw, pitch)
 }
 
+// GetVelocity returns the agent's current physics velocity in blocks/tick.
+// ok is false when no movement executor is active.
+func (a *agent) GetVelocity() (x, y, z float64, ok bool) {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return 0, 0, 0, false
+	}
+
+	x, y, z = a.moveExec.GetVelocity()
+	return x, y, z, true
+}
+
 // SetManualJump sets whether the jump button is pressed for manual control.
 // For camels, holding jump charges the dash; releasing fires the impulse.
 func (a *agent) SetManualJump(enabled bool) error {

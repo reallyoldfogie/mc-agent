@@ -98,6 +98,16 @@ type trackedEntity struct {
 	// unknown.
 	IsBaby    bool
 	HasIsBaby bool
+
+	// FireworkShooterEntityID mirrors FireworkRocketEntity's SHOOTER_ENTITY_ID
+	// tracked field (metadata key 9, see
+	// models.EntityMetadataKeyFireworkShooterEntityID) — only populated for
+	// firework_rocket entity types. Wire encoding is "0=absent, N=entity ID
+	// N-1" (see HandlerOptionalInt), already decoded by the time it lands
+	// here. HasFireworkShooterEntityID stays false until the first update
+	// arrives, matching HorseFlags/IsBaby's "not seen yet" convention.
+	FireworkShooterEntityID    int32
+	HasFireworkShooterEntityID bool
 }
 
 // GetPosition returns the current bot position and rotation.

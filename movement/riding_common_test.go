@@ -51,6 +51,8 @@ func (f *fakeAttributeGetter) GetOwnActiveEffect(string) (int32, bool) { return 
 
 func (f *fakeAttributeGetter) GetOwnEquippedChestItem() (string, bool) { return "", false }
 
+func (f *fakeAttributeGetter) HasActiveFireworkBoost() bool { return false }
+
 func (f *fakeAttributeGetter) GetEntityAttribute(int32, string) (float64, bool) {
 	return f.liveValue, f.liveFound
 }

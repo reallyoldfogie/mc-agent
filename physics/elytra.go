@@ -107,3 +107,21 @@ func CanGlide(onGround, hasVehicle, hasLevitation, elytraEquipped bool) bool {
 func CanStartGliding(alreadyGliding, isTouchingWater bool, canGlide bool) bool {
 	return !alreadyGliding && canGlide && !isTouchingWater
 }
+
+// FireworkBoostVelocity mirrors Java FireworkRocketEntity.tick()'s
+// shooter-velocity nudge, applied every tick a firework rocket used while
+// gliding remains alive and attached: velocity eases toward
+// FireworkBoostTarget blocks/tick in the look direction, on all three axes
+// (including vertical — pitching up while boosting gains real altitude, not
+// just speed). This runs unconditionally each tick for the firework's
+// lifetime, layered on top of whatever GlidingVelocity already computed
+// that same tick — vanilla applies it as a separate, unconditional
+// setVelocity call on the shooter, not a modification of the gliding
+// formula itself.
+func FireworkBoostVelocity(vx, vy, vz, yawDegrees, pitchDegrees float64) (nx, ny, nz float64) {
+	rx, ry, rz := RotationVector(yawDegrees, pitchDegrees)
+	nx = vx + rx*FireworkBoostBlend + (rx*FireworkBoostTarget-vx)*FireworkBoostEase
+	ny = vy + ry*FireworkBoostBlend + (ry*FireworkBoostTarget-vy)*FireworkBoostEase
+	nz = vz + rz*FireworkBoostBlend + (rz*FireworkBoostTarget-vz)*FireworkBoostEase
+	return nx, ny, nz
+}

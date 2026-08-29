@@ -40,6 +40,12 @@ type PhysicsState interface {
 	// start_elytra_flying EntityAction packet — physics.State has no
 	// packet access of its own.
 	IsGliding() bool
+	// SetFireworkBoosting updates whether a firework rocket used while
+	// gliding is currently attached and boosting velocity, consulted by
+	// Tick() to apply FireworkBoostVelocity. Callers should call this once
+	// per tick, before Tick(), the same way SetElytraEquipped is synced in —
+	// physics.State has no entity-tracking access of its own.
+	SetFireworkBoosting(boosting bool)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

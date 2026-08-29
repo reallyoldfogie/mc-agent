@@ -69,6 +69,25 @@ type state struct {
 	// in applyGlideStateTransition, mirroring
 	// PlayerEntity.checkGliding()/LivingEntity.tickGliding().
 	isGliding bool
+
+	// lastJumpInput mirrors the rising-edge check ClientPlayerEntity.tick()
+	// performs before starting a glide (captures jump-held state, calls
+	// input.tick() to refresh it, then requires the old value to be false
+	// and the new one true). Holding jump continuously through a normal
+	// ground jump's ascent must NOT also start gliding the instant the
+	// player becomes airborne — only a genuine release-then-press does.
+	// Updated once per tick in applyGlideStateTransition to the current
+	// input.Jump value, so it always holds the PREVIOUS tick's state at the
+	// point this tick's transition check runs.
+	lastJumpInput bool
+
+	// fireworkBoosting mirrors whether a firework rocket used while gliding
+	// is currently attached and boosting velocity (FireworkRocketEntity.tick()'s
+	// per-tick nudge toward the look direction), set externally once per
+	// tick via SetFireworkBoosting before Tick() runs — physics.State has no
+	// entity-tracking access of its own, the same reason elytraEquipped is
+	// synced in rather than looked up here.
+	fireworkBoosting bool
 }
 
 // NewState creates a new physics state with default player dimensions.
@@ -293,6 +312,16 @@ func (s *state) IsGliding() bool {
 	return s.isGliding
 }
 
+// SetFireworkBoosting updates whether a firework rocket used while gliding
+// is currently attached and boosting velocity. Callers should call this
+// once per tick, before Tick(), the same way SetElytraEquipped is synced
+// in — physics.State has no entity-tracking access of its own.
+func (s *state) SetFireworkBoosting(boosting bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fireworkBoosting = boosting
+}
+
 // getAABBUnsafe computes the AABB without acquiring the mutex.
 // Must only be called while the write lock is already held (e.g., from within Tick()).
 func (s *state) getAABBUnsafe() AABB {
@@ -484,6 +513,18 @@ func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
 		// cleared isGliding the instant Levitation lands.
 		gravity := EffectiveGravity(Gravity, s.Vel.Y, s.activeEffects.HasSlowFalling)
 		s.Vel.X, s.Vel.Y, s.Vel.Z = GlidingVelocity(s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, gravity)
+
+		// A firework rocket used while gliding applies its own,
+		// unconditional velocity nudge on top of this tick's gliding
+		// physics (Java: FireworkRocketEntity.tick() calls setVelocity
+		// directly on the shooter, entirely separate from the shooter's
+		// own travel()/calcGlidingVelocity call). Re-checked every tick —
+		// see applyGlideStateTransition's doc comment on why Levitation
+		// can't coexist with gliding; the same per-tick isGliding() gate
+		// vanilla uses is what this branch already provides.
+		if s.fireworkBoosting {
+			s.Vel.X, s.Vel.Y, s.Vel.Z = FireworkBoostVelocity(s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch)
+		}
 	} else {
 		// Normal physics (air). Levitation replaces gravity entirely with an
 		// eased approach toward a fixed upward target velocity; Slow Falling
@@ -648,6 +689,9 @@ func (s *state) applyLookInputs(input Inputs) {
 // only the unmounted walking player; riding physics live in a separate
 // handler entirely and never calls Tick().
 func (s *state) applyGlideStateTransition(input Inputs) {
+	wasJumpHeld := s.lastJumpInput
+	s.lastJumpInput = input.Jump
+
 	canGlide := CanGlide(s.onGround, false, s.activeEffects.HasLevitation, s.elytraEquipped)
 	if s.isGliding {
 		if !canGlide {
@@ -655,7 +699,8 @@ func (s *state) applyGlideStateTransition(input Inputs) {
 		}
 		return
 	}
-	if input.Jump && CanStartGliding(s.isGliding, s.isInWater, canGlide) {
+	jumpJustPressed := input.Jump && !wasJumpHeld
+	if jumpJustPressed && CanStartGliding(s.isGliding, s.isInWater, canGlide) {
 		s.isGliding = true
 	}
 }

@@ -57,4 +57,19 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	// Projectile actions
 	// projectileType: models.ProjectileType value
 	ThrowProjectileAt(ctx context.Context, projectileType ProjectileType, x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
+
+	// UseFireworkRocket sends a plain "use item" interaction with the
+	// currently held item, mirroring the real client action that triggers
+	// FireworkRocketItem.use()'s gliding-boost path when a firework rocket
+	// is held while gliding. See the agent package implementation's doc
+	// comment for why no aiming/targeting is involved.
+	UseFireworkRocket() error
+
+	// HasActiveFireworkBoost reports whether a firework rocket used while
+	// gliding is currently attached to the agent's own entity and boosting
+	// its velocity. See models.MountedEntityPositionGetter.HasActiveFireworkBoost
+	// for the full doc comment — exposed here too so callers driving a
+	// flight (deciding when to fire another rocket as the current one's
+	// boost runs out) don't need access to the narrower internal interface.
+	HasActiveFireworkBoost() bool
 }

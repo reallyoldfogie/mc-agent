@@ -89,6 +89,44 @@ func TestGlidingVelocity(t *testing.T) {
 	})
 }
 
+func TestFireworkBoostVelocity(t *testing.T) {
+	t.Run("from rest, looking south, level", func(t *testing.T) {
+		// rotationVector(0,0) = (0,0,1); nz = 0 + 1*0.1 + (1*1.5-0)*0.5 = 0.85
+		nx, ny, nz := FireworkBoostVelocity(0, 0, 0, 0, 0)
+		assert.InDelta(t, 0.0, nx, 1e-9)
+		assert.InDelta(t, 0.0, ny, 1e-9)
+		assert.InDelta(t, 0.85, nz, 1e-9)
+	})
+
+	t.Run("pitching upward gains real altitude, not just speed", func(t *testing.T) {
+		_, nyLevel, _ := FireworkBoostVelocity(0, 0, 0, 0, 0)
+		_, nyUp, _ := FireworkBoostVelocity(0, 0, 0, 0, -45)
+		assert.Greater(t, nyUp, nyLevel, "pitching up while boosting should add vertical velocity")
+	})
+
+	t.Run("repeated boosting converges to a steady-state speed in the look direction", func(t *testing.T) {
+		// Steady state solves v = v + blend + (target-v)*ease for v:
+		// v = v + 0.1 + (1.5-v)*0.5 => 0.5v = 0.85 => v = 1.7 - the flat
+		// FireworkBoostBlend term keeps nudging even after the ease term
+		// alone would have settled at FireworkBoostTarget, so the true
+		// steady state is higher than 1.5.
+		const steadyState = (FireworkBoostBlend + FireworkBoostTarget*FireworkBoostEase) / FireworkBoostEase
+		vx, vy, vz := 0.0, 0.0, 0.0
+		for range 50 {
+			vx, vy, vz = FireworkBoostVelocity(vx, vy, vz, 0, 0)
+		}
+		assert.InDelta(t, 0.0, vx, 1e-6)
+		assert.InDelta(t, 0.0, vy, 1e-6)
+		assert.InDelta(t, steadyState, vz, 1e-3, "should converge toward the algebraic steady-state speed in the look direction")
+	})
+
+	t.Run("boosting decelerates existing overshoot back toward the steady state", func(t *testing.T) {
+		// Already moving faster than the steady-state speed in the look direction.
+		_, _, nz := FireworkBoostVelocity(0, 0, 3.0, 0, 0)
+		assert.Less(t, nz, 3.0, "overshooting the steady-state speed should ease back down, not keep accelerating")
+	})
+}
+
 func TestCanGlide(t *testing.T) {
 	tests := []struct {
 		name                                                      string

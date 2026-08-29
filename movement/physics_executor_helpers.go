@@ -99,6 +99,18 @@ func (pe *PhysicsMovementExecutor) syncEquipment() {
 	pe.physicsState.SetElytraEquipped(itemName == "elytra")
 }
 
+// syncFireworkBoost reads whether a firework rocket is currently attached
+// to (boosting) the agent's own entity via entityPositionGetter and pushes
+// that into physicsState before Tick() runs, mirroring syncEquipment's
+// pattern — physics.State has no entity-tracking access of its own.
+func (pe *PhysicsMovementExecutor) syncFireworkBoost() {
+	if pe.entityPositionGetter == nil {
+		return
+	}
+
+	pe.physicsState.SetFireworkBoosting(pe.entityPositionGetter.HasActiveFireworkBoost())
+}
+
 // recordTelemetry records telemetry data if a recorder is set.
 func (pe *PhysicsMovementExecutor) recordTelemetry(inputs physics.Inputs) {
 	if pe.telemetryRecorder == nil {

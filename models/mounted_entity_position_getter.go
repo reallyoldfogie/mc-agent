@@ -120,4 +120,14 @@ type MountedEntityPositionGetter interface {
 	// ("", false) if the slot is empty or not yet resolvable — mirrors
 	// GetRiderHeldItem's naming/resolution shape but for the chest slot.
 	GetOwnEquippedChestItem() (itemName string, found bool)
+
+	// HasActiveFireworkBoost reports whether a firework rocket used while
+	// gliding is currently attached to the agent's own entity and boosting
+	// its velocity (Java FireworkRocketEntity's SHOOTER_ENTITY_ID pointing
+	// back at the agent). True for as long as that firework entity exists —
+	// vanilla re-checks isGliding() every tick the firework is alive, so
+	// this alone doesn't guarantee the boost is currently being applied,
+	// only that a firework is attached; the gliding check itself happens
+	// separately in physics.State.
+	HasActiveFireworkBoost() bool
 }

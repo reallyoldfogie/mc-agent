@@ -1454,6 +1454,25 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 						models.HorseFlagSaddled.IsSet(e.HorseFlags),
 						models.HorseFlagTamed.IsSet(e.HorseFlags))
 				}
+			case int(models.EntityMetadataKeyFireworkShooterEntityID):
+				// Key 9 is only FireworkRocketEntity's SHOOTER_ENTITY_ID on
+				// that entity type; on a living entity it's health, so the
+				// entity type has to gate this or we would misread health as
+				// a shooter reference (and vice versa).
+				if !a.isFireworkRocketEntityType(e.EntityType) {
+					continue
+				}
+				if shooterVal, ok := entry.Value.(*pk.VarInt); ok && shooterVal != nil {
+					// HandlerOptionalInt wire convention: 0=absent, N=value-1.
+					if *shooterVal == 0 {
+						e.HasFireworkShooterEntityID = false
+					} else {
+						e.FireworkShooterEntityID = int32(*shooterVal) - 1
+						e.HasFireworkShooterEntityID = true
+						log.Printf("[onSetEntityMetadata] Entity %d (firework_rocket) shooter=%d",
+							entityID, e.FireworkShooterEntityID)
+					}
+				}
 			}
 		}
 

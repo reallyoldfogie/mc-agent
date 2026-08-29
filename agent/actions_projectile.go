@@ -708,3 +708,40 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 
 	return trajectory, nil
 }
+
+// UseFireworkRocket sends a plain "use item" (right-click) interaction with
+// whatever is in the main hand, mirroring the real client action that
+// triggers FireworkRocketItem.use()'s gliding-boost path. No aiming or
+// targeting is needed — unlike ThrowProjectileAt, this isn't a projectile
+// throw; the server decides what happens based on the held item and
+// PlayerEntity.isGliding(), and the resulting boost (once the spawned
+// firework entity's SHOOTER_ENTITY_ID is observed pointing back at this
+// agent — see HasActiveFireworkBoost) pulls velocity toward whatever the
+// current look direction already is. Sends the current yaw/pitch simply
+// because SendUseItem requires some rotation value, not because it steers
+// anything.
+func (a *agent) UseFireworkRocket() error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+	actionHandler := a.versionHandler.Play().Actions()
+	if actionHandler == nil {
+		return fmt.Errorf("action handler not available")
+	}
+
+	_, yaw, pitch, ok := a.GetPosition()
+	if !ok {
+		return fmt.Errorf("agent position not initialized")
+	}
+
+	conn, err := a.getPacketWriter()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("[UseFireworkRocket] Sending use item packet, yaw=%.2f pitch=%.2f", yaw, pitch)
+	if err := actionHandler.SendUseItem(conn, models.MainHand, 0, yaw, pitch); err != nil {
+		return fmt.Errorf("error using firework rocket: %w", err)
+	}
+	return nil
+}

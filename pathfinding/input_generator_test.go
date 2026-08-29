@@ -83,6 +83,10 @@ func (m *mockPhysicsState) SetElytraEquipped(equipped bool) {
 	// no-op for mock
 }
 
+func (m *mockPhysicsState) SetFireworkBoosting(boosting bool) {
+	// no-op for mock
+}
+
 func (m *mockPhysicsState) IsGliding() bool {
 	return false
 }

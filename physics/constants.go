@@ -339,6 +339,25 @@ const (
 	GlideHorizontalEaseFactor = 0.1
 )
 
+// Firework rocket boost constants, cited from Java
+// FireworkRocketEntity.tick()'s shooter-velocity nudge (Yarn, decompiled
+// 1.21.11) — applied every tick a firework used while gliding is alive and
+// attached to the shooter. See physics/elytra.go's FireworkBoostVelocity.
+const (
+	// FireworkBoostBlend is the flat per-tick nudge toward the look
+	// direction (Java: `vec3d.x * 0.1`, applied per axis including Y).
+	FireworkBoostBlend = 0.1
+
+	// FireworkBoostTarget is the target speed (in the look direction) the
+	// ease term pulls velocity toward (Java: `vec3d.x * 1.5`).
+	FireworkBoostTarget = 1.5
+
+	// FireworkBoostEase is the ease factor applied to the gap between
+	// current velocity and FireworkBoostTarget (Java: `... * 0.5`) — a much
+	// stronger per-tick pull than gliding's own 0.1 horizontal ease.
+	FireworkBoostEase = 0.5
+)
+
 // Minecart physics constants
 // Source: net/minecraft/entity/vehicle/DefaultMinecartController.java (1.21.2+)
 //

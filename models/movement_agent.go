@@ -6,6 +6,11 @@ import "context"
 type MovementAgent interface {
 	Position
 
+	// GetVelocity returns the agent's current physics velocity in
+	// blocks/tick. ok is false when no movement executor is active (e.g.
+	// physics disabled or not yet initialized).
+	GetVelocity() (x, y, z float64, ok bool)
+
 	MoveForward(ctx context.Context, distance float64) error
 	MoveUp(ctx context.Context, distance float64) error
 	MoveUpAndSneak(ctx context.Context, distance float64) error

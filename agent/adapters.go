@@ -611,6 +611,15 @@ func (a *agent) isSaddleableMountType(entityTypeID int32) bool {
 	}
 }
 
+// isFireworkRocketEntityType reports whether the given entity type is a
+// firework_rocket — used to gate reading
+// models.EntityMetadataKeyFireworkShooterEntityID, which numerically
+// collides with EntityMetadataKeyHealth on living entities.
+func (a *agent) isFireworkRocketEntityType(entityTypeID int32) bool {
+	localName, ok := a.entityTypeLocalName(entityTypeID)
+	return ok && localName == "firework_rocket"
+}
+
 // entityTypeLocalName resolves an entity type ID (as carried on spawn/equipment
 // packets) to its bare registry name with the namespace stripped (e.g.
 // "minecraft:camel" -> "camel"). ok is false when the entity-type registry
@@ -806,6 +815,32 @@ func (a *agent) GetOwnEquippedChestItem() (string, bool) {
 	}
 
 	return localName, true
+}
+
+// HasActiveFireworkBoost reports whether a firework rocket used while
+// gliding is currently attached to (boosting) the agent's own entity. See
+// models.MountedEntityPositionGetter.HasActiveFireworkBoost. Computed live
+// by scanning tracked entities rather than a separately maintained flag, so
+// it can never go stale relative to a.entities: a firework stops boosting
+// the instant its RemoveEntities packet is processed and it drops out of
+// the map.
+func (a *agent) HasActiveFireworkBoost() bool {
+	ownID := a.GetEntityID()
+	if ownID == 0 {
+		return false
+	}
+
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+	for _, e := range a.entities {
+		if !a.isFireworkRocketEntityType(e.EntityType) {
+			continue
+		}
+		if e.HasFireworkShooterEntityID && e.FireworkShooterEntityID == ownID {
+			return true
+		}
+	}
+	return false
 }
 
 // perceptionRadiusCap clamps radius to the agent's own effective vision
