@@ -154,18 +154,11 @@ func GetChestContents(ctx context.Context, rcon testenv.RCONHelper, pos models.V
 		return items, nil
 	}
 
-	entryRe := regexp.MustCompile(`\{([^}]*)\}`)
 	slotRe := regexp.MustCompile(`(?i)Slot:\s*(-?\d+)b`)
 	idRe := regexp.MustCompile(`(?i)id:\s*"([^"]+)"`)
 	countRe := regexp.MustCompile(`(?i)count:\s*(\d+)b?`)
 
-	entries := entryRe.FindAllStringSubmatch(resp, -1)
-	for _, entry := range entries {
-		if len(entry) != 2 {
-			continue
-		}
-		segment := entry[1]
-
+	for _, segment := range splitTopLevelBraceEntries(resp) {
 		slotMatch := slotRe.FindStringSubmatch(segment)
 		idMatch := idRe.FindStringSubmatch(segment)
 		countMatch := countRe.FindStringSubmatch(segment)
@@ -191,6 +184,54 @@ func GetChestContents(ctx context.Context, rcon testenv.RCONHelper, pos models.V
 	}
 
 	return items, nil
+}
+
+// splitTopLevelBraceEntries splits an RCON `data get` response's array of
+// `{...}` item entries on top-level braces only, tracking depth (and
+// skipping braces inside quoted strings) instead of a naive \{([^}]*)\}
+// regex. An item carrying component data - e.g. an elytra with
+// accumulated durability wear reports as
+// `{..., components: {"minecraft:damage": 1}, id: "minecraft:elytra"}` -
+// has a NESTED {...} inside its entry, which a naive regex matches as its
+// own bogus "entry" and stops at, silently dropping the real item
+// (confirmed live: an elytra with a damage component vanished from
+// GetInventoryItems's results entirely, even though the raw RCON response
+// plainly contained it).
+func splitTopLevelBraceEntries(s string) []string {
+	var entries []string
+	depth := 0
+	inQuotes := false
+	escaped := false
+	start := -1
+	for i, r := range s {
+		if inQuotes {
+			switch {
+			case escaped:
+				escaped = false
+			case r == '\\':
+				escaped = true
+			case r == '"':
+				inQuotes = false
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inQuotes = true
+		case '{':
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		case '}':
+			depth--
+			if depth == 0 && start != -1 {
+				entries = append(entries, s[start:i+1])
+				start = -1
+			}
+		}
+	}
+	return entries
 }
 
 // GetPlayerPosition gets the player's current position
@@ -270,18 +311,11 @@ func GetInventoryItems(ctx context.Context, rcon testenv.RCONHelper, playerName 
 		return items, nil
 	}
 
-	entryRe := regexp.MustCompile(`\{([^}]*)\}`)
 	slotRe := regexp.MustCompile(`(?i)Slot:\s*(-?\d+)b`)
 	idRe := regexp.MustCompile(`(?i)id:\s*"([^"]+)"`)
 	countRe := regexp.MustCompile(`(?i)count:\s*(\d+)b?`)
 
-	entries := entryRe.FindAllStringSubmatch(resp, -1)
-	for _, entry := range entries {
-		if len(entry) != 2 {
-			continue
-		}
-		segment := entry[1]
-
+	for _, segment := range splitTopLevelBraceEntries(resp) {
 		slotMatch := slotRe.FindStringSubmatch(segment)
 		idMatch := idRe.FindStringSubmatch(segment)
 		countMatch := countRe.FindStringSubmatch(segment)

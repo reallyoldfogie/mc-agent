@@ -21,14 +21,16 @@ import (
 // at any altitude, so it deserves its own direct check rather than relying
 // on the other tests only ever un-equipping after landing.
 //
-// Removing the elytra via a real RCON `item replace` while airborne (the
-// same command every other elytra test already uses at cleanup, just moved
-// mid-flight here) exercises the exact server round-trip this depends on:
-// the agent has no inventory access of its own inside physics.State, so
-// CanGlide only sees the equipment change once movement/physics_executor.go's
-// syncEquipment reads it back from the ClientboundSetSlot the server sends
-// in response - this test also confirms that path doesn't lag long enough
-// to matter, not just that the flag flips in principle.
+// Removing the elytra via a real shift-click on the armor slot while
+// airborne (the mirror image of the shift-click every elytra test already
+// uses to equip it, not RCON's `item replace` - see the mid-flight
+// shift-click's own comment below for why) exercises the exact
+// server round-trip this depends on: the agent has no inventory access of
+// its own inside physics.State, so CanGlide only sees the equipment change
+// once movement/physics_executor.go's syncEquipment reads it back from the
+// ClientboundSetSlot the server sends in response to the click - this test
+// also confirms that path doesn't lag long enough to matter, not just that
+// the flag flips in principle.
 func TestElytraUnequippingStopsGliding(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -110,14 +112,52 @@ func TestElytraUnequippingStopsGliding(t *testing.T) {
 			require.NoError(t, env.Agent.Agent.SetManualRotation(0, 0))
 			time.Sleep(300 * time.Millisecond)
 
-			// Remove the elytra mid-flight - the same RCON command every
-			// other elytra test already runs at cleanup, just while
-			// airborne here instead of after landing.
-			_, err = env.Inst.RCON.Exec(ctx, fmt.Sprintf("item replace entity %s armor.chest with air", env.BotName))
-			require.NoError(t, err, "unequip elytra mid-flight")
+			// Remove the elytra mid-flight via a real shift-click on the
+			// armor slot itself - the mirror image of the shift-click used
+			// to equip it above, and not RCON's `item replace`: that
+			// command changes the entity's equipment server-side but, per
+			// TestElytraGlideSlowsDescentAndAddsForwardMotion's doc comment,
+			// isn't reliably broadcast to every observer already tracking
+			// the entity (confirmed there via a real replay recording where
+			// a companion agent never saw the elytra equipped despite the
+			// bot gliding correctly). A shift-click goes through the same
+			// server-authoritative container-click path a real player's
+			// unequip action would.
+			armorSlot := env.ScreenMgr.Inventory().GetSlots()[6]
+			require.NoError(t, env.Agent.Agent.ShiftClickSlot(6, slotToItemStack(armorSlot)), "shift-click elytra out of the armor slot mid-flight")
 			require.True(t, waitForSlotState(env.ScreenMgr, 6, func(s screen.Slot) bool {
 				return s.Count == 0
 			}, 10*time.Second), "chest armor slot never cleared after unequipping")
+
+			// Verify against real server-side NBT inventory data (not just
+			// the client's own predicted screen state, which only proves
+			// what the client predicted, not what the server actually did)
+			// that the elytra genuinely moved into the main inventory
+			// rather than being duplicated or lost. waitForSlotState above
+			// only confirms local prediction, which fires synchronously the
+			// instant ShiftClickSlot is called - well before the real
+			// server-side click processing and its RCON-visible NBT update
+			// necessarily complete, so this polls rather than checking
+			// once (confirmed live: a single immediate check raced ahead
+			// of the server and saw neither the armor slot nor the
+			// inventory holding the elytra for a brief window).
+			elytraCount := 0
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				invItems, invErr := GetInventoryItems(ctx, env.Inst.RCON, env.BotName)
+				require.NoError(t, invErr, "get real inventory state via RCON")
+				elytraCount = 0
+				for _, it := range invItems {
+					if it.ID == "minecraft:elytra" {
+						elytraCount++
+					}
+				}
+				if elytraCount == 1 {
+					break
+				}
+				time.Sleep(steerInterval)
+			}
+			assert.Equal(t, 1, elytraCount, "should be exactly one real elytra in inventory after unequipping, not duplicated or lost")
 
 			// CanGlide is re-checked every tick (physics/state.go's
 			// applyGlideStateTransition), so this should clear within a
