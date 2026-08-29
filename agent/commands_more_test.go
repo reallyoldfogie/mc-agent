@@ -81,6 +81,11 @@ func (f *fakeMoveExec) GetVelocity() (float64, float64, float64) {
 	return 0, 0, 0
 }
 
+func (f *fakeMoveExec) IsGliding() bool {
+	// no-op for fake
+	return false
+}
+
 func (f *fakeMoveExec) SetMovementHandler(models.MovementHandler) {}
 
 // ManualMovementExecutor implementation for testing

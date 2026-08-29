@@ -32,6 +32,10 @@ func (v *velocityCaptureMoveExec) GetVelocity() (float64, float64, float64) {
 	return v.startVelocity[0], v.startVelocity[1], v.startVelocity[2]
 }
 
+func (v *velocityCaptureMoveExec) IsGliding() bool {
+	return false
+}
+
 // buildDamageEventPacket constructs a raw DamageEvent packet.
 // sourceCauseID and sourceDirectID are sent as ID+1 in the protocol (0 = absent).
 func buildDamageEventPacket(packetID int32, entityID, sourceTypeID, sourceCauseID, sourceDirectID int32, sourcePos *[3]float64) pk.Packet {

@@ -11,6 +11,11 @@ type MovementAgent interface {
 	// physics disabled or not yet initialized).
 	GetVelocity() (x, y, z float64, ok bool)
 
+	// IsGliding reports whether elytra-gliding physics are currently active.
+	// Returns false (not just "unknown") when no movement executor is
+	// active, since a non-flying agent is definitionally not gliding.
+	IsGliding() bool
+
 	MoveForward(ctx context.Context, distance float64) error
 	MoveUp(ctx context.Context, distance float64) error
 	MoveUpAndSneak(ctx context.Context, distance float64) error

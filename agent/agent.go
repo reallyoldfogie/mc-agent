@@ -1589,6 +1589,19 @@ func (a *agent) GetVelocity() (x, y, z float64, ok bool) {
 	return x, y, z, true
 }
 
+// IsGliding returns whether elytra-gliding physics are currently active.
+// Returns false when no movement executor is active.
+func (a *agent) IsGliding() bool {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return false
+	}
+
+	return a.moveExec.IsGliding()
+}
+
 // SetManualJump sets whether the jump button is pressed for manual control.
 // For camels, holding jump charges the dash; releasing fires the impulse.
 func (a *agent) SetManualJump(enabled bool) error {

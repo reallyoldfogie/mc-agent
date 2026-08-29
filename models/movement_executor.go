@@ -21,6 +21,9 @@ type MovementExecutor interface {
 	// existing velocity rather than replace it via SetVelocity.
 	GetVelocity() (x, y, z float64)
 
+	// IsGliding reports whether elytra-gliding physics are currently active.
+	IsGliding() bool
+
 	// SetMounted transitions the executor to mounted/riding mode.
 	// The executor should switch to sending vehicle movement packets (ServerboundMoveVehicle).
 	// vehicleEntityID: the entity ID of the vehicle being ridden

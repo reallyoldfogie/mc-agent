@@ -309,6 +309,11 @@ func (pe *PhysicsMovementExecutor) GetVelocity() (x, y, z float64) {
 	return vel.X, vel.Y, vel.Z
 }
 
+// IsGliding returns the physics state's current gliding status.
+func (pe *PhysicsMovementExecutor) IsGliding() bool {
+	return pe.physicsState.IsGliding()
+}
+
 // SetMounted transitions the executor to mounted/riding mode.
 // The executor will then send vehicle movement packets instead of player position packets.
 func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
