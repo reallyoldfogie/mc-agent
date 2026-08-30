@@ -57,3 +57,26 @@ func TestHandleChatCommand_FlyTo_MissingArgs(t *testing.T) {
 		t.Fatalf("expected usage message, got %#v", capture.GetMessages())
 	}
 }
+
+func TestHandleChatCommand_Mount_NumericID(t *testing.T) {
+	agent, capture := setupChatCapture(t, "1.21.5")
+
+	// No entities tracked without a live connection, so this exercises
+	// argument parsing (numeric -> MountEntity) and dispatch, which then
+	// fails cleanly rather than panicking.
+	agent.handleChatCommand("mount 5")
+	if !capture.ContainsMessage("Mount failed") {
+		t.Fatalf("expected mount failure (entity not found), got %#v", capture.GetMessages())
+	}
+}
+
+func TestHandleChatCommand_Mount_EntityType(t *testing.T) {
+	agent, capture := setupChatCapture(t, "1.21.5")
+
+	// Non-numeric argument routes to MountNearest instead of MountEntity;
+	// no nearby entities without a live connection, so this fails cleanly.
+	agent.handleChatCommand("mount horse")
+	if !capture.ContainsMessage("Mount failed") {
+		t.Fatalf("expected mount failure (no nearby horse), got %#v", capture.GetMessages())
+	}
+}

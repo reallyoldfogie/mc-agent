@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -510,22 +510,27 @@ func (FireBowAt) Execute(ctx context.Context, agent models.CommandAgent, args []
 type Mount struct{}
 
 func (Mount) Name() string  { return "mount" }
-func (Mount) Usage() string { return "mount <entityID>" }
+func (Mount) Usage() string { return "mount <entityID | entityType>" }
 func (Mount) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
 	if len(args) < 1 {
-		_ = agent.SendChat("Usage: mount <entityID>")
+		_ = agent.SendChat("Usage: mount <entityID | entityType>")
 		return nil
 	}
-	entityID, err := strconv.ParseInt(args[0], 10, 32)
-	if err != nil {
-		_ = agent.SendChat("Invalid entity ID")
+	if entityID, err := strconv.ParseInt(args[0], 10, 32); err == nil {
+		if err := agent.MountEntity(ctx, int32(entityID)); err != nil {
+			_ = agent.SendChat(fmt.Sprintf("Mount failed: %v", err))
+			return nil
+		}
+		_ = agent.SendChat(fmt.Sprintf("Attempting to mount entity %d", entityID))
 		return nil
 	}
-	if err := agent.MountEntity(ctx, int32(entityID)); err != nil {
+
+	entityType := args[0]
+	if err := agent.MountNearest(ctx, entityType); err != nil {
 		_ = agent.SendChat(fmt.Sprintf("Mount failed: %v", err))
 		return nil
 	}
-	_ = agent.SendChat(fmt.Sprintf("Attempting to mount entity %d", entityID))
+	_ = agent.SendChat("Attempting to mount nearest " + entityType)
 	return nil
 }
 

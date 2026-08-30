@@ -30,6 +30,13 @@ type CommandAgent interface {
 	FireBowAt(ctx context.Context, x, y, z float64, callbacks ...ProjectileHitCallback) ([]TrajectoryPoint, error)
 
 	MountEntity(ctx context.Context, entityID int32) error
+
+	// MountNearest resolves entityTypeName (e.g. "horse", "minecraft:boat")
+	// to the nearest matching entity within perception range and mounts
+	// it - the common case a raw numeric entity ID can't cover, since a
+	// chat user rarely already knows a target's ID but does know what kind
+	// of thing they want to ride.
+	MountNearest(ctx context.Context, entityTypeName string) error
 	DismountEntity() error
 	JumpVehicle(ctx context.Context, power int32) error
 

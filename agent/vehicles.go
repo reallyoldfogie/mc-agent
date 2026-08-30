@@ -48,6 +48,33 @@ func (a *agent) MountEntity(ctx context.Context, entityID int32) error {
 	return nil
 }
 
+// MountNearest resolves entityTypeName (e.g. "horse", "minecraft:boat") to
+// the nearest matching entity within perception range and mounts it,
+// covering the common case a raw "mount <entityID>" can't: a chat user
+// rarely already knows a target's numeric entity ID, but does know what
+// kind of thing they want to ride.
+func (a *agent) MountNearest(ctx context.Context, entityTypeName string) error {
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return fmt.Errorf("agent position not initialized")
+	}
+
+	typeID, ok := a.GetEntityTypeID(normalizeItemName(entityTypeName))
+	if !ok {
+		return fmt.Errorf("unknown entity type %q", entityTypeName)
+	}
+
+	entityID, distance, found := a.FindNearestEntityByType(typeID, pos.X, pos.Y, pos.Z, true)
+	if !found {
+		return fmt.Errorf("no nearby %s found", entityTypeName)
+	}
+
+	if err := a.MountEntity(ctx, entityID); err != nil {
+		return fmt.Errorf("mount nearest %s (entity %d, %.1f blocks away): %w", entityTypeName, entityID, distance, err)
+	}
+	return nil
+}
+
 // DismountEntity dismounts the agent from the current vehicle.
 // This is typically called in response to a /dismount command.
 // The dismounting is done by sending a sneak action while mounted.
