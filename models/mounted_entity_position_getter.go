@@ -137,4 +137,9 @@ type MountedEntityPositionGetter interface {
 	// (PlayerAbilities.FlySpeed, vanilla default 0.05). flySpeed is only
 	// meaningful when flying is true.
 	GetOwnFlying() (flying bool, flySpeed float64)
+
+	// IsSpectator reports whether the agent's own player is currently in
+	// spectator game mode - gates noclip physics (Entity.noClip is
+	// literally `this.isSpectator()`, refreshed every tick in vanilla).
+	IsSpectator() bool
 }

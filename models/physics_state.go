@@ -52,6 +52,12 @@ type PhysicsState interface {
 	// once per tick, before Tick(), the same way SetElytraEquipped is
 	// synced in — physics.State has no ability-tracking access of its own.
 	SetFlying(flying bool, flySpeed float64)
+	// SetNoClip updates whether collision resolution should be bypassed
+	// entirely this tick (spectator mode - see Entity.noClip). Callers
+	// should call this once per tick, before Tick(), the same way
+	// SetElytraEquipped is synced in — physics.State has no game-mode
+	// access of its own.
+	SetNoClip(noClip bool)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

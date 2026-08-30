@@ -99,6 +99,14 @@ type state struct {
 	// isFlying, set alongside it via SetFlying. See
 	// PHYSICS_AND_MOVEMENT_ENGINE_ENHANCEMENT.md §4.4.
 	flySpeed float64
+
+	// noClip mirrors Entity.noClip (true only in spectator mode - see
+	// PlayerEntity.tick()'s `this.noClip = this.isSpectator()`), set
+	// externally once per tick via SetNoClip before Tick() runs —
+	// physics.State has no game-mode access of its own, the same reason
+	// elytraEquipped is synced in rather than looked up here. Bypasses all
+	// collision resolution in Tick() when true.
+	noClip bool
 }
 
 // NewState creates a new physics state with default player dimensions.
@@ -326,6 +334,16 @@ func (s *state) SetFlying(flying bool, flySpeed float64) {
 	s.flySpeed = flySpeed
 }
 
+// SetNoClip updates whether collision resolution should be bypassed
+// entirely this tick (spectator mode - see Entity.noClip). Callers should
+// call this once per tick, before Tick(), the same way SetElytraEquipped
+// is synced in.
+func (s *state) SetNoClip(noClip bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noClip = noClip
+}
+
 // IsGliding reports whether elytra-gliding physics are currently active.
 // Callers (e.g. the movement executor) compare this before/after Tick() to
 // detect a start-gliding transition and send the corresponding
@@ -449,8 +467,22 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Z *= mz
 	}
 
-	// Update position with collision detection
-	s.tickPosition(w)
+	// Update position, with collision detection unless noClip (spectator)
+	// is active - matches decompiled Entity.move(): `if (this.noClip) {
+	// this.setPosition(x+movement.x, y+movement.y, z+movement.z); } else {
+	// ...collision... }`. onGround is also forced false, matching
+	// PlayerEntity.tick()'s `this.noClip = this.isSpectator(); if
+	// (this.isSpectator() || ...) this.setOnGround(false);` - onGround
+	// would otherwise never get updated at all once collision resolution
+	// (its only source) is skipped.
+	if s.noClip {
+		s.Pos.X += s.Vel.X
+		s.Pos.Y += s.Vel.Y
+		s.Pos.Z += s.Vel.Z
+		s.onGround = false
+	} else {
+		s.tickPosition(w)
+	}
 
 	// Zero velocity after moving while in a cobweb, matching Java's
 	// `this.setVelocity(Vec3d.ZERO)`/`setDeltaMovement(Vec3.ZERO)` — momentum

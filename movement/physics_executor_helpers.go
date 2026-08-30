@@ -124,6 +124,18 @@ func (pe *PhysicsMovementExecutor) syncFlying() {
 	pe.physicsState.SetFlying(flying, flySpeed)
 }
 
+// syncNoClip reads the agent's own tracked game mode via
+// entityPositionGetter and pushes spectator-noclip state into physicsState
+// before Tick() runs, mirroring syncEquipment's pattern — physics.State
+// has no game-mode access of its own.
+func (pe *PhysicsMovementExecutor) syncNoClip() {
+	if pe.entityPositionGetter == nil {
+		return
+	}
+
+	pe.physicsState.SetNoClip(pe.entityPositionGetter.IsSpectator())
+}
+
 // recordTelemetry records telemetry data if a recorder is set.
 func (pe *PhysicsMovementExecutor) recordTelemetry(inputs physics.Inputs) {
 	if pe.telemetryRecorder == nil {

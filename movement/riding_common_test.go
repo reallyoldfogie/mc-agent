@@ -55,6 +55,8 @@ func (f *fakeAttributeGetter) HasActiveFireworkBoost() bool { return false }
 
 func (f *fakeAttributeGetter) GetOwnFlying() (bool, float64) { return false, 0 }
 
+func (f *fakeAttributeGetter) IsSpectator() bool { return false }
+
 func (f *fakeAttributeGetter) GetEntityAttribute(int32, string) (float64, bool) {
 	return f.liveValue, f.liveFound
 }

@@ -824,6 +824,13 @@ func (a *agent) GetOwnFlying() (flying bool, flySpeed float64) {
 	return abilities.Flying, float64(abilities.FlySpeed)
 }
 
+// IsSpectator reports whether the agent's own tracked game mode is
+// spectator. See models.MountedEntityPositionGetter.IsSpectator.
+func (a *agent) IsSpectator() bool {
+	gameMode, _ := a.GetGameMode()
+	return gameMode == models.GameModeSpectator
+}
+
 // HasActiveFireworkBoost reports whether a firework rocket used while
 // gliding is currently attached to (boosting) the agent's own entity. See
 // models.MountedEntityPositionGetter.HasActiveFireworkBoost. Computed live
