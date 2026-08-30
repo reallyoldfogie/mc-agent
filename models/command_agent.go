@@ -74,4 +74,20 @@ type CommandAgent interface {
 	// name, fireBowAt nearest) pass true.
 	NearestPlayerInfo(ctx context.Context, honorPerceptionEffects bool) (NearestPlayerInfo, bool)
 	FindPlayerByName(ctx context.Context, name string) (x, y, z float64, found bool, err error)
+
+	// GetPlayerAbilities returns the bot's own last-known PlayerAbilities
+	// (initialized is false until the first clientbound Abilities packet,
+	// sent at login, has arrived).
+	GetPlayerAbilities() (abilities PlayerAbilities, initialized bool)
+
+	// GetGameMode returns the bot's own current game mode (initialized is
+	// false until the Login packet has been processed).
+	GetGameMode() (gameMode GameMode, initialized bool)
+
+	// SetFlying requests the flying ability be toggled: sends the
+	// serverbound Abilities packet and, if the server's abilities allow
+	// flying (AllowFlying - creative or spectator, or a survival player an
+	// op granted it to), switches the physics engine into flying mode.
+	// Returns an error without sending anything if AllowFlying is false.
+	SetFlying(ctx context.Context, flying bool) error
 }

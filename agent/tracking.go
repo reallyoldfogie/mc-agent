@@ -161,6 +161,39 @@ func (a *agent) setEntityID(id int32) {
 	a.entIDMu.Unlock()
 }
 
+// GetPlayerAbilities returns the bot's own last-known PlayerAbilities.
+// initialized is false until the first clientbound Abilities packet (sent
+// at login) has arrived.
+func (a *agent) GetPlayerAbilities() (abilities models.PlayerAbilities, initialized bool) {
+	a.abilitiesMu.RLock()
+	defer a.abilitiesMu.RUnlock()
+	return a.abilities, a.abilitiesInitialized
+}
+
+// setPlayerAbilities updates the bot's own tracked PlayerAbilities.
+func (a *agent) setPlayerAbilities(abilities models.PlayerAbilities) {
+	a.abilitiesMu.Lock()
+	a.abilities = abilities
+	a.abilitiesInitialized = true
+	a.abilitiesMu.Unlock()
+}
+
+// GetGameMode returns the bot's own current game mode. initialized is false
+// until the Login packet has been processed.
+func (a *agent) GetGameMode() (gameMode models.GameMode, initialized bool) {
+	a.gameModeMu.RLock()
+	defer a.gameModeMu.RUnlock()
+	return a.gameMode, a.gameModeInitialized
+}
+
+// setGameMode updates the bot's own tracked game mode.
+func (a *agent) setGameMode(gameMode models.GameMode) {
+	a.gameModeMu.Lock()
+	a.gameMode = gameMode
+	a.gameModeInitialized = true
+	a.gameModeMu.Unlock()
+}
+
 // setMountedEntity sets the mounted vehicle entity ID and our seat index within
 // that vehicle's passenger list. Pass entityID -1 (and index -1) to indicate
 // dismounted. Both are written under one lock so a reader can never observe a

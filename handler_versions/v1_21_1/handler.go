@@ -183,13 +183,31 @@ func (p *playHandler) SendCustomPayload(conn models.PacketWriter, channel string
 	return nil
 }
 
-// ParseLogin parses the ClientboundLogin packet to extract entity ID.
-func (p *playHandler) ParseLogin(pkt pk.Packet) (entityID int32, err error) {
-	var id pk.Int
-	if err = pkt.Scan(&id); err != nil {
-		return 0, common.ErrPacketParse{PacketName: "Login", Cause: err}
+// ParseLogin parses the ClientboundLogin packet to extract the entity ID
+// and initial game mode.
+func (p *playHandler) ParseLogin(pkt pk.Packet) (entityID int32, gameMode agent_models.GameMode, err error) {
+	login := cb.NewLogin()
+	if err = login.Scan(pkt); err != nil {
+		return 0, agent_models.GameModeSurvival, common.ErrPacketParse{PacketName: "Login", Cause: err}
 	}
-	return int32(id), nil
+	return int32(login.EntityId), agent_models.ParseGameModeString(login.WorldState.Gamemode.Value), nil
+}
+
+// ParseClientboundAbilities parses a ClientboundAbilities packet.
+func (p *playHandler) ParseClientboundAbilities(pkt pk.Packet) (abilities agent_models.PlayerAbilities, err error) {
+	abilitiesPkt := cb.NewAbilities()
+	if err = abilitiesPkt.Scan(pkt); err != nil {
+		return agent_models.PlayerAbilities{}, common.ErrPacketParse{PacketName: "Abilities", Cause: err}
+	}
+	invulnerable, flying, allowFlying, creativeMode := agent_models.DecodePlayerAbilitiesFlags(byte(abilitiesPkt.Flags))
+	return agent_models.PlayerAbilities{
+		Invulnerable: invulnerable,
+		Flying:       flying,
+		AllowFlying:  allowFlying,
+		CreativeMode: creativeMode,
+		FlySpeed:     float32(abilitiesPkt.FlyingSpeed),
+		WalkSpeed:    float32(abilitiesPkt.WalkingSpeed),
+	}, nil
 }
 
 // ParseSound parses a ClientboundSound packet.

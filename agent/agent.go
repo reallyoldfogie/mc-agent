@@ -170,6 +170,22 @@ type agent struct {
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
 
+	// abilitiesMu guards abilities/abilitiesInitialized.
+	abilitiesMu sync.RWMutex
+	// abilities is the bot's own last-known PlayerAbilities, as reported by
+	// the server's clientbound Abilities packet (sent at login and
+	// whenever it changes, e.g. a game mode switch).
+	abilities            models.PlayerAbilities
+	abilitiesInitialized bool
+
+	// gameModeMu guards gameMode/gameModeInitialized.
+	gameModeMu sync.RWMutex
+	// gameMode is the bot's own current game mode, set from the Login
+	// packet at join and kept current via ClientboundGameEvent's
+	// GAME_MODE_CHANGED reason.
+	gameMode            models.GameMode
+	gameModeInitialized bool
+
 	// ownEffectsMu guards ownEffects.
 	ownEffectsMu sync.RWMutex
 	// ownEffects holds the agent's own player entity's active status

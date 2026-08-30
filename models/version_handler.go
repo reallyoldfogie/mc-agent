@@ -120,8 +120,14 @@ type PlayHandler interface {
 	// payload: the payload data (e.g., brand string)
 	SendCustomPayload(conn PacketWriter, channel string, payload string) error
 
-	// ParseLogin parses the ClientboundLogin packet to extract entity ID.
-	ParseLogin(p pk.Packet) (entityID int32, err error)
+	// ParseLogin parses the ClientboundLogin packet to extract the entity ID
+	// and the player's initial game mode (SpawnInfo.Gamemode).
+	ParseLogin(p pk.Packet) (entityID int32, gameMode GameMode, err error)
+
+	// ParseClientboundAbilities parses a ClientboundAbilities packet - sent
+	// at login and whenever the local player's flying-related abilities
+	// change (e.g. a game mode switch). See PlayerAbilities's doc comment.
+	ParseClientboundAbilities(p pk.Packet) (abilities PlayerAbilities, err error)
 
 	// ParseSound parses a ClientboundSound packet.
 	// Returns soundID (0-based), category, position (fixed-point x8), volume, pitch, seed.

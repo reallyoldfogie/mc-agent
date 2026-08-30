@@ -120,6 +120,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onGameEvent,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundAbilities"),
+			Name:     "ClientboundAbilities",
+			Priority: 0,
+			F:        a.onPlayerAbilities,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundEntityUpdateAttributes"),
 			Name:     "ClientboundEntityUpdateAttributes",
 			Priority: 0,
@@ -1607,10 +1613,37 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 	// Log game event for debugging
 	log.Printf("[onGameEvent] Event type: %d, Position: (%.2f, %.2f, %.2f), Value: %.1f", eventType, x, y, z, value)
 
-	// Check for PROJECTILE_LAND event (game event type 3)
-	if eventType == 3 {
-		log.Printf("[onGameEvent] PROJECTILE_LAND detected at (%.2f, %.2f, %.2f)", x, y, z)
+	// GAME_MODE_CHANGED (game event reason 3, per decompiled
+	// GameStateChangeS2CPacket.java) - fired whenever the local player's
+	// own game mode changes mid-session (e.g. an op running /gamemode).
+	// The prior version of this check mislabeled reason 3 as
+	// "PROJECTILE_LAND", which isn't a real vanilla GameEvent reason at
+	// all; it was dead/log-only code with no other logic depending on it.
+	const gameEventGameModeChanged = 3
+	if eventType == gameEventGameModeChanged {
+		gameMode := models.GameMode(int32(value))
+		log.Printf("[onGameEvent] Game mode changed to %s", gameMode)
+		a.setGameMode(gameMode)
 	}
+
+	return nil
+}
+
+// onPlayerAbilities handles the clientbound Abilities packet, sent at login
+// and whenever the local player's flying-related abilities change.
+func (a *agent) onPlayerAbilities(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	abilities, err := a.versionHandler.Play().ParseClientboundAbilities(p)
+	if err != nil {
+		return err
+	}
+
+	log.Printf("[onPlayerAbilities] invulnerable=%v flying=%v allowFlying=%v creativeMode=%v flySpeed=%.3f walkSpeed=%.3f",
+		abilities.Invulnerable, abilities.Flying, abilities.AllowFlying, abilities.CreativeMode, abilities.FlySpeed, abilities.WalkSpeed)
+	a.setPlayerAbilities(abilities)
 
 	return nil
 }
@@ -1937,12 +1970,13 @@ func (a *agent) onLogin(p pk.Packet) error {
 		return fmt.Errorf("missing version handler")
 	}
 
-	entityID, err := a.versionHandler.Play().ParseLogin(p)
+	entityID, gameMode, err := a.versionHandler.Play().ParseLogin(p)
 	if err != nil {
 		return err
 	}
 
 	a.setEntityID(entityID)
+	a.setGameMode(gameMode)
 	if a.rec != nil {
 		// Set selfId to -1 to match ReplayMod's standard behavior.
 		// This indicates no special camera entity - all players render normally.
