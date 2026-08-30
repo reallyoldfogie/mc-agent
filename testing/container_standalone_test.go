@@ -77,6 +77,16 @@ func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string,
 	serverCfg.Difficulty = difficulty
 	serverCfg.PullImage = false
 	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", testName, mcVersion)
+	// itzg/minecraft-server defaults ENABLE_COMMAND_BLOCK to off - without
+	// this, a command block placed via /setblock keeps ticking
+	// (LastExecution increments normally) but its Command NEVER actually
+	// runs (SuccessCount stays 0 forever), silently, with no error from
+	// /setblock itself. Confirmed live while building the Phase 9
+	// navigation-course tool: identical condition/run logic issued once
+	// via a raw RCON command succeeded every time, while the exact same
+	// text placed in a command block never did, across hundreds of ticks,
+	// until this was set.
+	serverCfg.ExtraEnv = map[string]string{"ENABLE_COMMAND_BLOCK": "true"}
 	RequireIntegrationEnv(t, serverCfg)
 
 	// Optionally copy protocol dumper mod for packet debugging
