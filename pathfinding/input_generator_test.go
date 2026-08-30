@@ -87,6 +87,10 @@ func (m *mockPhysicsState) SetFireworkBoosting(boosting bool) {
 	// no-op for mock
 }
 
+func (m *mockPhysicsState) SetFlying(flying bool, flySpeed float64) {
+	// no-op for mock
+}
+
 func (m *mockPhysicsState) IsGliding() bool {
 	return false
 }

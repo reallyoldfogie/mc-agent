@@ -130,4 +130,11 @@ type MountedEntityPositionGetter interface {
 	// only that a firework is attached; the gliding check itself happens
 	// separately in physics.State.
 	HasActiveFireworkBoost() bool
+
+	// GetOwnFlying reports whether the agent's own player currently has
+	// creative/spectator-style flying active (PlayerAbilities.Flying), and
+	// the vertical ascend/descend impulse scale to use while so
+	// (PlayerAbilities.FlySpeed, vanilla default 0.05). flySpeed is only
+	// meaningful when flying is true.
+	GetOwnFlying() (flying bool, flySpeed float64)
 }

@@ -111,6 +111,19 @@ func (pe *PhysicsMovementExecutor) syncFireworkBoost() {
 	pe.physicsState.SetFireworkBoosting(pe.entityPositionGetter.HasActiveFireworkBoost())
 }
 
+// syncFlying reads the agent's own tracked flying ability state via
+// entityPositionGetter and pushes it into physicsState before Tick() runs,
+// mirroring syncEquipment's pattern — physics.State has no ability-tracking
+// access of its own.
+func (pe *PhysicsMovementExecutor) syncFlying() {
+	if pe.entityPositionGetter == nil {
+		return
+	}
+
+	flying, flySpeed := pe.entityPositionGetter.GetOwnFlying()
+	pe.physicsState.SetFlying(flying, flySpeed)
+}
+
 // recordTelemetry records telemetry data if a recorder is set.
 func (pe *PhysicsMovementExecutor) recordTelemetry(inputs physics.Inputs) {
 	if pe.telemetryRecorder == nil {

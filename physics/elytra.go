@@ -88,12 +88,16 @@ func GlidingVelocity(vx, vy, vz, yawDegrees, pitchDegrees, gravity float64) (nx,
 	return vx * GlideHorizontalDrag, vy * GlideVerticalDrag, vz * GlideHorizontalDrag
 }
 
-// CanGlide mirrors Java LivingEntity.canGlide(): gliding requires being
-// airborne (not on ground), unmounted, free of Levitation, and wearing an
-// elytra. onGround/hasVehicle/hasLevitation short-circuit the whole check
-// the same way Java's early-return does.
-func CanGlide(onGround, hasVehicle, hasLevitation, elytraEquipped bool) bool {
-	if onGround || hasVehicle || hasLevitation {
+// CanGlide mirrors Java PlayerEntity.canGlide() wrapping
+// LivingEntity.canGlide(): gliding requires being airborne (not on
+// ground), unmounted, free of Levitation, not flying, and wearing an
+// elytra. onGround/hasVehicle/hasLevitation/isFlying short-circuit the
+// whole check the same way Java's early-returns do - PlayerEntity.
+// canGlide() is literally `!abilities.flying && super.canGlide()`, so
+// flying and gliding are mutually exclusive in vanilla (see
+// PHYSICS_AND_MOVEMENT_ENGINE_ENHANCEMENT.md §4.4).
+func CanGlide(onGround, hasVehicle, hasLevitation, isFlying, elytraEquipped bool) bool {
+	if onGround || hasVehicle || hasLevitation || isFlying {
 		return false
 	}
 	return elytraEquipped

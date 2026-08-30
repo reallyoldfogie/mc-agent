@@ -129,18 +129,19 @@ func TestFireworkBoostVelocity(t *testing.T) {
 
 func TestCanGlide(t *testing.T) {
 	tests := []struct {
-		name                                                      string
-		onGround, hasVehicle, hasLevitation, elytraEquipped, want bool
+		name                                                                string
+		onGround, hasVehicle, hasLevitation, isFlying, elytraEquipped, want bool
 	}{
-		{name: "airborne with elytra: can glide", onGround: false, hasVehicle: false, hasLevitation: false, elytraEquipped: true, want: true},
-		{name: "on ground: cannot glide even with elytra", onGround: true, hasVehicle: false, hasLevitation: false, elytraEquipped: true, want: false},
-		{name: "mounted: cannot glide even with elytra", onGround: false, hasVehicle: true, hasLevitation: false, elytraEquipped: true, want: false},
-		{name: "levitating: cannot glide even with elytra", onGround: false, hasVehicle: false, hasLevitation: true, elytraEquipped: true, want: false},
-		{name: "airborne without elytra: cannot glide", onGround: false, hasVehicle: false, hasLevitation: false, elytraEquipped: false, want: false},
+		{name: "airborne with elytra: can glide", onGround: false, hasVehicle: false, hasLevitation: false, isFlying: false, elytraEquipped: true, want: true},
+		{name: "on ground: cannot glide even with elytra", onGround: true, hasVehicle: false, hasLevitation: false, isFlying: false, elytraEquipped: true, want: false},
+		{name: "mounted: cannot glide even with elytra", onGround: false, hasVehicle: true, hasLevitation: false, isFlying: false, elytraEquipped: true, want: false},
+		{name: "levitating: cannot glide even with elytra", onGround: false, hasVehicle: false, hasLevitation: true, isFlying: false, elytraEquipped: true, want: false},
+		{name: "flying: cannot glide even with elytra", onGround: false, hasVehicle: false, hasLevitation: false, isFlying: true, elytraEquipped: true, want: false},
+		{name: "airborne without elytra: cannot glide", onGround: false, hasVehicle: false, hasLevitation: false, isFlying: false, elytraEquipped: false, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := CanGlide(tt.onGround, tt.hasVehicle, tt.hasLevitation, tt.elytraEquipped)
+			got := CanGlide(tt.onGround, tt.hasVehicle, tt.hasLevitation, tt.isFlying, tt.elytraEquipped)
 			assert.Equal(t, tt.want, got)
 		})
 	}

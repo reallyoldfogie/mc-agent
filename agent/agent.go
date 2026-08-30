@@ -1658,6 +1658,23 @@ func (a *agent) SetManualSprint(enabled bool) error {
 	return manual.SetManualSprint(enabled)
 }
 
+// SetManualSneak sets whether the sneak button is pressed for manual control.
+func (a *agent) SetManualSneak(enabled bool) error {
+	a.movementMu.RLock()
+	defer a.movementMu.RUnlock()
+
+	if a.moveExec == nil {
+		return fmt.Errorf("movement executor not available")
+	}
+
+	manual, ok := a.moveExec.(models.ManualMovementExecutor)
+	if !ok {
+		return fmt.Errorf("movement executor does not support manual mode")
+	}
+
+	return manual.SetManualSneak(enabled)
+}
+
 // errors
 
 var ErrAlreadyInitialized = errors.New("agent: already initialized")

@@ -66,6 +66,11 @@ type ManualMovementExecutor interface {
 
 	// SetManualSprint sets whether the sprint button is pressed.
 	SetManualSprint(enabled bool) error
+
+	// SetManualSneak sets whether the sneak button is pressed. While
+	// flying (see PlayerAbilities.Flying), this is one half of the
+	// ascend/descend control - sneak descends, jump ascends.
+	SetManualSneak(enabled bool) error
 }
 
 // RidingPhysicsInspector provides read-only access to the riding (mounted
@@ -108,4 +113,9 @@ type ManualMovement interface {
 
 	// SetManualSprint sets whether the sprint button is pressed.
 	SetManualSprint(enabled bool) error
+
+	// SetManualSneak sets whether the sneak button is pressed. While
+	// flying (see PlayerAbilities.Flying), this is one half of the
+	// ascend/descend control - sneak descends, jump ascends.
+	SetManualSneak(enabled bool) error
 }

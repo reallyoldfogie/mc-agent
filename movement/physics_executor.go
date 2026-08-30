@@ -1480,6 +1480,7 @@ func (pe *PhysicsMovementExecutor) tick() {
 		pe.syncActiveEffects()
 		pe.syncEquipment()
 		pe.syncFireworkBoost()
+		pe.syncFlying()
 
 		wasGliding := pe.physicsState.IsGliding()
 

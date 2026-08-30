@@ -46,6 +46,12 @@ type PhysicsState interface {
 	// per tick, before Tick(), the same way SetElytraEquipped is synced in —
 	// physics.State has no entity-tracking access of its own.
 	SetFireworkBoosting(boosting bool)
+	// SetFlying updates whether creative/spectator-style flying physics are
+	// currently active, and the vertical ascend/descend impulse scale to
+	// use while so (PlayerAbilities.FlySpeed). Callers should call this
+	// once per tick, before Tick(), the same way SetElytraEquipped is
+	// synced in — physics.State has no ability-tracking access of its own.
+	SetFlying(flying bool, flySpeed float64)
 	GetVelocity() V3
 	Tick(input Inputs, w PhysicsWorld) error
 	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState

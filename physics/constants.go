@@ -43,6 +43,24 @@ const (
 	JumpVelocity = 0.42 // Initial upward velocity when jumping
 )
 
+// Flying (creative/spectator) constants. Cited from decompiled
+// PlayerEntity.travel()/ClientPlayerEntity.tickMovement() - see
+// PHYSICS_AND_MOVEMENT_ENGINE_ENHANCEMENT.md §4.4.
+const (
+	// FlyingVerticalDecay replaces gravity/drag entirely while flying:
+	// vertical velocity is unconditionally overwritten to this fraction of
+	// its pre-tick value (which already includes this tick's ascend/
+	// descend impulse - see FlyingVerticalImpulseScale) every tick,
+	// discarding whatever gravity would otherwise have computed. Matches
+	// PlayerEntity.travel()'s `velocity.y = d * 0.6`.
+	FlyingVerticalDecay = 0.6
+	// FlyingVerticalImpulseScale multiplies PlayerAbilities.FlySpeed
+	// (vanilla default 0.05) to get the per-tick ascend/descend impulse
+	// added while jump/sneak is held: matches
+	// ClientPlayerEntity.tickMovement()'s `i * flySpeed * 3.0F`.
+	FlyingVerticalImpulseScale = 3.0
+)
+
 // Status effect constants (Phase 4a). Cited directly from decompiled
 // LivingEntity.java (getEffectiveGravity/travelMidAir) rather than the
 // wiki's amplifier-scaled approximation for Slow Falling — vanilla does not

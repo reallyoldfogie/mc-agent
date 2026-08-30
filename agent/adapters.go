@@ -817,6 +817,13 @@ func (a *agent) GetOwnEquippedChestItem() (string, bool) {
 	return localName, true
 }
 
+// GetOwnFlying reports the agent's own tracked flying ability state. See
+// models.MountedEntityPositionGetter.GetOwnFlying.
+func (a *agent) GetOwnFlying() (flying bool, flySpeed float64) {
+	abilities, _ := a.GetPlayerAbilities()
+	return abilities.Flying, float64(abilities.FlySpeed)
+}
+
 // HasActiveFireworkBoost reports whether a firework rocket used while
 // gliding is currently attached to (boosting) the agent's own entity. See
 // models.MountedEntityPositionGetter.HasActiveFireworkBoost. Computed live

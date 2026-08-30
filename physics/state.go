@@ -88,6 +88,17 @@ type state struct {
 	// entity-tracking access of its own, the same reason elytraEquipped is
 	// synced in rather than looked up here.
 	fireworkBoosting bool
+
+	// isFlying mirrors PlayerAbilities.Flying (creative/spectator flight),
+	// set externally once per tick via SetFlying before Tick() runs —
+	// physics.State has no packet/ability access of its own, the same
+	// reason elytraEquipped is synced in rather than looked up here.
+	isFlying bool
+	// flySpeed mirrors PlayerAbilities.FlySpeed (vanilla default 0.05):
+	// the scale of the per-tick vertical ascend/descend impulse while
+	// isFlying, set alongside it via SetFlying. See
+	// PHYSICS_AND_MOVEMENT_ENGINE_ENHANCEMENT.md §4.4.
+	flySpeed float64
 }
 
 // NewState creates a new physics state with default player dimensions.
@@ -301,6 +312,20 @@ func (s *state) SetElytraEquipped(equipped bool) {
 	s.elytraEquipped = equipped
 }
 
+// SetFlying updates whether creative/spectator-style flying physics are
+// currently active, and the vertical ascend/descend impulse scale to use
+// while so (PlayerAbilities.FlySpeed, vanilla default 0.05 - horizontal
+// flying speed uses the normal movement-speed/acceleration path unchanged,
+// see applyMovementInputs and applyEnvironmentForces's doc comments).
+// Callers should call this once per tick, before Tick(), the same way
+// SetElytraEquipped is synced in.
+func (s *state) SetFlying(flying bool, flySpeed float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.isFlying = flying
+	s.flySpeed = flySpeed
+}
+
 // IsGliding reports whether elytra-gliding physics are currently active.
 // Callers (e.g. the movement executor) compare this before/after Tick() to
 // detect a start-gliding transition and send the corresponding
@@ -501,6 +526,21 @@ func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
 
 		// Apply water flow current
 		s.applyWaterFlow(w)
+	} else if s.isFlying {
+		// Flying unconditionally overrides vertical velocity, discarding
+		// whatever gravity/Levitation would otherwise have computed -
+		// mirrors PlayerEntity.travel(): `d := velocity.y` (captured
+		// before travel() runs, already including this tick's
+		// ascend/descend impulse from applyMovementInputs above), run the
+		// normal tick, then `velocity.y = d * 0.6` regardless of what the
+		// normal tick computed. canGlide() excludes flying in vanilla (see
+		// CanGlide's flying parameter), so this and the isGliding branch
+		// below never both apply to the same tick. Horizontal (X/Z)
+		// velocity is untouched here - vanilla has no flying-specific
+		// horizontal branch at all, see applyMovementInputs's doc comment.
+		s.Vel.Y *= FlyingVerticalDecay
+		s.Vel.X *= inertiaFactor
+		s.Vel.Z *= inertiaFactor
 	} else if s.isGliding {
 		// Elytra gliding entirely replaces normal air gravity/drag — mirrors
 		// Java travel()'s dispatch order (fluid > gliding > mid-air): the
@@ -692,7 +732,7 @@ func (s *state) applyGlideStateTransition(input Inputs) {
 	wasJumpHeld := s.lastJumpInput
 	s.lastJumpInput = input.Jump
 
-	canGlide := CanGlide(s.onGround, false, s.activeEffects.HasLevitation, s.elytraEquipped)
+	canGlide := CanGlide(s.onGround, false, s.activeEffects.HasLevitation, s.isFlying, s.elytraEquipped)
 	if s.isGliding {
 		if !canGlide {
 			s.isGliding = false
@@ -707,8 +747,26 @@ func (s *state) applyGlideStateTransition(input Inputs) {
 
 // applyMovementInputs updates velocity based on throttle and jump inputs.
 func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
-	// Handle jump / swim-up / swim-down
-	if s.isInWater {
+	// Handle jump / swim-up / swim-down / fly-ascend/descend
+	if s.isFlying {
+		// Flying: jump/sneak directly control ascend/descend every tick,
+		// regardless of water/onGround state - matches
+		// ClientPlayerEntity.tickMovement()'s isCamera() block (always
+		// true for a locally-controlled player, i.e. always true here).
+		// Java adds this before travel() runs, so it's included in the
+		// pre-tick Y velocity applyEnvironmentForces's flying branch
+		// decays afterward.
+		var i float64
+		if input.Jump {
+			i++
+		}
+		if input.Sneak {
+			i--
+		}
+		if i != 0 {
+			s.Vel.Y += i * s.flySpeed * FlyingVerticalImpulseScale
+		}
+	} else if s.isInWater {
 		// In water: jump input swims up, sneak input swims down (no cooldown)
 		if input.Jump {
 			s.Vel.Y += SwimUpVelocity
