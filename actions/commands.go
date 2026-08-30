@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -633,5 +633,38 @@ func (FlyTo) Execute(ctx context.Context, agent models.CommandAgent, args []stri
 			_ = agent.SendChat(fmt.Sprintf("FlyTo failed: %v", err))
 		}
 	}()
+	return nil
+}
+
+// Fly and Land toggle creative/spectator-style flying (see
+// PHYSICS_AND_MOVEMENT_ENGINE_ENHANCEMENT.md §4.4) - distinct from FlyTo,
+// which pilots an elytra glide and requires one equipped. SetFlying itself
+// refuses to enable flying unless the server has granted AllowFlying
+// (creative/spectator, or a survival player an op granted it to), so a
+// misuse in survival reports a clear chat error rather than silently
+// no-oping.
+type Fly struct{}
+
+func (Fly) Name() string  { return "fly" }
+func (Fly) Usage() string { return "fly" }
+func (Fly) Execute(ctx context.Context, agent models.CommandAgent, _ []string) error {
+	if err := agent.SetFlying(ctx, true); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Fly failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat("Flying enabled")
+	return nil
+}
+
+type Land struct{}
+
+func (Land) Name() string  { return "land" }
+func (Land) Usage() string { return "land" }
+func (Land) Execute(ctx context.Context, agent models.CommandAgent, _ []string) error {
+	if err := agent.SetFlying(ctx, false); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("Land failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat("Flying disabled")
 	return nil
 }

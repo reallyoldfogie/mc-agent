@@ -80,3 +80,22 @@ func TestHandleChatCommand_Mount_EntityType(t *testing.T) {
 		t.Fatalf("expected mount failure (no nearby horse), got %#v", capture.GetMessages())
 	}
 }
+
+// TestHandleChatCommand_Fly_NotAllowed exercises the "fly" command's
+// dispatch and its AllowFlying gate (SetFlying refuses to enable flying
+// without server-granted permission) without a live connection - abilities
+// are never received in this harness, so AllowFlying defaults to false,
+// giving a clean failure. Full end-to-end coverage (creative granting
+// AllowFlying, the real toggle taking effect) is in
+// testing/flying_command_test.go against a real server; "land" isn't
+// tested here at all since, unlike "fly", it has no validation gate that
+// runs before reaching the network layer - calling it with no live
+// connection would reach a real packet write and panic, not fail cleanly.
+func TestHandleChatCommand_Fly_NotAllowed(t *testing.T) {
+	agent, capture := setupChatCapture(t, "1.21.5")
+
+	agent.handleChatCommand("fly")
+	if !capture.ContainsMessage("Fly failed") {
+		t.Fatalf("expected fly failure (no server-granted AllowFlying), got %#v", capture.GetMessages())
+	}
+}
