@@ -42,6 +42,16 @@ func ensureFireworkBoost(t *testing.T, agent models.Agent) {
 // unstable way to fly it in practice - real elytra flight is steered mostly
 // by yaw at a shallow, controlled pitch, trading a little altitude for
 // forward progress.
+//
+// The waypoint course is also cross-checked against a NavigationCourse
+// (see PHASE_9_PLAN.md and testing/navigation_course.go): a second,
+// server-authoritative witness that doesn't rely on the same client-side
+// position tracking this test's own per-leg loop uses to decide "reached."
+// Its radius is wider than the client-side loop's (25 vs. 15 blocks) to
+// tolerate real elytra altitude drift over the course - the client-side
+// check is deliberately horizontal-only (Y is "informational only," never
+// steered toward), but the course's marker entities sit at a fixed Y, and
+// vanilla's distance selector is full 3D.
 func TestElytraFlightNavigatesWaypointsAndLands(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -158,6 +168,15 @@ func TestElytraFlightNavigatesWaypointsAndLands(t *testing.T) {
 			const perLegTimeout = 8 * time.Second
 			const cruisePitch = 0.0
 
+			courseWaypoints := make([]CourseWaypoint, len(waypoints))
+			for i, wp := range waypoints {
+				courseWaypoints[i] = CourseWaypoint{Pos: models.V3{X: wp.x, Y: wp.y, Z: wp.z}}
+			}
+			const navCourseRadius = 25.0
+			navCourse, err := SetupNavigationCourse(ctx, env.Inst.RCON, env.BotName, navCourseRadius, courseWaypoints)
+			require.NoError(t, err, "set up navigation course")
+			defer func() { _ = navCourse.Cleanup(context.Background(), env.Inst.RCON) }()
+
 			for i, wp := range waypoints {
 				legStart := time.Now()
 				reached := false
@@ -182,6 +201,17 @@ func TestElytraFlightNavigatesWaypointsAndLands(t *testing.T) {
 				t.Logf("waypoint %d target=(%.1f,%.1f,%.1f) reached=%v final pos=(%.2f,%.2f,%.2f)",
 					i, wp.x, wp.y, wp.z, reached, pos.X, pos.Y, pos.Z)
 				assert.True(t, reached, "should reach waypoint %d within %v", i, perLegTimeout)
+			}
+
+			navResults, err := navCourse.Results(ctx, env.Inst.RCON)
+			require.NoError(t, err, "query navigation course results")
+			require.Len(t, navResults, len(waypoints))
+			var lastTriggeredTime int64
+			for i, res := range navResults {
+				t.Logf("navigation course waypoint %d: TriggeredTime=%d", i, res.TriggeredTime)
+				assert.Greater(t, res.TriggeredTime, int64(0), "server should independently confirm waypoint %d was reached", i)
+				assert.GreaterOrEqual(t, res.TriggeredTime, lastTriggeredTime, "server should confirm waypoint %d wasn't reached before the previous one", i)
+				lastTriggeredTime = res.TriggeredTime
 			}
 
 			// Land: pitch down and let the descent bring it down; keep

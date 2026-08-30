@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
@@ -24,6 +26,26 @@ type WaypointResult struct {
 
 func navWaypointTag(index int) string {
 	return fmt.Sprintf("nav_wp_%d", index)
+}
+
+// setScoreWithRetry sets a scoreboard score for the entity tagged tag,
+// retrying briefly if the server reports "No entity was found" - see the
+// call site in SetupNavigationCourse for why that can happen immediately
+// after a successful /summon.
+func setScoreWithRetry(ctx context.Context, rcon testenv.RCONHelper, tag, objective string, value int) error {
+	cmd := fmt.Sprintf("scoreboard players set @e[tag=%s,limit=1] %s %d", tag, objective, value)
+	const maxAttempts = 10
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := rcon.Exec(ctx, cmd)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(resp, "No entity was found") {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("entity tagged %s never became queryable after %d attempts", tag, maxAttempts)
 }
 
 // NavigationCourse is a server-tracked sequence of waypoints, set up by
@@ -114,6 +136,27 @@ func SetupNavigationCourse(ctx context.Context, rcon testenv.RCONHelper, botName
 		tag := navWaypointTag(i)
 		course.tags[i] = tag
 
+		// /forceload add takes block coordinates and resolves the
+		// containing chunk itself - no chunk-coordinate conversion needed.
+		// This runs BEFORE summoning anything into this chunk: a live
+		// diagnostic during the elytra course retrofit caught a waypoint
+		// well outside the player's natural simulation distance (this
+		// course's waypoints span hundreds of blocks; the player is still
+		// near the takeoff point when the whole course is set up) whose
+		// chunk got summoned into successfully but was then immediately
+		// unloaded again before an entity-tag query issued right
+		// afterward could see it - a real chunk-lifecycle race, not a
+		// selector bug (every later query for the same tag always found
+		// it once the chunk was pinned loaded first). This also covers
+		// the command block pair below: both sit in the same chunk as
+		// their waypoint (see the type doc comment for why that
+		// placement, not just the loading, is what matters).
+		blockX, blockZ := int(wp.Pos.X), int(wp.Pos.Z)
+		if _, err := rcon.Exec(ctx, fmt.Sprintf("forceload add %d %d", blockX, blockZ)); err != nil {
+			return nil, fmt.Errorf("forceload waypoint %d: %w", i, err)
+		}
+		course.forceloadedXZ = append(course.forceloadedXZ, [2]int{blockX, blockZ})
+
 		summonCmd := fmt.Sprintf(
 			`summon minecraft:block_display %f %f %f {Tags:["%s"],block_state:{Name:"minecraft:red_stained_glass"},glowing:1b,glow_color_override:16711680}`,
 			wp.Pos.X, wp.Pos.Y, wp.Pos.Z, tag,
@@ -125,20 +168,10 @@ func SetupNavigationCourse(ctx context.Context, rcon testenv.RCONHelper, botName
 		// Scores start unset, and "if score ... matches <n>" never matches
 		// an unset score (not even 0) - this initialization is what makes
 		// the trigger command block's "matches 0" gate below meaningful.
-		if _, err := rcon.Exec(ctx, fmt.Sprintf("scoreboard players set @e[tag=%s,limit=1] %s 0", tag, objective)); err != nil {
+		// Retried defensively even with the chunk pinned loaded above.
+		if err := setScoreWithRetry(ctx, rcon, tag, objective, 0); err != nil {
 			return nil, fmt.Errorf("initialize score for waypoint %d: %w", i, err)
 		}
-
-		// /forceload add takes block coordinates and resolves the
-		// containing chunk itself - no chunk-coordinate conversion needed.
-		// This also covers the command block pair below: both sit in the
-		// same chunk as their waypoint (see the type doc comment for why
-		// that placement, not just the loading, is what matters).
-		blockX, blockZ := int(wp.Pos.X), int(wp.Pos.Z)
-		if _, err := rcon.Exec(ctx, fmt.Sprintf("forceload add %d %d", blockX, blockZ)); err != nil {
-			return nil, fmt.Errorf("forceload waypoint %d: %w", i, err)
-		}
-		course.forceloadedXZ = append(course.forceloadedXZ, [2]int{blockX, blockZ})
 
 		tx, ty, tz := int(wp.Pos.X), int(wp.Pos.Y)+3, int(wp.Pos.Z)
 		course.commandPairs[i] = [2][3]int{{tx, ty, tz}, {tx + 1, ty, tz}}
