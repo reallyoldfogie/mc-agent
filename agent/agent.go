@@ -154,6 +154,12 @@ type agent struct {
 	posYaw, posPitch float64
 	posInitialized   bool
 
+	healthMu          sync.RWMutex
+	health            float32
+	food              int32
+	foodSaturation    float32
+	healthInitialized bool
+
 	entIDMu sync.RWMutex
 	entID   int32
 
