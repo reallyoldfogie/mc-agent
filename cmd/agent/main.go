@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	// _ "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 )
 
@@ -42,6 +45,14 @@ var (
 
 	skinCacheDir   = flag.String("skin-cache", "skins", "Directory to cache player/default skins")
 	skinNetEnabled = flag.Bool("skin-net", false, "Allow network skin fetches from Mojang (default off)")
+
+	// RCON flags - only needed for -follow-cam
+	rconAddress  = flag.String("rcon-address", "", "RCON host:port (e.g. localhost:25575) - required for -follow-cam")
+	rconPassword = flag.String("rcon-password", "", "RCON password")
+
+	// cam-follow flags
+	followCamTarget   = flag.String("follow-cam", "", "Player name to follow in spectator camera mode (requires -rcon-address/-rcon-password)")
+	followCamDistance = flag.Float64("follow-cam-distance", 8.0, "Max distance (blocks) to maintain from the followed player")
 
 	help = flag.Bool("help", false, "Display help")
 )
@@ -119,6 +130,29 @@ func main() {
 		*replayOut = filepath.Join(replayDir, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
 	}
 
+	// Dial RCON if configured - only needed for -follow-cam, but dialing
+	// eagerly here (rather than lazily inside StartCamFollow) surfaces a
+	// bad address/password immediately instead of after the agent has
+	// already fully connected and joined.
+	var camRCON testenv.RCONHelper
+	if *rconAddress != "" {
+		host, portStr, err := net.SplitHostPort(*rconAddress)
+		if err != nil {
+			log.Fatalf("invalid -rcon-address %q: %v", *rconAddress, err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			log.Fatalf("invalid -rcon-address port %q: %v", portStr, err)
+		}
+		rconCtx, rconCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		camRCON, err = testenv.DialRCON(rconCtx, host, port, *rconPassword)
+		rconCancel()
+		if err != nil {
+			log.Fatalf("dial RCON at %s: %v", *rconAddress, err)
+		}
+		log.Printf("Connected to RCON at %s", *rconAddress)
+	}
+
 	// Build agent config - version detection, manager resolution, and client creation
 	// are now handled automatically by agent.Init() if not provided
 	cfg := models.AgentConfig{
@@ -135,6 +169,7 @@ func main() {
 		ReplayGenerator:    *replayGenerator,
 		SkinProvider:       skinProvider,
 		LogWriter:          packetLogWriter,
+		RCON:               camRCON,
 	}
 
 	a, err := agent.New(cfg)
@@ -161,6 +196,16 @@ func main() {
 		log.Printf("start failed: %v", err)
 		exitCode = 1
 		return
+	}
+
+	if *followCamTarget != "" {
+		// A cam-follow failure isn't fatal to the agent process itself -
+		// log it clearly and keep running normally, just without the
+		// follow behavior. It's the operator's responsibility to ensure
+		// RCON access and the necessary server permissions are in place.
+		if err := a.StartCamFollow(ctx, *followCamTarget, *followCamDistance); err != nil {
+			log.Printf("cam-follow disabled: %v", err)
+		}
 	}
 
 	agentDone := a.Done()

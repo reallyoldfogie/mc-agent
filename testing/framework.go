@@ -651,6 +651,22 @@ type AgentConfig struct {
 	VersionHandler    models.VersionHandler // Optional: version-specific packet handler (overrides auto-detection)
 
 	EnableCamAgent bool // Whether to spawn a companion cam agent
+
+	// EnableCamFollow switches the companion cam agent to spectator mode
+	// and has it continuously teleport (via RCON) to stay within
+	// CamFollowDistance blocks of the main agent, including snapping
+	// instantly if the main agent is itself teleported. Requires RCON
+	// (inst.RCON, already threaded into every spawned agent's config) - if
+	// the RCON-driven spectator-mode switch fails, this is logged as a
+	// warning and the cam still connects normally, just without following.
+	// Defaults false (opt-in): unlike EnableCamAgent, this changes the
+	// cam's runtime behavior mid-test, which existing tests weren't
+	// written expecting.
+	EnableCamFollow bool
+	// CamFollowDistance is the max distance (blocks) the cam maintains
+	// from the main agent when EnableCamFollow is true. Only meaningful
+	// when EnableCamFollow is true.
+	CamFollowDistance float64
 }
 
 // DefaultAgentConfig returns a sensible default configuration for test agents.
@@ -667,11 +683,15 @@ func DefaultAgentConfig(name, serverAddress, version string) AgentConfig {
 		HPADebugPathBlock: "",
 		HPADebugPathColor: "",
 		EnableCamAgent:    true,
+		EnableCamFollow:   false,
+		CamFollowDistance: 8.0,
 	}
 }
 
 // SpawnAgent creates and starts a new agent connected to the test server.
-// It also spawns a companion recording agent (<name>Cam) before the main agent.
+// It also spawns a companion recording agent (<name>Cam) - before the main
+// agent, so it's already connected and recording by the time anything the
+// main agent does becomes observable.
 func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg AgentConfig) (*ManagedAgent, error) {
 	camCfg := cfg
 	camCfg.Name = camAgentName(cfg.Name)
@@ -682,19 +702,27 @@ func (f *Framework) SpawnAgent(ctx context.Context, inst *TestInstance, cfg Agen
 		camCfg.ReplayOutput = ""
 	}
 
-	managed, err := f.spawnAgentInternal(ctx, inst, cfg, true)
-	if err != nil {
-		// _ = cam.Stop(context.Background())
-		return nil, err
-	}
-
+	var cam *ManagedAgent
 	if cfg.EnableCamAgent {
-		cam, err := f.spawnAgentInternal(ctx, inst, camCfg, false)
+		c, err := f.spawnAgentInternal(ctx, inst, camCfg, false)
 		if err != nil {
 			return nil, fmt.Errorf("spawn cam agent %s: %w", camCfg.Name, err)
 		}
-		managed.Cam = cam
+		cam = c
 	}
+
+	managed, err := f.spawnAgentInternal(ctx, inst, cfg, true)
+	if err != nil {
+		return nil, err
+	}
+	managed.Cam = cam
+
+	if cam != nil && cfg.EnableCamFollow {
+		if err := cam.Agent.StartCamFollow(cam.ctx, cfg.Name, cfg.CamFollowDistance); err != nil {
+			log.Printf("[SpawnAgent] cam-follow disabled for %s: %v", camCfg.Name, err)
+		}
+	}
+
 	return managed, nil
 }
 

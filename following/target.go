@@ -1,11 +1,11 @@
 package following
 
 import (
+	"crypto/md5"
 	"fmt"
 	"math"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -72,11 +72,22 @@ func (ts *targetSelector) FindPlayerByName(name string) (*models.TargetInfo, err
 	return nil, fmt.Errorf("player %s not found in tracked entities (UUID source: %s, may be too far away)", name, uuidSource)
 }
 
+// deriveOfflineUUID mirrors vanilla's own offline-mode UUID assignment
+// (Java's UUID.nameUUIDFromBytes("OfflinePlayer:"+name)): a raw MD5 digest
+// of the name bytes with version (3) and IETF variant bits set on the
+// digest directly - NOT an RFC4122 "UUIDv3 with namespace" derivation,
+// which additionally prepends the namespace UUID's own bytes before
+// hashing and produces a different (wrong) result. Confirmed live: the
+// previous implementation (uuid.NewMD5(uuid.NameSpaceOID, ...), the
+// namespaced form) never matched a real offline-mode server's actual
+// assigned UUID, silently breaking this whole fallback path (FindPlayerByName
+// would report "not found" for any target whose UUID wasn't independently
+// resolvable via the player list first).
 func deriveOfflineUUID(name string) [16]byte {
-	var out [16]byte
-	ns := uuid.NewMD5(uuid.NameSpaceOID, []byte("OfflinePlayer:"+name))
-	copy(out[:], ns[:])
-	return out
+	sum := md5.Sum([]byte("OfflinePlayer:" + name))
+	sum[6] = (sum[6] & 0x0f) | 0x30 // version 3
+	sum[8] = (sum[8] & 0x3f) | 0x80 // IETF variant
+	return sum
 }
 
 // FindNearestPlayer finds the nearest player entity

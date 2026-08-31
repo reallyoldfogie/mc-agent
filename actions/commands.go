@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -666,5 +666,49 @@ func (Land) Execute(ctx context.Context, agent models.CommandAgent, _ []string) 
 		return nil
 	}
 	_ = agent.SendChat("Flying disabled")
+	return nil
+}
+
+// defaultCamFollowDistance is used when followCam's optional distance
+// argument is omitted.
+const defaultCamFollowDistance = 8.0
+
+type FollowCam struct{}
+
+func (FollowCam) Name() string  { return "followcam" }
+func (FollowCam) Usage() string { return "followCam <playerName> [maxDistance]" }
+func (FollowCam) Execute(ctx context.Context, agent models.CommandAgent, args []string) error {
+	if len(args) < 1 {
+		_ = agent.SendChat("Usage: followCam <playerName> [maxDistance]")
+		return nil
+	}
+	targetName := args[0]
+	maxDistance := defaultCamFollowDistance
+	if len(args) > 1 {
+		d, err := parseFloat(args[1])
+		if err != nil {
+			_ = agent.SendChat("Invalid maxDistance")
+			return nil
+		}
+		maxDistance = d
+	}
+	if err := agent.StartCamFollow(ctx, targetName, maxDistance); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("FollowCam failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat(fmt.Sprintf("Following %s (spectator, max %.1f blocks)", targetName, maxDistance))
+	return nil
+}
+
+type StopFollowCam struct{}
+
+func (StopFollowCam) Name() string  { return "stopfollowcam" }
+func (StopFollowCam) Usage() string { return "stopFollowCam" }
+func (StopFollowCam) Execute(ctx context.Context, agent models.CommandAgent, _ []string) error {
+	if err := agent.StopCamFollow(); err != nil {
+		_ = agent.SendChat(fmt.Sprintf("StopFollowCam failed: %v", err))
+		return nil
+	}
+	_ = agent.SendChat("Stopped following")
 	return nil
 }

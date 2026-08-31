@@ -90,4 +90,18 @@ type CommandAgent interface {
 	// op granted it to), switches the physics engine into flying mode.
 	// Returns an error without sending anything if AllowFlying is false.
 	SetFlying(ctx context.Context, flying bool) error
+
+	// StartCamFollow switches this agent to spectator mode via RCON and
+	// begins periodically teleporting it (also via RCON) to stay within
+	// maxDistance blocks of targetName, snapping instantly if the target
+	// is itself teleported. Requires RCON to be configured on this agent
+	// (AgentConfig.RCON) - returns an error immediately, without starting
+	// anything, if RCON is unset or the spectator-mode switch itself
+	// fails. Callers should treat that error as non-fatal: log/chat it and
+	// keep the agent running normally, just without cam-follow active.
+	StartCamFollow(ctx context.Context, targetName string, maxDistance float64) error
+
+	// StopCamFollow stops any active StartCamFollow loop. No-op if not
+	// currently following.
+	StopCamFollow() error
 }

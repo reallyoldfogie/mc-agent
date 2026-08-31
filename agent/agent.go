@@ -186,6 +186,12 @@ type agent struct {
 	gameMode            models.GameMode
 	gameModeInitialized bool
 
+	// camFollowMu guards camFollowCancel.
+	camFollowMu sync.Mutex
+	// camFollowCancel stops the currently active StartCamFollow loop, if
+	// any. nil when not currently following.
+	camFollowCancel context.CancelFunc
+
 	// ownEffectsMu guards ownEffects.
 	ownEffectsMu sync.RWMutex
 	// ownEffects holds the agent's own player entity's active status
