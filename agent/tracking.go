@@ -147,6 +147,26 @@ func (a *agent) GetPositionSimple() (pos models.V3, initialized bool) {
 	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posInitialized
 }
 
+// Health returns the most recently received health/food/saturation values
+// (see setHealth), and whether any HealthChange event has been received yet
+// (false before the first one, e.g. before the player subsystem finishes
+// joining). Satisfies models.HealthProvider.
+func (a *agent) Health() (health float32, food int32, saturation float32, known bool) {
+	a.healthMu.RLock()
+	defer a.healthMu.RUnlock()
+	return a.health, a.food, a.foodSaturation, a.healthInitialized
+}
+
+// setHealth records the latest health/food/saturation values from a
+// HealthChange event (see HandleHealthChange), mirroring setPosition's
+// pattern for the equivalent position state.
+func (a *agent) setHealth(health float32, food int32, saturation float32) {
+	a.healthMu.Lock()
+	a.health, a.food, a.foodSaturation = health, food, saturation
+	a.healthInitialized = true
+	a.healthMu.Unlock()
+}
+
 // GetEntityID returns the bot's entity ID.
 func (a *agent) GetEntityID() int32 {
 	a.entIDMu.RLock()

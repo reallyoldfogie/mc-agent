@@ -44,6 +44,7 @@ func (a *agent) onDisconnect(reason string) {
 
 // onHealthChange handles player health changes.
 func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
+	a.setHealth(health, food, saturation)
 	log.Printf("Health: %.2f, Food: %d, Saturation: %.2f", health, food, saturation)
 }
 
