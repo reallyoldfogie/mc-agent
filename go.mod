@@ -2,13 +2,13 @@ module github.com/reallyoldfogie/mc-agent
 
 go 1.27.0
 
-replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
+// replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
 
-replace github.com/reallyoldfogie/mc-protocol-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-protocol-go
+// replace github.com/reallyoldfogie/mc-protocol-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-protocol-go
 
-replace github.com/reallyoldfogie/mc-client-test-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-client-test-go
+// replace github.com/reallyoldfogie/mc-client-test-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-client-test-go
 
-replace github.com/reallyoldfogie/mc-replay-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-replay-go
+// replace github.com/reallyoldfogie/mc-replay-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-replay-go
 
 require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
@@ -22,11 +22,11 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.12.0
-	github.com/reallyoldfogie/mc-bot-go v0.0.0-00010101000000-000000000000
-	github.com/reallyoldfogie/mc-client-test-go v0.0.0-00010101000000-000000000000
+	github.com/reallyoldfogie/mc-bot-go v0.1.0
+	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4
-	github.com/reallyoldfogie/mc-protocol-go v0.0.0-00010101000000-000000000000
-	github.com/reallyoldfogie/mc-replay-go v0.0.3
+	github.com/reallyoldfogie/mc-protocol-go v0.1.0
+	github.com/reallyoldfogie/mc-replay-go v0.0.5
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/tools v0.41.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1

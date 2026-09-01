@@ -140,8 +140,16 @@ github.com/prometheus/procfs v0.19.2 h1:zUMhqEW66Ex7OXIiDkll3tl9a1ZdilUOd/F6ZXw4
 github.com/prometheus/procfs v0.19.2/go.mod h1:M0aotyiemPhBCM0z5w87kL22CxfcH05ZpYlu+b4J7mw=
 github.com/rabbitmq/amqp091-go v1.12.0 h1:V0v14Iqfs+MwHWihJt/nGS5Ulu0vw572b2Co3mwunkI=
 github.com/rabbitmq/amqp091-go v1.12.0/go.mod h1:Hy4jKW5kQART1u+JkDTF9YYOQUHXqMuhrgxOEeS7G4o=
+github.com/reallyoldfogie/mc-bot-go v0.1.0 h1:W2ZnazP5uDFNuMf6mAWSxpoEJHDb0q+Tx/JVV3gckxo=
+github.com/reallyoldfogie/mc-bot-go v0.1.0/go.mod h1:a1PEyOa8tw4vgLPQHSKKYUkQmyxNV5Btdt9e+UVuDgA=
+github.com/reallyoldfogie/mc-client-test-go v0.1.0 h1:cajCq69/ijsnDhRFPOvuwgvWOLt8RCx8ItE2ce6bR68=
+github.com/reallyoldfogie/mc-client-test-go v0.1.0/go.mod h1:dL6Ts3HmHcQLJ733f7xwAeWIuR7pHhBgSxrYBl7KFHU=
 github.com/reallyoldfogie/mc-data-gen/loader v0.0.4 h1:UfLayatot4n1EhW6MKbm9vouHg9/QUsToXcExea9HFI=
 github.com/reallyoldfogie/mc-data-gen/loader v0.0.4/go.mod h1:CG/tCLZ5NpGVnT05ezX0wJJ2Pl/SxnhOd2xh4skMmmg=
+github.com/reallyoldfogie/mc-protocol-go v0.1.0 h1:mM9k3v981n/Tr/Yu/tj57Bh4xTZEHpYRIvuWBsEAuiE=
+github.com/reallyoldfogie/mc-protocol-go v0.1.0/go.mod h1:aS+gtbeNr11RQKf3O+ORZH1HIbODjq1/ihCdHomJGZ4=
+github.com/reallyoldfogie/mc-replay-go v0.0.5 h1:GtnUm/nR6UK/G02z40WEd7wT1Xz9oeroDO5tHAcqZ3U=
+github.com/reallyoldfogie/mc-replay-go v0.0.5/go.mod h1:nEB/6hUAOO1x+VLPVYrnbnhrfHzNVRnGYNL66P+L9KI=
 github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
 github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
