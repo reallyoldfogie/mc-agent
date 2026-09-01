@@ -21,17 +21,12 @@ type Config struct {
 	// counts as having reached a target.
 	ArrivalThreshold float64
 
-	// StepTimeout bounds how long one Step waits for a dispatched movement
-	// action to make progress before giving up on *this step* (see
-	// environment.go's Step doc comment for why this can't simply block
-	// until the action reports completion).
+	// StepTimeout bounds how long one Step waits for a dispatched
+	// movement action's models.Completion to resolve before giving up on
+	// *this step* (see environment.go's Step doc comment). The dispatched
+	// action may still be running in the background past this deadline —
+	// StepTimeout bounds one Step call, not the action itself.
 	StepTimeout time.Duration
-
-	// PollInterval is how often Step samples position while waiting inside
-	// StepTimeout. Small in production (real movement is slow relative to
-	// any reasonable value here); tests set it near-zero so a simulated
-	// instant arrival doesn't force a real sleep.
-	PollInterval time.Duration
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -41,7 +36,6 @@ func DefaultConfig() Config {
 	return Config{
 		ArrivalThreshold: 1.5,
 		StepTimeout:      10 * time.Second,
-		PollInterval:     200 * time.Millisecond,
 	}
 }
 
@@ -51,9 +45,6 @@ func (c Config) validate() error {
 	}
 	if c.StepTimeout <= 0 {
 		return errStepTimeout
-	}
-	if c.PollInterval <= 0 {
-		return errPollInterval
 	}
 	return nil
 }

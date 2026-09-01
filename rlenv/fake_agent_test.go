@@ -3,6 +3,7 @@ package rlenv_test
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -26,6 +27,7 @@ type fakeAgent struct {
 	saturation          float32
 	healthKnown         bool
 	moveToWithChatErr   error
+	moveToWithChatDelay time.Duration // if set, MoveToWithChat sleeps this long before returning
 	moveToWithChatCalls int
 }
 
@@ -114,10 +116,18 @@ func (f *fakeAgent) MoveToWithChat(_ context.Context, x, y, z float64) error {
 	f.mu.Lock()
 	f.moveToWithChatCalls++
 	err := f.moveToWithChatErr
-	if err == nil {
-		f.x, f.y, f.z = x, y, z
-	}
+	delay := f.moveToWithChatDelay
 	f.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+
+	if err == nil {
+		f.mu.Lock()
+		f.x, f.y, f.z = x, y, z
+		f.mu.Unlock()
+	}
 	return err
 }
 

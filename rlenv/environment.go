@@ -3,7 +3,6 @@ package rlenv
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -82,21 +81,17 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 
 // Step implements rl.Environment.
 //
-// Why this polls position instead of blocking on the dispatched action:
-// actions.MoveTo.Execute (what "moveto" dispatches to) launches
-// MoveToWithChat in its own goroutine against context.Background() and
-// returns immediately — Execute returning nil means "the move was
-// launched," not "the move finished." This is exactly the "done signal"
-// gap RL_POLICY_INTEGRATION_PLAN.md item 3 flagged
-// ("deterministic action implementations... don't currently expose [a
-// completion signal] in a uniform way"). Rather than block on Execute
-// (which wouldn't wait long enough) or guess a fixed sleep, Step polls
-// GetPosition every Config.PollInterval until arrival or
-// Config.StepTimeout elapses, treating "didn't arrive within one step's
-// timeout" as a normal, non-fatal outcome (the episode continues; the
-// dispatched move may still be in flight in the background — a documented
-// limitation, not a bug, given ctx passed to Execute isn't honored by
-// MoveToWithChat's internal context.Background() call).
+// Movement completion, resolved via models.Completion: actions.MoveTo.Execute
+// (what "moveto" dispatches to) launches MoveToWithChat in its own
+// goroutine and returns immediately, but as of models.ActionRegistry's
+// uniform completion signal (see models/completion.go), that goroutine's
+// eventual outcome is available via the models.Completion Execute
+// returns — closing the "done signal" gap RL_POLICY_INTEGRATION_PLAN.md
+// item 3 flagged. Step waits on that Completion, bounded by
+// Config.StepTimeout, instead of polling position for a proxy signal.
+// A step timing out (the Completion hasn't resolved yet) is treated as a
+// normal, non-fatal outcome — the episode continues, and the dispatched
+// move may still be running in the background past this Step call.
 func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult, error) {
 	if !e.episodeStarted {
 		return rl.StepResult{}, fmt.Errorf("rlenv: Step called before Reset")
@@ -112,10 +107,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 
 	if isMovement {
-		if err := e.registry.Execute(ctx, moveToActionName, e.agent, moveToArgs(targetX, targetY, targetZ)); err != nil {
+		completion, err := e.registry.Execute(ctx, moveToActionName, e.agent, moveToArgs(targetX, targetY, targetZ))
+		if err != nil {
 			return rl.StepResult{}, fmt.Errorf("rlenv: dispatching %s: %w", moveToActionName, err)
 		}
-		if err := e.waitForArrival(ctx, targetX, targetY, targetZ); err != nil {
+		if err := e.awaitStep(ctx, completion); err != nil {
 			return rl.StepResult{}, err
 		}
 	}
@@ -146,27 +142,26 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
 }
 
-// waitForArrival polls GetPosition until the bot is within
-// Config.ArrivalThreshold of (targetX, targetY, targetZ), Config.StepTimeout
-// elapses, or ctx is canceled. A plain timeout is not an error (see Step's
-// doc comment); ctx cancellation is, since that's a caller-initiated abort
-// that should propagate rather than be silently absorbed.
-func (e *Environment) waitForArrival(ctx context.Context, targetX, targetY, targetZ float64) error {
-	deadline := time.Now().Add(e.cfg.StepTimeout)
-	for {
-		if pos, _, _, ok := e.agent.GetPosition(); ok {
-			if distance3(pos.X, pos.Y, pos.Z, targetX, targetY, targetZ) <= e.cfg.ArrivalThreshold {
-				return nil
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		time.Sleep(e.cfg.PollInterval)
+// awaitStep waits, bounded by Config.StepTimeout, for completion (the
+// models.Completion the dispatched action returned) to resolve. Three
+// outcomes:
+//   - completion resolves within the timeout: its outcome is returned as
+//     Step's own final position/observation already reflects it, so a
+//     non-nil error here (the action's own effect failed, e.g. a
+//     pathfinding error) is not itself fatal to the step — the episode
+//     continues and reward is computed from wherever the bot actually
+//     ended up.
+//   - Config.StepTimeout elapses first: not an error (see Step's doc
+//     comment) — the dispatched action may still be running in the
+//     background past this call.
+//   - ctx is canceled by the caller: propagated as a real error, since
+//     that's a caller-initiated abort, distinguished from our own
+//     StepTimeout by checking ctx's own error after the wait.
+func (e *Environment) awaitStep(ctx context.Context, completion models.Completion) error {
+	stepCtx, cancel := context.WithTimeout(ctx, e.cfg.StepTimeout)
+	defer cancel()
+	if err := completion.Wait(stepCtx); err != nil && ctx.Err() != nil {
+		return ctx.Err()
 	}
+	return nil
 }

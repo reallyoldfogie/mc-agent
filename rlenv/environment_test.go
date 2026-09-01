@@ -15,7 +15,6 @@ func testConfig() rlenv.Config {
 		TargetOffset:     [3]float64{5, 0, 0},
 		ArrivalThreshold: 0.5,
 		StepTimeout:      200 * time.Millisecond,
-		PollInterval:     time.Millisecond,
 	}
 }
 
@@ -230,12 +229,16 @@ func TestStepDeathEndsEpisode(t *testing.T) {
 	}
 }
 
-func TestStepTimesOutWithoutErrorWhenTargetUnreachable(t *testing.T) {
+// TestStepSwallowsActionFailureWithoutError covers the dispatched action's
+// own models.Completion resolving with a real (non-timeout) error — e.g.
+// MoveToWithChat's pathfinding genuinely failing. See awaitStep's doc
+// comment: this is treated the same as a step timeout, not propagated as
+// a Step error, since reward is computed from wherever the bot actually
+// ended up, not from the completion's outcome.
+func TestStepSwallowsActionFailureWithoutError(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // MoveToWithChat "fails" every call: position never changes
 	cfg := testConfig()
-	cfg.StepTimeout = 20 * time.Millisecond
-	cfg.PollInterval = time.Millisecond
 	env := newTestEnvironment(t, agent, cfg)
 	if _, err := env.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)
@@ -243,19 +246,45 @@ func TestStepTimesOutWithoutErrorWhenTargetUnreachable(t *testing.T) {
 
 	result, err := env.Step(context.Background(), rlenv.ActionGoToTarget)
 	if err != nil {
-		t.Fatalf("Step: %v, want nil (a step timeout is not an environment error)", err)
+		t.Fatalf("Step: %v, want nil (a failed dispatched action is not an environment error)", err)
 	}
 	if result.Done {
 		t.Fatalf("Done = true, want false (target never reached)")
 	}
 }
 
+// TestStepTimesOutWhileActionStillRunning covers Config.StepTimeout
+// actually elapsing before the dispatched action's models.Completion
+// resolves — Step must return promptly around StepTimeout rather than
+// blocking for however long the (still in-flight) action takes.
+func TestStepTimesOutWhileActionStillRunning(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.moveToWithChatDelay = 200 * time.Millisecond
+	cfg := testConfig()
+	cfg.StepTimeout = 20 * time.Millisecond
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	start := time.Now()
+	result, err := env.Step(context.Background(), rlenv.ActionGoToTarget)
+	if err != nil {
+		t.Fatalf("Step: %v, want nil (a step timeout is not an environment error)", err)
+	}
+	if elapsed := time.Since(start); elapsed >= agent.moveToWithChatDelay {
+		t.Fatalf("Step took %v, want it to return around StepTimeout (%v) instead of blocking for the full in-flight action duration", elapsed, cfg.StepTimeout)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (target not actually reached yet)")
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
-	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes; forces the poll loop to run
+	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes
 	cfg := testConfig()
 	cfg.StepTimeout = time.Second
-	cfg.PollInterval = time.Millisecond
 	env := newTestEnvironment(t, agent, cfg)
 	if _, err := env.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)

@@ -39,7 +39,7 @@ func (a *agent) handleChatCommandWithContext(ctx context.Context, cmd string) {
 		_ = a.SendChat("Command registry not initialized")
 		return
 	}
-	if err := a.commandRegistry.Execute(ctx, name, a, args); err != nil {
+	if _, err := a.commandRegistry.Execute(ctx, name, a, args); err != nil {
 		if errors.Is(err, models.ErrActionNotFound) {
 			_ = a.SendChat("Unknown command. Try: help, pos, say")
 			return
