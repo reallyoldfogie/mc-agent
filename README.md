@@ -347,10 +347,27 @@ go build -o mc-agent ./cmd/mc-agent
 go run ./cmd/mc-agent -address "localhost:25565"
 ```
 
+### Adding a New Action
+
+Chat commands (`moveTo`, `fireBow`, `equip`, ...) are `models.Action` values registered in
+`actions/registry.go`. Adding one is roughly:
+
+1. Add any new capability it needs to `models.CommandAgent` and implement it on the real agent.
+2. Write the `Action` (`Name`/`Usage`/`Execute`) in `actions/commands.go`, returning a
+   `models.Completion` (`models.Done(nil)` if it finishes synchronously, `models.NewCompletion()`
+   if it launches a goroutine).
+3. Register it in `actions/registry.go`, and add it to `helpText` and CLAUDE.md's command list.
+4. Optionally wire it into `rlenv` (`rlenv/action.go`) so the RL policy can use it too — most
+   actions don't need this.
+
+See **[docs/ADDING_NEW_ACTION.md](docs/ADDING_NEW_ACTION.md)** for the full checklist, including
+the interface fan-out that step 1 triggers and what "wire it into `rlenv`" actually involves.
+
 ### Documentation
 
 - **[CLAUDE.md](CLAUDE.md)** - Comprehensive codebase guide for Claude Code
 - **[docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md)** - Guide for adding new Minecraft version support
+- **[docs/ADDING_NEW_ACTION.md](docs/ADDING_NEW_ACTION.md)** - Checklist for adding a new chat command/action, including RL (`rlenv`) wiring
 - **[docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md)** - Bow firing commands and ballistics documentation
 - **[docs/HPA_USAGE_EXAMPLE.md](docs/HPA_USAGE_EXAMPLE.md)** - HPA* pathfinding usage guide
 - **[docs/CONTAINER_INTERACTION_GUIDE.md](docs/CONTAINER_INTERACTION_GUIDE.md)** - Container/inventory interaction guide

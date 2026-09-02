@@ -140,6 +140,8 @@ github.com/prometheus/procfs v0.19.2 h1:zUMhqEW66Ex7OXIiDkll3tl9a1ZdilUOd/F6ZXw4
 github.com/prometheus/procfs v0.19.2/go.mod h1:M0aotyiemPhBCM0z5w87kL22CxfcH05ZpYlu+b4J7mw=
 github.com/rabbitmq/amqp091-go v1.12.0 h1:V0v14Iqfs+MwHWihJt/nGS5Ulu0vw572b2Co3mwunkI=
 github.com/rabbitmq/amqp091-go v1.12.0/go.mod h1:Hy4jKW5kQART1u+JkDTF9YYOQUHXqMuhrgxOEeS7G4o=
+github.com/reallyoldfogie/cRL-go v0.8.0 h1:QiA7wN7OagNvoJD0nygjRBGKSQa9+FNIVb5e/y+WLlM=
+github.com/reallyoldfogie/cRL-go v0.8.0/go.mod h1:qirLO/t/yHDS8MhMbs7qAOJBiEU8vBcuRJyix+X30Tc=
 github.com/reallyoldfogie/mc-bot-go v0.1.0 h1:W2ZnazP5uDFNuMf6mAWSxpoEJHDb0q+Tx/JVV3gckxo=
 github.com/reallyoldfogie/mc-bot-go v0.1.0/go.mod h1:a1PEyOa8tw4vgLPQHSKKYUkQmyxNV5Btdt9e+UVuDgA=
 github.com/reallyoldfogie/mc-client-test-go v0.1.0 h1:cajCq69/ijsnDhRFPOvuwgvWOLt8RCx8ItE2ce6bR68=

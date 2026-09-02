@@ -10,13 +10,6 @@ go 1.27.0
 
 // replace github.com/reallyoldfogie/mc-replay-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-replay-go
 
-// Pinned to the local checkout rather than the v0.4.0 tag on origin so this
-// branch can be developed/tested offline; see
-// docs/plans/RL_POLICY_INTEGRATION_PLAN.md's dependency-wiring section for
-// why v0.4.0 (a real tagged release, no replace needed) is the long-term
-// intent once this lands and CI/network access to the tag is confirmed.
-replace github.com/reallyoldfogie/cRL-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/cRL-go
-
 require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
 	github.com/aquasecurity/go-version v0.0.1
@@ -29,7 +22,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.12.0
-	github.com/reallyoldfogie/cRL-go v0.4.0
+	github.com/reallyoldfogie/cRL-go v0.8.0
 	github.com/reallyoldfogie/mc-bot-go v0.1.0
 	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4
