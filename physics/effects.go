@@ -116,6 +116,18 @@ func CobwebSlowdownMultiplier(hasWeaving bool) (x, y, z float64) {
 	return CobwebSlowdownX, CobwebSlowdownY, CobwebSlowdownZ
 }
 
+// PowderSnowSlowdownMultiplier mirrors Java PowderSnowBlock.onEntityCollision:
+// while a LivingEntity's own feet position is inside powder snow (sinking
+// into it rather than standing on top with leather boots — see
+// physics/state.go's isOverlappingPowderSnow doc comment for the boots
+// gate), that tick's attempted movement is scaled by a fixed per-axis
+// multiplier and velocity is separately reset to zero afterward by the
+// caller, the same Entity.slowMovement mechanism CobwebSlowdownMultiplier
+// uses. No status effect changes this multiplier.
+func PowderSnowSlowdownMultiplier() (x, y, z float64) {
+	return PowderSnowSlowdownX, PowderSnowSlowdownY, PowderSnowSlowdownZ
+}
+
 // PerceptionRadiusCap clamps a detection radius to the agent's own
 // effective vision range while Blindness/Darkness is active, cited from
 // BlindnessEffectFogModifier.java/DarknessEffectFogModifier.java (see

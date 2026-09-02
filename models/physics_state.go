@@ -34,6 +34,13 @@ type PhysicsState interface {
 	// once per tick, before Tick(), the same way SetActiveEffects is synced
 	// in — physics.State has no inventory access of its own.
 	SetElytraEquipped(equipped bool)
+	// SetLeatherBootsEquipped updates whether the player's feet slot
+	// currently holds leather boots, consulted by Tick() to gate powder
+	// snow's walkable-surface behavior (Java
+	// PowderSnowBlock.canWalkOnPowderSnow). Callers should call this once
+	// per tick, before Tick(), the same way SetElytraEquipped is synced in —
+	// physics.State has no inventory access of its own.
+	SetLeatherBootsEquipped(equipped bool)
 	// IsGliding reports whether elytra-gliding physics are currently
 	// active. Callers compare this before/after Tick() to detect a
 	// start-gliding transition and send the corresponding

@@ -175,6 +175,10 @@ func (m *testMockShapeManager) IsCobweb(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) IsScaffolding(stateID uint32) bool {
+	return false
+}
+
 func (m *testMockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
 	return models.V3{} // No flow in mock world
 }

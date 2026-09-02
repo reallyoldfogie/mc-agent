@@ -63,6 +63,15 @@ type state struct {
 	// than looked up here.
 	elytraEquipped bool
 
+	// hasLeatherBoots mirrors whether the player's feet armor slot holds
+	// leather boots, set externally once per tick via
+	// SetLeatherBootsEquipped before Tick() runs — physics.State has no
+	// inventory access of its own, the same reason elytraEquipped is synced
+	// in rather than looked up here. Gates powder snow's walkable-surface
+	// behavior (PowderSnowBlock.canWalkOnPowderSnow) — see
+	// isOverlappingPowderSnow and getSurroundingBoxes.
+	hasLeatherBoots bool
+
 	// isGliding is this codebase's equivalent of Java's GLIDING_FLAG_INDEX
 	// entity flag: true while elytra-gliding physics (GlidingVelocity) is
 	// in effect instead of normal air gravity/drag. Transitions are decided
@@ -320,6 +329,17 @@ func (s *state) SetElytraEquipped(equipped bool) {
 	s.elytraEquipped = equipped
 }
 
+// SetLeatherBootsEquipped updates whether the player's feet slot currently
+// holds leather boots, consulted by Tick() to gate powder snow's
+// walkable-surface behavior (Java PowderSnowBlock.canWalkOnPowderSnow).
+// Callers should call this once per tick, before Tick(), the same way
+// SetElytraEquipped is synced in.
+func (s *state) SetLeatherBootsEquipped(equipped bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hasLeatherBoots = equipped
+}
+
 // SetFlying updates whether creative/spectator-style flying physics are
 // currently active, and the vertical ascend/descend impulse scale to use
 // while so (PlayerAbilities.FlySpeed, vanilla default 0.05 - horizontal
@@ -411,6 +431,11 @@ func (s *state) Tick(input Inputs, w World) error {
 	// replicating vanilla's exact one-tick-delayed field).
 	inCobweb := s.isOverlappingCobweb(w)
 
+	// Detect powder snow overlap the same way (pre-move position). Gated on
+	// !hasLeatherBoots — see isOverlappingPowderSnow's doc comment for why
+	// a booted player standing on top never overlaps it in the first place.
+	inPowderSnow := s.isOverlappingPowderSnow(w)
+
 	// Decide elytra glide start/stop using this tick's pre-move onGround —
 	// matches Java's own ordering (tickGliding()/checkGliding() run before
 	// travel()/move() each tick, off the previous tick's ground state).
@@ -420,9 +445,9 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Slow Falling and Levitation do the same — Java calls onLanding() every
 	// tick while either is active (LivingEntity.tickMovement), which is what
 	// actually negates their fall damage, not a special-cased damage formula.
-	// Cobwebs do too (Entity.slowMovement/makeStuckInBlock also calls
-	// onLanding()/resetFallDistance()).
-	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation || inCobweb {
+	// Cobwebs and powder snow do too (Entity.slowMovement/makeStuckInBlock
+	// also calls onLanding()/resetFallDistance()).
+	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation || inCobweb || inPowderSnow {
 		s.fallDistance = 0.0
 	}
 
@@ -438,10 +463,30 @@ func (s *state) Tick(input Inputs, w World) error {
 			int(math.Floor(s.Pos.Z)),
 		)
 
-		// For now, use default slipperiness for all blocks
-		// TODO: Query block-specific slipperiness from shape provider
-		if !s.shapeProvider.IsPassable(blockBelow) {
-			inertiaFactor *= Slipperiness
+		// TODO: ice isn't wired in here yet (no shapeProvider.IsIce — the
+		// numeric-ID-keyed GetBlockSlipperiness in slipperyness.go covers
+		// only the riding handlers, which query it directly rather than
+		// going through this walking-player branch). Slime is now covered
+		// below, straight from BlockShapeManager's own IsSlimeBlock — a
+		// genuine AbstractBlock.Settings.slipperiness(0.8F) value (Blocks.java),
+		// unlike honey (see HoneyBlockVelocityMultiplier's doc comment for
+		// why that one is NOT a slipperiness value and is applied
+		// separately, after tickPosition, below).
+		//
+		// Powder snow reports passable (it has no static collision box —
+		// see getSurroundingBoxes) even when a booted player is standing on
+		// the synthetic solid box added for it, so this check needs the
+		// same boots-aware override collision uses, or a booted player
+		// crossing it would get treated as airborne (base Acceleration
+		// instead of the ground formula) despite onGround being true.
+		isSolidBelow := !s.shapeProvider.IsPassable(blockBelow) ||
+			(s.hasLeatherBoots && s.shapeProvider.IsPowderSnow(blockBelow))
+		if isSolidBelow {
+			blockSlipperiness := Slipperiness
+			if s.shapeProvider.IsSlimeBlock(blockBelow) {
+				blockSlipperiness = SlimeBlockSlipperiness
+			}
+			inertiaFactor *= blockSlipperiness
 			accelFactor = 0.1 * (0.1627714 / (inertiaFactor * inertiaFactor * inertiaFactor))
 		}
 	}
@@ -467,6 +512,17 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Z *= mz
 	}
 
+	// Powder snow slowdown uses the same mechanism (Java's
+	// PowderSnowBlock.onEntityCollision also calls Entity.slowMovement),
+	// with its own fixed per-axis multiplier — see
+	// PowderSnowSlowdownMultiplier's doc comment.
+	if inPowderSnow {
+		mx, my, mz := PowderSnowSlowdownMultiplier()
+		s.Vel.X *= mx
+		s.Vel.Y *= my
+		s.Vel.Z *= mz
+	}
+
 	// Update position, with collision detection unless noClip (spectator)
 	// is active - matches decompiled Entity.move(): `if (this.noClip) {
 	// this.setPosition(x+movement.x, y+movement.y, z+movement.z); } else {
@@ -484,11 +540,35 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.tickPosition(w)
 	}
 
-	// Zero velocity after moving while in a cobweb, matching Java's
-	// `this.setVelocity(Vec3d.ZERO)`/`setDeltaMovement(Vec3.ZERO)` — momentum
-	// does not carry into the next tick.
-	if inCobweb {
+	// Zero velocity after moving while in a cobweb or sinking in powder
+	// snow, matching Java's `this.setVelocity(Vec3d.ZERO)`/
+	// `setDeltaMovement(Vec3.ZERO)` — the same movementMultiplier codepath
+	// zeroes velocity for every block that uses it, not just cobwebs.
+	// Momentum does not carry into the next tick.
+	if inCobweb || inPowderSnow {
 		s.Vel = models.V3{}
+	}
+
+	// Honey block slowdown mirrors Java Entity.move()'s tail
+	// (`this.setVelocity(this.getVelocity().multiply(f, 1.0, f))`, f =
+	// getVelocityMultiplier()): a direct per-tick horizontal-only velocity
+	// multiplier, unrelated to ground-friction slipperiness — see
+	// HoneyBlockVelocityMultiplier's doc comment. Checked at the post-move
+	// position (matching vanilla's own ordering, unlike the pre-move
+	// simplification cobweb/powder snow use above) and only while standing
+	// on top of it; falling past the side and getting slowed while sliding
+	// down it (HoneyBlock.isSliding/updateSlidingVelocity) is not
+	// implemented.
+	if s.onGround {
+		blockBelow, _ := w.GetBlockStatus(
+			int(math.Floor(s.Pos.X)),
+			int(math.Floor(s.Pos.Y))-1,
+			int(math.Floor(s.Pos.Z)),
+		)
+		if s.shapeProvider.IsHoneyBlock(blockBelow) {
+			s.Vel.X *= HoneyBlockVelocityMultiplier
+			s.Vel.Z *= HoneyBlockVelocityMultiplier
+		}
 	}
 
 	// Check if player is on a ladder/vine and should climb
@@ -727,8 +807,14 @@ func (s *state) tickVelocity(input Inputs, inertia, acceleration float64, w Worl
 	if s.shapeProvider.IsClimbable(blockAtPlayer) {
 		// Clamp all velocity components to ladder max speed
 		s.Vel.X = clamp(s.Vel.X, -LadderMaxSpeed, LadderMaxSpeed)
-		if s.isSneaking {
-			// When sneaking on a ladder, prevent descent (vanilla Minecraft behavior)
+		// Sneaking freezes descent on a ladder/vine (vanilla
+		// LivingEntity.applyClimbingSpeed's isHoldingOntoLadder() ==
+		// isSneaking() branch) but NOT on scaffolding — vanilla explicitly
+		// excludes it (`!getBlockStateAtPos().isOf(Blocks.SCAFFOLDING)`),
+		// so a sneaking player standing over a scaffolding gap keeps
+		// slowly sinking through it rather than clinging in place like a
+		// ladder. See §5.3.
+		if s.isSneaking && !s.shapeProvider.IsScaffolding(blockAtPlayer) {
 			s.Vel.Y = clamp(s.Vel.Y, 0, LadderMaxSpeed)
 		} else {
 			s.Vel.Y = clamp(s.Vel.Y, -LadderMaxSpeed, LadderMaxSpeed)
@@ -1267,6 +1353,25 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 			for x := minX; x < maxX; x++ {
 				blockStateID, _ := w.GetBlockStatus(x, y, z)
 
+				// Powder snow has no static collision box (mc-data-gen
+				// reports it passable) — Java only makes it solid
+				// per-entity, via canWalkOnPowderSnow (leather boots).
+				// Without boots it stays passable, matching every other
+				// block below; with boots, add a synthetic full-cube box
+				// so the player stands on top instead of sinking in. See
+				// isOverlappingPowderSnow's doc comment for the collision
+				// model this simplifies (solid on every axis, not just
+				// from above).
+				if s.shapeProvider.IsPowderSnow(blockStateID) {
+					if s.hasLeatherBoots {
+						boxes = append(boxes, NewAABB(
+							float64(x), float64(y), float64(z),
+							float64(x)+1.0, float64(y)+1.0, float64(z)+1.0,
+						))
+					}
+					continue
+				}
+
 				// Skip passable blocks (air, water, etc.)
 				if s.shapeProvider.IsPassable(blockStateID) {
 					continue
@@ -1308,6 +1413,46 @@ func (s *state) isOverlappingCobweb(w World) bool {
 			for x := minX; x <= maxX; x++ {
 				blockStateID, _ := w.GetBlockStatus(x, y, z)
 				if s.shapeProvider.IsCobweb(blockStateID) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isOverlappingPowderSnow reports whether the player's current bounding box
+// intersects any powder snow block, using the same whole-AABB-overlap
+// simplification as isOverlappingCobweb (see its doc comment) rather than
+// Java's exact "block at feet position" check.
+//
+// Gated on !hasLeatherBoots: a player wearing leather boots never actually
+// occupies the powder snow block's own space in the first place (they rest
+// on top of the synthetic solid box getSurroundingBoxes adds for it — see
+// below), the same way vanilla's slowMovement call only fires when
+// LivingEntity.getBlockStateAtPos() is itself powder snow, which a booted
+// player standing on the surface never satisfies. Checking the flag directly
+// here is equivalent for this codebase's simplified collision model and
+// avoids a redundant AABB scan when boots make the question moot. Must only
+// be called while the write lock is held.
+func (s *state) isOverlappingPowderSnow(w World) bool {
+	if s.hasLeatherBoots {
+		return false
+	}
+
+	bb := s.getAABBUnsafe()
+	minX := int(math.Floor(bb.X.Min))
+	maxX := int(math.Floor(bb.X.Max))
+	minY := int(math.Floor(bb.Y.Min))
+	maxY := int(math.Floor(bb.Y.Max))
+	minZ := int(math.Floor(bb.Z.Min))
+	maxZ := int(math.Floor(bb.Z.Max))
+
+	for y := minY; y <= maxY; y++ {
+		for z := minZ; z <= maxZ; z++ {
+			for x := minX; x <= maxX; x++ {
+				blockStateID, _ := w.GetBlockStatus(x, y, z)
+				if s.shapeProvider.IsPowderSnow(blockStateID) {
 					return true
 				}
 			}

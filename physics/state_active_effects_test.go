@@ -319,3 +319,166 @@ func TestState_CobwebSlowsMovementAndWeavingHalvesSeverity(t *testing.T) {
 	assert.Greater(t, wovenDist, webbedDist, "weaving should let the player move further than plain cobweb slowdown")
 	assert.Less(t, wovenDist, normalDist, "weaving should still not restore full normal speed")
 }
+
+// TestState_PowderSnowSlowsMovementWithoutLeatherBoots verifies §5.1: a
+// player without leather boots sinks into a powder snow layer (it has no
+// static collision box — see getSurroundingBoxes) and is slowed by
+// PowderSnowSlowdownMultiplier while their body overlaps it, the same
+// Entity.slowMovement mechanism cobwebs use (see
+// TestState_CobwebSlowsMovementAndWeavingHalvesSeverity above) but with
+// powder snow's own per-axis multiplier.
+func TestState_PowderSnowSlowsMovementWithoutLeatherBoots(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetPassable(BlockPowderSnow, true)
+	shapes.SetPowderSnow(BlockPowderSnow, true)
+
+	// Cover a patch of the floor's surface (Y=1, the block cell just above
+	// the Y=0 stone floor) with powder snow, wide enough that a correctly
+	// slowed player never leaves it within the test's tick budget.
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 1, z, BlockPowderSnow)
+		}
+	}
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, -15) // far outside the powder snow patch
+
+	sunk := NewState(shapes)
+	settle(sunk, 0) // inside the patch, no leather boots
+
+	forward := Inputs{ThrottleX: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, sunk.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().X - (-15))
+	sunkDist := math.Abs(sunk.Position().X)
+	t.Logf("after %d ticks: normal=%.4f, powder snow (no boots)=%.4f", ticks, normalDist, sunkDist)
+
+	assert.Greater(t, normalDist, sunkDist, "powder snow should slow horizontal movement well below normal without leather boots")
+	assert.Equal(t, 1.0, sunk.Position().Y, "player should rest on the real floor beneath the (collisionless) powder snow layer, not sink through it")
+}
+
+// TestState_LeatherBootsWalkOnPowderSnowAtNormalSpeed verifies §5.1's other
+// half: Java PowderSnowBlock.canWalkOnPowderSnow — a player wearing leather
+// boots stands on top of a powder snow layer instead of sinking into it
+// (getSurroundingBoxes adds a synthetic solid box for it only when booted),
+// and never triggers the slowMovement multiplier, since their body no
+// longer overlaps the block itself (see isOverlappingPowderSnow's doc
+// comment).
+func TestState_LeatherBootsWalkOnPowderSnowAtNormalSpeed(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetPassable(BlockPowderSnow, true)
+	shapes.SetPowderSnow(BlockPowderSnow, true)
+
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 1, z, BlockPowderSnow)
+		}
+	}
+
+	settleFromAbove := func(s models.PhysicsState, x, startY float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: startY, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 40 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settleFromAbove(normal, -15, 1) // far outside the patch, plain stone floor
+
+	booted := NewState(shapes)
+	booted.SetLeatherBootsEquipped(true)
+	settleFromAbove(booted, 0, 5) // falling onto the patch from above, wearing boots
+
+	require.Equal(t, 2.0, booted.Position().Y, "leather boots should let the player stand on top of the powder snow layer (Y=2), not sink into it (Y=1)")
+
+	forward := Inputs{ThrottleX: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, booted.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().X - (-15))
+	bootedDist := math.Abs(booted.Position().X)
+	t.Logf("after %d ticks: normal=%.4f, powder snow (leather boots)=%.4f", ticks, normalDist, bootedDist)
+
+	assert.InDelta(t, normalDist, bootedDist, 1e-6, "leather boots should let the player cross powder snow at full normal speed, with no slowdown")
+}
+
+// TestState_HoneyBlockSlowsGroundMovement verifies §5.2: walking on a honey
+// block floor now applies HoneyBlockVelocityMultiplier (a direct per-tick
+// horizontal velocity multiplier, mirroring Java's Entity.getVelocityMultiplier/
+// move()) instead of doing nothing. This is deliberately NOT modeled as a
+// ground-friction slipperiness change — honey doesn't override
+// slipperiness in vanilla at all (see HoneyBlockVelocityMultiplier's doc
+// comment in physics/constants.go); using its 0.4 as a slipperiness input
+// would actually make ground acceleration faster, not slower, since the
+// formula is not monotonic (see movement/riding_physics_test.go's
+// TestTravelMidAirTopSpeedOnIce, which caught this on the riding side
+// first).
+func TestState_HoneyBlockSlowsGroundMovement(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetHoneyBlock(BlockHoney, true)
+
+	// Replace a patch of the floor itself (Y=0) with honey blocks, wide
+	// enough that a correctly-slowed player never leaves it within the
+	// test's tick budget.
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 0, z, BlockHoney)
+		}
+	}
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, -15) // plain stone floor
+
+	sticky := NewState(shapes)
+	settle(sticky, 0) // honey block floor
+
+	forward := Inputs{ThrottleX: 1.0}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, sticky.Tick(forward, world))
+	}
+
+	normalDist := math.Abs(normal.Position().X - (-15))
+	stickyDist := math.Abs(sticky.Position().X)
+	t.Logf("after %d ticks: normal=%.4f, honey block floor=%.4f", ticks, normalDist, stickyDist)
+
+	assert.Greater(t, normalDist, stickyDist, "honey block should slow horizontal ground movement below normal")
+}

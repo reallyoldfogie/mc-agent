@@ -282,6 +282,11 @@ func (msm *MockShapeManager) IsCobweb(blockStateID uint32) bool {
 	return msm.blockName(blockStateID) == "minecraft:cobweb"
 }
 
+// IsScaffolding returns whether a block is scaffolding
+func (msm *MockShapeManager) IsScaffolding(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:scaffolding"
+}
+
 // BlockName returns the block name for a given block state ID
 func (msm *MockShapeManager) BlockName(blockStateID uint32) string {
 	return msm.blockName(blockStateID)

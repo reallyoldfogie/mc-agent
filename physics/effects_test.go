@@ -188,3 +188,12 @@ func TestCobwebSlowdownMultiplier(t *testing.T) {
 		})
 	}
 }
+
+func TestPowderSnowSlowdownMultiplier(t *testing.T) {
+	x, y, z := PowderSnowSlowdownMultiplier()
+	assert.InDelta(t, PowderSnowSlowdownX, x, 1e-9)
+	assert.InDelta(t, PowderSnowSlowdownY, y, 1e-9)
+	assert.InDelta(t, PowderSnowSlowdownZ, z, 1e-9)
+	assert.Less(t, x, 1.0, "horizontal powder snow movement should be slowed below full speed")
+	assert.Greater(t, y, 1.0, "vertical multiplier amplifies sinking rather than slowing it")
+}

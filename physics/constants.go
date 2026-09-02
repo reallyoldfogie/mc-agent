@@ -200,9 +200,23 @@ const (
 	BlueIceSlipperiness    = 0.989 // Blue ice (even slipperier than regular ice)
 	SlimeBlockSlipperiness = 0.80  // Slime blocks (some slide but also bounce)
 	DefaultSlipperiness    = 0.60  // Default for most blocks (normal friction)
-	HoneyBlockSlipperiness = 0.4   // Honey blocks (sticky, very low slipperiness)
+	HoneyBlockSlipperiness = 0.4   // NOT a real slipperiness value — see HoneyBlockVelocityMultiplier below. Kept only for the pre-existing formula-consistency tests that already documented this (movement/riding_physics_test.go's TestTravelMidAirTopSpeedOnIce).
 	// Note: Packed ice / blue ice may have slightly different values; add as needed.
 )
+
+// HoneyBlockVelocityMultiplier is honey block's real vanilla slowdown value —
+// AbstractBlock.Settings.velocityMultiplier(0.4F) in Blocks.java's
+// HONEY_BLOCK registration, NOT a slipperiness() setting (honey doesn't
+// override slipperiness at all, so it uses the same 0.6 default as every
+// other block — see HoneyBlockSlipperiness's doc comment above for why
+// that confusingly-named constant exists anyway). Entity.getVelocityMultiplier/
+// Entity.move() applies this as a direct multiplier on horizontal (X/Z)
+// velocity only, every tick the entity moves while touching the block —
+// an entirely different mechanism from the ground-friction
+// slipperiness-cubed formula (physics/state.go's Tick() applies it
+// separately, after tickPosition). Soul sand shares this same mechanism
+// with its own 0.4 value; only honey is wired in for now (§5.2's scope).
+const HoneyBlockVelocityMultiplier = 0.4
 
 // Entity collision constants
 const (
@@ -321,6 +335,21 @@ const (
 	WeavingCobwebSlowdownX = 0.5
 	WeavingCobwebSlowdownY = 0.25
 	WeavingCobwebSlowdownZ = 0.5
+)
+
+// Powder snow slowdown constants, cited from Java PowderSnowBlock's
+// HORIZONTAL_MOVEMENT_MULTIPLIER/VERTICAL_MOVEMENT_MULTIPLIER fields.
+// PowderSnowBlock.onEntityCollision calls the exact same
+// Entity.slowMovement/movementMultiplier mechanism as cobwebs (see
+// CobwebSlowdownX above) with these per-axis values instead — scales that
+// tick's attempted movement, then resets velocity to zero. Only applies
+// while sinking into the block (no leather boots); see
+// physics/state.go's isOverlappingPowderSnow for how this is gated and
+// applied. Unlike cobweb/Weaving, no status effect changes this multiplier.
+const (
+	PowderSnowSlowdownX = 0.9
+	PowderSnowSlowdownY = 1.5
+	PowderSnowSlowdownZ = 0.9
 )
 
 // Elytra gliding constants, cited from Java LivingEntity.calcGlidingVelocity

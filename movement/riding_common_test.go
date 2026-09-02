@@ -51,6 +51,8 @@ func (f *fakeAttributeGetter) GetOwnActiveEffect(string) (int32, bool) { return 
 
 func (f *fakeAttributeGetter) GetOwnEquippedChestItem() (string, bool) { return "", false }
 
+func (f *fakeAttributeGetter) GetOwnEquippedFeetItem() (string, bool) { return "", false }
+
 func (f *fakeAttributeGetter) HasActiveFireworkBoost() bool { return false }
 
 func (f *fakeAttributeGetter) GetOwnFlying() (bool, float64) { return false, 0 }

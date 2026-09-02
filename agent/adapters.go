@@ -816,6 +816,43 @@ func (a *agent) GetOwnEquippedChestItem() (string, bool) {
 	return localName, true
 }
 
+// GetOwnEquippedFeetItem returns the local item name (unprefixed, e.g.
+// "leather_boots") in the agent's own feet armor slot. See
+// models.MountedEntityPositionGetter.GetOwnEquippedFeetItem.
+func (a *agent) GetOwnEquippedFeetItem() (string, bool) {
+	a.slotsMu.RLock()
+	slotResolver := a.slots
+	a.slotsMu.RUnlock()
+
+	a.itemMgrMu.RLock()
+	itemMgr := a.itemMgr
+	a.itemMgrMu.RUnlock()
+
+	if slotResolver == nil || itemMgr == nil {
+		return "", false
+	}
+
+	// Player inventory feet armor slot is index 8 (0=craft output,
+	// 1-4=craft grid, 5=head, 6=chest, 7=legs, 8=feet, 9-35=main, 36-44=hotbar).
+	itemID, _, ok := slotResolver.ResolveSlot(-2, 8)
+	if !ok {
+		return "", false
+	}
+
+	itemName := itemMgr.GetItemNameByID(itemID)
+	if itemName == "" {
+		return "", false
+	}
+
+	// Strip the namespace prefix (e.g., "minecraft:") to get local name
+	localName := itemName
+	if idx := strings.IndexByte(localName, ':'); idx >= 0 {
+		localName = localName[idx+1:]
+	}
+
+	return localName, true
+}
+
 // GetOwnFlying reports the agent's own tracked flying ability state. See
 // models.MountedEntityPositionGetter.GetOwnFlying.
 func (a *agent) GetOwnFlying() (flying bool, flySpeed float64) {

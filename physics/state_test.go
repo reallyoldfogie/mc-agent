@@ -49,26 +49,28 @@ func (m *mockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBound
 
 // mockShapeProvider provides simple block collision data
 type mockShapeProvider struct {
-	passableBlocks   map[uint32]bool
-	climbableBlocks  map[uint32]bool
-	hayBaleBlocks    map[uint32]bool
-	bedBlocks        map[uint32]bool
-	honeyBlocks      map[uint32]bool
-	slimeBlocks      map[uint32]bool
-	powderSnowBlocks map[uint32]bool
-	cobwebBlocks     map[uint32]bool
+	passableBlocks    map[uint32]bool
+	climbableBlocks   map[uint32]bool
+	hayBaleBlocks     map[uint32]bool
+	bedBlocks         map[uint32]bool
+	honeyBlocks       map[uint32]bool
+	slimeBlocks       map[uint32]bool
+	powderSnowBlocks  map[uint32]bool
+	cobwebBlocks      map[uint32]bool
+	scaffoldingBlocks map[uint32]bool
 }
 
 func newMockShapeProvider() *mockShapeProvider {
 	return &mockShapeProvider{
-		passableBlocks:   make(map[uint32]bool),
-		climbableBlocks:  make(map[uint32]bool),
-		hayBaleBlocks:    make(map[uint32]bool),
-		bedBlocks:        make(map[uint32]bool),
-		honeyBlocks:      make(map[uint32]bool),
-		slimeBlocks:      make(map[uint32]bool),
-		powderSnowBlocks: make(map[uint32]bool),
-		cobwebBlocks:     make(map[uint32]bool),
+		passableBlocks:    make(map[uint32]bool),
+		climbableBlocks:   make(map[uint32]bool),
+		hayBaleBlocks:     make(map[uint32]bool),
+		bedBlocks:         make(map[uint32]bool),
+		honeyBlocks:       make(map[uint32]bool),
+		slimeBlocks:       make(map[uint32]bool),
+		powderSnowBlocks:  make(map[uint32]bool),
+		cobwebBlocks:      make(map[uint32]bool),
+		scaffoldingBlocks: make(map[uint32]bool),
 	}
 }
 
@@ -102,6 +104,10 @@ func (m *mockShapeProvider) SetPowderSnow(blockID uint32, isPowderSnow bool) {
 
 func (m *mockShapeProvider) SetCobweb(blockID uint32, isCobweb bool) {
 	m.cobwebBlocks[blockID] = isCobweb
+}
+
+func (m *mockShapeProvider) SetScaffolding(blockID uint32, isScaffolding bool) {
+	m.scaffoldingBlocks[blockID] = isScaffolding
 }
 
 func (m *mockShapeProvider) IsPassable(blockID uint32) bool {
@@ -191,6 +197,10 @@ func (m *mockShapeProvider) IsCobweb(blockStateID uint32) bool {
 	return m.cobwebBlocks[blockStateID]
 }
 
+func (m *mockShapeProvider) IsScaffolding(blockStateID uint32) bool {
+	return m.scaffoldingBlocks[blockStateID]
+}
+
 // GetWaterFlowDirection stub (returns no flow for tests)
 func (m *mockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
 	return models.V3{} // No flow in mock world
@@ -277,12 +287,15 @@ func (m *mockShapeProviderWithSlabs) GetCollisionBoxes(blockStateID uint32, x, y
 
 // Test block IDs
 const (
-	BlockAir      uint32 = 0
-	BlockStone    uint32 = 1
-	BlockWater    uint32 = 2
-	BlockLadder   uint32 = 3
-	BlockHalfSlab uint32 = 4 // Custom for testing
-	BlockCobweb   uint32 = 5
+	BlockAir         uint32 = 0
+	BlockStone       uint32 = 1
+	BlockWater       uint32 = 2
+	BlockLadder      uint32 = 3
+	BlockHalfSlab    uint32 = 4 // Custom for testing
+	BlockCobweb      uint32 = 5
+	BlockPowderSnow  uint32 = 6
+	BlockHoney       uint32 = 7
+	BlockScaffolding uint32 = 8
 )
 
 // Test helper: create a simple flat world with a floor at Y=0
@@ -788,6 +801,76 @@ func TestState_LadderDescendWithoutSneak(t *testing.T) {
 	// On a ladder, descent is clamped to LadderMaxSpeed (0.15/tick)
 	if state.Position().Y >= startY-0.5 {
 		t.Errorf("Player did not descend on ladder without sneaking: Y=%.3f (started at %.3f)", state.Position().Y, startY)
+	}
+}
+
+// TestState_ScaffoldingClimbing verifies §5.3's base capability: scaffolding
+// is climbable through the exact same data-driven IsClimbable path as
+// ladders (mc-data-gen's "climbable" field is sourced from
+// BlockTags.CLIMBABLE, which scaffolding is a member of — see
+// pathfinding/blocks.go's IsScaffolding doc comment), so no scaffolding-
+// specific code is needed for basic ascent/descent via ClimbDirection.
+func TestState_ScaffoldingClimbing(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetClimbable(BlockScaffolding, true)
+	shapes.SetScaffolding(BlockScaffolding, true)
+	shapes.SetPassable(BlockScaffolding, true) // matches BlockLadder's mock treatment: no collision-box modeling in this mock, only real IsPassable/IsClimbable behavior
+	state := NewState(shapes)
+
+	world.SetBlock(0, 1, 0, BlockScaffolding)
+	world.SetBlock(0, 2, 0, BlockScaffolding)
+	world.SetBlock(0, 3, 0, BlockScaffolding)
+	world.SetBlock(0, 4, 0, BlockScaffolding)
+
+	state.SetPositionSimple(models.V3{X: 0.5, Y: 1, Z: 0.5})
+	state.SetVelocity(models.V3{})
+
+	startY := state.Position().Y
+	input := Inputs{ClimbDirection: 1.0}
+	for i := 0; i < 50; i++ {
+		if err := state.Tick(input, world); err != nil {
+			t.Fatalf("Tick failed: %v", err)
+		}
+	}
+
+	if state.Position().Y <= startY+0.5 {
+		t.Errorf("Player did not climb scaffolding significantly: Y=%.3f (started at %.3f)", state.Position().Y, startY)
+	}
+}
+
+// TestState_ScaffoldingSneakingDoesNotPreventDescend verifies §5.3's one
+// genuine behavioral difference from a ladder: vanilla's
+// applyClimbingSpeed explicitly excludes scaffolding
+// (`!getBlockStateAtPos().isOf(Blocks.SCAFFOLDING)`) from the
+// sneak-freezes-descent clamp TestState_LadderSneakingPreventsDescend
+// covers for ladders — a sneaking player standing over a scaffolding gap
+// keeps slowly sinking through it instead of clinging in place.
+func TestState_ScaffoldingSneakingDoesNotPreventDescend(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetClimbable(BlockScaffolding, true)
+	shapes.SetScaffolding(BlockScaffolding, true)
+	shapes.SetPassable(BlockScaffolding, true) // matches BlockLadder's mock treatment: no collision-box modeling in this mock, only real IsPassable/IsClimbable behavior
+	state := NewState(shapes)
+
+	world.SetBlock(0, 1, 0, BlockScaffolding)
+	world.SetBlock(0, 2, 0, BlockScaffolding)
+	world.SetBlock(0, 3, 0, BlockScaffolding)
+	world.SetBlock(0, 4, 0, BlockScaffolding)
+
+	// Start mid-column, same shape as TestState_LadderSneakingPreventsDescend.
+	state.SetPositionSimple(models.V3{X: 0.5, Y: 3.0, Z: 0.5})
+	state.SetVelocity(models.V3{})
+
+	startY := state.Position().Y
+	input := Inputs{Sneak: true}
+	for i := 0; i < 50; i++ {
+		if err := state.Tick(input, world); err != nil {
+			t.Fatalf("Tick failed: %v", err)
+		}
+	}
+
+	if state.Position().Y >= startY-0.5 {
+		t.Errorf("Player did not descend on scaffolding while sneaking: Y=%.3f (started at %.3f)", state.Position().Y, startY)
 	}
 }
 

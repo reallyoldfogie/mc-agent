@@ -34,6 +34,7 @@ type BlockShapeManager interface {
 	IsSlimeBlock(blockStateID uint32) bool
 	IsPowderSnow(blockStateID uint32) bool
 	IsCobweb(blockStateID uint32) bool
+	IsScaffolding(blockStateID uint32) bool
 
 	BlockName(blockStateID uint32) string
 	FullBlockName(blockStateID uint32) string

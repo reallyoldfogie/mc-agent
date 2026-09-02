@@ -121,6 +121,14 @@ type MountedEntityPositionGetter interface {
 	// GetRiderHeldItem's naming/resolution shape but for the chest slot.
 	GetOwnEquippedChestItem() (itemName string, found bool)
 
+	// GetOwnEquippedFeetItem returns the local item name (unprefixed, e.g.
+	// "leather_boots") of whatever the agent's own player currently has
+	// equipped in its feet armor slot (player inventory slot index 8).
+	// Returns ("", false) if the slot is empty or not yet resolvable —
+	// mirrors GetOwnEquippedChestItem's naming/resolution shape but for the
+	// feet slot.
+	GetOwnEquippedFeetItem() (itemName string, found bool)
+
 	// HasActiveFireworkBoost reports whether a firework rocket used while
 	// gliding is currently attached to the agent's own entity and boosting
 	// its velocity (Java FireworkRocketEntity's SHOOTER_ENTITY_ID pointing

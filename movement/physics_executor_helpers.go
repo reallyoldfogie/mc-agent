@@ -86,17 +86,20 @@ func (pe *PhysicsMovementExecutor) syncActiveEffects() {
 	pe.physicsState.SetActiveEffects(effects)
 }
 
-// syncEquipment reads the agent's own currently-equipped chest item via
-// entityPositionGetter and pushes elytra-equipped state into physicsState
-// before Tick() runs, mirroring syncActiveEffects's pattern — physics.State
-// has no inventory access of its own.
+// syncEquipment reads the agent's own currently-equipped chest and feet
+// items via entityPositionGetter and pushes elytra-equipped/leather-boots
+// state into physicsState before Tick() runs, mirroring syncActiveEffects's
+// pattern — physics.State has no inventory access of its own.
 func (pe *PhysicsMovementExecutor) syncEquipment() {
 	if pe.entityPositionGetter == nil {
 		return
 	}
 
-	itemName, _ := pe.entityPositionGetter.GetOwnEquippedChestItem()
-	pe.physicsState.SetElytraEquipped(itemName == "elytra")
+	chestItemName, _ := pe.entityPositionGetter.GetOwnEquippedChestItem()
+	pe.physicsState.SetElytraEquipped(chestItemName == "elytra")
+
+	feetItemName, _ := pe.entityPositionGetter.GetOwnEquippedFeetItem()
+	pe.physicsState.SetLeatherBootsEquipped(feetItemName == "leather_boots")
 }
 
 // syncFireworkBoost reads whether a firework rocket is currently attached
