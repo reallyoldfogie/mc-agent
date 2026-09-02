@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"log"
-
 	pk "github.com/Tnze/go-mc/net/packet"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -33,20 +31,20 @@ func (a *agent) onSoundPacket(p pk.Packet) error {
 		subtitle = a.soundMgr.GetSubtitleKeyByID(id)
 	}
 	if a.packetMgr != nil {
-		log.Printf("[%s soundid]: %d => %s => %s at (%.2f, %.2f, %.2f) vol=%.1f pitch=%.2f cat=%d seed=%d", a.packetMgr.Name(), id, name, subtitle, fx, fy, fz, volume, pitch, category, seed)
+		a.logf("[%s soundid]: %d => %s => %s at (%.2f, %.2f, %.2f) vol=%.1f pitch=%.2f cat=%d seed=%d", a.packetMgr.Name(), id, name, subtitle, fx, fy, fz, volume, pitch, category, seed)
 	} else {
-		log.Printf("[soundid]: %d => %s => %s at (%.2f, %.2f, %.2f) vol=%.1f pitch=%.2f cat=%d seed=%d", id, name, subtitle, fx, fy, fz, volume, pitch, category, seed)
+		a.logf("[soundid]: %d => %s => %s at (%.2f, %.2f, %.2f) vol=%.1f pitch=%.2f cat=%d seed=%d", id, name, subtitle, fx, fy, fz, volume, pitch, category, seed)
 	}
 
 	// Identify arrow-specific sounds
 	if name != "" {
 		switch {
 		case name == "entity.arrow.shoot":
-			log.Printf("[onSoundPacket] ARROW_SHOOT sound at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
+			a.logf("[onSoundPacket] ARROW_SHOOT sound at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
 		case name == "entity.arrow.hit":
-			log.Printf("[onSoundPacket] ARROW_HIT sound at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
+			a.logf("[onSoundPacket] ARROW_HIT sound at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
 		case name == "entity.item.pickup":
-			log.Printf("[onSoundPacket] ITEM_PICKUP sound (possible arrow) at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
+			a.logf("[onSoundPacket] ITEM_PICKUP sound (possible arrow) at (%.2f, %.2f, %.2f) pitch=%.2f", fx, fy, fz, pitch)
 		}
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"strings"
 	"time"
@@ -73,19 +72,19 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 		return fmt.Errorf("failed to enter manual mode: %w", err)
 	}
 	defer manual.ExitManualMode()
-	log.Printf("[MoveForward] Entered manual mode, currentYaw=%.2f, targetDist=%.2f", yaw, dist)
+	a.logf("[MoveForward] Entered manual mode, currentYaw=%.2f, targetDist=%.2f", yaw, dist)
 
 	// Set up movement with calculated throttle direction
 	if err := manual.SetManualThrottle(throttleX, throttleZ); err != nil {
 		return fmt.Errorf("failed to set throttle: %w", err)
 	}
-	log.Printf("[MoveForward] Throttle set to X=%.4f, Z=%.4f (forward direction at yaw=%.2f)", throttleX, throttleZ, yaw)
+	a.logf("[MoveForward] Throttle set to X=%.4f, Z=%.4f (forward direction at yaw=%.2f)", throttleX, throttleZ, yaw)
 
 	// Keep current yaw (we're moving forward, not turning)
 	if err := manual.SetManualRotation(math.NaN(), math.NaN()); err != nil {
 		return fmt.Errorf("failed to set rotation: %w", err)
 	}
-	log.Printf("[MoveForward] Yaw maintained at current direction (%.2f)", yaw)
+	a.logf("[MoveForward] Yaw maintained at current direction (%.2f)", yaw)
 
 	// Execute movement for the calculated duration with context awareness
 	tickInterval := 50 * time.Millisecond
@@ -120,19 +119,19 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 
 			// Success: we've moved the requested distance (within tolerance)
 			if distMoved >= math.Abs(dist)*0.95 {
-				log.Printf("[MoveForward] Movement complete: %.2f/%.2f blocks", distMoved, dist)
+				a.logf("[MoveForward] Movement complete: %.2f/%.2f blocks", distMoved, dist)
 				return nil
 			}
 
 			// Edge prevention: very limited movement despite time elapsed
 			if elapsed > time.Duration(int64(tickCount*25))*time.Millisecond && distMoved < 0.2 {
-				log.Printf("[MoveForward] Movement blocked by edge prevention after %.2f blocks", distMoved)
+				a.logf("[MoveForward] Movement blocked by edge prevention after %.2f blocks", distMoved)
 				return nil // Return success - edge prevention is working
 			}
 
 			// Stuck detection: no progress for extended time
 			if time.Since(lastProgressTime) > 5*time.Second {
-				log.Printf("[MoveForward] No progress for 5 seconds, stopping after %.2f/%.2f blocks", distMoved, dist)
+				a.logf("[MoveForward] No progress for 5 seconds, stopping after %.2f/%.2f blocks", distMoved, dist)
 				return fmt.Errorf("movement stalled: only moved %.2f of %.2f blocks", distMoved, dist)
 			}
 		}
@@ -143,7 +142,7 @@ func (a *agent) MoveForward(ctx context.Context, dist float64) error {
 				pos, _, _, _ := a.GetPosition()
 				distMoved := math.Sqrt((pos.X-startPos.X)*(pos.X-startPos.X) +
 					(pos.Z-startPos.Z)*(pos.Z-startPos.Z))
-				log.Printf("[MoveForward] Movement timeout after %.2f/%.2f blocks", distMoved, dist)
+				a.logf("[MoveForward] Movement timeout after %.2f/%.2f blocks", distMoved, dist)
 			}
 			return errors.New("movement timed out")
 		}
@@ -490,7 +489,7 @@ func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 		if notifyChat {
 			_ = a.SendChat("Already at target position")
 		}
-		log.Printf("[MoveTo] Already at target position")
+		a.logf("[MoveTo] Already at target position")
 		return nil
 	}
 
@@ -498,7 +497,7 @@ func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 		_ = a.SendChat(fmt.Sprintf("Navigating from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)", x, y, z, finalGoal.X, finalGoal.Y, finalGoal.Z))
 	}
 
-	log.Printf("[MoveTo] Pathfinding from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
+	a.logf("[MoveTo] Pathfinding from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
 		currentPos.X, currentPos.Y, currentPos.Z, finalGoal.X, finalGoal.Y, finalGoal.Z)
 
 	// Use HPA* to find and follow the full path directly
@@ -872,7 +871,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	blockY := int(math.Floor(blockPos.Y))
 	blockZ := int(math.Floor(blockPos.Z))
 
-	log.Printf("[MineBlockAt] At (%.2f,%.2f,%.2f), attempting to mine block at (%d,%d,%d)", botX, botY, botZ, blockX, blockY, blockZ)
+	a.logf("[MineBlockAt] At (%.2f,%.2f,%.2f), attempting to mine block at (%d,%d,%d)", botX, botY, botZ, blockX, blockY, blockZ)
 
 	// Look at the block center
 	blockCenterX := float64(blockX) + 0.5
@@ -929,7 +928,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	if a.shapeMgr != nil {
 		blockName = a.shapeMgr.BlockName(stateID)
 	}
-	log.Printf("[MineBlockAt] Mining %s at (%d,%d,%d) face=%d breakTime=%.2fs",
+	a.logf("[MineBlockAt] Mining %s at (%d,%d,%d) face=%d breakTime=%.2fs",
 		blockName, blockX, blockY, blockZ, face, breakTime)
 
 	// Send start digging
@@ -943,7 +942,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 
 	// Instant break: hardness 0 or break time <= 1 tick
 	if breakTime <= 0.05 {
-		log.Printf("[MineBlockAt] Instant break for %s", blockName)
+		a.logf("[MineBlockAt] Instant break for %s", blockName)
 		return nil
 	}
 
@@ -971,7 +970,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 		return fmt.Errorf("send finish digging: %w", err)
 	}
 
-	log.Printf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
+	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
 }
 
@@ -1080,18 +1079,18 @@ func (a *agent) selectBestToolForBlock(ctx context.Context, material []string) m
 			hotbarSlot = 0
 		}
 
-		log.Printf("[MineBlockAt] Swapping inventory slot %d to hotbar slot %d", bestSlotIndex, hotbarSlot)
+		a.logf("[MineBlockAt] Swapping inventory slot %d to hotbar slot %d", bestSlotIndex, hotbarSlot)
 		if err := a.SwapInventoryWithHotbar(ctx, int(bestSlotIndex), int(hotbarSlot)); err != nil {
-			log.Printf("[MineBlockAt] Failed to swap tool to hotbar: %v", err)
+			a.logf("[MineBlockAt] Failed to swap tool to hotbar: %v", err)
 			return mining.HandTool()
 		}
 	}
 
 	// Select the hotbar slot.
-	log.Printf("[MineBlockAt] Selecting hotbar slot %d (tool=%s tier=%s speed=%.1f)",
+	a.logf("[MineBlockAt] Selecting hotbar slot %d (tool=%s tier=%s speed=%.1f)",
 		hotbarSlot, bestTool.Category, bestTool.Tier, bestSpeed)
 	if err := a.SelectHotbarSlot(ctx, hotbarSlot); err != nil {
-		log.Printf("[MineBlockAt] Failed to select hotbar slot: %v", err)
+		a.logf("[MineBlockAt] Failed to select hotbar slot: %v", err)
 		return mining.HandTool()
 	}
 
@@ -1246,12 +1245,12 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 func (a *agent) logLineOfSightFailure(ctx context.Context, ox, oy, oz float64, targetX, targetY, targetZ int) {
 	const extraBlocks = 2
 	blocks := a.collectLineOfSightBlocks(ctx, ox, oy, oz, targetX, targetY, targetZ, extraBlocks)
-	log.Printf("[LOS] failed from (%.2f, %.2f, %.2f) to block (%d, %d, %d); listing %d blocks (+%d past target)", ox, oy, oz, targetX, targetY, targetZ, len(blocks), extraBlocks)
+	a.logf("[LOS] failed from (%.2f, %.2f, %.2f) to block (%d, %d, %d); listing %d blocks (+%d past target)", ox, oy, oz, targetX, targetY, targetZ, len(blocks), extraBlocks)
 	for _, block := range blocks {
-		log.Printf("[LOS]   (%d, %d, %d) %s", block.x, block.y, block.z, block.name)
+		a.logf("[LOS]   (%d, %d, %d) %s", block.x, block.y, block.z, block.name)
 	}
 	line := utils.Line(models.V3{X: ox, Y: oy, Z: oz}, models.V3{X: float64(targetX) + 0.5, Y: float64(targetY) + 0.5, Z: float64(targetZ) + 0.5})
-	log.Printf("[LOS] line points: %v", line)
+	a.logf("[LOS] line points: %v", line)
 }
 
 type losBlock struct {

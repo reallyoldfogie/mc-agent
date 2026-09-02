@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"log"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/items"
@@ -26,12 +25,12 @@ func (a *agent) handleClutchPlan(usage *items.ItemUsage, plan physics.ClutchPlan
 
 	slot, itemName := a.findClutchItemSlot()
 	if slot < 0 {
-		log.Printf("[Clutch] No clutch item found in hotbar")
+		a.logf("[Clutch] No clutch item found in hotbar")
 		return
 	}
 
 	if err := usage.SwitchToSlot(slot); err != nil {
-		log.Printf("[Clutch] Failed to switch to slot %d: %v", slot, err)
+		a.logf("[Clutch] Failed to switch to slot %d: %v", slot, err)
 		return
 	}
 
@@ -41,7 +40,7 @@ func (a *agent) handleClutchPlan(usage *items.ItemUsage, plan physics.ClutchPlan
 		models.MainHand,
 	)
 	if err != nil {
-		log.Printf("[Clutch] UseItemOnBlock failed for %s: %v", itemName, err)
+		a.logf("[Clutch] UseItemOnBlock failed for %s: %v", itemName, err)
 		return
 	}
 	a.noteClutchAction(time.Now(), plan, itemName)
@@ -94,6 +93,6 @@ func (a *agent) ensureClutchSafety(now time.Time) bool {
 
 func (a *agent) noteClutchAction(now time.Time, plan physics.ClutchPlan, itemName string) {
 	a.lastClutchAction = now
-	log.Printf("[Clutch] Actioned %s using %s at (%.0f,%.0f,%.0f) in %d ticks",
+	a.logf("[Clutch] Actioned %s using %s at (%.0f,%.0f,%.0f) in %d ticks",
 		plan.Type, itemName, plan.PlacePos.X, plan.PlacePos.Y, plan.PlacePos.Z, plan.TicksToImpact)
 }

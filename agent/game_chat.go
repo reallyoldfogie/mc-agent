@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -39,18 +38,18 @@ func (a *agent) HandleDeath() error { a.onDeath(); return nil }
 
 // onDisconnect handles graceful disconnect processing.
 func (a *agent) onDisconnect(reason string) {
-	log.Printf("Disconnected: %s", reason)
+	a.logf("Disconnected: %s", reason)
 }
 
 // onHealthChange handles player health changes.
 func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
 	a.setHealth(health, food, saturation)
-	log.Printf("Health: %.2f, Food: %d, Saturation: %.2f", health, food, saturation)
+	a.logf("Health: %.2f, Food: %d, Saturation: %.2f", health, food, saturation)
 }
 
 // onDeath handles player death events.
 func (a *agent) onDeath() {
-	log.Printf("Died and respawn scheduled")
+	a.logf("Died and respawn scheduled")
 	// Pause physics position updates while dead to prevent corrupting server-side playerdata
 	a.movementMu.RLock()
 	moveExec := a.moveExec
@@ -114,7 +113,7 @@ func (a *agent) SendChat(message string) error {
 		return fallback.SendMessage(message)
 	}
 	// If no fallback is set, log and return (allows tests to work without explicit chat setup)
-	log.Printf("SendChat (no network): %s", message)
+	a.logf("SendChat (no network): %s", message)
 	return nil
 }
 
@@ -125,7 +124,7 @@ func (a *agent) SendChat(message string) error {
 // this also extracts and dispatches bot commands the same way
 // OnPlayerChat/OnDisguisedChat do.
 func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
-	log.Printf("System Chat: %#v, Overlay: %v", c, overlay)
+	a.logf("System Chat: %#v, Overlay: %v", c, overlay)
 	a.emitChatEvent(c)
 
 	text, ok := a.extractCommandFromMessage(c)
@@ -171,7 +170,7 @@ func (a *agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message,
 	if !validated {
 		prefix = "[Not Secure] "
 	}
-	log.Printf("%sPlayer: %v", prefix, msg)
+	a.logf("%sPlayer: %v", prefix, msg)
 	a.emitChatEvent(msg)
 
 	// Check if message contains a command for this bot
@@ -188,7 +187,7 @@ func (a *agent) OnPlayerChat(senderInfo playerlist.PlayerInfo, msg chat.Message,
 
 // OnDisguisedChat handles disguised chat messages (e.g., from RCON /say).
 func (a *agent) OnDisguisedChat(msg chat.Message) error {
-	log.Printf("Disguised: %v", msg)
+	a.logf("Disguised: %v", msg)
 	a.emitChatEvent(msg)
 
 	// Check if message contains a command for this bot
@@ -285,7 +284,7 @@ func (a *agent) dedupeChatPacket(next func(pk.Packet) error) func(pk.Packet) err
 		now := time.Now()
 		if data == lastData && now.Sub(lastAt) < chatPacketDedupWindow {
 			mu.Unlock()
-			log.Printf("[handleChatCommand] Dropping duplicate chat packet (%d bytes) within dedup window", len(p.Data))
+			a.logf("[handleChatCommand] Dropping duplicate chat packet (%d bytes) within dedup window", len(p.Data))
 			return nil
 		}
 		lastData = data

@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -38,6 +38,7 @@ type replayMovementMirror struct {
 	rec            *recorder.Recorder
 	pm             protocol_models.PacketMgr
 	versionHandler models.VersionHandler
+	logger         *slog.Logger
 
 	mu                   sync.Mutex
 	entityID             int32
@@ -89,7 +90,7 @@ const (
 
 // NewReplayMovementMirror constructs a movement mirror if both recorder and
 // packet manager are provided. It returns nil when either dependency is nil.
-func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, versionHandler models.VersionHandler, sp models.SkinProvider) MovementMirror {
+func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMgr, versionHandler models.VersionHandler, sp models.SkinProvider, logger *slog.Logger) MovementMirror {
 	if rec == nil || pm == nil {
 		return nil
 	}
@@ -97,6 +98,7 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		rec:            rec,
 		pm:             pm,
 		versionHandler: versionHandler,
+		logger:         logger,
 		startTime:      time.Now(),
 		sbidPos:        int32(pm.GetServerboundPacketID("ServerboundMovePlayerPos")),
 		sbidPosRot:     int32(pm.GetServerboundPacketID("ServerboundMovePlayerPosRot")),
@@ -112,6 +114,12 @@ func NewReplayMovementMirror(rec *recorder.Recorder, pm protocol_models.PacketMg
 		cbidAnimate:    int32(pm.GetClientboundPacketID("ClientboundAnimation")),
 		skinProvider:   sp,
 	}
+}
+
+// logf mirrors log.Printf's signature, routed through this mirror's owning
+// agent's fielded slog.Logger instead of the package-global "log" package.
+func (m *replayMovementMirror) logf(format string, args ...any) {
+	safeLogger(m.logger).Info(fmt.Sprintf(format, args...))
 }
 
 // RecordPositionSnapshot directly records a position snapshot for the auto-camera
@@ -217,13 +225,13 @@ func (m *replayMovementMirror) EmitEquipment(entityID int32, slot models.Equipme
 
 	packetID, packetData, err := m.versionHandler.Play().BuildEntityEquipmentPacket(entityID, slot, itemID, count)
 	if err != nil {
-		log.Printf("[ReplayMirror] EmitEquipment: failed to build packet: %v", err)
+		m.logf("[ReplayMirror] EmitEquipment: failed to build packet: %v", err)
 		return
 	}
 
-	log.Printf("[ReplayMirror] EmitEquipment: entityID=%d slot=%s itemID=%d count=%d", entityID, slot, itemID, count)
+	m.logf("[ReplayMirror] EmitEquipment: entityID=%d slot=%s itemID=%d count=%d", entityID, slot, itemID, count)
 	if err := m.rec.RecordNow(packetID, packetData); err != nil {
-		log.Printf("[ReplayMirror] EmitEquipment: failed to record packet: %v", err)
+		m.logf("[ReplayMirror] EmitEquipment: failed to record packet: %v", err)
 	}
 }
 
@@ -250,13 +258,13 @@ func (m *replayMovementMirror) HandleServerbound(p pk.Packet) {
 // It processes all entries, handles removal actions, and stores raw packet data for replay re-emission.
 func (m *replayMovementMirror) HandlePlayerInfo(p pk.Packet) {
 	if m.versionHandler == nil {
-		log.Printf("HandlePlayerInfo: version handler not available, skipping PlayerInfo processing")
+		m.logf("HandlePlayerInfo: version handler not available, skipping PlayerInfo processing")
 		return
 	}
 
 	update, err := m.versionHandler.Play().ParsePlayerInfo(p)
 	if err != nil {
-		log.Printf("HandlePlayerInfo: failed to parse PlayerInfo packet: %v", err)
+		m.logf("HandlePlayerInfo: failed to parse PlayerInfo packet: %v", err)
 		return
 	}
 	if update == nil {
@@ -357,7 +365,7 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 	if m.versionHandler != nil {
 		x, y, z, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPos(p)
 		if err == nil {
-			log.Printf("[ReplayMirror] handlePos (version-specific): pos=(%.2f, %.2f, %.2f)", x, y, z)
+			m.logf("[ReplayMirror] handlePos (version-specific): pos=(%.2f, %.2f, %.2f)", x, y, z)
 			_, _, _, lastYaw, lastPitch := m.lastPosition()
 			m.emitTeleport(x, y, z, lastYaw, lastPitch, onGround)
 			return
@@ -370,7 +378,7 @@ func (m *replayMovementMirror) handlePos(p pk.Packet) {
 	if err := p.Scan(&x, &y, &z, &onGround); err != nil {
 		return
 	}
-	log.Printf("[ReplayMirror] handlePos (fallback): pos=(%.2f, %.2f, %.2f)", float64(x), float64(y), float64(z))
+	m.logf("[ReplayMirror] handlePos (fallback): pos=(%.2f, %.2f, %.2f)", float64(x), float64(y), float64(z))
 	_, _, _, lastYaw, lastPitch := m.lastPosition()
 	m.emitTeleport(float64(x), float64(y), float64(z), lastYaw, lastPitch, bool(onGround))
 }
@@ -380,7 +388,7 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	if m.versionHandler != nil {
 		x, y, z, yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundPosRot(p)
 		if err == nil {
-			log.Printf("[ReplayMirror] handlePosRot (version-specific): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+			m.logf("[ReplayMirror] handlePosRot (version-specific): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
 				x, y, z, yaw, pitch)
 			m.emitTeleport(x, y, z, yaw, pitch, onGround)
 			return
@@ -394,7 +402,7 @@ func (m *replayMovementMirror) handlePosRot(p pk.Packet) {
 	if err := p.Scan(&x, &y, &z, &yaw, &pitch, &onGround); err != nil {
 		return
 	}
-	log.Printf("[ReplayMirror] handlePosRot (fallback): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
+	m.logf("[ReplayMirror] handlePosRot (fallback): pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f",
 		float64(x), float64(y), float64(z), float32(yaw), float32(pitch))
 	m.emitTeleport(float64(x), float64(y), float64(z), float64(yaw), float64(pitch), bool(onGround))
 }
@@ -404,7 +412,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 	if m.versionHandler != nil {
 		yaw, pitch, onGround, err := m.versionHandler.Play().Movement().ParseServerboundRot(p)
 		if err == nil {
-			log.Printf("[ReplayMirror] handleRot (version-specific): yaw=%.2f pitch=%.2f", yaw, pitch)
+			m.logf("[ReplayMirror] handleRot (version-specific): yaw=%.2f pitch=%.2f", yaw, pitch)
 			lastX, lastY, lastZ, _, _ := m.lastPosition()
 			m.emitTeleport(lastX, lastY, lastZ, yaw, pitch, onGround)
 			return
@@ -417,7 +425,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 	if err := p.Scan(&yaw, &pitch, &onGround); err != nil {
 		return
 	}
-	log.Printf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
+	m.logf("[ReplayMirror] handleRot (fallback): yaw=%.2f pitch=%.2f", float32(yaw), float32(pitch))
 	lastX, lastY, lastZ, _, _ := m.lastPosition()
 	m.emitTeleport(lastX, lastY, lastZ, float64(yaw), float64(pitch), bool(onGround))
 }
@@ -427,7 +435,7 @@ func (m *replayMovementMirror) handleRot(p pk.Packet) {
 func (m *replayMovementMirror) handleSwing(p pk.Packet) {
 	var hand pk.VarInt
 	if err := p.Scan(&hand); err != nil {
-		log.Printf("[ReplayMirror] handleSwing: failed to parse hand: %v", err)
+		m.logf("[ReplayMirror] handleSwing: failed to parse hand: %v", err)
 		return
 	}
 	m.emitSwing(int32(hand))
@@ -453,14 +461,14 @@ func (m *replayMovementMirror) emitSwing(hand int32) {
 		animation = animationSwingOffHand
 	}
 
-	log.Printf("[ReplayMirror] emitSwing: entityID=%d hand=%d animation=%d", entityID, hand, animation)
+	m.logf("[ReplayMirror] emitSwing: entityID=%d hand=%d animation=%d", entityID, hand, animation)
 	packet := pk.Marshal(
 		cbidAnimate,
 		pk.VarInt(entityID),
 		pk.UnsignedByte(animation),
 	)
 	if err := m.rec.RecordNow(int32(packet.ID), packet.Data); err != nil {
-		log.Printf("[ReplayMirror] emitSwing: failed to record animation packet: %v", err)
+		m.logf("[ReplayMirror] emitSwing: failed to record animation packet: %v", err)
 	}
 }
 
@@ -469,7 +477,7 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 	if m.versionHandler != nil {
 		onGround, err := m.versionHandler.Play().Movement().ParseServerboundStatus(p)
 		if err == nil {
-			log.Printf("[ReplayMirror] handleStatus (version-specific): onGround=%v", onGround)
+			m.logf("[ReplayMirror] handleStatus (version-specific): onGround=%v", onGround)
 			lastX, lastY, lastZ, lastYaw, lastPitch := m.lastPosition()
 			m.emitTeleport(lastX, lastY, lastZ, lastYaw, lastPitch, onGround)
 			return
@@ -481,7 +489,7 @@ func (m *replayMovementMirror) handleStatus(p pk.Packet) {
 	if err := p.Scan(&onGround); err != nil {
 		return
 	}
-	log.Printf("[ReplayMirror] handleStatus (fallback): onGround=%v", bool(onGround))
+	m.logf("[ReplayMirror] handleStatus (fallback): onGround=%v", bool(onGround))
 	lastX, lastY, lastZ, lastYaw, lastPitch := m.lastPosition()
 	m.emitTeleport(lastX, lastY, lastZ, lastYaw, lastPitch, bool(onGround))
 }
@@ -512,7 +520,7 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float64,
 	}
 
 	if !m.spawned && m.entityType != 0 {
-		log.Printf("[ReplayMirror] Spawning bot entity at (%.2f, %.2f, %.2f) entityID=%d", x, y, z, m.entityID)
+		m.logf("[ReplayMirror] Spawning bot entity at (%.2f, %.2f, %.2f) entityID=%d", x, y, z, m.entityID)
 		m.spawned = true
 		m.writeAddEntity(x, y, z, yaw, pitch)
 	}
@@ -551,7 +559,7 @@ func (m *replayMovementMirror) emitTeleport(x, y, z float64, yaw, pitch float64,
 func (m *replayMovementMirror) writeRelMove(dx, dy, dz int16, yaw, pitch float64, onGround bool) {
 	yawByte := angleToByte(yaw)
 	pitchByte := angleToByte(pitch)
-	log.Printf("[ReplayMirror] writeRelMove: delta=(%d, %d, %d) yaw=%.2f->%d pitch=%.2f->%d",
+	m.logf("[ReplayMirror] writeRelMove: delta=(%d, %d, %d) yaw=%.2f->%d pitch=%.2f->%d",
 		dx, dy, dz, yaw, yawByte, pitch, pitchByte)
 	move := pk.Marshal(
 		m.cbidMovePosRot,
@@ -597,7 +605,7 @@ func (m *replayMovementMirror) emitRelMoveSteps(prevX, prevY, prevZ, x, y, z flo
 		nextZ := prevZ + dz*float64(i)/float64(steps)
 		rdx, rdy, rdz, ok := encodeRelMove(curX, curY, curZ, nextX, nextY, nextZ)
 		if !ok {
-			log.Printf("[ReplayMirror] Warning: failed to encode relative move step (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
+			m.logf("[ReplayMirror] Warning: failed to encode relative move step (%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)",
 				curX, curY, curZ, nextX, nextY, nextZ)
 			return
 		}
@@ -621,7 +629,7 @@ func (m *replayMovementMirror) writeAddEntity(x, y, z float64, yaw, pitch float6
 		0, 0, 0, // velX, velY, velZ (zero velocity on spawn)
 	)
 	if err != nil {
-		log.Printf("[ReplayMirror] Error building SpawnEntity packet: %v", err)
+		m.logf("[ReplayMirror] Error building SpawnEntity packet: %v", err)
 		return
 	}
 	_ = m.rec.RecordNow(packetID, packetData)
@@ -669,7 +677,7 @@ func (m *replayMovementMirror) ensurePlayerInfo() {
 // The function sets m.playerInfoSent when a packet is recorded to avoid
 // duplicate emissions.
 func (m *replayMovementMirror) ensurePlayerInfoLocked() {
-	log.Printf("ensurePlayerInfoLocked: entityID=%d name=%q sent=%v loginSeen=%v", m.entityID, m.name, m.playerInfoSent, m.loginSeen)
+	m.logf("ensurePlayerInfoLocked: entityID=%d name=%q sent=%v loginSeen=%v", m.entityID, m.name, m.playerInfoSent, m.loginSeen)
 	if m.playerInfoSent || m.rec == nil {
 		return
 	}
@@ -714,12 +722,12 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 
 	// If we still have no properties (and none came from the server), wait until we do.
 	if len(m.properties) == 0 {
-		log.Printf("ensurePlayerInfoLocked: emitting without textures for %s (uuid=%s)", name, uuidHex(uuid))
+		m.logf("ensurePlayerInfoLocked: emitting without textures for %s (uuid=%s)", name, uuidHex(uuid))
 	}
 
 	// Build a version-aware PlayerInfo packet using the version handler.
 	if m.versionHandler == nil {
-		log.Printf("ensurePlayerInfoLocked: version handler not available, skipping PlayerInfo")
+		m.logf("ensurePlayerInfoLocked: version handler not available, skipping PlayerInfo")
 		return
 	}
 
@@ -734,11 +742,11 @@ func (m *replayMovementMirror) ensurePlayerInfoLocked() {
 
 	packetID, packetData, err := m.versionHandler.Play().BuildPlayerInfoPacket(uuid, name, props)
 	if err != nil {
-		log.Printf("ensurePlayerInfoLocked: failed to build PlayerInfo packet: %v", err)
+		m.logf("ensurePlayerInfoLocked: failed to build PlayerInfo packet: %v", err)
 		return
 	}
 	if err := m.rec.RecordNow(packetID, packetData); err != nil {
-		log.Printf("ensurePlayerInfoLocked: failed to record PlayerInfo packet: %v", err)
+		m.logf("ensurePlayerInfoLocked: failed to record PlayerInfo packet: %v", err)
 		return
 	}
 	m.playerInfoSent = true
@@ -789,7 +797,8 @@ func writeString(buf *bytes.Buffer, s string) {
 }
 
 // loadTexturesFromReplay scans a local mcpr for an add_player entry matching the uuid and returns its properties.
-func loadTexturesFromReplay(path string, target [16]byte, targetName string) ([]profileProperty, error) {
+func loadTexturesFromReplay(logger *slog.Logger, path string, target [16]byte, targetName string) ([]profileProperty, error) {
+	logger = safeLogger(logger)
 	zr, err := zip.OpenReader(path)
 	if err != nil {
 		return nil, err
@@ -879,11 +888,11 @@ func loadTexturesFromReplay(path string, target [16]byte, targetName string) ([]
 			}
 			if len(props) > 0 {
 				if uuid == target {
-					log.Printf("loaded %d properties for %s from %s (name=%s)", len(props), uuidHex(uuid), path, name)
+					logger.Info(fmt.Sprintf("loaded %d properties for %s from %s (name=%s)", len(props), uuidHex(uuid), path, name))
 					return props, nil
 				}
 				if targetName != "" && name == targetName {
-					log.Printf("loaded %d properties for name %s from %s (uuid=%s)", len(props), name, path, uuidHex(uuid))
+					logger.Info(fmt.Sprintf("loaded %d properties for name %s from %s (uuid=%s)", len(props), name, path, uuidHex(uuid)))
 					return props, nil
 				}
 				if fallbackProps == nil {
@@ -917,7 +926,7 @@ func loadTexturesFromReplay(path string, target [16]byte, targetName string) ([]
 		}
 	}
 	if fallbackProps != nil {
-		log.Printf("using fallback properties from %s for uuid %s", path, uuidHex(target))
+		logger.Info(fmt.Sprintf("using fallback properties from %s for uuid %s", path, uuidHex(target)))
 		return fallbackProps, nil
 	}
 	return nil, fmt.Errorf("no properties found for uuid %s in %s", uuidHex(target), path)
@@ -933,7 +942,7 @@ func (m *replayMovementMirror) ensurePropertiesFromLocalReplayLocked() {
 		src = "tmp/2025_11_30_16_37_20.mcpr"
 	}
 	if src == "" {
-		log.Printf("textures fallback: no MC_AGENT_TEXTURE_SOURCE provided")
+		m.logf("textures fallback: no MC_AGENT_TEXTURE_SOURCE provided")
 		return
 	}
 	if abs, err := filepath.Abs(src); err == nil {
@@ -941,18 +950,18 @@ func (m *replayMovementMirror) ensurePropertiesFromLocalReplayLocked() {
 	}
 	info, err := os.Stat(src)
 	if err != nil || info.IsDir() {
-		log.Printf("textures fallback: cannot stat %s: %v", src, err)
+		m.logf("textures fallback: cannot stat %s: %v", src, err)
 		return
 	}
-	props, err := loadTexturesFromReplay(src, m.uuid, m.name)
+	props, err := loadTexturesFromReplay(m.logger, src, m.uuid, m.name)
 	if err != nil {
-		log.Printf("failed to load textures from %s: %v", src, err)
+		m.logf("failed to load textures from %s: %v", src, err)
 		return
 	}
 	if len(props) > 0 {
 		m.properties = props
 		m.fetchedProps = true
-		log.Printf("textures fallback: loaded %d props from %s", len(props), src)
+		m.logf("textures fallback: loaded %d props from %s", len(props), src)
 	}
 }
 

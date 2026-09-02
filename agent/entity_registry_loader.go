@@ -3,7 +3,6 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 )
@@ -40,7 +39,7 @@ func (a *agent) LoadRegistriesFromFile(dataPath string) error {
 
 	if dataPath == "" {
 		dataPath = "." // Default to current directory if no path provided
-		log.Printf("[RegistryLoader][WARN] No dataPath provided for LoadRegistriesFromFile, defaulting to current directory: %s", dataPath)
+		a.logf("[RegistryLoader][WARN] No dataPath provided for LoadRegistriesFromFile, defaulting to current directory: %s", dataPath)
 	}
 
 	registryPath := dataPath
@@ -61,11 +60,11 @@ func (a *agent) LoadRegistriesFromFile(dataPath string) error {
 	}
 
 	if len(registries) == 0 {
-		log.Printf("[RegistryLoader][WARN] no registries found in : %s", registryPath)
+		a.logf("[RegistryLoader][WARN] no registries found in : %s", registryPath)
 		return fmt.Errorf("no registries found in registries.json")
 	}
 
-	log.Printf("[RegistryLoader] Loading %d registries from file: %s", len(registries), registryPath)
+	a.logf("[RegistryLoader] Loading %d registries from file: %s", len(registries), registryPath)
 
 	// Load each registry into the agent's registry system
 	totalLoaded := 0
@@ -84,10 +83,10 @@ func (a *agent) LoadRegistriesFromFile(dataPath string) error {
 			a.onRegistryDataCallback(registryID, entries)
 			totalLoaded++
 		} else {
-			log.Printf("[RegistryLoader] Skipping %s registry (no entries found)", registryID)
+			a.logf("[RegistryLoader] Skipping %s registry (no entries found)", registryID)
 		}
 	}
 
-	log.Printf("[RegistryLoader] ✓ Successfully loaded %d registries from file", totalLoaded)
+	a.logf("[RegistryLoader] ✓ Successfully loaded %d registries from file", totalLoaded)
 	return nil
 }

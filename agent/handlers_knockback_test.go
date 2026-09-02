@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"math"
 	"testing"
 
@@ -12,6 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// discardLogger is a no-op logger for tests that exercise logging call
+// sites but don't care about their output.
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // velocityCaptureMoveExec captures SetVelocity calls for knockback testing.
 // startVelocity is a settable baseline GetVelocity returns, so tests can
@@ -257,7 +263,7 @@ func TestOnDamageEvent_FallbackToCauseEntity(t *testing.T) {
 func TestApplyExplosionKnockback_AddsToExistingVelocity(t *testing.T) {
 	velCapture := &velocityCaptureMoveExec{startVelocity: [3]float64{1.0, 0.2, -0.5}}
 
-	err := applyExplosionKnockback(velCapture, 0.4, 0.6, -1.0)
+	err := applyExplosionKnockback(discardLogger, velCapture, 0.4, 0.6, -1.0)
 	require.NoError(t, err)
 
 	require.Len(t, velCapture.velocityCalls, 1)
@@ -268,6 +274,6 @@ func TestApplyExplosionKnockback_AddsToExistingVelocity(t *testing.T) {
 }
 
 func TestApplyExplosionKnockback_NilExecutorIsNoop(t *testing.T) {
-	err := applyExplosionKnockback(nil, 1, 1, 1)
+	err := applyExplosionKnockback(discardLogger, nil, 1, 1, 1)
 	assert.NoError(t, err, "a nil executor should be a harmless no-op, not an error")
 }

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"strings"
@@ -43,7 +42,7 @@ func (a *agent) FindValidTrajectory(
 	if a.worldMgr == nil || a.shapeMgr == nil {
 		// Can't validate trajectories without world state
 		// Fall back to simple unvalidated trajectory
-		log.Printf("[Agent %s][FindValidTrajectory] No world manager, using unvalidated trajectory", agentName)
+		a.logf("[Agent %s][FindValidTrajectory] No world manager, using unvalidated trajectory", agentName)
 		pitch, power, errorY, trajectory := physics.FindOptimalAiming(projectileType, origin, target)
 		if len(trajectory) == 0 {
 			return nil, fmt.Errorf("target unreachable")
@@ -61,19 +60,19 @@ func (a *agent) FindValidTrajectory(
 
 	// Find all valid trajectories (low angle and high angle if available)
 	rankedSolutions := a.findAllTrajectories(projectileType, origin, target)
-	log.Printf("[Agent %s][FindValidTrajectory] findAllTrajectories returned %d solutions for %s", agentName, len(rankedSolutions), projectileType.String())
+	a.logf("[Agent %s][FindValidTrajectory] findAllTrajectories returned %d solutions for %s", agentName, len(rankedSolutions), projectileType.String())
 
 	if len(rankedSolutions) == 0 {
-		log.Printf("[Agent %s][FindValidTrajectory] ERROR: No trajectory solutions found! Origin=(%.2f,%.2f,%.2f), Target=(%.2f,%.2f,%.2f)",
+		a.logf("[Agent %s][FindValidTrajectory] ERROR: No trajectory solutions found! Origin=(%.2f,%.2f,%.2f), Target=(%.2f,%.2f,%.2f)",
 			agentName, origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z)
 		return nil, fmt.Errorf("no trajectories found to target")
 	}
 
-	log.Printf("[Agent %s][FindValidTrajectory] Found %d trajectory solutions to target", agentName, len(rankedSolutions))
+	a.logf("[Agent %s][FindValidTrajectory] Found %d trajectory solutions to target", agentName, len(rankedSolutions))
 
 	// Try each trajectory in order until finding one that's clear
 	for i, solution := range rankedSolutions {
-		log.Printf("[Agent %s][FindValidTrajectory] Testing solution %d: pitch=%.2f°, power=%.3f, trajectory points=%d",
+		a.logf("[Agent %s][FindValidTrajectory] Testing solution %d: pitch=%.2f°, power=%.3f, trajectory points=%d",
 			agentName, i, solution.Pitch, solution.Power, len(solution.Trajectory))
 		clear, hitPos, hitBlockName := physics.ValidateTrajectory(solution.Trajectory, a, target)
 
@@ -81,7 +80,7 @@ func (a *agent) FindValidTrajectory(
 			solution.IsBlocked = false
 			solution.BlockedAt = nil
 			solution.Rank = i
-			log.Printf("[Agent %s][FindValidTrajectory] Found clear trajectory at rank %d: pitch=%.2f°, power=%.3f",
+			a.logf("[Agent %s][FindValidTrajectory] Found clear trajectory at rank %d: pitch=%.2f°, power=%.3f",
 				agentName, i, solution.Pitch, solution.Power)
 			return solution, nil
 		}
@@ -91,7 +90,7 @@ func (a *agent) FindValidTrajectory(
 		solution.BlockedAt = hitPos
 		solution.Rank = i
 		if hitPos != nil {
-			log.Printf("[Agent %s][FindValidTrajectory] Trajectory %d blocked at (%.2f, %.2f, %.2f)[%s]: pitch=%.2f°, power=%.3f",
+			a.logf("[Agent %s][FindValidTrajectory] Trajectory %d blocked at (%.2f, %.2f, %.2f)[%s]: pitch=%.2f°, power=%.3f",
 				agentName, i, hitPos.X, hitPos.Y, hitPos.Z, hitBlockName, solution.Pitch, solution.Power)
 		}
 	}
@@ -134,7 +133,7 @@ func (a *agent) FindValidTrajectory(
 		// Write to stderr so it appears in test output
 		fmt.Fprint(os.Stderr, diagBuf.String())
 		// Also log it
-		log.Printf("[Agent %s][FindValidTrajectory] %s", agentName, diagBuf.String())
+		a.logf("[Agent %s][FindValidTrajectory] %s", agentName, diagBuf.String())
 
 		return nil, fmt.Errorf("all trajectories to target are blocked by obstacles")
 	}

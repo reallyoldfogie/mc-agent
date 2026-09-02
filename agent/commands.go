@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -151,14 +150,14 @@ func (a *agent) cmdMoveTo(xs, ys, zs string) {
 
 // followPath executes an already-computed path
 func (a *agent) followPath(ctx context.Context, path *models.Path) error {
-	log.Printf("[followPath] Executing cached path with %d steps", len(path.Steps))
-	log.Printf("[followPath] %s", path.LogSummary())
+	a.logf("[followPath] Executing cached path with %d steps", len(path.Steps))
+	a.logf("[followPath] %s", path.LogSummary())
 
 	// Log first 5 steps to diagnose direction issues
-	log.Printf("[followPath] Steps of path being executed:")
+	a.logf("[followPath] Steps of path being executed:")
 	for i := 0; i < len(path.Steps); i++ {
 		step := path.Steps[i]
-		log.Printf("[followPath]   Step %d: %s to (%.0f, %.0f, %.0f)",
+		a.logf("[followPath]   Step %d: %s to (%.0f, %.0f, %.0f)",
 			i+1, step.Movement.String(), step.Position.X, step.Position.Y, step.Position.Z)
 	}
 
@@ -168,11 +167,11 @@ func (a *agent) followPath(ctx context.Context, path *models.Path) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		log.Printf("[followPath] Exec implements ExecutePathWithContext, using it.")
+		a.logf("[followPath] Exec implements ExecutePathWithContext, using it.")
 		return exec.ExecutePathWithContext(ctx, path)
 	}
 
-	log.Printf("[followPath] Exec doesn't implement ExecutePath, using fallback")
+	a.logf("[followPath] Exec doesn't implement ExecutePath, using fallback")
 
 	// Follow the path
 	const stepDelay = 100 * time.Millisecond
@@ -184,15 +183,15 @@ func (a *agent) followPath(ctx context.Context, path *models.Path) error {
 		stepY := float64(step.Position.Y)
 		stepZ := float64(step.Position.Z) + 0.5
 
-		log.Printf("[followPath] Step %d/%d: %s to (%.1f, %.1f, %.1f)",
+		a.logf("[followPath] Step %d/%d: %s to (%.1f, %.1f, %.1f)",
 			i+1, len(path.Steps), step.Movement, stepX, stepY, stepZ)
 
 		if err := a.moveExec.LookAt(stepX, stepY, stepZ, true); err != nil {
-			log.Printf("[followPath] LookAt failed: %v", err)
+			a.logf("[followPath] LookAt failed: %v", err)
 		}
 
 		if err := a.moveExec.SendPosition(stepX, stepY, stepZ, true); err != nil {
-			log.Printf("[followPath] Movement failed: %v", err)
+			a.logf("[followPath] Movement failed: %v", err)
 			return fmt.Errorf("movement failed at step %d: %w", i+1, err)
 		}
 
@@ -206,7 +205,7 @@ func (a *agent) followPath(ctx context.Context, path *models.Path) error {
 
 // pathfindAndFollow computes and follows a path from start to goal
 func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) error {
-	log.Printf("[pathfindAndFollow] From (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
+	a.logf("[pathfindAndFollow] From (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
 		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z)
 
 	distance := start.DistanceTo(goal)
@@ -220,12 +219,12 @@ func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) er
 
 	path, err := a.pathfind.FindPath(ctx, start, goal, maxSteps)
 	if err != nil {
-		log.Printf("[pathfindAndFollow] FindPath error: %v", err)
+		a.logf("[pathfindAndFollow] FindPath error: %v", err)
 		return err
 	}
 
 	if !path.Found {
-		log.Printf("[pathfindAndFollow] No path found")
+		a.logf("[pathfindAndFollow] No path found")
 		return fmt.Errorf("no path found")
 	}
 
@@ -355,7 +354,7 @@ func (a *agent) cmdStartTracking() {
 	a.trackMu.Unlock()
 
 	_ = a.SendChat("Started tracking nearest player...")
-	log.Println("Started tracking nearest player")
+	a.logln("Started tracking nearest player")
 
 	tick := time.NewTicker(trackingTickDur)
 	statsTick := time.NewTicker(trackingStatsDur)
@@ -365,13 +364,13 @@ func (a *agent) cmdStartTracking() {
 		for {
 			select {
 			case <-a.trackStop:
-				log.Println("Tracking stopped")
+				a.logln("Tracking stopped")
 				return
 			case <-statsTick.C:
 				stats := a.getEntityStats()
 				msg := a.formatEntityStats(stats)
 				_ = a.SendChat(msg)
-				log.Println(msg)
+				a.logln(msg)
 			case <-tick.C:
 				nearest, ok := a.findNearestPlayer(true)
 				if !ok {
@@ -382,7 +381,7 @@ func (a *agent) cmdStartTracking() {
 						a.lastNoPlayersMsg = now
 					}
 					stats := a.getEntityStats()
-					log.Printf("No players nearby. %s", a.formatEntityStats(stats))
+					a.logf("No players nearby. %s", a.formatEntityStats(stats))
 					continue
 				}
 
@@ -405,7 +404,7 @@ func (a *agent) cmdStartTracking() {
 				a.playerResolversMu.RUnlock()
 				msg := fmt.Sprintf("My Pos: (%.1f, %.1f, %.1f) | Nearest: %s | Distance: %.2f blocks | Pos: (%.1f, %.1f, %.1f)", bx, by, bz, pname, nearest.Distance, nearest.X, nearest.Y, nearest.Z)
 				_ = a.SendChat(msg)
-				log.Println(msg)
+				a.logln(msg)
 			}
 		}
 	}()

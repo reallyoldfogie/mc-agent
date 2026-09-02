@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"log"
 	"strings"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -179,7 +178,7 @@ func (a *agent) IsMountedEntityBoat(entityTypeID int32) bool {
 	rval := localName == "boat" || localName == "chest_boat" ||
 		strings.HasSuffix(localName, "_boat") || strings.HasSuffix(localName, "_raft")
 
-	log.Printf("[IsMountedEntityBoat] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityBoat] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -208,7 +207,7 @@ func (a *agent) IsMountedEntityCamel(entityTypeID int32) bool {
 
 	rval := localName == "camel" || localName == "camel_husk"
 
-	log.Printf("[IsMountedEntityCamel] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityCamel] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -259,7 +258,7 @@ func (a *agent) IsMountedEntityNautilus(entityTypeID int32) bool {
 
 	rval := localName == "nautilus" || localName == "zombie_nautilus"
 
-	log.Printf("[IsMountedEntityNautilus] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityNautilus] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -316,7 +315,7 @@ func (a *agent) IsMountedEntityMinecart(entityTypeID int32) bool {
 
 	rval := localName == "minecart" || strings.HasSuffix(localName, "_minecart")
 
-	log.Printf("[IsMountedEntityMinecart] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityMinecart] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -343,7 +342,7 @@ func (a *agent) IsMountedEntityPig(entityTypeID int32) bool {
 
 	rval := localName == "pig"
 
-	log.Printf("[IsMountedEntityPig] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityPig] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -370,7 +369,7 @@ func (a *agent) IsMountedEntityStrider(entityTypeID int32) bool {
 
 	rval := localName == "strider"
 
-	log.Printf("[IsMountedEntityStrider] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityStrider] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -397,7 +396,7 @@ func (a *agent) IsMountedEntityDonkey(entityTypeID int32) bool {
 
 	rval := localName == "donkey"
 
-	log.Printf("[IsMountedEntityDonkey] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityDonkey] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -424,7 +423,7 @@ func (a *agent) IsMountedEntityMule(entityTypeID int32) bool {
 
 	rval := localName == "mule"
 
-	log.Printf("[IsMountedEntityMule] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityMule] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }
@@ -453,7 +452,7 @@ func (a *agent) IsMountedEntityLlama(entityTypeID int32) bool {
 
 	rval := localName == "llama" || localName == "trader_llama"
 
-	log.Printf("[IsMountedEntityLlama] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
+	a.logf("[IsMountedEntityLlama] entityTypeID: %d entityTypeName: %s rval: %t", entityTypeID, entityTypeName, rval)
 
 	return rval
 }

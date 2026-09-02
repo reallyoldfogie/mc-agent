@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"log"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -11,12 +11,13 @@ import (
 // versionHandlerAdapter adapts mc-agent's models.VersionHandler to mc-bot-go's bot.VersionHandler interface
 type versionHandlerAdapter struct {
 	handler models.VersionHandler
+	logger  *slog.Logger
 }
 
 // NewVersionHandlerAdapter creates a new adapter that wraps an mc-agent version handler
 // for use with mc-bot-go
-func NewVersionHandlerAdapter(handler models.VersionHandler) bot.VersionHandler {
-	return &versionHandlerAdapter{handler: handler}
+func NewVersionHandlerAdapter(handler models.VersionHandler, logger *slog.Logger) bot.VersionHandler {
+	return &versionHandlerAdapter{handler: handler, logger: safeLogger(logger)}
 }
 
 func (a *versionHandlerAdapter) Version() string {
@@ -24,8 +25,8 @@ func (a *versionHandlerAdapter) Version() string {
 }
 
 func (a *versionHandlerAdapter) Login() bot.LoginHandler {
-	log.Println("[Adapter] Login() called - creating loginHandlerAdapter")
-	return &loginHandlerAdapter{handler: a.handler.Login()}
+	a.logger.Info("[Adapter] Login() called - creating loginHandlerAdapter")
+	return &loginHandlerAdapter{handler: a.handler.Login(), logger: a.logger}
 }
 
 func (a *versionHandlerAdapter) Configuration() bot.ConfigurationHandler {
@@ -35,6 +36,7 @@ func (a *versionHandlerAdapter) Configuration() bot.ConfigurationHandler {
 // loginHandlerAdapter adapts mc-agent's LoginHandler to mc-bot-go's bot.LoginHandler interface
 type loginHandlerAdapter struct {
 	handler models.LoginHandler
+	logger  *slog.Logger
 }
 
 func (a *loginHandlerAdapter) SendLoginStart(conn bot.PacketWriter, username string, uuid [16]byte) error {
@@ -46,12 +48,12 @@ func (a *loginHandlerAdapter) SendEncryptionResponse(conn bot.PacketWriter, shar
 }
 
 func (a *loginHandlerAdapter) SendLoginAcknowledged(conn bot.PacketWriter) error {
-	log.Println("[Adapter] SendLoginAcknowledged called")
+	a.logger.Info("[Adapter] SendLoginAcknowledged called")
 	return a.handler.SendLoginAcknowledged(conn)
 }
 
 func (a *loginHandlerAdapter) ParseLoginSuccess(p pk.Packet) (username string, uuid [16]byte, err error) {
-	log.Println("[Adapter] ParseLoginSuccess called")
+	a.logger.Info("[Adapter] ParseLoginSuccess called")
 	return a.handler.ParseLoginSuccess(p)
 }
 

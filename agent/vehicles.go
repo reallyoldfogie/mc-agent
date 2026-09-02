@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -35,7 +34,7 @@ func (a *agent) MountEntity(ctx context.Context, entityID int32) error {
 		return fmt.Errorf("entity %d is marked as removed", entityID)
 	}
 
-	log.Printf("[MountEntity] Attempting to mount entity %d (type %d at %.1f, %.1f, %.1f)",
+	a.logf("[MountEntity] Attempting to mount entity %d (type %d at %.1f, %.1f, %.1f)",
 		entityID, entity.EntityType, entity.X, entity.Y, entity.Z)
 
 	// Use the existing UseItemOnEntity action to interact with the entity (right-click)
@@ -85,7 +84,7 @@ func (a *agent) DismountEntity() error {
 		return fmt.Errorf("agent is not currently mounted")
 	}
 
-	log.Printf("[DismountEntity] Dismounting from entity %d", currentMount)
+	a.logf("[DismountEntity] Dismounting from entity %d", currentMount)
 
 	// Send a sneak action to dismount
 	if a.versionHandler == nil || a.client == nil {
@@ -174,7 +173,7 @@ func (a *agent) JumpVehicle(ctx context.Context, power int32) error {
 		}
 		defer func() {
 			if err := manual.ExitManualMode(); err != nil {
-				log.Printf("[JumpVehicle] Failed to exit manual mode after jump: %v", err)
+				a.logf("[JumpVehicle] Failed to exit manual mode after jump: %v", err)
 			}
 		}()
 	}
@@ -221,7 +220,7 @@ func (a *agent) JumpVehicle(ctx context.Context, power int32) error {
 	case <-time.After(jumpSettleTimeout):
 	}
 
-	log.Printf("[JumpVehicle] Horse jump fired with power %d (holdTicks=%d, alreadyManual=%v)", power, holdTicks, alreadyManual)
+	a.logf("[JumpVehicle] Horse jump fired with power %d (holdTicks=%d, alreadyManual=%v)", power, holdTicks, alreadyManual)
 	return nil
 }
 

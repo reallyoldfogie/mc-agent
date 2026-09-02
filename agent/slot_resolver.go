@@ -1,7 +1,8 @@
 package agent
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"reflect"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -39,7 +40,7 @@ func (r *screenManagerSlotResolver) ResolveSlot(windowID int, slotIndex int16) (
 	if windowID == 0 {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("[SlotResolver] Recovered from panic in GetPlayerInventory: %v", rec)
+				r.agent.logf("[SlotResolver] Recovered from panic in GetPlayerInventory: %v", rec)
 			}
 		}()
 
@@ -55,7 +56,7 @@ func (r *screenManagerSlotResolver) ResolveSlot(windowID int, slotIndex int16) (
 	// Handle container windows (window > 0)
 	defer func() {
 		if rec := recover(); rec != nil {
-			log.Printf("[SlotResolver] Recovered from panic in GetScreenByID: %v", rec)
+			r.agent.logf("[SlotResolver] Recovered from panic in GetScreenByID: %v", rec)
 		}
 	}()
 
@@ -65,12 +66,13 @@ func (r *screenManagerSlotResolver) ResolveSlot(windowID int, slotIndex int16) (
 	}
 
 	// Get slots from the container - use type assertion as various container types exist
-	return getSlotFromContainer(container, slotIndex)
+	return getSlotFromContainer(r.agent.logger, container, slotIndex)
 }
 
 // getSlotFromContainer extracts a slot from any container type.
 // Containers have a Slots field that's accessible via type assertion.
-func getSlotFromContainer(container mcscreen.Container, slotIndex int16) (itemID int32, count int, ok bool) {
+func getSlotFromContainer(logger *slog.Logger, container mcscreen.Container, slotIndex int16) (itemID int32, count int, ok bool) {
+	logger = safeLogger(logger)
 	// Check bounds
 	if slotIndex < 0 {
 		return 0, 0, false
@@ -97,7 +99,7 @@ func getSlotFromContainer(container mcscreen.Container, slotIndex int16) (itemID
 	default:
 		// For unknown container types, we can't resolve slots safely
 		// Log a warning for debugging purposes
-		log.Printf("[SlotResolver] Unknown container type: %T (slotIndex=%d)", container, slotIndex)
+		logger.Warn("unknown container type", "type", fmt.Sprintf("%T", container), "slotIndex", slotIndex)
 		return 0, 0, false
 	}
 }
@@ -177,11 +179,11 @@ func newScreenManagerSlotResolver(a *agent) models.SlotResolver {
 // initializeSlotResolver sets up the slot resolver after the screen manager is ready.
 func (a *agent) initializeSlotResolver() {
 	if a.screenMgr == nil {
-		log.Printf("[Agent %s] Cannot initialize slot resolver: screen manager not set", a.cfg.Name)
+		a.logf("[Agent %s] Cannot initialize slot resolver: screen manager not set", a.cfg.Name)
 		return
 	}
 
 	resolver := newScreenManagerSlotResolver(a)
 	a.SetSlotResolver(resolver)
-	log.Printf("[Agent %s] Slot resolver initialized from screen manager", a.cfg.Name)
+	a.logf("[Agent %s] Slot resolver initialized from screen manager", a.cfg.Name)
 }

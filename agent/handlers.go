@@ -2,7 +2,7 @@ package agent
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -259,17 +259,17 @@ func (a *agent) onDisconnect2(p pk.Packet) error {
 	}
 
 	if a.versionHandler == nil {
-		log.Printf("[Agent %s] Disconnected from server.", name)
+		a.logf("[Agent %s] Disconnected from server.", name)
 		return nil
 	}
 
 	reason, err := a.versionHandler.Play().ParseDisconnect(p)
 	if err != nil {
-		log.Printf("[Agent %s] Disconnected from server.", name)
+		a.logf("[Agent %s] Disconnected from server.", name)
 		return nil
 	}
 
-	log.Printf("[Agent %s] Disconnected from server: %s", name, reason)
+	a.logf("[Agent %s] Disconnected from server: %s", name, reason)
 	return nil
 }
 
@@ -293,9 +293,9 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 		}
 	}
 	if entityTypeName == "minecraft:arrow" {
-		log.Printf("[onAddEntity] ARROW SPAWN: entityID=%d, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d, vel=(%.4f, %.4f, %.4f)", entityID, x, y, z, yaw, pitch, velX, velY, velZ)
+		a.logf("[onAddEntity] ARROW SPAWN: entityID=%d, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d, vel=(%.4f, %.4f, %.4f)", entityID, x, y, z, yaw, pitch, velX, velY, velZ)
 	} else if entityTypeName != "" {
-		log.Printf("[onAddEntity] Entity spawn: entityID=%d, type=%s, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d, vel=(%.4f, %.4f, %.4f)", entityID, entityTypeName, x, y, z, yaw, pitch, velX, velY, velZ)
+		a.logf("[onAddEntity] Entity spawn: entityID=%d, type=%s, pos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d, vel=(%.4f, %.4f, %.4f)", entityID, entityTypeName, x, y, z, yaw, pitch, velX, velY, velZ)
 	}
 
 	a.entitiesMu.Lock()
@@ -348,15 +348,15 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 				entityTypeStr = models.EntityType(localName)
 			}
 		} else {
-			log.Printf("[onAddEntity] Warning: Entity type registry not ready when registering entity %d. Type ID: %d", entityID, entityType)
+			a.logf("[onAddEntity] Warning: Entity type registry not ready when registering entity %d. Type ID: %d", entityID, entityType)
 		}
 		if entityTypeStr == "" {
 			entityTypeStr = models.EntityTypeUnknown
 		}
 		a.entityRegistry.RegisterEntity(entityID, entityTypeStr)
-		log.Printf("[onAddEntity] Registered entity %d as type %s in metadata handler", entityID, entityTypeStr)
+		a.logf("[onAddEntity] Registered entity %d as type %s in metadata handler", entityID, entityTypeStr)
 	} else {
-		log.Printf("[onAddEntity] Warning: entityRegistry is nil, cannot register entity %d", entityID)
+		a.logf("[onAddEntity] Warning: entityRegistry is nil, cannot register entity %d", entityID)
 	}
 
 	if a.moveMirror != nil && entityID == a.GetEntityID() {
@@ -401,7 +401,7 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 
 						// Remove from pending queue
 						a.pendingProjectiles = append(a.pendingProjectiles[:i], a.pendingProjectiles[i+1:]...)
-						log.Printf("[onAddEntity] Matched projectile %s (entityID=%d) to pending callbacks (count=%d)", name, entityID, len(pending.callbacks))
+						a.logf("[onAddEntity] Matched projectile %s (entityID=%d) to pending callbacks (count=%d)", name, entityID, len(pending.callbacks))
 						break
 					}
 				}
@@ -424,7 +424,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		return err
 	}
 
-	log.Printf("[onMoveEntityPosRot][%s] Received pos/rot update for entity %d: delta=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
+	a.logf("[onMoveEntityPosRot][%s] Received pos/rot update for entity %d: delta=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
 		a.cfg.Name, entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), yaw, pitch)
 
 	// Snapshot entity data (MINIMAL LOCK SCOPE)
@@ -460,11 +460,11 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	// All remaining work OUTSIDE the lock
 
 	if callbackPos == nil {
-		log.Printf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
+		a.logf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
 		return nil
 	}
 
-	log.Printf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
+	a.logf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
 
 	// Update active projectiles (separate lock, no entity lock held)
 	if dx != 0 || dy != 0 || dz != 0 {
@@ -475,7 +475,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
 			projInfo.currentServerTime = now
 			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-			log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
+			a.logf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
 				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ, yaw, pitch)
 		}
 		a.activeProjectilesMu.Unlock()
@@ -483,7 +483,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
 			projInfo.currentServerTime = now
-			log.Printf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+			a.logf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
 		}
 		a.activeProjectilesMu.Unlock()
 	}
@@ -495,7 +495,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 				deltaX := float64(dx) / (128 * 32)
 				deltaY := float64(dy) / (128 * 32)
 				deltaZ := float64(dz) / (128 * 32)
-				log.Printf("[onMoveEntityPosRot] %s: entityID=%d, oldPos=(%.2f, %.2f, %.2f), delta=(%.4f, %.4f, %.4f), newPos=(%.2f, %.2f, %.2f), vel/tick=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
+				a.logf("[onMoveEntityPosRot] %s: entityID=%d, oldPos=(%.2f, %.2f, %.2f), delta=(%.4f, %.4f, %.4f), newPos=(%.2f, %.2f, %.2f), vel/tick=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
 					name, entityID, oldX, oldY, oldZ, deltaX, deltaY, deltaZ, newX, newY, newZ, deltaX, deltaY, deltaZ, yaw, pitch)
 			}
 		}
@@ -521,7 +521,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 						SyncMountedPosition(float64, float64, float64)
 					}); ok {
 						syncer.SyncMountedPosition(newX, newY, newZ)
-						log.Printf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
+						a.logf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
 					}
 				} else {
 					if syncer, ok := moveExec.(interface {
@@ -530,7 +530,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 						yawDegrees := float64(yaw) * 360.0 / 256.0
 						pitchDegrees := float64(pitch) * 360.0 / 256.0
 						syncer.SyncMountedPositionWithRotation(newX, newY, newZ, yawDegrees, pitchDegrees)
-						log.Printf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, newX, newY, newZ, yawDegrees, pitchDegrees)
+						a.logf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, newX, newY, newZ, yawDegrees, pitchDegrees)
 					}
 				}
 			}
@@ -538,7 +538,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	}
 
 	// Call position update callbacks (outside all locks)
-	log.Printf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.logf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
@@ -591,7 +591,7 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
 			projInfo.currentServerTime = now
 			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-			log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
+			a.logf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
 				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
 		}
 		a.activeProjectilesMu.Unlock()
@@ -599,7 +599,7 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
 			projInfo.currentServerTime = now
-			log.Printf("[onMoveEntityPos] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+			a.logf("[onMoveEntityPos] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
 		}
 		a.activeProjectilesMu.Unlock()
 	}
@@ -608,7 +608,7 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 	if callbackPos == nil {
 		a.activeProjectilesMu.Lock()
 		if _, exists := a.activeProjectiles[entityID]; exists {
-			log.Printf("[onMoveEntityPos] PROJECTILE entityID=%d not in entities map yet! delta=(%.4f,%.4f,%.4f)",
+			a.logf("[onMoveEntityPos] PROJECTILE entityID=%d not in entities map yet! delta=(%.4f,%.4f,%.4f)",
 				entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32))
 		}
 		a.activeProjectilesMu.Unlock()
@@ -626,14 +626,14 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 					SyncMountedPosition(float64, float64, float64)
 				}); ok {
 					syncer.SyncMountedPosition(newX, newY, newZ)
-					log.Printf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
+					a.logf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
 				}
 			}
 		}
 	}
 
 	// Call position update callbacks (outside all locks)
-	log.Printf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.logf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
@@ -650,7 +650,7 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 		return err
 	}
 
-	log.Printf("[onSyncEntityPosition][%s] Received sync for entity %d: pos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d, onGround=%v",
+	a.logf("[onSyncEntityPosition][%s] Received sync for entity %d: pos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d, onGround=%v",
 		a.cfg.Name, entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
 
 	// Snapshot entity data (MINIMAL LOCK SCOPE)
@@ -686,7 +686,7 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 	// Debug logging (no locks held)
 	if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
 		if name, ok := reg.GetNameByID(entityType); ok && name == "minecraft:arrow" {
-			log.Printf("[onSyncEntityPosition] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), ground=%v",
+			a.logf("[onSyncEntityPosition] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), ground=%v",
 				entityID, oldX, oldY, oldZ, x, y, z, dx, dy, dz, onGround)
 		}
 	}
@@ -699,7 +699,7 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 		projInfo.currentServerPos = models.V3{X: x, Y: y, Z: z}
 		projInfo.currentServerTime = now
 		projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-		log.Printf("[onSyncEntityPosition] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), newPos=(%.2f,%.2f,%.2f)",
+		a.logf("[onSyncEntityPosition] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), newPos=(%.2f,%.2f,%.2f)",
 			entityID, oldServerX, oldServerY, oldServerZ, x, y, z)
 
 		// Check if this projectile has a pending callback waiting for server position confirmation
@@ -729,7 +729,7 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 			}
 
 			projInfo.callbacksFired = true
-			log.Printf("[onSyncEntityPosition] Fired pending projectile callbacks with server position: projectileID=%d, type=%s, hitType=%v, count=%d, flightTime=%.3fs, clientPred=(%.2f, %.2f, %.2f), serverPos=(%.2f, %.2f, %.2f), delta=%.2f blocks",
+			a.logf("[onSyncEntityPosition] Fired pending projectile callbacks with server position: projectileID=%d, type=%s, hitType=%v, count=%d, flightTime=%.3fs, clientPred=(%.2f, %.2f, %.2f), serverPos=(%.2f, %.2f, %.2f), delta=%.2f blocks",
 				entityID, projInfo.projectileType, projInfo.pendingHitType, len(projInfo.callbacks), flightTime,
 				projInfo.pendingHitPos.X, projInfo.pendingHitPos.Y, projInfo.pendingHitPos.Z,
 				serverPos.X, serverPos.Y, serverPos.Z,
@@ -789,7 +789,7 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 	// Debug logging (no locks held)
 	if reg := a.GetRegistry("minecraft:entity_type"); reg != nil && reg.IsReady() {
 		if name, ok := reg.GetNameByID(entityType); ok && name == "minecraft:arrow" {
-			log.Printf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d",
+			a.logf("[onTeleportEntity] ARROW: entityID=%d, oldPos=(%.2f, %.2f, %.2f), newPos=(%.2f, %.2f, %.2f), yaw=%d, pitch=%d",
 				entityID, oldX, oldY, oldZ, x, y, z, yaw, pitch)
 		}
 	}
@@ -826,9 +826,9 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 	if entityID == botEntityID {
 		err = a.moveExec.SetVelocity(velX, velY, velZ)
 		if err != nil {
-			log.Printf("[onEntityVelocityUpdate] Error setting bot velocity: %v", err)
+			a.logf("[onEntityVelocityUpdate] Error setting bot velocity: %v", err)
 		} else {
-			log.Printf("[onEntityVelocityUpdate] EntityID=%d velocity update applied to bot: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
+			a.logf("[onEntityVelocityUpdate] EntityID=%d velocity update applied to bot: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
 		}
 	}
 
@@ -843,7 +843,7 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 					SetMountedVelocity(float64, float64, float64)
 				}); ok {
 					setter.SetMountedVelocity(velX, velY, velZ)
-					log.Printf("[onEntityVelocityUpdate] Mounted entity %d velocity synced: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
+					a.logf("[onEntityVelocityUpdate] Mounted entity %d velocity synced: (%.4f, %.4f, %.4f)", entityID, velX, velY, velZ)
 				}
 			}
 		}
@@ -857,7 +857,7 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 		a.activeProjectilesMu.Unlock()
 
 		if isProjectile {
-			log.Printf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
+			a.logf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
 				entityID, velX, velY, velZ)
 		}
 
@@ -898,7 +898,7 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 		return nil
 	}
 
-	log.Printf("[onDamageEvent] Agent damaged: sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
+	a.logf("[onDamageEvent] Agent damaged: sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
 		sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ)
 
 	// Determine the attacker position for knockback direction.
@@ -936,7 +936,7 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 	}
 
 	if !hasAttackerPos {
-		log.Printf("[onDamageEvent] No attacker position available for knockback calculation")
+		a.logf("[onDamageEvent] No attacker position available for knockback calculation")
 		return nil
 	}
 
@@ -954,7 +954,7 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 	magnitude := math.Sqrt(dirX*dirX + dirZ*dirZ)
 	if magnitude < 0.01 {
 		// Attacker at same position — no meaningful knockback direction
-		log.Printf("[onDamageEvent] Attacker too close for directional knockback (dist=%.4f)", magnitude)
+		a.logf("[onDamageEvent] Attacker too close for directional knockback (dist=%.4f)", magnitude)
 		return nil
 	}
 	dirX /= magnitude
@@ -966,11 +966,11 @@ func (a *agent) onDamageEvent(p pk.Packet) error {
 	knockbackY := physics.KnockbackVerticalStrength
 
 	if err := a.moveExec.SetVelocity(knockbackX, knockbackY, knockbackZ); err != nil {
-		log.Printf("[onDamageEvent] Error applying knockback velocity: %v", err)
+		a.logf("[onDamageEvent] Error applying knockback velocity: %v", err)
 		return nil
 	}
 
-	log.Printf("[onDamageEvent] Applied knockback: vel=(%.4f, %.4f, %.4f) dir=(%.2f, %.2f) from attacker at (%.2f, %.2f)",
+	a.logf("[onDamageEvent] Applied knockback: vel=(%.4f, %.4f, %.4f) dir=(%.2f, %.2f) from attacker at (%.2f, %.2f)",
 		knockbackX, knockbackY, knockbackZ, dirX, dirZ, attackerX, attackerZ)
 
 	return nil
@@ -1003,7 +1003,7 @@ func (a *agent) onExplosion(p pk.Packet) error {
 		return nil
 	}
 
-	return applyExplosionKnockback(a.moveExec, kbX, kbY, kbZ)
+	return applyExplosionKnockback(a.logger, a.moveExec, kbX, kbY, kbZ)
 }
 
 // applyExplosionKnockback adds an explosion's knockback delta onto the
@@ -1012,7 +1012,8 @@ func (a *agent) onExplosion(p pk.Packet) error {
 // Split out from onExplosion so the additive-velocity behavior can be
 // tested directly, without needing a real (and, for this packet, fairly
 // elaborate — Particle/ItemSoundHolder trailing fields) wire-format packet.
-func applyExplosionKnockback(moveExec models.MovementExecutor, kbX, kbY, kbZ float64) error {
+func applyExplosionKnockback(logger *slog.Logger, moveExec models.MovementExecutor, kbX, kbY, kbZ float64) error {
+	logger = safeLogger(logger)
 	if moveExec == nil {
 		return nil
 	}
@@ -1021,12 +1022,12 @@ func applyExplosionKnockback(moveExec models.MovementExecutor, kbX, kbY, kbZ flo
 	newX, newY, newZ := curX+kbX, curY+kbY, curZ+kbZ
 
 	if err := moveExec.SetVelocity(newX, newY, newZ); err != nil {
-		log.Printf("[onExplosion] Error applying explosion knockback: %v", err)
+		logger.Warn("error applying explosion knockback", "error", err)
 		return nil
 	}
 
-	log.Printf("[onExplosion] Applied explosion knockback delta=(%.4f, %.4f, %.4f) -> velocity=(%.4f, %.4f, %.4f)",
-		kbX, kbY, kbZ, newX, newY, newZ)
+	logger.Info(fmt.Sprintf("[onExplosion] Applied explosion knockback delta=(%.4f, %.4f, %.4f) -> velocity=(%.4f, %.4f, %.4f)",
+		kbX, kbY, kbZ, newX, newY, newZ))
 
 	return nil
 }
@@ -1061,14 +1062,14 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	currentMount := a.getMountedEntityID()
 	for _, id := range entityIDs {
 		if id == currentMount {
-			log.Printf("[onRemoveEntities] Mounted vehicle %d was removed; triggering clean dismount", id)
+			a.logf("[onRemoveEntities] Mounted vehicle %d was removed; triggering clean dismount", id)
 			a.setMountedEntity(-1, -1)
 			a.movementMu.RLock()
 			moveExec := a.moveExec
 			a.movementMu.RUnlock()
 			if moveExec != nil {
 				if err := moveExec.SetDismounted(); err != nil {
-					log.Printf("[onRemoveEntities] Error clearing mounted state: %v", err)
+					a.logf("[onRemoveEntities] Error clearing mounted state: %v", err)
 				}
 			}
 			break
@@ -1090,11 +1091,11 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 					if projInfo.shake > 0 {
 						// Arrow is being picked up while still in block
 						hitType = models.ProjectileHitBlock
-						log.Printf("[onRemoveEntities] Arrow removal with shake=%d indicates PICKUP (not despawn)", projInfo.shake)
+						a.logf("[onRemoveEntities] Arrow removal with shake=%d indicates PICKUP (not despawn)", projInfo.shake)
 					} else {
 						// Arrow has stopped shaking and is being despawned due to timeout
 						hitType = models.ProjectileHitBlock
-						log.Printf("[onRemoveEntities] Arrow removal with shake=0 after IN_GROUND indicates DESPAWN/TIMEOUT")
+						a.logf("[onRemoveEntities] Arrow removal with shake=0 after IN_GROUND indicates DESPAWN/TIMEOUT")
 					}
 				} else {
 					hitType = models.ProjectileHitEntity
@@ -1126,39 +1127,39 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 						// Use physics simulation to estimate position at impact time
 						estimatedPos := a.InterpolateProjectilePosition(projInfo, now.Sub(projInfo.spawnTime).Seconds())
 						positionSource = fmt.Sprintf("server position + velocity estimate (%.3fs after last update)", timeSinceLastPos)
-						log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s non-persistent: server pos=(%.2f,%.2f,%.2f) @ %.3fs ago, estimated impact pos=(%.2f,%.2f,%.2f)",
+						a.logf("[onRemoveEntities] Projectile entityID=%d type=%s non-persistent: server pos=(%.2f,%.2f,%.2f) @ %.3fs ago, estimated impact pos=(%.2f,%.2f,%.2f)",
 							id, projInfo.projectileType, projInfo.currentServerPos.X, projInfo.currentServerPos.Y, projInfo.currentServerPos.Z,
 							timeSinceLastPos, estimatedPos.X, estimatedPos.Y, estimatedPos.Z)
 						pos = estimatedPos
 					}
 				}
-				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
+				a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
 			} else if projInfo.interpolatedPos != (models.V3{}) {
 				// Use render loop's interpolated position if available
 				pos = projInfo.interpolatedPos
 				positionSource = "render loop interpolated"
-				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
+				a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
 				// Calculate time in flight
 				flightTime := now.Sub(projInfo.spawnTime).Seconds()
 				if flightTime > 0 {
 					// Use discrete physics simulation to estimate final position
 					pos = a.InterpolateProjectilePosition(projInfo, flightTime)
 					positionSource = fmt.Sprintf("velocity-based estimation (%.3fs flight)", flightTime)
-					log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
+					a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
 				} else {
 					// Very short flight time, use spawn position
 					pos = projInfo.spawnPos
 					positionSource = "spawn position (very short flight)"
-					log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
+					a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
 				}
 			} else if projInfo.lastServerTime.IsZero() && entityExists {
 				// Persistent projectile or entity exists but no position data, use entity position
 				pos = models.V3{X: e.X, Y: e.Y, Z: e.Z}
 				positionSource = "last tracked entity position"
-				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
+				a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f) (spawn was %.2f,%.2f,%.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z)
 			} else {
 				positionSource = "interpolated position (fallback)"
-				log.Printf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
+				a.logf("[onRemoveEntities] Projectile entityID=%d type=%s using %s: (%.2f, %.2f, %.2f)", id, projInfo.projectileType, positionSource, pos.X, pos.Y, pos.Z)
 			}
 
 			// Determine hit result type
@@ -1192,9 +1193,9 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 
 				if nearestEntityID >= 0 {
 					hitEntityID = nearestEntityID
-					log.Printf("[onRemoveEntities] Inferred hit entity: entityID=%d at distance %.2f blocks from projectile position", nearestEntityID, nearestDistance)
+					a.logf("[onRemoveEntities] Inferred hit entity: entityID=%d at distance %.2f blocks from projectile position", nearestEntityID, nearestDistance)
 				} else {
-					log.Printf("[onRemoveEntities] Entity hit but no nearby entities found to infer target (within %.1f blocks)", hitDetectionRadius)
+					a.logf("[onRemoveEntities] Entity hit but no nearby entities found to infer target (within %.1f blocks)", hitDetectionRadius)
 				}
 			}
 
@@ -1228,7 +1229,7 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				}
 
 				isValidHit = isDirectHit || trajectoryHit
-				log.Printf("[onRemoveEntities] Hit validation: type=%s, hitDist=%.2f, radius=%.2f, "+
+				a.logf("[onRemoveEntities] Hit validation: type=%s, hitDist=%.2f, radius=%.2f, "+
 					"directHit=%v, trajHit=%v, isValidHit=%v",
 					projInfo.projectileType, hitDistance, radius, isDirectHit, trajectoryHit, isValidHit)
 			}
@@ -1253,7 +1254,7 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 				go cb(evt) // Fire asynchronously to not block handler
 			}
 
-			log.Printf("[onRemoveEntities] Fired projectile hit callbacks: type=%s, hitType=%v, hitResult=%s, count=%d, pos=(%.2f, %.2f, %.2f). Entity tracked pos: X=%.2f, Y=%.2f, Z=%.2f",
+			a.logf("[onRemoveEntities] Fired projectile hit callbacks: type=%s, hitType=%v, hitResult=%s, count=%d, pos=(%.2f, %.2f, %.2f). Entity tracked pos: X=%.2f, Y=%.2f, Z=%.2f",
 				projInfo.projectileType, hitType, hitResult, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
 
 			// Visualize actual entity trajectory
@@ -1286,7 +1287,7 @@ func (a *agent) onRemoveEntities(p pk.Packet) error {
 	// Clean up entity registry
 	if a.entityRegistry != nil {
 		a.entityRegistry.RemoveEntities(entityIDs)
-		log.Printf("[onRemoveEntities] Cleaned up %d entities from metadata handler registry", len(entityIDs))
+		a.logf("[onRemoveEntities] Cleaned up %d entities from metadata handler registry", len(entityIDs))
 	}
 
 	return nil
@@ -1301,13 +1302,13 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 
 	entityID, entries, err := a.versionHandler.Play().Entities().ParseSetEntityMetadata(p)
 	if err != nil {
-		log.Printf("[Agent %s][onSetEntityMetadata] entityID=%d", a.cfg.Name, entityID)
+		a.logf("[Agent %s][onSetEntityMetadata] entityID=%d", a.cfg.Name, entityID)
 		return err
 	}
 
 	if projInfo, exists := a.activeProjectiles[entityID]; exists {
 
-		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.cfg.Name, projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
+		a.logf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.cfg.Name, projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
 	}
 
 	// Process metadata through the handler system if available
@@ -1317,7 +1318,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			// Process each metadata entry through the handler
 			result, err := a.metadataHandler.HandleMetadata(entityID, entry)
 			if err != nil {
-				log.Printf("[Agent %s][onSetEntityMetadata] Warning: failed to process metadata for entity %d: %v", a.cfg.Name, entityID, err)
+				a.logf("[Agent %s][onSetEntityMetadata] Warning: failed to process metadata for entity %d: %v", a.cfg.Name, entityID, err)
 				continue
 			}
 			metadataResults = append(metadataResults, result)
@@ -1375,7 +1376,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	if e, ok := a.entities[entityID]; ok {
 		// Only update if health was actually provided in metadata
 		if health >= 0 {
-			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d health updated: %.1f / %.1f", a.cfg.Name, entityID, health, maxHealth)
+			a.logf("[Agent %s] [ParseSetEntityMetadata] Entity %d health updated: %.1f / %.1f", a.cfg.Name, entityID, health, maxHealth)
 			e.Health = health
 		}
 		e.MaxHealth = maxHealth
@@ -1384,7 +1385,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			e.VelX = velocity[0]
 			e.VelY = velocity[1]
 			e.VelZ = velocity[2]
-			log.Printf("[Agent %s] [ParseSetEntityMetadata] Entity %d velocity updated: (%.4f, %.4f, %.4f)", a.cfg.Name, entityID, velocity[0], velocity[1], velocity[2])
+			a.logf("[Agent %s] [ParseSetEntityMetadata] Entity %d velocity updated: (%.4f, %.4f, %.4f)", a.cfg.Name, entityID, velocity[0], velocity[1], velocity[2])
 		}
 		// Store projectile-specific metadata
 		e.shake = shake
@@ -1430,7 +1431,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if babyVal, ok := entry.Value.(bool); ok {
 					e.IsBaby = babyVal
 					e.HasIsBaby = true
-					log.Printf("[onSetEntityMetadata] Entity %d happy ghast is_baby=%v", entityID, babyVal)
+					a.logf("[onSetEntityMetadata] Entity %d happy ghast is_baby=%v", entityID, babyVal)
 				}
 			case int(models.EntityMetadataKeyHappyGhastStayingStill):
 				// Key 18 is only HappyGhastEntity's STAYING_STILL flag on
@@ -1443,7 +1444,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if stillVal, ok := entry.Value.(bool); ok {
 					e.HappyGhastStayingStill = stillVal
 					e.HasHappyGhastStayingStill = true
-					log.Printf("[onSetEntityMetadata] Entity %d happy ghast staying_still=%v", entityID, stillVal)
+					a.logf("[onSetEntityMetadata] Entity %d happy ghast staying_still=%v", entityID, stillVal)
 				}
 			case int(models.EntityMetadataKeyHorseFlags):
 				// Key 17 is only the horse flags byte on AbstractHorseEntity
@@ -1455,7 +1456,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if flagsVal, ok := entry.Value.(*pk.Byte); ok && flagsVal != nil {
 					e.HorseFlags = uint8(*flagsVal)
 					e.HasHorseFlags = true
-					log.Printf("[onSetEntityMetadata] Entity %d horse flags=0x%02X (saddled=%v tamed=%v)",
+					a.logf("[onSetEntityMetadata] Entity %d horse flags=0x%02X (saddled=%v tamed=%v)",
 						entityID, e.HorseFlags,
 						models.HorseFlagSaddled.IsSet(e.HorseFlags),
 						models.HorseFlagTamed.IsSet(e.HorseFlags))
@@ -1475,7 +1476,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 					} else {
 						e.FireworkShooterEntityID = int32(*shooterVal) - 1
 						e.HasFireworkShooterEntityID = true
-						log.Printf("[onSetEntityMetadata] Entity %d (firework_rocket) shooter=%d",
+						a.logf("[onSetEntityMetadata] Entity %d (firework_rocket) shooter=%d",
 							entityID, e.FireworkShooterEntityID)
 					}
 				}
@@ -1508,7 +1509,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		projInfo.criticalHit = criticalHit
 		projInfo.pierceLevel = pierceLevel
 		projInfo.potionColor = potionColor
-		log.Printf("[Agent %s][onSetEntityMetadata] %s entityID=%d isInGround=%v (was %v), shake=%d, critical=%v, pierce=%d, color=%d", a.cfg.Name, projInfo.projectileType.String(), entityID, isInGround, prevInGround, shake, criticalHit, pierceLevel, potionColor)
+		a.logf("[Agent %s][onSetEntityMetadata] %s entityID=%d isInGround=%v (was %v), shake=%d, critical=%v, pierce=%d, color=%d", a.cfg.Name, projInfo.projectileType.String(), entityID, isInGround, prevInGround, shake, criticalHit, pierceLevel, potionColor)
 
 		// If arrow just hit a block (isInGround transitioned from false to true), queue callback for server-authoritative position
 		if isInGround && !prevInGround && !projInfo.callbacksFired && len(projInfo.callbacks) > 0 {
@@ -1518,7 +1519,7 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 				if !projInfo.currentServerTime.IsZero() {
 					pos := projInfo.currentServerPos
 					flightTime := time.Since(projInfo.spawnTime).Seconds()
-					log.Printf("[onSetEntityMetadata] Block hit: firing immediately with server position. entityID=%d, flightTime=%.3fs, serverPos=(%.2f,%.2f,%.2f)",
+					a.logf("[onSetEntityMetadata] Block hit: firing immediately with server position. entityID=%d, flightTime=%.3fs, serverPos=(%.2f,%.2f,%.2f)",
 						entityID, flightTime, pos.X, pos.Y, pos.Z)
 
 					evt := models.ProjectileHitEvent{
@@ -1541,14 +1542,14 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 					projInfo.pendingHitType = models.ProjectileHitBlock
 					projInfo.pendingHitPos = projInfo.interpolatedPos // fallback if server never responds
 					projInfo.collisionDetectTime = time.Now()
-					log.Printf("[onSetEntityMetadata] Block hit: QUEUED callback (waiting for server position). entityID=%d, clientPos=(%.2f,%.2f,%.2f)",
+					a.logf("[onSetEntityMetadata] Block hit: QUEUED callback (waiting for server position). entityID=%d, clientPos=(%.2f,%.2f,%.2f)",
 						entityID, projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
 				}
 			} else {
 				// Non-persistent projectiles: fire immediately with client prediction (no server position available)
 				pos := projInfo.interpolatedPos
 				flightTime := time.Since(projInfo.spawnTime).Seconds()
-				log.Printf("[onSetEntityMetadata] Block hit (non-persistent): firing immediately. entityID=%d, flightTime=%.3fs, pos=(%.2f,%.2f,%.2f)",
+				a.logf("[onSetEntityMetadata] Block hit (non-persistent): firing immediately. entityID=%d, flightTime=%.3fs, pos=(%.2f,%.2f,%.2f)",
 					entityID, flightTime, pos.X, pos.Y, pos.Z)
 
 				evt := models.ProjectileHitEvent{
@@ -1589,13 +1590,13 @@ func (a *agent) onEntityStatus(p pk.Packet) error {
 	if eventID == 0 {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
-			log.Printf("[onEntityStatus] Potion effect expiration for %s entityID=%d", projInfo.projectileType.String(), entityID)
+			a.logf("[onEntityStatus] Potion effect expiration for %s entityID=%d", projInfo.projectileType.String(), entityID)
 		}
 		a.activeProjectilesMu.Unlock()
 	}
 
 	// Log entity status for debugging
-	log.Printf("[onEntityStatus] Entity %d status event: %d", entityID, eventID)
+	a.logf("[onEntityStatus] Entity %d status event: %d", entityID, eventID)
 	return nil
 }
 
@@ -1611,7 +1612,7 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 	}
 
 	// Log game event for debugging
-	log.Printf("[onGameEvent] Event type: %d, Position: (%.2f, %.2f, %.2f), Value: %.1f", eventType, x, y, z, value)
+	a.logf("[onGameEvent] Event type: %d, Position: (%.2f, %.2f, %.2f), Value: %.1f", eventType, x, y, z, value)
 
 	// GAME_MODE_CHANGED (game event reason 3, per decompiled
 	// GameStateChangeS2CPacket.java) - fired whenever the local player's
@@ -1622,7 +1623,7 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 	const gameEventGameModeChanged = 3
 	if eventType == gameEventGameModeChanged {
 		gameMode := models.GameMode(int32(value))
-		log.Printf("[onGameEvent] Game mode changed to %s", gameMode)
+		a.logf("[onGameEvent] Game mode changed to %s", gameMode)
 		a.setGameMode(gameMode)
 	}
 
@@ -1641,7 +1642,7 @@ func (a *agent) onPlayerAbilities(p pk.Packet) error {
 		return err
 	}
 
-	log.Printf("[onPlayerAbilities] invulnerable=%v flying=%v allowFlying=%v creativeMode=%v flySpeed=%.3f walkSpeed=%.3f",
+	a.logf("[onPlayerAbilities] invulnerable=%v flying=%v allowFlying=%v creativeMode=%v flySpeed=%.3f walkSpeed=%.3f",
 		abilities.Invulnerable, abilities.Flying, abilities.AllowFlying, abilities.CreativeMode, abilities.FlySpeed, abilities.WalkSpeed)
 	a.setPlayerAbilities(abilities)
 
@@ -1667,7 +1668,7 @@ func (a *agent) onEntityUpdateAttributes(p pk.Packet) error {
 		for key, value := range attrs {
 			entity.Attributes[key] = value
 		}
-		log.Printf("[onEntityUpdateAttributes] Updated attributes for entity %d: %v", entityID, attrs)
+		a.logf("[onEntityUpdateAttributes] Updated attributes for entity %d: %v", entityID, attrs)
 	}
 	a.entitiesMu.Unlock()
 
@@ -1706,7 +1707,7 @@ func (a *agent) onEntityEquipment(p pk.Packet) error {
 
 	for _, eq := range equipment {
 		slot := models.EquipmentSlotType(eq.InventorySlot)
-		log.Printf("[onEntityEquipment] Entity %d equipment slot %d (%s): itemID=%d, count=%d",
+		a.logf("[onEntityEquipment] Entity %d equipment slot %d (%s): itemID=%d, count=%d",
 			entityID, eq.InventorySlot, slot, eq.Item.ItemID, eq.Item.Count)
 	}
 	return nil
@@ -1745,7 +1746,7 @@ func (a *agent) onEntityEffect(p pk.Packet) error {
 
 	effectName, ok := a.effectNameByID(effectID)
 	if !ok {
-		log.Printf("[onEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
+		a.logf("[onEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
 		return nil
 	}
 
@@ -1775,7 +1776,7 @@ func (a *agent) onEntityEffect(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[onEntityEffect] entity=%d effect=%s amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
+	a.logf("[onEntityEffect] entity=%d effect=%s amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
 		entityID, effectName, amplifier, durationTicks, ambient, showParticles, showIcon)
 	return nil
 }
@@ -1795,7 +1796,7 @@ func (a *agent) onRemoveEntityEffect(p pk.Packet) error {
 
 	effectName, ok := a.effectNameByID(effectID)
 	if !ok {
-		log.Printf("[onRemoveEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
+		a.logf("[onRemoveEntityEffect] entity=%d effectID=%d could not be resolved via minecraft:mob_effect registry (not ready yet?)", entityID, effectID)
 		return nil
 	}
 
@@ -1811,7 +1812,7 @@ func (a *agent) onRemoveEntityEffect(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[onRemoveEntityEffect] entity=%d effect=%s", entityID, effectName)
+	a.logf("[onRemoveEntityEffect] entity=%d effect=%s", entityID, effectName)
 	return nil
 }
 
@@ -1832,7 +1833,7 @@ func (a *agent) onEntityHeadRotation(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[onEntityHeadRotation] Entity %d head yaw: %d", entityID, headYaw)
+	a.logf("[onEntityHeadRotation] Entity %d head yaw: %d", entityID, headYaw)
 	return nil
 }
 
@@ -1854,7 +1855,7 @@ func (a *agent) onEntityLook(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[onEntityLook] Entity %d look: yaw=%d, pitch=%d, onGround=%v", entityID, yaw, pitch, onGround)
+	a.logf("[onEntityLook] Entity %d look: yaw=%d, pitch=%d, onGround=%v", entityID, yaw, pitch, onGround)
 	return nil
 }
 
@@ -1953,7 +1954,7 @@ func (a *agent) onWindowItems(p pk.Packet) error {
 		return err
 	}
 
-	log.Printf("[Agent %s] ClientboundContainerSetContent: windowID=%d slots=%d", a.cfg.Name, windowID, len(slots))
+	a.logf("[Agent %s] ClientboundContainerSetContent: windowID=%d slots=%d", a.cfg.Name, windowID, len(slots))
 
 	// Negative window IDs address the player's own inventory views, which are
 	// never an entity container.
@@ -2010,27 +2011,27 @@ func (a *agent) onLogin(p pk.Packet) error {
 // implementation is a no-op (the packet doesn't exist server-side).
 func (a *agent) sendPlayerLoadedOnce() {
 	if a.versionHandler == nil || a.client == nil {
-		log.Printf("[Agent %s][WARN] Version handler or client not available; cannot send PlayerLoaded", a.cfg.Name)
+		a.logf("[Agent %s][WARN] Version handler or client not available; cannot send PlayerLoaded", a.cfg.Name)
 		return
 	}
 
 	lifecycle := a.versionHandler.Play().Lifecycle()
 	if lifecycle == nil {
-		log.Printf("[Agent %s][WARN] Lifecycle handler not available; cannot send PlayerLoaded", a.cfg.Name)
+		a.logf("[Agent %s][WARN] Lifecycle handler not available; cannot send PlayerLoaded", a.cfg.Name)
 		return
 	}
 
 	a.playerLoadedSent.Do(func() {
 		conn := a.client.Conn()
 		if conn == nil {
-			log.Printf("[Agent %s][WARN] Client connection not available; skipping SendPlayerLoaded (likely in tests)", a.cfg.Name)
+			a.logf("[Agent %s][WARN] Client connection not available; skipping SendPlayerLoaded (likely in tests)", a.cfg.Name)
 			return
 		}
 		if err := lifecycle.SendPlayerLoaded(conn); err != nil {
-			log.Printf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
+			a.logf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
 			return
 		}
-		log.Printf("[Agent %s] Sent ServerboundPlayerLoaded (post first-teleport-ack)", a.cfg.Name)
+		a.logf("[Agent %s] Sent ServerboundPlayerLoaded (post first-teleport-ack)", a.cfg.Name)
 	})
 }
 
@@ -2075,7 +2076,7 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	// handler fires for the initial mount teleport. The non-mounted path below also sends
 	// TeleportConfirm; this branch covers subsequent corrections while already riding.
 	if a.IsMounted() {
-		log.Printf("[onClientboundPosition] Mounted: skipping position update (%.2f,%.2f,%.2f), confirming teleportID=%d",
+		a.logf("[onClientboundPosition] Mounted: skipping position update (%.2f,%.2f,%.2f), confirming teleportID=%d",
 			X, Y, Z, TeleportID)
 		t := a.player
 		if t == nil {
@@ -2083,10 +2084,10 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 		}
 		if t != nil {
 			if err := t.AcceptTeleportation(pk.VarInt(TeleportID)); err != nil {
-				log.Printf("[onClientboundPosition] Warning: failed to send teleport confirmation (mounted): %v", err)
+				a.logf("[onClientboundPosition] Warning: failed to send teleport confirmation (mounted): %v", err)
 			}
 		} else {
-			log.Printf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport (mounted) ID=%d", TeleportID)
+			a.logf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport (mounted) ID=%d", TeleportID)
 		}
 		a.sendPlayerLoadedOnce()
 		if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
@@ -2155,10 +2156,10 @@ func (a *agent) onClientboundPosition(p pk.Packet) error {
 	}
 	if t != nil {
 		if err := t.AcceptTeleportation(pk.VarInt(TeleportID)); err != nil {
-			log.Printf("[onClientboundPosition] Warning: failed to send teleport confirmation: %v", err)
+			a.logf("[onClientboundPosition] Warning: failed to send teleport confirmation: %v", err)
 		}
 	} else {
-		log.Printf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport ID=%d", TeleportID)
+		a.logf("[onClientboundPosition] ERROR: no TeleportAccepter available to confirm teleport ID=%d", TeleportID)
 	}
 	a.sendPlayerLoadedOnce()
 	if notifier, ok := moveExec.(interface{ NotifyRespawned() }); ok {
@@ -2181,17 +2182,17 @@ func (a *agent) onClientboundMoveVehicle(p pk.Packet) error {
 
 	vx, vy, vz, vyaw, vpitch, err := a.versionHandler.Play().Movement().ParseClientboundMoveVehicle(p)
 	if err != nil {
-		log.Printf("[onClientboundMoveVehicle] ERROR parsing packet: %v", err)
+		a.logf("[onClientboundMoveVehicle] ERROR parsing packet: %v", err)
 		return err
 	}
 
-	log.Printf("[onClientboundMoveVehicle] Server correction: pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f",
+	a.logf("[onClientboundMoveVehicle] Server correction: pos=(%.2f,%.2f,%.2f) yaw=%.2f pitch=%.2f",
 		vx, vy, vz, vyaw, vpitch)
 
 	if !a.IsMounted() {
 		// Received while not mounted; could be a stale packet from a just-dismounted
 		// vehicle. Update the entity tracker position if we have it.
-		log.Printf("[onClientboundMoveVehicle] Not mounted, ignoring position correction")
+		a.logf("[onClientboundMoveVehicle] Not mounted, ignoring position correction")
 		return nil
 	}
 
@@ -2220,7 +2221,7 @@ func (a *agent) onUpdateViewDistance(p pk.Packet) error {
 
 	// Currently just logging for awareness
 	// Could be used to update client state if needed
-	log.Printf("view distance: %d", viewDistance)
+	a.logf("view distance: %d", viewDistance)
 	return nil
 }
 
@@ -2237,7 +2238,7 @@ func (a *agent) onSimulationDistance(p pk.Packet) error {
 
 	// Currently just logging for awareness
 	// Could be used to update client state if needed
-	log.Printf("simulation distance: %d", simulationDistance)
+	a.logf("simulation distance: %d", simulationDistance)
 	return nil
 }
 
@@ -2249,7 +2250,7 @@ func (a *agent) onUpdateRecipes(p pk.Packet) error {
 
 	payload, err := a.versionHandler.Play().ParseUpdateRecipes(p)
 	if err != nil {
-		log.Printf("[Agent %s] Failed to parse UpdateRecipes: %v", a.cfg.Name, err)
+		a.logf("[Agent %s] Failed to parse UpdateRecipes: %v", a.cfg.Name, err)
 		return nil // Don't fail on parse errors
 	}
 
@@ -2271,7 +2272,7 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 
 	vehicleID, passengerIDs, err := a.versionHandler.Play().Entities().ParseSetPassengers(p)
 	if err != nil {
-		log.Printf("[onSetPassengers] ERROR parsing packet: %v", err)
+		a.logf("[onSetPassengers] ERROR parsing packet: %v", err)
 		return err
 	}
 
@@ -2291,7 +2292,7 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 	isPassenger := passengerIndex >= 0
 
 	currentMount := a.getMountedEntityID()
-	log.Printf("[onSetPassengers] RECEIVED: vehicleID=%d isPassenger=%v passengerIndex=%d currentMount=%d passengerCount=%d", vehicleID, isPassenger, passengerIndex, currentMount, len(passengerIDs))
+	a.logf("[onSetPassengers] RECEIVED: vehicleID=%d isPassenger=%v passengerIndex=%d currentMount=%d passengerCount=%d", vehicleID, isPassenger, passengerIndex, currentMount, len(passengerIDs))
 
 	// A seat change without a mount/dismount happens when another passenger
 	// boards or leaves: e.g. the driver of a happy ghast dismounts and the
@@ -2303,11 +2304,11 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 
 	if isPassenger && currentMount != vehicleID {
 		// Agent just mounted a vehicle
-		log.Printf("[onSetPassengers] Agent mounted entity %d at passenger index %d (vehicle with %d passengers)", vehicleID, passengerIndex, len(passengerIDs))
+		a.logf("[onSetPassengers] Agent mounted entity %d at passenger index %d (vehicle with %d passengers)", vehicleID, passengerIndex, len(passengerIDs))
 		a.setMountedEntity(vehicleID, passengerIndex)
 		if a.moveExec != nil {
 			if err := a.moveExec.SetMounted(vehicleID); err != nil {
-				log.Printf("[onSetPassengers] Error setting movement executor mounted state: %v", err)
+				a.logf("[onSetPassengers] Error setting movement executor mounted state: %v", err)
 			}
 			// Seed the executor with the mount's currently-tracked pose so
 			// vehicle-specific state (e.g. CamelState) reflects whether the
@@ -2334,15 +2335,15 @@ func (a *agent) onSetPassengers(p pk.Packet) error {
 		}
 	} else if !isPassenger && currentMount == vehicleID {
 		// Agent just dismounted from the vehicle
-		log.Printf("[onSetPassengers] Agent dismounted from entity %d", vehicleID)
+		a.logf("[onSetPassengers] Agent dismounted from entity %d", vehicleID)
 		a.setMountedEntity(-1, -1)
 		if a.moveExec != nil {
 			if err := a.moveExec.SetDismounted(); err != nil {
-				log.Printf("[onSetPassengers] Error setting movement executor dismounted state: %v", err)
+				a.logf("[onSetPassengers] Error setting movement executor dismounted state: %v", err)
 			}
 		}
 	} else {
-		log.Printf("[onSetPassengers] No mount state change (isPassenger=%v, currentMount=%d, vehicleID=%d)", isPassenger, currentMount, vehicleID)
+		a.logf("[onSetPassengers] No mount state change (isPassenger=%v, currentMount=%d, vehicleID=%d)", isPassenger, currentMount, vehicleID)
 	}
 
 	return nil
@@ -2359,14 +2360,14 @@ func (a *agent) onUpdateTime(p pk.Packet) error {
 	// Parse the UpdateTime packet using the version handler
 	worldAge, timeOfDay, err := a.versionHandler.Play().World().ParseUpdateTime(p)
 	if err != nil {
-		log.Printf("[Agent %s] Failed to parse UpdateTime packet: %v", a.cfg.Name, err)
+		a.logf("[Agent %s] Failed to parse UpdateTime packet: %v", a.cfg.Name, err)
 		return nil // Non-fatal: just log and continue
 	}
 
 	// Update world manager with server's world age and time of day
 	if a.mcAgentWorld != nil {
 		a.mcAgentWorld.SetWorldTime(worldAge, timeOfDay)
-		log.Printf("[Agent %s] Updated world time: age=%d ticks (%.1f days), timeOfDay=%d",
+		a.logf("[Agent %s] Updated world time: age=%d ticks (%.1f days), timeOfDay=%d",
 			a.cfg.Name, worldAge, float64(worldAge)/24000.0, timeOfDay)
 	}
 
@@ -2378,31 +2379,31 @@ func (a *agent) onUpdateTime(p pk.Packet) error {
 func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 	// Only register handlers when using mc-agent world with version handler
 	if a.versionHandler == nil || a.mcAgentWorld == nil {
-		log.Printf("[Agent %s] worldPacketHandlers: NOT registering (versionHandler=%v, mcAgentWorld=%v)",
+		a.logf("[Agent %s] worldPacketHandlers: NOT registering (versionHandler=%v, mcAgentWorld=%v)",
 			a.cfg.Name, a.versionHandler != nil, a.mcAgentWorld != nil)
 		return nil
 	}
 
-	log.Printf("[Agent %s] worldPacketHandlers: Registering world packet handlers", a.cfg.Name)
+	a.logf("[Agent %s] worldPacketHandlers: Registering world packet handlers", a.cfg.Name)
 	worldHandler := a.versionHandler.Play().World()
 
 	chunkPacketID := a.packetMgr.GetClientboundPacketID("ClientboundMapChunk")
 	blockUpdateID := a.packetMgr.GetClientboundPacketID("ClientboundBlockUpdate")
-	log.Printf("[Agent %s] Registering chunk handler for packet ID %d", a.cfg.Name, chunkPacketID)
-	log.Printf("[Agent %s] Registering block update handler for packet ID %d", a.cfg.Name, blockUpdateID)
+	a.logf("[Agent %s] Registering chunk handler for packet ID %d", a.cfg.Name, chunkPacketID)
+	a.logf("[Agent %s] Registering block update handler for packet ID %d", a.cfg.Name, blockUpdateID)
 
 	handlers := []bot.PacketHandler{
 		{
 			ID:       chunkPacketID,
 			Priority: 50, // Higher priority than other handlers to process chunk data first
 			F: func(p pk.Packet) error {
-				log.Printf("[Agent %s] Received ClientboundLevelChunkWithLight packet", a.cfg.Name)
+				a.logf("[Agent %s] Received ClientboundLevelChunkWithLight packet", a.cfg.Name)
 				chunkX, chunkZ, data, err := worldHandler.ParseChunkData(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse chunk data: %v", a.cfg.Name, err)
+					a.logf("[Agent %s] Warning: failed to parse chunk data: %v", a.cfg.Name, err)
 					return nil // Don't fail on parse errors
 				}
-				log.Printf("[Agent %s] Loaded chunk at (%d, %d), data size: %d", a.cfg.Name, chunkX, chunkZ, len(data))
+				a.logf("[Agent %s] Loaded chunk at (%d, %d), data size: %d", a.cfg.Name, chunkX, chunkZ, len(data))
 				return a.mcAgentWorld.HandleChunkLoad(chunkX, chunkZ, data)
 			},
 		},
@@ -2412,7 +2413,7 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				chunkX, chunkZ, err := worldHandler.ParseUnloadChunk(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse unload chunk: %v", a.cfg.Name, err)
+					a.logf("[Agent %s] Warning: failed to parse unload chunk: %v", a.cfg.Name, err)
 					return nil
 				}
 				return a.mcAgentWorld.HandleChunkUnload(chunkX, chunkZ)
@@ -2424,10 +2425,10 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				x, y, z, blockStateID, err := worldHandler.ParseBlockUpdate(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse blocks update: %v", a.cfg.Name, err)
+					a.logf("[Agent %s] Warning: failed to parse blocks update: %v", a.cfg.Name, err)
 					return nil // Ignore parse errors
 				}
-				log.Printf("[Agent %s] Block update at (%d, %d, %d) -> state %d", a.cfg.Name, x, y, z, blockStateID)
+				a.logf("[Agent %s] Block update at (%d, %d, %d) -> state %d", a.cfg.Name, x, y, z, blockStateID)
 				a.mcAgentWorld.HandleBlockUpdate(x, y, z, blockStateID)
 				return nil
 			},
@@ -2438,7 +2439,7 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 			F: func(p pk.Packet) error {
 				_, blocks, err := worldHandler.ParseSectionBlocksUpdate(p)
 				if err != nil {
-					log.Printf("[Agent %s] Warning: failed to parse section blocks update: %v", a.cfg.Name, err)
+					a.logf("[Agent %s] Warning: failed to parse section blocks update: %v", a.cfg.Name, err)
 					return nil // Ignore parse errors
 				}
 				a.mcAgentWorld.HandleSectionBlocksUpdate(blocks)
@@ -2456,19 +2457,19 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 
 				// Send acknowledgment immediately
 				if err := worldHandler.SendChunkBatchReceived(a.client.Conn(), a.chunkBatchCount); err != nil {
-					log.Printf("[Agent %s] Error sending chunk batch acknowledgement: %v", a.cfg.Name, err)
+					a.logf("[Agent %s] Error sending chunk batch acknowledgement: %v", a.cfg.Name, err)
 					return nil // Don't fail on ack errors
 				}
 
 				// Log progress periodically
 				if int(a.chunkBatchCount)%10 == 0 || int(a.chunkBatchCount) <= 3 {
-					log.Printf("[Agent %s] Acknowledged %d chunk batches", a.cfg.Name, int(a.chunkBatchCount))
+					a.logf("[Agent %s] Acknowledged %d chunk batches", a.cfg.Name, int(a.chunkBatchCount))
 				}
 				return nil
 			},
 		},
 	}
 
-	log.Printf("[Agent %s] worldPacketHandlers: Returning %d world packet handlers", a.cfg.Name, len(handlers))
+	a.logf("[Agent %s] worldPacketHandlers: Returning %d world packet handlers", a.cfg.Name, len(handlers))
 	return handlers
 }

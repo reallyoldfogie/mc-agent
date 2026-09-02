@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"time"
 
@@ -186,11 +185,11 @@ func (a *agent) FlyTo(ctx context.Context, x, y, z float64) error {
 
 	fireRocket := func() {
 		if _, err := a.SwitchToItem(ctx, "minecraft:firework_rocket"); err != nil {
-			log.Printf("[FlyTo] select firework rocket: %v", err)
+			a.logf("[FlyTo] select firework rocket: %v", err)
 			return
 		}
 		if err := a.UseItem(ctx, models.MainHand); err != nil {
-			log.Printf("[FlyTo] use firework rocket: %v", err)
+			a.logf("[FlyTo] use firework rocket: %v", err)
 		}
 	}
 

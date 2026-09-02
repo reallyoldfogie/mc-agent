@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"time"
@@ -33,7 +32,7 @@ func NewLLMExecutor(a models.Agent) *AgentExecutor {
 // It dispatches LLM action calls to the corresponding agent methods.
 // state can be cast to *AgentExecutorState to access orchestration state.
 func (e *AgentExecutor) Execute(ctx context.Context, name string, args map[string]any, state llm.ExecutorState) (any, error) {
-	log.Printf("AgentExecutor.Execute: action=%s, args=%v", name, args)
+	e.agent.Logger().Info("AgentExecutor.Execute", "action", name, "args", args)
 
 	switch name {
 	case "FindPath":
@@ -147,7 +146,7 @@ func (e *AgentExecutor) executeMineBlockAt(ctx context.Context, args map[string]
 				dist := target.DistanceTo(models.V3{X: entityInfo.X, Y: entityInfo.Y, Z: entityInfo.Z})
 				if dist < 10 {
 					itemFound = true
-					log.Printf("Found item entity at (%.2f, %.2f, %.2f), distance: %.2f", entityInfo.X, entityInfo.Y, entityInfo.Z, dist)
+					e.agent.Logger().Info(fmt.Sprintf("Found item entity at (%.2f, %.2f, %.2f), distance: %.2f", entityInfo.X, entityInfo.Y, entityInfo.Z, dist))
 
 					if dist > itemPickupRange {
 						agentPos, _ := e.agent.GetPositionSimple()
@@ -170,7 +169,7 @@ func (e *AgentExecutor) executeMineBlockAt(ctx context.Context, args map[string]
 		}
 
 		if !itemFound {
-			log.Printf("No item entities found, items likely picked up")
+			e.agent.Logger().Info("no item entities found, items likely picked up")
 			break
 		}
 
@@ -196,7 +195,7 @@ func (e *AgentExecutor) executeFindAllVisibleBlocksInSphere(ctx context.Context,
 }
 
 func (e *AgentExecutor) executeExit(ctx context.Context) (any, error) {
-	log.Printf("Exit command received, shutting down")
+	e.agent.Logger().Info("exit command received, shutting down")
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	e.agent.Close(cleanupCtx)

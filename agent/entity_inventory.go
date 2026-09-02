@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"log"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -27,7 +26,7 @@ func (a *agent) registerEntityWindow(windowID byte, entityID int32) {
 		a.entityWindows = make(map[byte]int32)
 	}
 	a.entityWindows[windowID] = entityID
-	log.Printf("[entityInventory] Window %d now tracking entity %d's container", windowID, entityID)
+	a.logf("[entityInventory] Window %d now tracking entity %d's container", windowID, entityID)
 }
 
 // entityForWindow returns the entity whose container is shown in windowID.
@@ -82,7 +81,7 @@ func (a *agent) resolveEntityForWindow(windowID byte) (int32, bool) {
 		a.entityWindows = make(map[byte]int32)
 	}
 	a.entityWindows[windowID] = entityID
-	log.Printf("[entityInventory] Window %d bound to entity %d from the in-flight open (contents arrived before the window ID was recorded)",
+	a.logf("[entityInventory] Window %d bound to entity %d from the in-flight open (contents arrived before the window ID was recorded)",
 		windowID, entityID)
 	return entityID, true
 }
@@ -115,7 +114,7 @@ func (a *agent) releaseEntityWindows() {
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[entityInventory] Released %d entity container window(s); cached contents are now snapshots", len(trackedEntityIDs))
+	a.logf("[entityInventory] Released %d entity container window(s); cached contents are now snapshots", len(trackedEntityIDs))
 }
 
 // forgetEntityWindows removes the window mapping for entities that no longer
@@ -137,7 +136,7 @@ func (a *agent) forgetEntityWindows(entityIDs []int32) {
 	for windowID, entityID := range a.entityWindows {
 		if _, gone := purged[entityID]; gone {
 			delete(a.entityWindows, windowID)
-			log.Printf("[entityInventory] Dropped window %d mapping; entity %d no longer tracked", windowID, entityID)
+			a.logf("[entityInventory] Dropped window %d mapping; entity %d no longer tracked", windowID, entityID)
 		}
 	}
 }
@@ -158,7 +157,7 @@ func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.In
 	if !splitOK {
 		// Too small to have the expected [container][player] layout. Storing a
 		// mis-split snapshot would be worse than storing nothing.
-		log.Printf("[entityInventory] Window %d for entity %d has %d slots, fewer than the %d-slot player section; skipping",
+		a.logf("[entityInventory] Window %d for entity %d has %d slots, fewer than the %d-slot player section; skipping",
 			windowID, entityID, len(windowSlots), models.PlayerInventorySlotCount)
 		return
 	}
@@ -178,9 +177,9 @@ func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.In
 	}
 	a.entitiesMu.Unlock()
 
-	log.Printf("[entityInventory] Entity %d container refreshed: %d entity slots (window had %d total)",
+	a.logf("[entityInventory] Entity %d container refreshed: %d entity slots (window had %d total)",
 		entityID, len(storedSlots), len(windowSlots))
-	logEntityInventorySlots(entityID, storedSlots)
+	a.logEntityInventorySlots(entityID, storedSlots)
 }
 
 // logEntityInventorySlots logs every non-empty slot in an entity's container.
@@ -190,10 +189,10 @@ func (a *agent) storeEntityWindowContents(windowID byte, windowSlots []models.In
 // exact container.N slot layout (saddle vs. chest vs. decoration) isn't yet
 // confirmed against a live server (see testChestedMountInventoryCache and
 // TestLlamaInventoryCache in testing/container_entity_test.go).
-func logEntityInventorySlots(entityID int32, slots []models.InventorySlot) {
+func (a *agent) logEntityInventorySlots(entityID int32, slots []models.InventorySlot) {
 	for i, slot := range slots {
 		if slot.Present || slot.Count > 0 {
-			log.Printf("[entityInventory] Entity %d slot %d: itemID=%d count=%d present=%v",
+			a.logf("[entityInventory] Entity %d slot %d: itemID=%d count=%d present=%v",
 				entityID, i, slot.ItemID, slot.Count, slot.Present)
 		}
 	}
@@ -227,7 +226,7 @@ func (a *agent) updateEntityWindowSlot(windowID byte, slotIndex int16, item mode
 
 	entity.Inventory.Slots[slotIndex] = item
 	entity.Inventory.UpdatedAt = time.Now()
-	log.Printf("[entityInventory] Entity %d slot %d updated: itemID=%d count=%d present=%v",
+	a.logf("[entityInventory] Entity %d slot %d updated: itemID=%d count=%d present=%v",
 		entityID, slotIndex, item.ItemID, item.Count, item.Present)
 }
 

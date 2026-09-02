@@ -2,7 +2,8 @@ package agent
 
 import (
 	"bytes"
-	"log"
+	"fmt"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 
@@ -18,6 +19,7 @@ type customRegistry struct {
 	byID   map[int32]string
 	byName map[string]int32
 	ready  bool
+	logger *slog.Logger
 }
 
 func (r *customRegistry) GetID() string {
@@ -39,9 +41,10 @@ func (r *customRegistry) IsReady() bool {
 }
 
 func (r *customRegistry) Dump() {
-	log.Printf("\n%s\n", r.id)
+	logger := safeLogger(r.logger)
+	logger.Info(fmt.Sprintf("\n%s", r.id))
 	for k, v := range r.byName {
-		log.Printf("\t%s: %d\n", k, v)
+		logger.Info(fmt.Sprintf("\t%s: %d", k, v))
 	}
 }
 
@@ -65,13 +68,13 @@ func (a *agent) onRegistryData(p pk.Packet) error {
 
 	var registryID pk.String
 	if _, err := registryID.ReadFrom(reader); err != nil {
-		log.Printf("Failed to read registry ID: %v", err)
+		a.logf("Failed to read registry ID: %v", err)
 		return nil
 	}
 
 	var numEntries pk.VarInt
 	if _, err := numEntries.ReadFrom(reader); err != nil {
-		log.Printf("Failed to read number of entries for %s: %v", registryID, err)
+		a.logf("Failed to read number of entries for %s: %v", registryID, err)
 		return nil
 	}
 
@@ -80,17 +83,18 @@ func (a *agent) onRegistryData(p pk.Packet) error {
 		byID:   make(map[int32]string),
 		byName: make(map[string]int32),
 		ready:  false,
+		logger: a.logger,
 	}
 
 	for i := 0; i < int(numEntries); i++ {
 		var entryKey pk.String
 		var hasData pk.Boolean
 		if _, err := entryKey.ReadFrom(reader); err != nil {
-			log.Printf("Failed to read entry %d key: %v", i, err)
+			a.logf("Failed to read entry %d key: %v", i, err)
 			break
 		}
 		if _, err := hasData.ReadFrom(reader); err != nil {
-			log.Printf("Failed to read entry %d hasData: %v", i, err)
+			a.logf("Failed to read entry %d hasData: %v", i, err)
 			break
 		}
 		reg.byID[int32(i)] = string(entryKey)
@@ -99,7 +103,7 @@ func (a *agent) onRegistryData(p pk.Packet) error {
 			var nbtData protocol_models.NBTField
 			if _, err := nbtData.ReadFrom(reader); err != nil {
 				// skip errors; continue processing
-				log.Printf("[ERROR][onRegistryData] Failed to read entry %d NBT data: %v", i, err)
+				a.logf("[ERROR][onRegistryData] Failed to read entry %d NBT data: %v", i, err)
 			}
 		}
 	}
@@ -141,11 +145,11 @@ func (a *agent) GetEntityTypeID(entityName string) (int32, bool) {
 func (a *agent) DumpRegistry(regName string) {
 	reg := a.GetRegistry(regName)
 	if reg == nil || !reg.IsReady() {
-		log.Printf("[DUMP %s %s] registry %s not loaded", a.cfg.Name, a.cfg.Version, regName)
+		a.logf("[DUMP %s %s] registry %s not loaded", a.cfg.Name, a.cfg.Version, regName)
 		return
 	}
 
-	log.Printf("[DUMP %s %s] %s registry", a.cfg.Name, a.cfg.Version, regName)
+	a.logf("[DUMP %s %s] %s registry", a.cfg.Name, a.cfg.Version, regName)
 	reg.Dump()
 }
 
@@ -155,10 +159,10 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 	// Handle entity type registry to set player entity type for movement mirror
 	if registryID == "minecraft:entity_type" && a.moveMirror != nil {
 		if playerTypeID, ok := entries["minecraft:player"]; ok {
-			log.Printf("[Registry %s] Setting player entity type to %d for movement mirror", a.cfg.Name, playerTypeID)
+			a.logf("[Registry %s] Setting player entity type to %d for movement mirror", a.cfg.Name, playerTypeID)
 			a.moveMirror.SetEntityType(playerTypeID)
 		} else {
-			log.Printf("[Registry %s][WARN] minecraft:player not found in entity_type registry", a.cfg.Name)
+			a.logf("[Registry %s][WARN] minecraft:player not found in entity_type registry", a.cfg.Name)
 		}
 	}
 
@@ -173,6 +177,7 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 		byID:   make(map[int32]string),
 		byName: make(map[string]int32),
 		ready:  true,
+		logger: a.logger,
 	}
 
 	for name, id := range entries {
@@ -194,9 +199,9 @@ func (a *agent) onRegistryDataCallback(registryID string, entries map[string]int
 	a.regMu.Unlock()
 
 	if existed {
-		log.Printf("[Registry %s] ⚠ Overwriting %s registry with %d entries", a.cfg.Name, registryID, len(entries))
+		a.logf("[Registry %s] ⚠ Overwriting %s registry with %d entries", a.cfg.Name, registryID, len(entries))
 	} else {
 
-		log.Printf("[Registry %s] Stored %s registry with %d entries", a.cfg.Name, registryID, len(entries))
+		a.logf("[Registry %s] Stored %s registry with %d entries", a.cfg.Name, registryID, len(entries))
 	}
 }

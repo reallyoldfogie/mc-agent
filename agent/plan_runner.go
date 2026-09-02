@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"errors"
-	"log"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -58,6 +57,6 @@ func (a *agent) PlanEvents() <-chan models.PlanEvent {
 
 func (a *agent) startInitialPlan() {
 	if err := a.StartPlan(a.cfg.InitialPlan); err != nil {
-		log.Printf("[plan] Failed to start initial plan: %v", err)
+		a.logf("[plan] Failed to start initial plan: %v", err)
 	}
 }

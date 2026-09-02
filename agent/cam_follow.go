@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"regexp"
 	"strconv"
@@ -103,7 +102,7 @@ func (a *agent) camFollowTick(ctx context.Context, targetName string, maxDistanc
 	// state directly, with no view-distance concept at all.
 	tx, ty, tz, ok := a.queryEntityPosViaRCON(ctx, targetName)
 	if !ok {
-		log.Printf("[Agent %s][CamFollow] target %q not currently locatable", a.cfg.Name, targetName)
+		a.logf("[Agent %s][CamFollow] target %q not currently locatable", a.cfg.Name, targetName)
 		return
 	}
 
@@ -125,7 +124,7 @@ func (a *agent) camFollowTick(ctx context.Context, targetName string, maxDistanc
 	cmd := fmt.Sprintf("teleport %s %.2f %.2f %.2f facing entity %s",
 		a.cfg.Name, tx, ty+camFollowVerticalOffset, tz, targetName)
 	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
-		log.Printf("[Agent %s][CamFollow] teleport failed: %v", a.cfg.Name, err)
+		a.logf("[Agent %s][CamFollow] teleport failed: %v", a.cfg.Name, err)
 	}
 }
 
@@ -138,7 +137,7 @@ var entityPosRe = regexp.MustCompile(`\[\s*(-?[0-9.]+)d?,\s*(-?[0-9.]+)d?,\s*(-?
 func (a *agent) queryEntityPosViaRCON(ctx context.Context, targetName string) (x, y, z float64, ok bool) {
 	resp, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("data get entity %s Pos", targetName))
 	if err != nil {
-		log.Printf("[Agent %s][CamFollow] query %q position: %v", a.cfg.Name, targetName, err)
+		a.logf("[Agent %s][CamFollow] query %q position: %v", a.cfg.Name, targetName, err)
 		return 0, 0, 0, false
 	}
 	m := entityPosRe.FindStringSubmatch(resp)

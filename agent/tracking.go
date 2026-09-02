@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"time"
 
@@ -118,7 +117,7 @@ type trackedEntity struct {
 func (a *agent) GetPosition() (pos models.V3, yaw, pitch float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-	log.Printf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch)
+	a.logf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch)
 
 	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posYaw, a.posPitch, a.posInitialized
 }
@@ -131,7 +130,7 @@ func (a *agent) setPosition(pos models.V3, yaw, pitch float64) {
 	a.posX, a.posY, a.posZ = pos.X, pos.Y, pos.Z
 	a.posYaw, a.posPitch = yaw, pitch
 	a.posInitialized = true
-	log.Printf("[setPosition %s] Updated bot position to %s with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, pos, yaw, pitch)
+	a.logf("[setPosition %s] Updated bot position to %s with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, pos, yaw, pitch)
 }
 
 // GetPositionSimple returns bot position without rotation.
@@ -142,7 +141,7 @@ func (a *agent) setPosition(pos models.V3, yaw, pitch float64) {
 func (a *agent) GetPositionSimple() (pos models.V3, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-	log.Printf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, a.posX, a.posY, a.posZ)
+	a.logf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, a.posX, a.posY, a.posZ)
 
 	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posInitialized
 }
@@ -355,7 +354,7 @@ func (a *agent) cleanupRemovedEntities() {
 					go cb(evt) // Fire asynchronously
 				}
 				projInfo.callbacksFired = true
-				log.Printf("[cleanupRemovedEntities] Fired pending projectile callbacks with fallback position (server didn't respond within 2s): projectileID=%d, type=%s, count=%d, clientPos=(%.2f, %.2f, %.2f) after %.1fs",
+				a.logf("[cleanupRemovedEntities] Fired pending projectile callbacks with fallback position (server didn't respond within 2s): projectileID=%d, type=%s, count=%d, clientPos=(%.2f, %.2f, %.2f) after %.1fs",
 					id, projInfo.projectileType, len(projInfo.callbacks), projInfo.pendingHitPos.X, projInfo.pendingHitPos.Y, projInfo.pendingHitPos.Z, now.Sub(projInfo.collisionDetectTime).Seconds())
 			}
 		}
@@ -391,7 +390,7 @@ func (a *agent) cleanupRemovedEntities() {
 				go cb(evt) // Fire asynchronously
 			}
 			projInfo.callbacksFired = true
-			log.Printf("[cleanupRemovedEntities] Fired projectile callbacks due to callback timeout: projectileID=%d, type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f) after %.1fs",
+			a.logf("[cleanupRemovedEntities] Fired projectile callbacks due to callback timeout: projectileID=%d, type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f) after %.1fs",
 				id, projInfo.projectileType, hitType, len(projInfo.callbacks), pos.X, pos.Y, pos.Z, now.Sub(projInfo.callbackRegisteredAt).Seconds())
 			// Remove from active tracking
 			delete(a.activeProjectiles, id)

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"time"
 
@@ -67,7 +66,7 @@ func (a *agent) setCallbackRegistrationTime(entityID int32) {
 	a.activeProjectilesMu.Lock()
 	if projInfo, exists := a.activeProjectiles[entityID]; exists {
 		projInfo.callbackRegisteredAt = time.Now()
-		log.Printf("[setCallbackRegistrationTime] Registered callbacks for projectile entityID=%d, will timeout in %.1fs if no server response",
+		a.logf("[setCallbackRegistrationTime] Registered callbacks for projectile entityID=%d, will timeout in %.1fs if no server response",
 			entityID, projectileCallbackTimeout.Seconds())
 	}
 	a.activeProjectilesMu.Unlock()
@@ -171,7 +170,7 @@ func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callba
 	velocity := models.V3{X: velX, Y: velY, Z: velZ}
 	trajectory := physics.SimulateProjectileTrajectory(models.Arrow, botOrigin, velocity, 400)
 
-	log.Printf("[FireBowWithPitch] Pitch=%.1f, Yaw=%.1f, InitialVel=(%.3f, %.3f, %.3f), Predicted %d trajectory points",
+	a.logf("[FireBowWithPitch] Pitch=%.1f, Yaw=%.1f, InitialVel=(%.3f, %.3f, %.3f), Predicted %d trajectory points",
 		pitch, yaw, velX, velY, velZ, len(trajectory))
 
 	// Visualize the predicted trajectory
@@ -309,13 +308,13 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	botOrigin := models.V3{X: botPos.X, Y: botPos.Y + a.getEyeHeight() - .1, Z: botPos.Z}
 	targetPos := models.V3{X: targetX, Y: targetY, Z: targetZ}
 
-	log.Printf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=%s, target input=%s",
+	a.logf("[Agent %s] FireBowAtDebug: INPUT CHECK - bot actual pos=%s, target input=%s",
 		a.cfg.Name, botPos, targetPos)
 
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(models.Arrow, botOrigin, targetPos)
 	if err != nil {
-		log.Printf("[Agent %s] FireBowAtDebug: No valid trajectory: %v", a.cfg.Name, err)
+		a.logf("[Agent %s] FireBowAtDebug: No valid trajectory: %v", a.cfg.Name, err)
 		a.SendChat(fmt.Sprintf("Cannot fire at (%.1f, %.1f, %.1f): %v",
 			targetPos.X, targetPos.Y, targetPos.Z, err))
 
@@ -331,18 +330,18 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	dz := targetPos.Z - botOrigin.Z
 	yaw := physics.YawForStartTarget(botOrigin, targetPos)
 
-	log.Printf("[Agent %s] FireBowAtDebug: Yaw=%.10f°",
+	a.logf("[Agent %s] FireBowAtDebug: Yaw=%.10f°",
 		a.cfg.Name, yaw)
-	log.Printf("[Agent %s] FireBowAtDebug: Yaw calculation debug: dx=%.2f, dz=%.2f, atan2(dz,dx)_rad=%.4f, atan2(dz,dx)_deg=%.2f, yaw_final=%.2f°",
+	a.logf("[Agent %s] FireBowAtDebug: Yaw calculation debug: dx=%.2f, dz=%.2f, atan2(dz,dx)_rad=%.4f, atan2(dz,dx)_deg=%.2f, yaw_final=%.2f°",
 		a.cfg.Name, dx, dz, math.Atan2(dz, dx), math.Atan2(dz, dx)*180/math.Pi, yaw)
-	log.Printf("[Agent %s] FireBowAtDebug: Trajectory validated for arrow: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), yaw=%.2f°, pitch=%.2f°, power=%.3f, blocked=%v",
+	a.logf("[Agent %s] FireBowAtDebug: Trajectory validated for arrow: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), yaw=%.2f°, pitch=%.2f°, power=%.3f, blocked=%v",
 		a.cfg.Name, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, yaw, pitch, powerFactor, validSolution.IsBlocked)
-	log.Printf("[Agent %s] FireBowAtDebug: SendUseItem will send: yaw=%.2f°, pitch=%.2f°",
+	a.logf("[Agent %s] FireBowAtDebug: SendUseItem will send: yaw=%.2f°, pitch=%.2f°",
 		a.cfg.Name, yaw, pitch)
 
 	// CRITICAL: Send position packet with trajectory-verified pitch BEFORE using bow
 	// This ensures server knows the correct player rotation matching the trajectory we calculated
-	log.Printf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.cfg.Name, pitch)
+	a.logf("[Agent %s] FireBowAtDebug: Sending position with trajectory pitch=%.2f°", a.cfg.Name, pitch)
 	if err := a.moveExec.SendPositionAndRotation(botPos.X, botPos.Y, botPos.Z, yaw, pitch, true); err != nil {
 		return nil, fmt.Errorf("send position for bow: %w", err)
 	}
@@ -352,11 +351,11 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 	a.setPosition(botPos, yaw, pitch)
 
 	// Visualize trajectory with display entities for debugging (uses RCON if available)
-	log.Printf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.cfg.Name, len(trajectory))
+	a.logf("[Agent %s] FireBowAtDebug: Calling visualizeTrajectory with %d trajectory points", a.cfg.Name, len(trajectory))
 	if len(trajectory) > 0 {
 		a.visualizeTrajectory(botOrigin, targetPos, trajectory, yaw, true)
 	} else {
-		log.Printf("[Agent %s] FireBowAtDebug: WARNING: Target at (%.1f, %.1f, %.1f) is unreachable",
+		a.logf("[Agent %s] FireBowAtDebug: WARNING: Target at (%.1f, %.1f, %.1f) is unreachable",
 			a.cfg.Name, targetPos.X, targetPos.Y, targetPos.Z)
 		a.SendChat(fmt.Sprintf("WARNING: Target at (%.1f, %.1f, %.1f) is unreachable",
 			targetPos.X, targetPos.Y, targetPos.Z))
@@ -416,31 +415,31 @@ func durationFromSeconds(seconds float64) time.Duration {
 // Shows calculated trajectory in orange stained glass (1/8 scale) display entities.
 // yawDeg is the firing yaw in degrees, used to rotate the local-space trajectory into world coordinates.
 func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []models.TrajectoryPoint, yawDeg float64, removePrevious bool) {
-	log.Printf("[visualizeTrajectory] Starting visualization (RCON available: %v, trajectory points: %d, yaw: %.1f)",
+	a.logf("[visualizeTrajectory] Starting visualization (RCON available: %v, trajectory points: %d, yaw: %.1f)",
 		a.cfg.RCON != nil, len(trajectory), yawDeg)
 	// Skip if we don't have RCON access (e.g., in non-testing scenarios)
 	if a.cfg.RCON == nil {
-		log.Printf("[visualizeTrajectory] RCON not available, skipping visualization")
+		a.logf("[visualizeTrajectory] RCON not available, skipping visualization")
 		return
 	}
 
 	if removePrevious {
-		log.Printf("[visualizeTrajectory] Removing previous trajectory markers")
+		a.logf("[visualizeTrajectory] Removing previous trajectory markers")
 		ctx := context.Background()
 		removeCmd := `/kill @e[tag=projectile_trajectory]`
 		if _, err := a.cfg.RCON.Exec(ctx, removeCmd); err != nil {
-			log.Printf("[visualizeTrajectory] Error removing previous markers: %v", err)
+			a.logf("[visualizeTrajectory] Error removing previous markers: %v", err)
 		}
 	}
 
 	if len(trajectory) == 0 {
-		log.Printf("[visualizeTrajectory] Empty trajectory, skipping visualization")
+		a.logf("[visualizeTrajectory] Empty trajectory, skipping visualization")
 		return
 	}
 
-	log.Printf("[visualizeTrajectory] Origin: (%.2f, %.2f, %.2f), Target: (%.2f, %.2f, %.2f)",
+	a.logf("[visualizeTrajectory] Origin: (%.2f, %.2f, %.2f), Target: (%.2f, %.2f, %.2f)",
 		origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z)
-	log.Printf("[visualizeTrajectory] Visualizing trajectory with %d points", len(trajectory))
+	a.logf("[visualizeTrajectory] Visualizing trajectory with %d points", len(trajectory))
 
 	ctx := context.Background()
 
@@ -470,26 +469,26 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 
 	// Send calculated trajectory display entities
 	for i, cmd := range trajectoryCommands {
-		log.Printf("[visualizeTrajectory] Sending trajectory point %d: %s", i, cmd)
+		a.logf("[visualizeTrajectory] Sending trajectory point %d: %s", i, cmd)
 		if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
-			log.Printf("[visualizeTrajectory] Error sending trajectory point %d: %v", i, err)
+			a.logf("[visualizeTrajectory] Error sending trajectory point %d: %v", i, err)
 		}
 	}
 
 	// Mark the origin point with green concrete
 	originNBT := `{Tags:[projectile_trajectory],Glowing:1b,block_state:{Name:"minecraft:green_concrete"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 	originCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", origin.X, origin.Y, origin.Z, originNBT)
-	log.Printf("[visualizeTrajectory] Origin marker: %s", originCmd)
+	a.logf("[visualizeTrajectory] Origin marker: %s", originCmd)
 	if _, err := a.cfg.RCON.Exec(ctx, originCmd); err != nil {
-		log.Printf("[visualizeTrajectory] Error sending origin marker: %v", err)
+		a.logf("[visualizeTrajectory] Error sending origin marker: %v", err)
 	}
 
 	// Mark the target with a target block
 	targetNBT := `{Tags:[projectile_trajectory],Glowing:1b,block_state:{Name:"minecraft:target"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 	targetCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", target.X, target.Y, target.Z, targetNBT)
-	log.Printf("[visualizeTrajectory] Target marker: %s", targetCmd)
+	a.logf("[visualizeTrajectory] Target marker: %s", targetCmd)
 	if _, err := a.cfg.RCON.Exec(ctx, targetCmd); err != nil {
-		log.Printf("[visualizeTrajectory] Error sending target marker: %v", err)
+		a.logf("[visualizeTrajectory] Error sending target marker: %v", err)
 	}
 
 	// Mark landing point of calculated trajectory with white glass
@@ -503,13 +502,13 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 
 		landingNBT := `{Tags:[projectile_trajectory],Glowing:1b,block_state:{Name:"minecraft:white_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 		landingCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", landingX, landingY, landingZ, landingNBT)
-		log.Printf("[visualizeTrajectory] Landing marker: %s", landingCmd)
+		a.logf("[visualizeTrajectory] Landing marker: %s", landingCmd)
 		if _, err := a.cfg.RCON.Exec(ctx, landingCmd); err != nil {
-			log.Printf("[visualizeTrajectory] Error sending landing marker: %v", err)
+			a.logf("[visualizeTrajectory] Error sending landing marker: %v", err)
 		}
 	}
 
-	log.Printf("[visualizeTrajectory] Trajectory visualization complete (%d calculated points + 3 markers)", len(trajectoryCommands))
+	a.logf("[visualizeTrajectory] Trajectory visualization complete (%d calculated points + 3 markers)", len(trajectoryCommands))
 }
 
 // visualizeActualEntityTrajectory displays the actual projectile path from server packets
@@ -518,23 +517,23 @@ func (a *agent) visualizeTrajectory(origin, target models.V3, trajectory []model
 // Uses magma_block for path (glowing orange/red) and crying_obsidian for landing marker
 func (a *agent) visualizeActualEntityTrajectory(projType models.ProjectileType, positions []models.V3) {
 	if a.cfg.RCON == nil {
-		log.Printf("[visualizeActualEntityTrajectory] RCON not available, skipping visualization")
+		a.logf("[visualizeActualEntityTrajectory] RCON not available, skipping visualization")
 		return
 	}
 
 	if len(positions) == 0 {
-		log.Printf("[visualizeActualEntityTrajectory] No positions to visualize for %s", projType)
+		a.logf("[visualizeActualEntityTrajectory] No positions to visualize for %s", projType)
 		return
 	}
 
-	log.Printf("[visualizeActualEntityTrajectory] Visualizing %d actual %s positions (magma_block)", len(positions), projType)
+	a.logf("[visualizeActualEntityTrajectory] Visualizing %d actual %s positions (magma_block)", len(positions), projType)
 
 	ctx := context.Background()
 
 	// Kill previous entity track first
 	killCmd := "/kill @e[tag=projectile_entity_track]"
 	if _, err := a.cfg.RCON.Exec(ctx, killCmd); err != nil {
-		log.Printf("[visualizeActualEntityTrajectory] Error killing previous entity track: %v", err)
+		a.logf("[visualizeActualEntityTrajectory] Error killing previous entity track: %v", err)
 	}
 
 	// Build display entity commands for actual trajectory (1/8 scale = 0.125)
@@ -551,9 +550,9 @@ func (a *agent) visualizeActualEntityTrajectory(projType models.ProjectileType, 
 
 	// Send actual trajectory display entities
 	for i, cmd := range trajectoryCommands {
-		log.Printf("[visualizeActualEntityTrajectory] Sending actual position %d: %s", i, cmd)
+		a.logf("[visualizeActualEntityTrajectory] Sending actual position %d: %s", i, cmd)
 		if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
-			log.Printf("[visualizeActualEntityTrajectory] Error sending position %d: %v", i, err)
+			a.logf("[visualizeActualEntityTrajectory] Error sending position %d: %v", i, err)
 		}
 	}
 
@@ -562,13 +561,13 @@ func (a *agent) visualizeActualEntityTrajectory(projType models.ProjectileType, 
 		last := positions[len(positions)-1]
 		landingNBT := `{Tags:["projectile_entity_track"],Glowing:1b,block_state:{Name:"minecraft:crying_obsidian"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.125f,0.125f,0.125f], right_rotation:[0f,0f,0f,1f]}}`
 		landingCmd := fmt.Sprintf("/summon block_display %.2f %.2f %.2f %s", last.X, last.Y, last.Z, landingNBT)
-		log.Printf("[visualizeActualEntityTrajectory] Actual landing marker (%s): %s", projType, landingCmd)
+		a.logf("[visualizeActualEntityTrajectory] Actual landing marker (%s): %s", projType, landingCmd)
 		if _, err := a.cfg.RCON.Exec(ctx, landingCmd); err != nil {
-			log.Printf("[visualizeActualEntityTrajectory] Error sending landing marker: %v", err)
+			a.logf("[visualizeActualEntityTrajectory] Error sending landing marker: %v", err)
 		}
 	}
 
-	log.Printf("[visualizeActualEntityTrajectory] %s trajectory visualization complete (%d actual points + 1 marker)", projType, len(trajectoryCommands))
+	a.logf("[visualizeActualEntityTrajectory] %s trajectory visualization complete (%d actual points + 1 marker)", projType, len(trajectoryCommands))
 }
 
 // ThrowProjectileAt throws/fires a projectile at a target location.
@@ -608,11 +607,11 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 			// Successfully equipped from hotbar
 			time.Sleep(50 * time.Millisecond)
 		} else {
-			log.Printf("[Agent %s] EquipItemByName failed for %s: %v. Attempting fallback to inventory search...", a.cfg.Name, fullItemName, err)
+			a.logf("[Agent %s] EquipItemByName failed for %s: %v. Attempting fallback to inventory search...", a.cfg.Name, fullItemName, err)
 			// Not in hotbar, try to find in inventory and move to hotbar
 			slot, found, err := a.FindSlotWith(ctx, itemName, 0)
 			if err != nil || !found {
-				log.Printf("[Agent %s] FindSlotWith also failed for %s in inventory. EquipError: %v, FindError: %v, Found: %v", a.cfg.Name, itemName, err, err, found)
+				a.logf("[Agent %s] FindSlotWith also failed for %s in inventory. EquipError: %v, FindError: %v, Found: %v", a.cfg.Name, itemName, err, err, found)
 				return nil, fmt.Errorf("%s not found in inventory: %v", itemName, err)
 			}
 
@@ -648,7 +647,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Use trajectory validation to find unobstructed path
 	validSolution, err := a.FindValidTrajectory(projectileType, botOrigin, targetPos)
 	if err != nil {
-		log.Printf("[Agent %s] ThrowProjectileAt: No valid trajectory for %s: %v", a.cfg.Name, itemName, err)
+		a.logf("[Agent %s] ThrowProjectileAt: No valid trajectory for %s: %v", a.cfg.Name, itemName, err)
 		a.SendChat(fmt.Sprintf("Cannot throw %s at (%.1f, %.1f, %.1f): %v",
 			itemName, x, y, z, err))
 		return nil, err
@@ -657,7 +656,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	pitch := validSolution.Pitch
 	trajectory := validSolution.Trajectory
 
-	log.Printf("[Agent %s] ThrowProjectileAt: Trajectory validated for %s: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), pitch=%.2f°, trajectory points=%d, blocked=%v",
+	a.logf("[Agent %s] ThrowProjectileAt: Trajectory validated for %s: botOrigin=(%.2f,%.2f,%.2f), targetPos=(%.2f,%.2f,%.2f), pitch=%.2f°, trajectory points=%d, blocked=%v",
 		a.cfg.Name, itemName, botOrigin.X, botOrigin.Y, botOrigin.Z, targetPos.X, targetPos.Y, targetPos.Z, pitch, len(trajectory), validSolution.IsBlocked)
 
 	// Check if target is reachable
@@ -670,7 +669,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 
 	a.visualizeTrajectory(botOrigin, targetPos, trajectory, yaw, true)
 
-	log.Printf("[ThrowProjectileAt] Final aiming angles for %s: yaw=%.2f°, pitch=%.2f°", itemName, yaw, pitch)
+	a.logf("[ThrowProjectileAt] Final aiming angles for %s: yaw=%.2f°, pitch=%.2f°", itemName, yaw, pitch)
 	// Turn to face the target
 	if err := a.moveExec.SendRotation(yaw, pitch, true); err != nil {
 		return nil, fmt.Errorf("error setting rotation: %w", err)
@@ -697,7 +696,7 @@ func (a *agent) ThrowProjectileAt(ctx context.Context, projectileType models.Pro
 	// Register all callbacks before sending use item packet
 	a.setPendingProjectileCallback(projectileType, &targetPos, callbacks...)
 
-	log.Printf("[ThrowProjectileAt] Sending use item packet for %s with yaw=%.2f, pitch=%.2f", itemName, yaw, pitch)
+	a.logf("[ThrowProjectileAt] Sending use item packet for %s with yaw=%.2f, pitch=%.2f", itemName, yaw, pitch)
 	conn, err := a.getPacketWriter()
 	if err != nil {
 		return nil, err
@@ -749,7 +748,7 @@ func (a *agent) UseItem(ctx context.Context, hand models.Hand) error {
 		return err
 	}
 
-	log.Printf("[UseItem] Sending use item packet, hand=%v yaw=%.2f pitch=%.2f", hand, yaw, pitch)
+	a.logf("[UseItem] Sending use item packet, hand=%v yaw=%.2f pitch=%.2f", hand, yaw, pitch)
 	if err := actionHandler.SendUseItem(conn, hand, 0, yaw, pitch); err != nil {
 		return fmt.Errorf("error using item: %w", err)
 	}

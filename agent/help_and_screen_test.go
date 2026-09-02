@@ -3,7 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
-	"log"
+	"os"
 	"strings"
 	"testing"
 
@@ -61,9 +61,8 @@ func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
 	agent.SetSlotResolver(fakeSlotResolver{itemID: 5, count: 3, ok: true})
 	agent.SetItemManager(fakeItemMgr{name: "TestItem"})
 	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	defer log.SetOutput(prev)
+	agent.logWriter.setTarget(&buf)
+	defer agent.logWriter.setTarget(os.Stdout)
 	if err := agent.OnScreenSlotChange(0, 0); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

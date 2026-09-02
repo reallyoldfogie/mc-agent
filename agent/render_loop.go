@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"log"
 	"math"
 	"time"
 
@@ -47,12 +46,12 @@ func (a *agent) renderTick() {
 	for entityID, projInfo := range a.activeProjectiles {
 		// Skip if already collided
 		if projInfo.callbacksFired {
-			log.Printf("[renderTick] Projectile %d: skipping (callbacks already fired)", entityID)
+			a.logf("[renderTick] Projectile %d: skipping (callbacks already fired)", entityID)
 			continue
 		}
 		// Skip if we don't have enough position history to interpolate
 		if projInfo.currentServerTime.IsZero() {
-			log.Printf("[renderTick] Projectile %d: skipping (no position history, currentServerTime=zero)", entityID)
+			a.logf("[renderTick] Projectile %d: skipping (no position history, currentServerTime=zero)", entityID)
 			continue
 		}
 
@@ -65,7 +64,7 @@ func (a *agent) renderTick() {
 			if timeElapsedSinceSpawn < 0 {
 				// Time went backwards, use spawn position
 				projInfo.interpolatedPos = projInfo.spawnPos
-				log.Printf("[renderTick] Projectile %d: time went backwards, using spawn pos", entityID)
+				a.logf("[renderTick] Projectile %d: time went backwards, using spawn pos", entityID)
 				continue
 			}
 
@@ -80,13 +79,13 @@ func (a *agent) renderTick() {
 			subTickFraction := totalTicks - float64(fullTicks)
 
 			if subTickFraction > 0 {
-				log.Printf("[renderTick] Projectile %d velocity interpolated: spawn=(%.2f,%.2f,%.2f) → (%.4f, %.4f, %.4f) elapsed=%.3fs, ticks=%.2f (full=%d, sub=%.2f), spawnVel=(%.4f, %.4f, %.4f)",
+				a.logf("[renderTick] Projectile %d velocity interpolated: spawn=(%.2f,%.2f,%.2f) → (%.4f, %.4f, %.4f) elapsed=%.3fs, ticks=%.2f (full=%d, sub=%.2f), spawnVel=(%.4f, %.4f, %.4f)",
 					entityID, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z,
 					projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z, timeElapsedSinceSpawn,
 					totalTicks, fullTicks, subTickFraction,
 					projInfo.spawnVelocity.X, projInfo.spawnVelocity.Y, projInfo.spawnVelocity.Z)
 			} else {
-				log.Printf("[renderTick] Projectile %d velocity interpolated: spawn=(%.2f,%.2f,%.2f) → (%.4f, %.4f, %.4f) elapsed=%.3fs, ticks=%d, spawnVel=(%.4f, %.4f, %.4f)",
+				a.logf("[renderTick] Projectile %d velocity interpolated: spawn=(%.2f,%.2f,%.2f) → (%.4f, %.4f, %.4f) elapsed=%.3fs, ticks=%d, spawnVel=(%.4f, %.4f, %.4f)",
 					entityID, projInfo.spawnPos.X, projInfo.spawnPos.Y, projInfo.spawnPos.Z,
 					projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z, timeElapsedSinceSpawn,
 					fullTicks,
@@ -96,7 +95,7 @@ func (a *agent) renderTick() {
 			// Skip collision detection until we've received at least one position update
 			// (lastServerTime should differ from currentServerTime after first update)
 			if projInfo.lastServerTime.Equal(projInfo.currentServerTime) {
-				log.Printf("[renderTick] Projectile %d: waiting for first position delta (lastServerTime == currentServerTime)", entityID)
+				a.logf("[renderTick] Projectile %d: waiting for first position delta (lastServerTime == currentServerTime)", entityID)
 				continue
 			}
 
@@ -126,7 +125,7 @@ func (a *agent) renderTick() {
 			projInfo.interpolatedPos.Y = projInfo.lastServerPos.Y + (projInfo.currentServerPos.Y-projInfo.lastServerPos.Y)*interpolationFactor
 			projInfo.interpolatedPos.Z = projInfo.lastServerPos.Z + (projInfo.currentServerPos.Z-projInfo.lastServerPos.Z)*interpolationFactor
 
-			log.Printf("[renderTick] Projectile %d server interpolated: (%.4f, %.4f, %.4f) factor=%.3f",
+			a.logf("[renderTick] Projectile %d server interpolated: (%.4f, %.4f, %.4f) factor=%.3f",
 				entityID, projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z, interpolationFactor)
 		}
 
@@ -147,7 +146,7 @@ func (a *agent) renderTick() {
 			// Check for entity collisions at interpolated position
 			if hitEntityID, ok := a.checkEntityCollision(entityID, projInfo.interpolatedPos); ok {
 				a.fireProjectileCollisionCallback(entityID, projInfo, models.ProjectileHitEntity)
-				log.Printf("[renderTick] Projectile %d hit entity %d at (%.4f, %.4f, %.4f)",
+				a.logf("[renderTick] Projectile %d hit entity %d at (%.4f, %.4f, %.4f)",
 					entityID, hitEntityID, projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
 			}
 		}
@@ -175,7 +174,7 @@ func (a *agent) checkBlockCollision(pos models.V3) bool {
 
 	// Check if block is solid (has collision shapes)
 	if a.shapeMgr.IsSolid(stateID) {
-		log.Printf("[checkBlockCollision] Hit solid block at (%.4f, %.4f, %.4f) stateID=%d",
+		a.logf("[checkBlockCollision] Hit solid block at (%.4f, %.4f, %.4f) stateID=%d",
 			pos.X, pos.Y, pos.Z, stateID)
 		return true
 	}
@@ -207,7 +206,7 @@ func (a *agent) checkEntityCollision(projectileID int32, pos models.V3) (int32, 
 		// Simple sphere collision: check if distance is within collision radius
 		// Most entities have a bounding box of 0.6 x 1.8, but for projectiles we use a simple sphere
 		if distance < collisionRadius {
-			log.Printf("[checkEntityCollision] Projectile at (%.4f, %.4f, %.4f) collided with entity %d at (%.4f, %.4f, %.4f) distance=%.4f",
+			a.logf("[checkEntityCollision] Projectile at (%.4f, %.4f, %.4f) collided with entity %d at (%.4f, %.4f, %.4f) distance=%.4f",
 				pos.X, pos.Y, pos.Z, entityID, entity.X, entity.Y, entity.Z, distance)
 			return entityID, true
 		}
@@ -231,7 +230,7 @@ func (a *agent) fireProjectileCollisionCallback(projectileID int32, projInfo *ac
 		projInfo.pendingHitType = hitType
 		projInfo.pendingHitPos = projInfo.interpolatedPos
 		projInfo.collisionDetectTime = time.Now()
-		log.Printf("[fireProjectileCollisionCallback] QUEUED callback (waiting for server position): projectileID=%d, type=%s, hitType=%v, count=%d, clientPos=(%.2f, %.2f, %.2f)",
+		a.logf("[fireProjectileCollisionCallback] QUEUED callback (waiting for server position): projectileID=%d, type=%s, hitType=%v, count=%d, clientPos=(%.2f, %.2f, %.2f)",
 			projectileID, projInfo.projectileType, hitType, len(projInfo.callbacks), projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
 		return
 	}
@@ -248,6 +247,6 @@ func (a *agent) fireProjectileCollisionCallback(projectileID int32, projInfo *ac
 	}
 
 	projInfo.callbacksFired = true
-	log.Printf("[fireProjectileCollisionCallback] Fired projectile collision callbacks (non-persistent): projectileID=%d, type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f)",
+	a.logf("[fireProjectileCollisionCallback] Fired projectile collision callbacks (non-persistent): projectileID=%d, type=%s, hitType=%v, count=%d, pos=(%.2f, %.2f, %.2f)",
 		projectileID, projInfo.projectileType, hitType, len(projInfo.callbacks), projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
 }

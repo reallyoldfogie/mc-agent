@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 	"math"
 	"time"
 
@@ -23,7 +22,7 @@ func (a *agent) startPositionHeartbeat(tps int) {
 	}
 
 	if a.moveExec == nil {
-		log.Printf("[Agent %s] Cannot start position heartbeat: movement executor not set", a.cfg.Name)
+		a.logf("[Agent %s] Cannot start position heartbeat: movement executor not set", a.cfg.Name)
 		return
 	}
 
@@ -37,24 +36,24 @@ func (a *agent) startPositionHeartbeat(tps int) {
 		ticker := time.NewTicker(time.Second / time.Duration(tps))
 		defer ticker.Stop()
 
-		log.Printf("[Agent %s] Position heartbeat started at %d TPS", a.cfg.Name, tps)
+		a.logf("[Agent %s] Position heartbeat started at %d TPS", a.cfg.Name, tps)
 
 		for {
 			select {
 			case <-a.posHeartbeatStop:
-				log.Printf("[Agent %s] Position heartbeat stopped", a.cfg.Name)
+				a.logf("[Agent %s] Position heartbeat stopped", a.cfg.Name)
 				return
 			case <-a.ctx.Done():
-				log.Printf("[Agent %s] Position heartbeat stopped (context cancelled)", a.cfg.Name)
+				a.logf("[Agent %s] Position heartbeat stopped (context cancelled)", a.cfg.Name)
 				return
 			case <-ticker.C:
 				// Send current position to server
 				pos, yaw, pitch, initialized := a.GetPosition()
 				if initialized && a.moveExec != nil {
-					log.Printf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", pos.X, pos.Y, pos.Z, yaw, pitch)
+					a.logf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", pos.X, pos.Y, pos.Z, yaw, pitch)
 					if err := a.moveExec.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yaw, pitch, true); err != nil {
 						// Don't spam logs on errors, just continue
-						// log.Printf("[Agent] Position heartbeat send error: %v", err)
+						// a.logf("[Agent] Position heartbeat send error: %v", err)
 					}
 				}
 			}
@@ -99,7 +98,7 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 	face = a.chooseOpenFace(pos, face)
 
 	// Look at the container before opening
-	log.Printf("[Agent %s] Looking at container at (%.1f, %.1f, %.1f)", a.cfg.Name, pos.X, pos.Y, pos.Z)
+	a.logf("[Agent %s] Looking at container at (%.1f, %.1f, %.1f)", a.cfg.Name, pos.X, pos.Y, pos.Z)
 	if err := moveExec.LookAt(pos.X, pos.Y, pos.Z, true); err != nil {
 		return 0, fmt.Errorf("look at container: %w", err)
 	}
@@ -108,13 +107,13 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 	time.Sleep(2 * time.Second)
 
 	// Open the container using helper
-	log.Printf("[Agent %s] Opening container at (%.1f, %.1f, %.1f) face=%d", a.cfg.Name, pos.X, pos.Y, pos.Z, face)
+	a.logf("[Agent %s] Opening container at (%.1f, %.1f, %.1f) face=%d", a.cfg.Name, pos.X, pos.Y, pos.Z, face)
 	windowID, err := ch.OpenContainer(pos, face, timeout, cursorX, cursorY, cursorZ)
 	if err != nil {
 		return 0, fmt.Errorf("open container: %w", err)
 	}
 
-	log.Printf("[Agent %s] Container opened successfully with window ID %d", a.cfg.Name, windowID)
+	a.logf("[Agent %s] Container opened successfully with window ID %d", a.cfg.Name, windowID)
 	time.Sleep(2 * time.Second)
 	return windowID, nil
 }
@@ -176,7 +175,7 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 	defer a.endEntityContainerOpen()
 
 	// Open the entity container using helper
-	log.Printf("[Agent %s] Opening entity container for entity ID %d", a.cfg.Name, entityID)
+	a.logf("[Agent %s] Opening entity container for entity ID %d", a.cfg.Name, entityID)
 	windowID, err := ch.OpenEntityContainer(entityID, timeout)
 	if err != nil {
 		return 0, fmt.Errorf("open entity container: %w", err)
@@ -191,17 +190,17 @@ func (a *agent) OpenEntityContainer(entityID int32, timeout time.Duration) (byte
 	// section) is the fastest way to tell what kind of container the server
 	// actually opened — e.g. distinguishing a chested donkey/mule/llama's
 	// larger window from a plain horse's saddle-only one.
-	log.Printf("[Agent %s] Window %d total slot count: %d", a.cfg.Name, windowID, ch.GetContainerSlotCount(windowID))
+	a.logf("[Agent %s] Window %d total slot count: %d", a.cfg.Name, windowID, ch.GetContainerSlotCount(windowID))
 
 	// Report whether contents were actually captured. A container whose window
 	// opens but never delivers ContainerSetContent would leave no snapshot, and
 	// this is the only place that distinction is visible.
 	if _, captured := a.GetEntityInventory(entityID); !captured {
-		log.Printf("[Agent %s][WARN] Entity container opened (window %d, entity %d) but no contents have been received yet; inventory snapshot is empty",
+		a.logf("[Agent %s][WARN] Entity container opened (window %d, entity %d) but no contents have been received yet; inventory snapshot is empty",
 			a.cfg.Name, windowID, entityID)
 	}
 
-	log.Printf("[Agent %s] Entity container opened successfully with window ID %d (entity %d)", a.cfg.Name, windowID, entityID)
+	a.logf("[Agent %s] Entity container opened successfully with window ID %d (entity %d)", a.cfg.Name, windowID, entityID)
 	return windowID, nil
 }
 
@@ -212,7 +211,7 @@ func (a *agent) CloseContainer() error {
 		return fmt.Errorf("container helper not initialized")
 	}
 
-	log.Printf("[Agent %s] Closing container", a.cfg.Name)
+	a.logf("[Agent %s] Closing container", a.cfg.Name)
 	if err := ch.CloseContainer(); err != nil {
 		return fmt.Errorf("close container: %w", err)
 	}
@@ -221,7 +220,7 @@ func (a *agent) CloseContainer() error {
 	// snapshot is kept but flagged not-live so callers know it can go stale.
 	a.releaseEntityWindows()
 
-	log.Printf("[Agent %s] Container closed successfully", a.cfg.Name)
+	a.logf("[Agent %s] Container closed successfully", a.cfg.Name)
 	return nil
 }
 

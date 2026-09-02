@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"io"
+	"log/slog"
 )
 
 // Agent is the primary interface for bot control and lifecycle management.
@@ -27,6 +28,12 @@ type Agent interface {
 	Done() <-chan struct{}
 	SetCriticalError(err error)
 	CriticalError() error
+
+	// Logger returns this agent's own fielded logger. Every line it writes
+	// is tagged with this agent's identity, so callers driving multiple
+	// concurrent agents (e.g. the RL environment or LLM executor) can log
+	// through it instead of a shared package-level logger.
+	Logger() *slog.Logger
 
 	// Recipes (Update Recipes packet)
 	LastUpdateRecipes() (UpdateRecipesPayload, bool)

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"sort"
 
@@ -27,17 +26,17 @@ func (a *agent) isObscuring(coord models.V3, world models.World) bool {
 	stateID, loaded := world.GetBlockAt(coord.X, coord.Y, coord.Z)
 	if stateID == 0 {
 		// chunkX, chunkZ := block2Chunk(int64(math.Floor(coord.X)), int64(math.Floor(coord.Z)))
-		// log.Printf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is air", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
+		// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is air", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
 		return false
 	}
 
 	if !loaded {
 		// chunkX, chunkZ := block2Chunk(int64(math.Floor(coord.X)), int64(math.Floor(coord.Z)))
-		// log.Printf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is not loaded", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
+		// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is not loaded", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
 		return false
 	}
 
-	// log.Printf("[isObscuring] Block at (%.2f, %.2f, %.2f) has stateID %d (%s)", coord.X, coord.Y, coord.Z, stateID, a.shapeMgr.BlockName(stateID))
+	// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) has stateID %d (%s)", coord.X, coord.Y, coord.Z, stateID, a.shapeMgr.BlockName(stateID))
 
 	// Skip passable blocks (water, plants, etc.)
 	if a.shapeMgr != nil && a.shapeMgr.IsPassable(stateID) {
@@ -51,7 +50,7 @@ func (a *agent) isObscuring(coord models.V3, world models.World) bool {
 // traceRay finds the first obscuring block along a ray within radius R
 // Returns (blockCoord, found)
 func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, bool) {
-	// log.Printf("[traceRay] Tracing ray from (%.2f, %.2f, %.2f) in direction (%.4f, %.4f, %.4f)", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X, ray.Direction.Y, ray.Direction.Z)
+	// a.logf("[traceRay] Tracing ray from (%.2f, %.2f, %.2f) in direction (%.4f, %.4f, %.4f)", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X, ray.Direction.Y, ray.Direction.Z)
 
 	// Current voxel coordinates
 	x, y, z := int(math.Floor(ray.Origin.X)), int(math.Floor(ray.Origin.Y)), int(math.Floor(ray.Origin.Z))
@@ -111,7 +110,7 @@ func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, boo
 			return coord, true
 		}
 
-		// log.Printf("[traceRay] Stepping from voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
+		// a.logf("[traceRay] Stepping from voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
 		// Step to next voxel - handle ties by stepping all axes at the minimum tMax
 		minT := math.Min(math.Min(tMaxX, tMaxY), tMaxZ)
 		const epsilon = 1e-6
@@ -127,7 +126,7 @@ func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, boo
 			z += stepZ
 			tMaxZ += tDeltaZ
 		}
-		// log.Printf("[traceRay] Stepping to voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
+		// a.logf("[traceRay] Stepping to voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
 	}
 }
 
@@ -237,7 +236,7 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 		}
 
 		if idx%1000 == 0 && idx > 0 {
-			log.Printf("[FindAllVisibleBlocksInSphere] Cast %d/%d rays", idx, len(targets))
+			a.logf("[FindAllVisibleBlocksInSphere] Cast %d/%d rays", idx, len(targets))
 		}
 
 		// Calculate normalized direction vector
