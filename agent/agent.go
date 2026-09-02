@@ -161,6 +161,13 @@ type agent struct {
 	posYaw, posPitch float64
 	posInitialized   bool
 
+	// sequenceMu guards the anti-cheat sequence counter used on outgoing
+	// Player Action packets. Kept separate from posMu since it has nothing
+	// to do with position.
+	sequenceMu          sync.Mutex
+	sequenceCounter     int32
+	sequenceInitialized bool
+
 	healthMu          sync.RWMutex
 	health            float32
 	food              int32
@@ -1907,18 +1914,19 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 	return versionAutoDetected, nil
 }
 
-// getNextSequence returns and increments the anti-cheat sequence number.
-// Each action that requires a sequence number should call this to get the next value.
+// getNextSequence returns and increments this agent's anti-cheat sequence
+// number. Each action that requires a sequence number should call this to
+// get the next value.
 func (a *agent) getNextSequence() int32 {
-	a.posMu.Lock()
-	defer a.posMu.Unlock()
-	// Use the current position as a simple sequence counter starting at 0
-	// In practice, this should track actual sequence numbers from the server
-	// For now, we use a simple incrementing counter
-	if !hasSequenceCounter() {
-		initSequenceCounter()
+	a.sequenceMu.Lock()
+	defer a.sequenceMu.Unlock()
+	if !a.sequenceInitialized {
+		a.sequenceCounter = 0
+		a.sequenceInitialized = true
 	}
-	return nextSequence()
+	result := a.sequenceCounter
+	a.sequenceCounter++
+	return result
 }
 
 // getRotation returns the player's current yaw and pitch
@@ -1936,33 +1944,6 @@ func (a *agent) getEyeHeight() float64 {
 	} else {
 		return models.PlayerEyeHeight
 	}
-}
-
-var (
-	sequenceCounterMu   sync.Mutex
-	sequenceCounter     int32
-	sequenceInitialized bool
-)
-
-func hasSequenceCounter() bool {
-	sequenceCounterMu.Lock()
-	defer sequenceCounterMu.Unlock()
-	return sequenceInitialized
-}
-
-func initSequenceCounter() {
-	sequenceCounterMu.Lock()
-	defer sequenceCounterMu.Unlock()
-	sequenceCounter = 0
-	sequenceInitialized = true
-}
-
-func nextSequence() int32 {
-	sequenceCounterMu.Lock()
-	defer sequenceCounterMu.Unlock()
-	result := sequenceCounter
-	sequenceCounter++
-	return result
 }
 
 // RegisterEntityPositionCallback registers a callback to be called when entity positions update.
