@@ -482,3 +482,68 @@ func TestState_HoneyBlockSlowsGroundMovement(t *testing.T) {
 
 	assert.Greater(t, normalDist, stickyDist, "honey block should slow horizontal ground movement below normal")
 }
+
+// TestState_HoneyBlockReducesJumpHeight verifies §5.2's other half: honey
+// block also registers `.jumpVelocityMultiplier(0.5F)` in Blocks.java
+// (alongside the horizontal `.velocityMultiplier(0.4F)`
+// TestState_HoneyBlockSlowsGroundMovement covers) — jumping from honey
+// mirrors Java's getJumpVelocity() (`attribute * strength *
+// getJumpVelocityMultiplier() + getJumpBoostVelocityModifier()`), so the
+// base jump velocity is roughly halved, independent of the horizontal
+// slowdown.
+func TestState_HoneyBlockReducesJumpHeight(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetHoneyBlock(BlockHoney, true)
+
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 0, z, BlockHoney)
+		}
+	}
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before jumping")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, -15) // plain stone floor
+
+	sticky := NewState(shapes)
+	settle(sticky, 0) // honey block floor
+
+	peakHeight := func(s models.PhysicsState) float64 {
+		startY := s.Position().Y
+		peak := startY
+		jump := Inputs{Jump: true}
+		idle := Inputs{}
+		for i := 0; i < 40; i++ {
+			input := idle
+			if i == 0 {
+				input = jump
+			}
+			require.NoError(t, s.Tick(input, world))
+			if s.Position().Y > peak {
+				peak = s.Position().Y
+			}
+			if i > 0 && s.OnGround() {
+				break
+			}
+		}
+		return peak - startY
+	}
+
+	normalPeak := peakHeight(normal)
+	stickyPeak := peakHeight(sticky)
+	t.Logf("jump height: normal=%.4f, honey block floor=%.4f", normalPeak, stickyPeak)
+
+	assert.Greater(t, normalPeak, stickyPeak, "honey block should reduce jump height below normal")
+	assert.Greater(t, stickyPeak, 0.0, "honey block should still allow some jump, not fully block it")
+}

@@ -455,6 +455,13 @@ func (s *state) Tick(input Inputs, w World) error {
 	inertiaFactor := Inertia
 	accelFactor := Acceleration
 
+	// jumpVelocityMultiplier mirrors Java's getJumpVelocityMultiplier():
+	// scales jump height, independent of the horizontal accel/inertia
+	// formula above. Only honey block overrides it (see
+	// HoneyBlockJumpVelocityMultiplier's doc comment); every other block
+	// leaves it at the vanilla default of 1.0 (no change).
+	jumpVelocityMultiplier := 1.0
+
 	// Check block below player for slipperiness (ice, slime, etc.)
 	if s.onGround {
 		blockBelow, _ := w.GetBlockStatus(
@@ -489,6 +496,10 @@ func (s *state) Tick(input Inputs, w World) error {
 			inertiaFactor *= blockSlipperiness
 			accelFactor = 0.1 * (0.1627714 / (inertiaFactor * inertiaFactor * inertiaFactor))
 		}
+
+		if s.shapeProvider.IsHoneyBlock(blockBelow) {
+			jumpVelocityMultiplier = HoneyBlockJumpVelocityMultiplier
+		}
 	}
 
 	// Speed/Slowness scale movement_speed itself (Java's
@@ -498,7 +509,7 @@ func (s *state) Tick(input Inputs, w World) error {
 	accelFactor *= EffectSpeedMultiplier(s.activeEffects.HasSpeed, s.activeEffects.SpeedAmplifier, s.activeEffects.HasSlowness, s.activeEffects.SlownessAmplifier)
 
 	// Update velocity based on inputs (swim-up/down uses s.isInWater)
-	s.tickVelocity(input, inertiaFactor, accelFactor, w)
+	s.tickVelocity(input, inertiaFactor, accelFactor, jumpVelocityMultiplier, w)
 
 	// Cobweb slowdown scales *this tick's* attempted movement (Java
 	// Entity.move()/travel: `movement = movement.multiply(movementMultiplier)`
@@ -780,7 +791,7 @@ func (s *state) applyWaterFlow(w World) {
 }
 
 // tickVelocity updates velocity based on player inputs.
-func (s *state) tickVelocity(input Inputs, inertia, acceleration float64, w World) {
+func (s *state) tickVelocity(input Inputs, inertia, acceleration, jumpVelocityMultiplier float64, w World) {
 	// Deadzone: Reset very small velocities to zero (prevents floating point drift)
 	if math.Abs(s.Vel.X) < ResetVelocity {
 		s.Vel.X = 0
@@ -796,7 +807,7 @@ func (s *state) tickVelocity(input Inputs, inertia, acceleration float64, w Worl
 	s.applyLookInputs(input)
 
 	// Apply movement inputs (throttle, jump)
-	s.applyMovementInputs(input, acceleration)
+	s.applyMovementInputs(input, acceleration, jumpVelocityMultiplier)
 
 	// Check if player is on a ladder (limits velocity)
 	blockAtPlayer, _ := w.GetBlockStatus(
@@ -864,7 +875,7 @@ func (s *state) applyGlideStateTransition(input Inputs) {
 }
 
 // applyMovementInputs updates velocity based on throttle and jump inputs.
-func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
+func (s *state) applyMovementInputs(input Inputs, acceleration, jumpVelocityMultiplier float64) {
 	// Handle jump / swim-up / swim-down / fly-ascend/descend
 	if s.isFlying {
 		// Flying: jump/sneak directly control ascend/descend every tick,
@@ -893,9 +904,14 @@ func (s *state) applyMovementInputs(input Inputs, acceleration float64) {
 			s.Vel.Y -= SwimDownVelocity
 		}
 	} else if input.Jump && s.tick >= s.lastJump+MinJumpTicks && s.onGround {
-		// On ground: normal jump with cooldown
+		// On ground: normal jump with cooldown. jumpVelocityMultiplier
+		// mirrors Java's getJumpVelocity(): `attribute * strength *
+		// getJumpVelocityMultiplier() + getJumpBoostVelocityModifier()` —
+		// the multiplier (honey block: 0.5, everything else: 1.0) applies
+		// to the base jump velocity only, not the flat Jump Boost bonus
+		// added after it.
 		s.lastJump = s.tick
-		s.Vel.Y = JumpVelocity
+		s.Vel.Y = JumpVelocity * jumpVelocityMultiplier
 		if s.activeEffects.HasJumpBoost {
 			s.Vel.Y += JumpBoostVelocityBonus(s.activeEffects.JumpBoostAmplifier)
 		}

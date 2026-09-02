@@ -218,6 +218,17 @@ const (
 // with its own 0.4 value; only honey is wired in for now (§5.2's scope).
 const HoneyBlockVelocityMultiplier = 0.4
 
+// HoneyBlockJumpVelocityMultiplier is honey block's jump-height reduction —
+// AbstractBlock.Settings.jumpVelocityMultiplier(0.5F), registered alongside
+// HoneyBlockVelocityMultiplier in the same Blocks.java HONEY_BLOCK call.
+// LivingEntity.getJumpVelocity() multiplies the JUMP_STRENGTH attribute by
+// this before adding the flat Jump Boost bonus
+// (`attribute * strength * getJumpVelocityMultiplier() + getJumpBoostVelocityModifier()`),
+// so jumping from honey rises roughly half as high, independent of the
+// horizontal velocityMultiplier above. See physics/state.go's Tick()/
+// applyMovementInputs for how this is threaded through.
+const HoneyBlockJumpVelocityMultiplier = 0.5
+
 // Entity collision constants
 const (
 	// EntitySeparationForce is the push magnitude applied when entities overlap (horizontal only).
