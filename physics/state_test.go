@@ -58,6 +58,8 @@ type mockShapeProvider struct {
 	powderSnowBlocks  map[uint32]bool
 	cobwebBlocks      map[uint32]bool
 	scaffoldingBlocks map[uint32]bool
+	iceBlocks         map[uint32]bool
+	blueIceBlocks     map[uint32]bool
 }
 
 func newMockShapeProvider() *mockShapeProvider {
@@ -71,6 +73,8 @@ func newMockShapeProvider() *mockShapeProvider {
 		powderSnowBlocks:  make(map[uint32]bool),
 		cobwebBlocks:      make(map[uint32]bool),
 		scaffoldingBlocks: make(map[uint32]bool),
+		iceBlocks:         make(map[uint32]bool),
+		blueIceBlocks:     make(map[uint32]bool),
 	}
 }
 
@@ -108,6 +112,14 @@ func (m *mockShapeProvider) SetCobweb(blockID uint32, isCobweb bool) {
 
 func (m *mockShapeProvider) SetScaffolding(blockID uint32, isScaffolding bool) {
 	m.scaffoldingBlocks[blockID] = isScaffolding
+}
+
+func (m *mockShapeProvider) SetIce(blockID uint32, isIce bool) {
+	m.iceBlocks[blockID] = isIce
+}
+
+func (m *mockShapeProvider) SetBlueIce(blockID uint32, isBlueIce bool) {
+	m.blueIceBlocks[blockID] = isBlueIce
 }
 
 func (m *mockShapeProvider) IsPassable(blockID uint32) bool {
@@ -199,6 +211,14 @@ func (m *mockShapeProvider) IsCobweb(blockStateID uint32) bool {
 
 func (m *mockShapeProvider) IsScaffolding(blockStateID uint32) bool {
 	return m.scaffoldingBlocks[blockStateID]
+}
+
+func (m *mockShapeProvider) IsIce(blockStateID uint32) bool {
+	return m.iceBlocks[blockStateID]
+}
+
+func (m *mockShapeProvider) IsBlueIce(blockStateID uint32) bool {
+	return m.blueIceBlocks[blockStateID]
 }
 
 // GetWaterFlowDirection stub (returns no flow for tests)
@@ -296,6 +316,7 @@ const (
 	BlockPowderSnow  uint32 = 6
 	BlockHoney       uint32 = 7
 	BlockScaffolding uint32 = 8
+	BlockIce         uint32 = 9
 )
 
 // Test helper: create a simple flat world with a floor at Y=0
@@ -871,6 +892,44 @@ func TestState_ScaffoldingSneakingDoesNotPreventDescend(t *testing.T) {
 
 	if state.Position().Y >= startY-0.5 {
 		t.Errorf("Player did not descend on scaffolding while sneaking: Y=%.3f (started at %.3f)", state.Position().Y, startY)
+	}
+}
+
+// TestState_ScaffoldingJumpToClimb verifies the descoped-then-implemented
+// jump-to-climb mechanic: pressing jump while touching a climbable block
+// (scaffolding here; ladders/vines share the same code path) now grabs and
+// climbs it even with no explicit ClimbDirection input — matching Java's
+// applyMovementInput (`(this.horizontalCollision || this.jumping) &&
+// this.isClimbing() => vec3d.y = 0.2`). Pathfinding's continuous
+// ClimbDirection-driven climb (TestState_ScaffoldingClimbing) is untouched;
+// this is the additive path a manually-controlled agent uses instead.
+func TestState_ScaffoldingJumpToClimb(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetClimbable(BlockScaffolding, true)
+	shapes.SetScaffolding(BlockScaffolding, true)
+	shapes.SetPassable(BlockScaffolding, true)
+	state := NewState(shapes)
+
+	world.SetBlock(0, 1, 0, BlockScaffolding)
+	world.SetBlock(0, 2, 0, BlockScaffolding)
+	world.SetBlock(0, 3, 0, BlockScaffolding)
+	world.SetBlock(0, 4, 0, BlockScaffolding)
+
+	// Start mid-column (not on ground), same shape as the sneak test above,
+	// so only the jump-to-climb path is exercised.
+	state.SetPositionSimple(models.V3{X: 0.5, Y: 3.0, Z: 0.5})
+	state.SetVelocity(models.V3{})
+
+	startY := state.Position().Y
+	input := Inputs{Jump: true} // no ClimbDirection set
+	for i := 0; i < 10; i++ {
+		if err := state.Tick(input, world); err != nil {
+			t.Fatalf("Tick failed: %v", err)
+		}
+	}
+
+	if state.Position().Y <= startY {
+		t.Errorf("Player did not climb scaffolding via jump-to-climb: Y=%.3f (started at %.3f)", state.Position().Y, startY)
 	}
 }
 

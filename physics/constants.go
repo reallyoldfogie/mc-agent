@@ -31,6 +31,14 @@ const (
 	MinJumpTicks     = 14   // Minimum ticks between jumps (jump cooldown)
 	LadderMaxSpeed   = 0.15 // Maximum velocity while on ladder
 	LadderClimbSpeed = 0.2  // Upward velocity when climbing ladder
+
+	// JumpToClimbBoost is vanilla's jump-to-grab-a-climbable impulse —
+	// Entity.applyMovementInput's `(this.horizontalCollision ||
+	// this.jumping) && this.isClimbing() => vec3d.y = 0.2`. Numerically
+	// identical to LadderClimbSpeed but a distinct mechanic: a one-time
+	// impulse triggered by jump/collision (see physics/state.go's Tick()),
+	// not the continuous ClimbDirection-scaled velocity pathfinding drives.
+	JumpToClimbBoost = 0.2
 )
 
 // Physics simulation constants (vanilla Minecraft values)
@@ -228,6 +236,38 @@ const HoneyBlockVelocityMultiplier = 0.4
 // horizontal velocityMultiplier above. See physics/state.go's Tick()/
 // applyMovementInputs for how this is threaded through.
 const HoneyBlockJumpVelocityMultiplier = 0.5
+
+// Honey block side-slide constants, cited from HoneyBlock.java's
+// isSliding/updateSlidingVelocity — falling past the side of a honey
+// column (not standing on top of it) caps descent to a slow glide. Vanilla
+// computes this via a getOldVelocityY/getNewVelocityY round-trip that
+// undoes and reapplies one step of gravity+drag, calibrated to exactly
+// where onEntityCollision fires mid-move() relative to travel()'s own
+// gravity application; this codebase checks the same condition at the
+// pre-move checkpoint used for cobweb/powder snow instead (see
+// physics/state.go's isSlidingOnHoney), so the constants below are used
+// directly against the tick's actual current velocity rather than through
+// that round-trip — same steady-state target and fast-fall threshold,
+// simpler mechanics.
+const (
+	// HoneySlideDescentRate is the steady-state downward speed sliding
+	// caps descent to, taken directly from updateSlidingVelocity's
+	// `getNewVelocityY(-0.05)` call — -0.05 is the value being converged
+	// toward on both sides of that round-trip.
+	HoneySlideDescentRate = 0.05
+
+	// HoneySlideFastFallThreshold mirrors updateSlidingVelocity's `< -0.13F`
+	// branch: only a fall already faster than this also decelerates
+	// horizontal velocity proportionally; a fall just barely exceeding the
+	// entry threshold (see isSliding's -0.08 check, applied via
+	// HoneySlideEntryThreshold below) leaves horizontal motion alone.
+	HoneySlideFastFallThreshold = -0.13
+
+	// HoneySlideEntryThreshold mirrors isSliding's `getOldVelocityY(...)
+	// >= -0.08` early return — sliding only engages once a real fall is
+	// underway, not immediately off a small hop or landing.
+	HoneySlideEntryThreshold = -0.08
+)
 
 // Entity collision constants
 const (

@@ -35,6 +35,14 @@ type BlockShapeManager interface {
 	IsPowderSnow(blockStateID uint32) bool
 	IsCobweb(blockStateID uint32) bool
 	IsScaffolding(blockStateID uint32) bool
+	// IsIce reports whether the block is ice, packed ice, or frosted ice —
+	// the three blocks sharing vanilla's 0.98F slipperiness (Blocks.java).
+	// Blue ice is a separate, slipperier value; see IsBlueIce.
+	IsIce(blockStateID uint32) bool
+	// IsBlueIce reports whether the block is blue ice specifically —
+	// slipperiness 0.989F in vanilla, distinct from (and higher than)
+	// ordinary ice's 0.98F.
+	IsBlueIce(blockStateID uint32) bool
 
 	BlockName(blockStateID uint32) string
 	FullBlockName(blockStateID uint32) string

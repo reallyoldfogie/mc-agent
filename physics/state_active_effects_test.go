@@ -547,3 +547,138 @@ func TestState_HoneyBlockReducesJumpHeight(t *testing.T) {
 	assert.Greater(t, normalPeak, stickyPeak, "honey block should reduce jump height below normal")
 	assert.Greater(t, stickyPeak, 0.0, "honey block should still allow some jump, not fully block it")
 }
+
+// TestState_IceAcceleratesSlowerButCoastsFurther verifies the descoped-then-
+// implemented ice ground-friction item: walking onto ice now uses
+// IceSlipperiness (0.98, a genuine AbstractBlock.Settings.slipperiness()
+// value — see physics/state.go's Tick() ground friction switch) instead of
+// always falling through to the flat Slipperiness default. The formula
+// (movementSpeed * 0.216 / slipperiness³ for acceleration,
+// Inertia * slipperiness for momentum retention) predicts the real vanilla
+// "feel": slower to build up speed, but carries much more momentum once
+// moving — covering less ground during a short burst from rest, but coasting
+// further after input stops. See movement/riding_physics_test.go's
+// TestTravelMidAirTopSpeedOnIce for the same formula's ordering already
+// verified in isolation on the riding side.
+func TestState_IceAcceleratesSlowerButCoastsFurther(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetIce(BlockIce, true)
+
+	for x := -3; x <= 3; x++ {
+		for z := -3; z <= 3; z++ {
+			world.SetBlock(x, 0, z, BlockIce)
+		}
+	}
+
+	settle := func(s models.PhysicsState, x float64) {
+		s.SetPositionSimple(models.V3{X: x, Y: 1, Z: 0})
+		s.SetVelocity(models.V3{})
+		for range 20 {
+			require.NoError(t, s.Tick(Inputs{}, world))
+			if s.OnGround() && math.Abs(s.Velocity().Y) < 0.01 {
+				break
+			}
+		}
+		require.True(t, s.OnGround(), "player should settle on ground before moving")
+	}
+
+	normal := NewState(shapes)
+	settle(normal, -15) // plain stone floor
+
+	icy := NewState(shapes)
+	settle(icy, 0) // ice floor
+
+	// Burst phase: hold forward throttle from rest for a short window.
+	const burstTicks = 15
+	forward := Inputs{ThrottleX: 1.0}
+	normalBurstStart := normal.Position().X
+	icyBurstStart := icy.Position().X
+	for range burstTicks {
+		require.NoError(t, normal.Tick(forward, world))
+		require.NoError(t, icy.Tick(forward, world))
+	}
+	normalBurstDist := math.Abs(normal.Position().X - normalBurstStart)
+	icyBurstDist := math.Abs(icy.Position().X - icyBurstStart)
+	t.Logf("burst (%d ticks from rest): normal=%.4f, ice=%.4f", burstTicks, normalBurstDist, icyBurstDist)
+	assert.Greater(t, normalBurstDist, icyBurstDist, "ice should accelerate slower than normal ground from a standing start")
+
+	// Coast phase: release throttle and let momentum carry each player.
+	const coastTicks = 30
+	idle := Inputs{}
+	normalCoastStart := normal.Position().X
+	icyCoastStart := icy.Position().X
+	for range coastTicks {
+		require.NoError(t, normal.Tick(idle, world))
+		require.NoError(t, icy.Tick(idle, world))
+	}
+	normalCoastDist := math.Abs(normal.Position().X - normalCoastStart)
+	icyCoastDist := math.Abs(icy.Position().X - icyCoastStart)
+	t.Logf("coast (%d ticks, no input): normal=%.4f, ice=%.4f", coastTicks, normalCoastDist, icyCoastDist)
+	assert.Greater(t, icyCoastDist, normalCoastDist, "ice should carry momentum further than normal ground once moving")
+}
+
+// TestState_HoneyBlockSideSlideCapsDescent verifies §5.2's other descoped
+// item: falling past the side of a honey column (not standing on top of it)
+// now caps descent to a slow glide, mirroring HoneyBlock.isSliding/
+// updateSlidingVelocity — see physics/state.go's isSlidingOnHoney and
+// HoneySlideDescentRate's doc comments for the simplified formula this uses
+// in place of vanilla's exact getOldVelocityY/getNewVelocityY round-trip.
+func TestState_HoneyBlockSideSlideCapsDescent(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetHoneyBlock(BlockHoney, true)
+
+	// A single honey block the player is falling directly alongside (not
+	// on top of — see the X offset below).
+	world.SetBlock(0, 5, 0, BlockHoney)
+
+	s := NewState(shapes)
+	// Positioned beside the honey block (its cell is x=[0,1)), roughly
+	// level with its top, already falling fast with some horizontal drift.
+	s.SetPositionSimple(models.V3{X: 1.05, Y: 5.5, Z: 0.5})
+	s.SetVelocity(models.V3{X: 0.3, Y: -0.5, Z: 0})
+
+	require.NoError(t, s.Tick(Inputs{}, world))
+
+	vel := s.Velocity()
+	t.Logf("after 1 tick beside honey: vel=(%.4f, %.4f, %.4f)", vel.X, vel.Y, vel.Z)
+
+	// The slide clamp sets Vel.Y to -HoneySlideDescentRate (-0.05) and
+	// Vel.X to 0.3 * (-0.05/-0.5) = 0.03 before tickPosition runs, but
+	// applyEnvironmentForces still applies one step of gravity+drag to
+	// both afterward, later in this same Tick() call — which happens to
+	// be exactly vanilla's own getNewVelocityY(-0.05) round-trip
+	// ((-0.05-Gravity)*Drag), just arrived at via this engine's normal
+	// per-tick force application rather than a dedicated helper. The
+	// *stored* value at the end of the tick is this composed result; next
+	// tick's isSlidingOnHoney entry check (reading that stored value) is
+	// still well below HoneySlideEntryThreshold, so sliding continues and
+	// the clamp re-applies fresh every tick — this is the steady state,
+	// not a one-off transient.
+	expectedY := (-HoneySlideDescentRate - Gravity) * Drag
+	expectedX := (0.3 * (-HoneySlideDescentRate / -0.5)) * Inertia
+	assert.InDelta(t, expectedY, vel.Y, 1e-9, "honey side-slide should clamp descent to the vanilla -0.05 steady glide speed (post-gravity/drag)")
+	assert.InDelta(t, expectedX, vel.X, 1e-9, "fast horizontal drift should be damped proportionally to the descent-speed reduction")
+}
+
+// TestState_HoneyBlockSideSlideRequiresEstablishedFall verifies
+// isSlidingOnHoney's entry threshold: a small downward velocity (not yet a
+// genuine fall) beside a honey block should not trigger sliding, matching
+// HoneyBlock.isSliding's `getOldVelocityY(velocity.y) >= -0.08` early
+// return.
+func TestState_HoneyBlockSideSlideRequiresEstablishedFall(t *testing.T) {
+	world, shapes := createFlatWorld()
+	shapes.SetHoneyBlock(BlockHoney, true)
+	world.SetBlock(0, 5, 0, BlockHoney)
+
+	s := NewState(shapes)
+	s.SetPositionSimple(models.V3{X: 1.05, Y: 5.5, Z: 0.5})
+	s.SetVelocity(models.V3{X: 0, Y: -0.02, Z: 0}) // barely falling, below the entry threshold
+
+	require.NoError(t, s.Tick(Inputs{}, world))
+
+	vel := s.Velocity()
+	t.Logf("after 1 tick with a small fall speed: vel.Y=%.4f", vel.Y)
+	// Without sliding, ordinary gravity+drag applies: (-0.02 - Gravity) * Drag.
+	expected := (-0.02 - Gravity) * Drag
+	assert.InDelta(t, expected, vel.Y, 1e-9, "a small downward velocity should not trigger honey side-sliding — ordinary gravity/drag should apply instead")
+}

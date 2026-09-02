@@ -179,6 +179,14 @@ func (m *testMockShapeManager) IsScaffolding(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) IsIce(stateID uint32) bool {
+	return false
+}
+
+func (m *testMockShapeManager) IsBlueIce(stateID uint32) bool {
+	return false
+}
+
 func (m *testMockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
 	return models.V3{} // No flow in mock world
 }

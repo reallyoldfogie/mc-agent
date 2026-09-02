@@ -436,6 +436,10 @@ func (s *state) Tick(input Inputs, w World) error {
 	// a booted player standing on top never overlaps it in the first place.
 	inPowderSnow := s.isOverlappingPowderSnow(w)
 
+	// Detect honey-block side-sliding the same way (pre-move position,
+	// current velocity). See isSlidingOnHoney's doc comment.
+	slidingOnHoney := s.isSlidingOnHoney(w)
+
 	// Decide elytra glide start/stop using this tick's pre-move onGround —
 	// matches Java's own ordering (tickGliding()/checkGliding() run before
 	// travel()/move() each tick, off the previous tick's ground state).
@@ -445,9 +449,10 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Slow Falling and Levitation do the same — Java calls onLanding() every
 	// tick while either is active (LivingEntity.tickMovement), which is what
 	// actually negates their fall damage, not a special-cased damage formula.
-	// Cobwebs and powder snow do too (Entity.slowMovement/makeStuckInBlock
-	// also calls onLanding()/resetFallDistance()).
-	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation || inCobweb || inPowderSnow {
+	// Cobwebs, powder snow, and honey-sliding do too (Entity.slowMovement/
+	// makeStuckInBlock/updateSlidingVelocity all call
+	// onLanding()/resetFallDistance()).
+	if s.isInWater || s.activeEffects.HasSlowFalling || s.activeEffects.HasLevitation || inCobweb || inPowderSnow || slidingOnHoney {
 		s.fallDistance = 0.0
 	}
 
@@ -466,19 +471,14 @@ func (s *state) Tick(input Inputs, w World) error {
 	if s.onGround {
 		blockBelow, _ := w.GetBlockStatus(
 			int(math.Floor(s.Pos.X)),
-			int(math.Floor(s.Pos.Y))-1,
+			blockBelowY(s.Pos.Y),
 			int(math.Floor(s.Pos.Z)),
 		)
 
-		// TODO: ice isn't wired in here yet (no shapeProvider.IsIce — the
-		// numeric-ID-keyed GetBlockSlipperiness in slipperyness.go covers
-		// only the riding handlers, which query it directly rather than
-		// going through this walking-player branch). Slime is now covered
-		// below, straight from BlockShapeManager's own IsSlimeBlock — a
-		// genuine AbstractBlock.Settings.slipperiness(0.8F) value (Blocks.java),
-		// unlike honey (see HoneyBlockVelocityMultiplier's doc comment for
-		// why that one is NOT a slipperiness value and is applied
-		// separately, after tickPosition, below).
+		// Ice/blue ice and slime are genuine AbstractBlock.Settings.slipperiness()
+		// values (Blocks.java) — unlike honey (see HoneyBlockVelocityMultiplier's
+		// doc comment for why that one is NOT a slipperiness value and is
+		// applied separately, after tickPosition, below).
 		//
 		// Powder snow reports passable (it has no static collision box —
 		// see getSurroundingBoxes) even when a booted player is standing on
@@ -490,7 +490,12 @@ func (s *state) Tick(input Inputs, w World) error {
 			(s.hasLeatherBoots && s.shapeProvider.IsPowderSnow(blockBelow))
 		if isSolidBelow {
 			blockSlipperiness := Slipperiness
-			if s.shapeProvider.IsSlimeBlock(blockBelow) {
+			switch {
+			case s.shapeProvider.IsBlueIce(blockBelow):
+				blockSlipperiness = BlueIceSlipperiness
+			case s.shapeProvider.IsIce(blockBelow):
+				blockSlipperiness = IceSlipperiness
+			case s.shapeProvider.IsSlimeBlock(blockBelow):
 				blockSlipperiness = SlimeBlockSlipperiness
 			}
 			inertiaFactor *= blockSlipperiness
@@ -534,6 +539,21 @@ func (s *state) Tick(input Inputs, w World) error {
 		s.Vel.Z *= mz
 	}
 
+	// Honey-block side-sliding caps descent to a slow glide (see
+	// isSlidingOnHoney/HoneySlideDescentRate's doc comments) rather than
+	// scaling-then-zeroing like cobweb/powder snow above — vanilla's
+	// updateSlidingVelocity converges velocity toward a steady state
+	// instead of resetting it to zero, so momentum does carry into the
+	// next tick here, unlike inCobweb/inPowderSnow.
+	if slidingOnHoney {
+		if s.Vel.Y < HoneySlideFastFallThreshold {
+			ratio := -HoneySlideDescentRate / s.Vel.Y
+			s.Vel.X *= ratio
+			s.Vel.Z *= ratio
+		}
+		s.Vel.Y = -HoneySlideDescentRate
+	}
+
 	// Update position, with collision detection unless noClip (spectator)
 	// is active - matches decompiled Entity.move(): `if (this.noClip) {
 	// this.setPosition(x+movement.x, y+movement.y, z+movement.z); } else {
@@ -568,12 +588,12 @@ func (s *state) Tick(input Inputs, w World) error {
 	// position (matching vanilla's own ordering, unlike the pre-move
 	// simplification cobweb/powder snow use above) and only while standing
 	// on top of it; falling past the side and getting slowed while sliding
-	// down it (HoneyBlock.isSliding/updateSlidingVelocity) is not
-	// implemented.
+	// down it is the separate isSlidingOnHoney/HoneySlideDescentRate
+	// mechanism below.
 	if s.onGround {
 		blockBelow, _ := w.GetBlockStatus(
 			int(math.Floor(s.Pos.X)),
-			int(math.Floor(s.Pos.Y))-1,
+			blockBelowY(s.Pos.Y),
 			int(math.Floor(s.Pos.Z)),
 		)
 		if s.shapeProvider.IsHoneyBlock(blockBelow) {
@@ -594,6 +614,16 @@ func (s *state) Tick(input Inputs, w World) error {
 		// Apply vertical velocity based on climb direction
 		// +1.0 = climb up, -1.0 = descend, 0.0 = don't climb (let gravity work)
 		s.Vel.Y = LadderClimbSpeed * input.ClimbDirection
+	} else if isClimbable && (input.Jump || s.collision.horizontal) {
+		// Jump-to-climb: mirrors Java's applyMovementInput
+		// (`(this.horizontalCollision || this.jumping) && this.isClimbing()
+		// => vec3d.y = 0.2`) — a manually-controlled agent (no pathfinding
+		// ClimbDirection driving continuous ascent) can still grab and start
+		// climbing a ladder or scaffolding by pressing jump while touching
+		// it, or by walking straight into it. Only fires when ClimbDirection
+		// is idle so pathfinding's explicit continuous-velocity climb
+		// (above) is never overridden by this additive path.
+		s.Vel.Y = JumpToClimbBoost
 	}
 
 	// Apply gravity, drag, and water flow based on water state
@@ -1388,6 +1418,44 @@ func (s *state) getSurroundingBoxes(queryBB AABB, w World) []AABB {
 					continue
 				}
 
+				// Scaffolding reports non-passable (blocks_movement: true)
+				// and its exported collision_boxes always include a
+				// near-full-width top platform plus four corner posts, EVEN
+				// for an ordinary stacked-on-another-scaffolding-block state
+				// (bottom=false, distance=0) — confirmed directly against
+				// the per-version mc-data-gen JSON, not assumed. Real
+				// vanilla's ScaffoldingBlock.getCollisionShape is
+				// context-dependent (`context.isAbove(fullCube, pos, true)
+				// && !isDescending()` decides whether the solid platform
+				// applies at all), which a static per-block export can't
+				// represent — so mc-data-gen's snapshot is, in effect,
+				// always the "something is standing on top of this exact
+				// block" shape, blocking vertical movement through every
+				// block of a real stacked column. Confirmed live: jump-to-
+				// climb (and, by the same mechanism, pathfinding's
+				// ClimbDirection-driven ascent) got stopped after ~0.075
+				// blocks instead of climbing, against a real server.
+				//
+				// Approximated here by checking whether another scaffolding
+				// block sits directly above: if so, this cell is interior
+				// to a column and is treated as fully passable (matching
+				// ladders, whose real vanilla shape genuinely is always
+				// empty) so climbing works; otherwise it's the top of a
+				// column (or a lone block) and keeps its real solid
+				// collision, so a capped scaffolding platform is still
+				// walkable like solid ground. Not a full replication of
+				// vanilla's isAbove/isDescending logic (e.g. horizontally
+				// walking onto the SIDE of an interior block mid-column
+				// still passes through here, where vanilla would let you
+				// stand on its corner posts) — a deliberate, documented
+				// simplification. See §5.3.
+				if s.shapeProvider.IsScaffolding(blockStateID) {
+					aboveID, _ := w.GetBlockStatus(x, y+1, z)
+					if s.shapeProvider.IsScaffolding(aboveID) {
+						continue
+					}
+				}
+
 				// Skip passable blocks (air, water, etc.)
 				if s.shapeProvider.IsPassable(blockStateID) {
 					continue
@@ -1469,6 +1537,61 @@ func (s *state) isOverlappingPowderSnow(w World) bool {
 			for x := minX; x <= maxX; x++ {
 				blockStateID, _ := w.GetBlockStatus(x, y, z)
 				if s.shapeProvider.IsPowderSnow(blockStateID) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isSlidingOnHoney reports whether the player is currently sliding down the
+// side of a honey block, mirroring Java HoneyBlock.isSliding — falling past
+// the side of a honey column (not standing on top of it, and not simply
+// dropping through open air near one). See HoneySlideDescentRate's doc
+// comment for how this simplifies vanilla's exact formula.
+//
+// Simplifications versus vanilla: uses the same whole-AABB-overlap block
+// scan as isOverlappingCobweb/isOverlappingPowderSnow (see their doc
+// comments) rather than vanilla's precise per-block horizontal-offset
+// check (`0.4375 + width/2` from the block's center) — honey's own
+// collision shape already occupies nearly the full cell (14/16 wide), so
+// overlap alone is a reasonably close proxy for genuine proximity to a
+// column's side. Also checks the block's full 1.0 top height rather than
+// vanilla's 0.9375, consistent with this codebase's own honey collision
+// box (getSurroundingBoxes/GetCollisionBoxes give honey a plain full cube,
+// not vanilla's slightly-inset column shape). Must only be called while
+// the write lock is held.
+func (s *state) isSlidingOnHoney(w World) bool {
+	if s.onGround {
+		return false
+	}
+	// Only a genuine, established fall triggers sliding — matches
+	// isSliding's `getOldVelocityY(velocity.y) >= -0.08` early return.
+	if s.Vel.Y >= HoneySlideEntryThreshold {
+		return false
+	}
+
+	bb := s.getAABBUnsafe()
+	minX := int(math.Floor(bb.X.Min))
+	maxX := int(math.Floor(bb.X.Max))
+	minY := int(math.Floor(bb.Y.Min))
+	maxY := int(math.Floor(bb.Y.Max))
+	minZ := int(math.Floor(bb.Z.Min))
+	maxZ := int(math.Floor(bb.Z.Max))
+
+	for y := minY; y <= maxY; y++ {
+		// A block whose top sits below the player's current feet isn't
+		// something they're sliding past — they're already below it,
+		// matching isSliding's `entity.getY() > pos.getY() + 0.9375 -
+		// 1.0E-7 => false` (they must be at or below the block's top).
+		if float64(y)+1.0 < s.Pos.Y {
+			continue
+		}
+		for z := minZ; z <= maxZ; z++ {
+			for x := minX; x <= maxX; x++ {
+				blockStateID, _ := w.GetBlockStatus(x, y, z)
+				if s.shapeProvider.IsHoneyBlock(blockStateID) {
 					return true
 				}
 			}
@@ -1764,6 +1887,31 @@ func (s *state) hasGroundSupportAt(pos models.V3, w World) bool {
 
 	// Position is either safely within block or has adjacent support
 	return true
+}
+
+// blockBelowY returns the block-grid Y coordinate of whatever cell is
+// actually supporting a player resting at feetY, for a "check the block
+// below me" query.
+//
+// Naively this is `floor(feetY) - 1`, assuming the player's feet sit
+// exactly on a full 1.0-tall collision box's top surface (true for most
+// blocks: stone, ice, slime). It is NOT true for a block whose real
+// collision height is less than a full block — honey, confirmed directly
+// against mc-data-gen's collision_boxes data at 0.9375, not 1.0 (Java's
+// `Block.createColumnShape(14.0, 0.0, 15.0)`). A player resting on such a
+// block settles slightly *into* its own cell (feetY a fraction below a
+// whole number), so `floor(feetY) - 1` overshoots by one cell and reads
+// the block two levels down instead of the one actually underfoot —
+// confirmed live: a walking player standing on honey read "dirt" below
+// them instead of "honey_block", silently disabling both the horizontal
+// slowdown and jump-height reduction (§5.2) whenever this happened, since
+// the caller queries this same coordinate afterward for those checks.
+//
+// Subtracting a small epsilon before flooring resolves to the correct
+// cell regardless of whether the player is sitting exactly on a
+// full-height boundary or slightly embedded in a shorter one.
+func blockBelowY(feetY float64) int {
+	return int(math.Floor(feetY - 0.001))
 }
 
 // clamp restricts a value to the range [min, max].

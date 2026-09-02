@@ -180,6 +180,14 @@ func (msp *MockShapeProvider) IsScaffolding(blockStateID uint32) bool {
 	return false // No scaffolding in mock
 }
 
+func (msp *MockShapeProvider) IsIce(blockStateID uint32) bool {
+	return false // No ice in mock
+}
+
+func (msp *MockShapeProvider) IsBlueIce(blockStateID uint32) bool {
+	return false // No blue ice in mock
+}
+
 func (msp *MockShapeProvider) BlockName(blockStateID uint32) string {
 	if blockStateID == 0 {
 		return "minecraft:air"

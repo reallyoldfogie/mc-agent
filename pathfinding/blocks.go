@@ -386,6 +386,23 @@ func (bsm *blockShapeManager) IsScaffolding(blockStateID uint32) bool {
 	return bsm.BlockName(blockStateID) == "minecraft:scaffolding"
 }
 
+// IsIce checks if block is ice, packed ice, or frosted ice (all share
+// vanilla's 0.98F slipperiness — see IsBlueIce for the separate 0.989F case).
+func (bsm *blockShapeManager) IsIce(blockStateID uint32) bool {
+	switch bsm.BlockName(blockStateID) {
+	case "minecraft:ice", "minecraft:packed_ice", "minecraft:frosted_ice":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsBlueIce checks if block is blue ice (0.989F slipperiness, slipperier
+// than ordinary ice's 0.98F).
+func (bsm *blockShapeManager) IsBlueIce(blockStateID uint32) bool {
+	return bsm.BlockName(blockStateID) == "minecraft:blue_ice"
+}
+
 // GetWaterFlowSpeed returns the flow speed multiplier for water based on the block's age property.
 // Age 0 (source): returns 0.0 (no flow)
 // Age 1-7 (flowing): returns proportional speed where age 7 = 1.0

@@ -287,6 +287,21 @@ func (msm *MockShapeManager) IsScaffolding(blockStateID uint32) bool {
 	return msm.blockName(blockStateID) == "minecraft:scaffolding"
 }
 
+// IsIce returns whether a block is ice, packed ice, or frosted ice.
+func (msm *MockShapeManager) IsIce(blockStateID uint32) bool {
+	switch msm.blockName(blockStateID) {
+	case "minecraft:ice", "minecraft:packed_ice", "minecraft:frosted_ice":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsBlueIce returns whether a block is blue ice.
+func (msm *MockShapeManager) IsBlueIce(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:blue_ice"
+}
+
 // BlockName returns the block name for a given block state ID
 func (msm *MockShapeManager) BlockName(blockStateID uint32) string {
 	return msm.blockName(blockStateID)
