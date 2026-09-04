@@ -25,6 +25,16 @@ const (
 	damagePenaltyScale float32 = 1.0
 	// arrivalBonus is added once, the step the target is reached.
 	arrivalBonus float32 = 10.0
+	// mineRewardBonus is added once, the step Config.MineTargetBlock's
+	// nearest visible instance is observed to change (see
+	// Environment.Step's before/after BlockNameAt comparison) — same
+	// magnitude as arrivalBonus, since both mark "this episode's task was
+	// accomplished." Not gated on the dispatched action having been
+	// ActionMine specifically, matching this file's existing philosophy of
+	// judging outcomes from actual world-state deltas rather than from
+	// which action was chosen (see TestStepReflectsExternalPositionChange
+	// in environment_test.go for the movement-side precedent).
+	mineRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

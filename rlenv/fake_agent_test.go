@@ -29,6 +29,19 @@ type fakeAgent struct {
 	moveToWithChatErr   error
 	moveToWithChatDelay time.Duration // if set, MoveToWithChat sleeps this long before returning
 	moveToWithChatCalls int
+
+	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
+	// name is mineBlockName ("" means nothing is there). FindVisibleBlock
+	// only reports it found when the queried name matches; MineBlockAt
+	// "breaks" it by setting mineBlockName to "minecraft:air", so
+	// Environment's before/after BlockNameAt diff (see environment.go's
+	// Step) sees a real change, the same way MoveToWithChat's fake actually
+	// moves the tracked position rather than just recording the call.
+	mineBlockName                      string
+	mineBlockX, mineBlockY, mineBlockZ float64
+	mineBlockAtErr                     error
+	mineBlockAtCalls                   int
+	findVisibleBlockCalls              int
 }
 
 func newFakeAgent(x, y, z float64) *fakeAgent {
@@ -44,6 +57,16 @@ func (f *fakeAgent) setPosition(x, y, z float64) {
 func (f *fakeAgent) setHealth(health float32, food int32, saturation float32) {
 	f.mu.Lock()
 	f.health, f.food, f.saturation, f.healthKnown = health, food, saturation, true
+	f.mu.Unlock()
+}
+
+// setMineBlock places a simulated block instance of the given name at
+// (x,y,z) — see mineBlockName's doc comment. name == "" means nothing is
+// there (FindVisibleBlock never finds it, matching the zero-value default).
+func (f *fakeAgent) setMineBlock(name string, x, y, z float64) {
+	f.mu.Lock()
+	f.mineBlockName = name
+	f.mineBlockX, f.mineBlockY, f.mineBlockZ = x, y, z
 	f.mu.Unlock()
 }
 
@@ -175,10 +198,48 @@ func (f *fakeAgent) SetFlying(context.Context, bool) error { return nil }
 func (f *fakeAgent) StartCamFollow(context.Context, string, float64) error { return nil }
 func (f *fakeAgent) StopCamFollow() error                                  { return nil }
 
-func (f *fakeAgent) FindVisibleBlock(context.Context, string, int) (x, y, z float64, found bool, err error) {
-	return 0, 0, 0, false, nil
+// FindVisibleBlock reports the simulated mine block's position only when
+// its current name matches blockName — mirrors the real implementation's
+// contract (finds the nearest visible instance of that specific block name)
+// closely enough for rlenv.Environment's dispatch/observation logic to
+// exercise for real, without needing a live server.
+func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, _ int) (x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findVisibleBlockCalls++
+	if f.mineBlockName == "" || f.mineBlockName != blockName {
+		return 0, 0, 0, false, nil
+	}
+	return f.mineBlockX, f.mineBlockY, f.mineBlockZ, true, nil
 }
-func (f *fakeAgent) MineBlockAt(context.Context, models.V3, models.BlockFace) error { return nil }
+
+// MineBlockAt "breaks" the simulated mine block if pos matches its current
+// position, setting its name to "minecraft:air" — see mineBlockName's doc
+// comment for why this actually mutates state rather than just recording
+// the call.
+func (f *fakeAgent) MineBlockAt(_ context.Context, pos models.V3, _ models.BlockFace) error {
+	f.mu.Lock()
+	f.mineBlockAtCalls++
+	err := f.mineBlockAtErr
+	if err == nil && int(pos.X) == int(f.mineBlockX) && int(pos.Y) == int(f.mineBlockY) && int(pos.Z) == int(f.mineBlockZ) {
+		f.mineBlockName = "minecraft:air"
+	}
+	f.mu.Unlock()
+	return err
+}
+
+// BlockNameAt returns the simulated mine block's name if (ix,iy,iz) matches
+// its position, "minecraft:air" otherwise — matches the real
+// implementation's contract of never erroring, just reporting air for
+// anywhere nothing of interest is tracked.
+func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.mineBlockName != "" && ix == int(f.mineBlockX) && iy == int(f.mineBlockY) && iz == int(f.mineBlockZ) {
+		return f.mineBlockName
+	}
+	return "minecraft:air"
+}
 
 func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]models.VisibleEntityInfo, error) {
 	return nil, nil

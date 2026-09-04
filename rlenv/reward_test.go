@@ -87,22 +87,32 @@ func TestComputeRewardDeathAppliesPenaltyAndEndsEpisode(t *testing.T) {
 	}
 }
 
-func TestMovementTargetMapsActionsToTheRightCoordinates(t *testing.T) {
+func TestResolveDispatchMapsActionsToTheRightTargetsAndArgs(t *testing.T) {
 	e := &Environment{
 		originX: 1, originY: 2, originZ: 3,
 		targetX: 10, targetY: 20, targetZ: 30,
 	}
 
-	if x, y, z, isMovement, err := e.movementTarget(ActionWait); err != nil || isMovement {
-		t.Fatalf("ActionWait: got (%v,%v,%v,%v,%v), want isMovement=false, err=nil", x, y, z, isMovement, err)
+	if dispatch, ok, err := e.resolveDispatch(ActionWait); err != nil || ok {
+		t.Fatalf("ActionWait: got (%v,%v,%v), want ok=false, err=nil", dispatch, ok, err)
 	}
-	if x, y, z, isMovement, err := e.movementTarget(ActionGoToTarget); err != nil || !isMovement || x != 10 || y != 20 || z != 30 {
-		t.Fatalf("ActionGoToTarget: got (%v,%v,%v,%v,%v), want (10,20,30,true,nil)", x, y, z, isMovement, err)
+	if dispatch, ok, err := e.resolveDispatch(ActionGoToTarget); err != nil || !ok || dispatch.name != moveToActionName ||
+		dispatch.args[0] != formatCoord(10) || dispatch.args[1] != formatCoord(20) || dispatch.args[2] != formatCoord(30) {
+		t.Fatalf("ActionGoToTarget: got (%+v,%v,%v), want moveto(10,20,30)", dispatch, ok, err)
 	}
-	if x, y, z, isMovement, err := e.movementTarget(ActionReturnHome); err != nil || !isMovement || x != 1 || y != 2 || z != 3 {
-		t.Fatalf("ActionReturnHome: got (%v,%v,%v,%v,%v), want (1,2,3,true,nil)", x, y, z, isMovement, err)
+	if dispatch, ok, err := e.resolveDispatch(ActionReturnHome); err != nil || !ok || dispatch.name != moveToActionName ||
+		dispatch.args[0] != formatCoord(1) || dispatch.args[1] != formatCoord(2) || dispatch.args[2] != formatCoord(3) {
+		t.Fatalf("ActionReturnHome: got (%+v,%v,%v), want moveto(1,2,3)", dispatch, ok, err)
 	}
-	if _, _, _, _, err := e.movementTarget(rl.Action(99)); err == nil {
+	if dispatch, ok, err := e.resolveDispatch(ActionMine); err != nil || ok {
+		t.Fatalf("ActionMine with no Config.MineTargetBlock: got (%+v,%v,%v), want ok=false, err=nil (safe no-op)", dispatch, ok, err)
+	}
+	e.cfg.MineTargetBlock = "minecraft:stone"
+	if dispatch, ok, err := e.resolveDispatch(ActionMine); err != nil || !ok || dispatch.name != mineActionName ||
+		len(dispatch.args) != 1 || dispatch.args[0] != "minecraft:stone" {
+		t.Fatalf("ActionMine with Config.MineTargetBlock set: got (%+v,%v,%v), want mine(minecraft:stone)", dispatch, ok, err)
+	}
+	if _, _, err := e.resolveDispatch(rl.Action(99)); err == nil {
 		t.Fatalf("out-of-range action: want error, got nil")
 	}
 }

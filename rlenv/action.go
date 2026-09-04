@@ -6,13 +6,12 @@ import (
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 )
 
-// Action vocabulary. Deliberately small: RL_POLICY_INTEGRATION_PLAN.md
-// sketched GO_TO/MINE/CRAFT/RETURN_HOME/WAIT, but mc-agent's action
-// registry (actions.NewRegistry, as of this branch's base commit) has no
-// mine/craft actions yet, so this environment only maps to what actually
-// exists today. Extend this list (and NumActions, mapAction) once more
-// mapped capabilities exist — do not add placeholder actions that don't
-// dispatch to anything real.
+// Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md sketched
+// GO_TO/MINE/CRAFT/RETURN_HOME/WAIT; this environment now maps four of the
+// five (everything but CRAFT — docs/plans/RL_ACTION_SPACE_EXPANSION.md
+// Phase 3, not started). Extend this list (and NumActions, resolveDispatch)
+// once more mapped capabilities exist — do not add placeholder actions that
+// don't dispatch to anything real.
 const (
 	// ActionWait performs no dispatch: the policy chooses to not move this
 	// step. See Environment.Step for why this doesn't block on anything.
@@ -23,28 +22,65 @@ const (
 	// ActionReturnHome dispatches "moveto" back toward the position the
 	// bot was at when Reset was called (Environment.originX/Y/Z).
 	ActionReturnHome
+	// ActionMine dispatches "mine <Config.MineTargetBlock>" — mc-agent's
+	// own Mine action (actions/commands.go) resolves the nearest visible
+	// instance of that block name itself via FindVisibleBlock, the same
+	// call Environment separately makes for observation/reward purposes
+	// (see Environment.resolveMineTarget) — nothing moves between those two
+	// calls within one Step, so they agree. A safe no-op (like ActionWait)
+	// when Config.MineTargetBlock is unset: this environment poses at most
+	// one mining task per instance (RL_ACTION_SPACE_EXPANSION.md Phase 2a
+	// option (a), mirrors TargetOffset's "environment poses the task"
+	// pattern), not a free-form "mine anything" capability.
+	ActionMine
 
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionReturnHome) + 1
+	NumActions = int(ActionMine) + 1
 )
 
-// moveToActionName is the registered action name MoveTo (actions/commands.go)
-// is keyed under (see actions.actionRegistry.Register: lowercased Name()).
-const moveToActionName = "moveto"
+// moveToActionName and mineActionName are the registered action names
+// MoveTo/Mine (actions/commands.go) are keyed under (see
+// actions.actionRegistry.Register: lowercased Name()).
+const (
+	moveToActionName = "moveto"
+	mineActionName   = "mine"
+)
 
-// movementTarget resolves action to the (x, y, z) a movement action should
-// dispatch toward, and whether action is a movement action at all (false
-// for ActionWait, which never reaches the registry).
-func (e *Environment) movementTarget(action rl.Action) (x, y, z float64, isMovement bool, err error) {
+// actionDispatch describes what Step should send through the
+// models.ActionRegistry for one rl.Action: which registered action name to
+// call, and the string args that action's Execute expects (see
+// actions/commands.go — MoveTo needs 3 parseFloat'able coordinates, Mine's
+// single-arg form needs one block name).
+type actionDispatch struct {
+	name string
+	args []string
+}
+
+// resolveDispatch maps action to what Step should dispatch through the
+// registry this step, and whether it should dispatch anything at all.
+// ok=false covers two cases: ActionWait (never dispatches, by design) and
+// ActionMine with no configured target (Config.MineTargetBlock == "") —
+// both are silent no-ops, not errors, the same way an unconfigured mine
+// task shouldn't punish a policy for trying it. This replaces the old
+// movementTarget/isMovement pair (RL_ACTION_SPACE_EXPANSION.md Phase 2b):
+// ActionMine's args aren't a movement target at all, so a single
+// dispatch-table shape covers both cases better than the old "give me an
+// (x,y,z)" signature could.
+func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch, ok bool, err error) {
 	switch action {
 	case ActionWait:
-		return 0, 0, 0, false, nil
+		return actionDispatch{}, false, nil
 	case ActionGoToTarget:
-		return e.targetX, e.targetY, e.targetZ, true, nil
+		return actionDispatch{name: moveToActionName, args: moveToArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 	case ActionReturnHome:
-		return e.originX, e.originY, e.originZ, true, nil
+		return actionDispatch{name: moveToActionName, args: moveToArgs(e.originX, e.originY, e.originZ)}, true, nil
+	case ActionMine:
+		if e.cfg.MineTargetBlock == "" {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: mineActionName, args: []string{e.cfg.MineTargetBlock}}, true, nil
 	default:
-		return 0, 0, 0, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
+		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
 }
 

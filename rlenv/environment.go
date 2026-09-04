@@ -29,6 +29,14 @@ type Environment struct {
 	prevHealth                float32
 	prevHealthKnown           bool
 	episodeStarted            bool
+
+	// mineX/Y/Z/mineVisible cache the last-resolved nearest visible
+	// Config.MineTargetBlock instance (see resolveMineTarget), the same
+	// way prevDistance/prevHealth cache the last-known state of their own
+	// features — refreshed once per Step (and once at Reset) rather than
+	// re-resolved multiple times within one call.
+	mineX, mineY, mineZ float64
+	mineVisible         bool
 }
 
 // New constructs an Environment. registry is typically actions.NewRegistry()
@@ -76,7 +84,45 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 
 	health, food, saturation, healthKnown := e.agent.Health()
 	e.prevHealth, e.prevHealthKnown = health, healthKnown
-	return buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown), nil
+
+	if err := e.refreshMineTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	return buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible), nil
+}
+
+// refreshMineTarget re-resolves the nearest currently-visible instance of
+// Config.MineTargetBlock and stores it into e.mineX/Y/Z/mineVisible, for
+// observation/reward purposes. Called once at Reset and once per Step
+// (after that step's dispatch — see Step), not more: unlike TargetOffset's
+// fixed point, mining consumes its target, so the nearest visible instance
+// can genuinely change step to step as blocks are broken (docs/plans/
+// RL_ACTION_SPACE_EXPANSION.md Phase 2a) and needs re-resolving regularly,
+// but Step reads the *previous* call's cached result as "before this step"
+// state (see its mined-this-step check) rather than re-resolving twice per
+// call — the same caching shape prevDistance/prevHealth already use.
+// Leaves e.mineVisible=false without error if MineTargetBlock is unset (the
+// common case for instances that don't pose a mining task) or if
+// FindVisibleBlock simply finds nothing in range; only a genuine
+// FindVisibleBlock error (e.g. world/block-manager not ready) is returned.
+//
+// Known cost tradeoff, not solved here: this runs FindVisibleBlock once per
+// step whenever MineTargetBlock is configured, regardless of which action
+// was dispatched, plus a second FindVisibleBlock call inside the "mine"
+// action's own Execute on steps that actually dispatch ActionMine (see
+// action.go's resolveDispatch). Acceptable for now; revisit (e.g. shrinking
+// MineSearchRadius, or resolving less often) if it matters in practice.
+func (e *Environment) refreshMineTarget(ctx context.Context) error {
+	if e.cfg.MineTargetBlock == "" {
+		e.mineX, e.mineY, e.mineZ, e.mineVisible = 0, 0, 0, false
+		return nil
+	}
+	x, y, z, found, err := e.agent.FindVisibleBlock(ctx, e.cfg.MineTargetBlock, e.cfg.MineSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving mine target: %w", err)
+	}
+	e.mineX, e.mineY, e.mineZ, e.mineVisible = x, y, z, found
+	return nil
 }
 
 // Step implements rl.Environment.
@@ -101,15 +147,26 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		return rl.StepResult{}, errPositionUnknown
 	}
 
-	targetX, targetY, targetZ, isMovement, err := e.movementTarget(action)
+	dispatch, shouldDispatch, err := e.resolveDispatch(action)
 	if err != nil {
 		return rl.StepResult{}, err
 	}
 
-	if isMovement {
-		completion, err := e.registry.Execute(ctx, moveToActionName, e.agent, moveToArgs(targetX, targetY, targetZ))
+	// e.mineX/Y/Z/mineVisible still hold whatever the previous Step (or
+	// Reset) last resolved — read here as "before this step's action"
+	// state, regardless of whether that action was ActionMine (mirrors
+	// refreshMineTarget's own doc comment on why this isn't gated to
+	// mine-dispatch steps).
+	prevMineX, prevMineY, prevMineZ, prevMineVisible := e.mineX, e.mineY, e.mineZ, e.mineVisible
+	prevMineBlockName := ""
+	if prevMineVisible {
+		prevMineBlockName = e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
+	}
+
+	if shouldDispatch {
+		completion, err := e.registry.Execute(ctx, dispatch.name, e.agent, dispatch.args)
 		if err != nil {
-			return rl.StepResult{}, fmt.Errorf("rlenv: dispatching %s: %w", moveToActionName, err)
+			return rl.StepResult{}, fmt.Errorf("rlenv: dispatching %s: %w", dispatch.name, err)
 		}
 		if err := e.awaitStep(ctx, completion); err != nil {
 			return rl.StepResult{}, err
@@ -121,6 +178,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 	x, y, z := pos.X, pos.Y, pos.Z
 	newHealth, food, saturation, newHealthKnown := e.agent.Health()
+
+	// mined is true if the pre-dispatch target position's block changed at
+	// all this step — not narrowly "became air," since a block could also
+	// be replaced by something else (e.g. a falling block landing there).
+	// Judged from actual world state, not from whether ActionMine was the
+	// dispatched action (see reward.go's mineRewardBonus doc comment).
+	mined := false
+	if prevMineVisible {
+		newMineBlockName := e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
+		mined = newMineBlockName != prevMineBlockName
+	}
 
 	newDistance := distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
 	reward, done := computeReward(stepOutcome{
@@ -135,10 +203,22 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		reward += arrivalBonus
 		done = true
 	}
+	if mined {
+		reward += mineRewardBonus
+		done = true
+	}
 	e.prevDistance = newDistance
 	e.prevHealth, e.prevHealthKnown = newHealth, newHealthKnown
 
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown)
+	// Refresh the cached mine target for the observation returned to the
+	// caller (and for the next Step's "before" read): mining (or anything
+	// else) this step may have changed what's nearest/visible, and the
+	// observation should reflect post-step state the same way
+	// position/health already do.
+	if err := e.refreshMineTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible)
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
 }
 
