@@ -127,4 +127,13 @@ type CommandAgent interface {
 	// entity (minecraft:item) within maxDistance blocks. found is false if
 	// none was located.
 	FindNearestVisibleItem(ctx context.Context, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
+
+	// CraftItem crafts itemName (e.g. "minecraft:stick") using the player's
+	// own 2x2 inventory crafting grid — no crafting table needed. Returns
+	// an error if no known 2x2-fitting recipe produces itemName, or if a
+	// required ingredient isn't in the inventory. See the agent package
+	// implementation's doc comment for the exact placement/collection
+	// sequence and its known MVP limitations (2x2 grid only, no rollback on
+	// partial failure).
+	CraftItem(ctx context.Context, itemName string) error
 }

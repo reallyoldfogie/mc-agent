@@ -2,7 +2,7 @@ module github.com/reallyoldfogie/mc-agent
 
 go 1.27.0
 
-// replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
+replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
 
 // replace github.com/reallyoldfogie/mc-protocol-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-protocol-go
 

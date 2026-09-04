@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName>, lookAround [radius], pickUpNearbyItem [maxDistance], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName>, lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -771,6 +771,31 @@ func (PickUpNearbyItem) Execute(ctx context.Context, agent models.CommandAgent, 
 		err := agent.MoveToWithChat(ctx, x, y, z)
 		if err != nil {
 			_ = agent.SendChat("Pick up item error: " + err.Error())
+		}
+		resolve(err)
+	}()
+	return completion, nil
+}
+
+type Craft struct{}
+
+func (Craft) Name() string  { return "craft" }
+func (Craft) Usage() string { return "craft <itemName>" }
+func (Craft) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 {
+		_ = agent.SendChat("Usage: craft <itemName>")
+		return models.Done(nil), nil
+	}
+	itemName := args[0]
+
+	// CraftItem's placement/collection sequence involves several inventory
+	// clicks, each with its own wait-for-confirmation timeout, so it can
+	// take real time — same goroutine+Completion pattern as Mine's mineAt.
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.CraftItem(ctx, itemName)
+		if err != nil {
+			_ = agent.SendChat("Craft error: " + err.Error())
 		}
 		resolve(err)
 	}()

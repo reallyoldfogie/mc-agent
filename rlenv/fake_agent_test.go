@@ -241,6 +241,12 @@ func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 	return "minecraft:air"
 }
 
+// CraftItem is not exercised by rlenv's tests (crafting isn't wired into
+// rlenv — docs/plans/RL_ACTION_SPACE_EXPANSION.md Phase 3 only adds the
+// chat command, not RL wiring); this stub exists solely so fakeAgent keeps
+// satisfying models.CommandAgent/rlenv.LiveAgent.
+func (f *fakeAgent) CraftItem(context.Context, string) error { return nil }
+
 func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]models.VisibleEntityInfo, error) {
 	return nil, nil
 }
