@@ -9,7 +9,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName>, lookAround [radius], pickUpNearbyItem [maxDistance], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -615,6 +615,166 @@ func (VehicleJump) Execute(ctx context.Context, agent models.CommandAgent, args 
 	}
 	_ = agent.SendChat(fmt.Sprintf("Jumping with power %d", power))
 	return models.Done(nil), nil
+}
+
+// mineSearchRadius is the default search radius (in blocks) for
+// "mine <blockName>"'s FindVisibleBlock lookup.
+const mineSearchRadius = 32
+
+type Mine struct{}
+
+func (Mine) Name() string  { return "mine" }
+func (Mine) Usage() string { return "mine <x> <y> <z> | mine <blockName>" }
+func (Mine) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) == 1 {
+		blockName := args[0]
+		x, y, z, found, err := agent.FindVisibleBlock(ctx, blockName, mineSearchRadius)
+		if err != nil {
+			_ = agent.SendChat("Find block error: " + err.Error())
+			return models.Done(nil), nil
+		}
+		if !found {
+			_ = agent.SendChat(fmt.Sprintf("No visible %s found within %d blocks", blockName, mineSearchRadius))
+			return models.Done(nil), nil
+		}
+		return mineAt(ctx, agent, x, y, z), nil
+	}
+
+	if len(args) != 3 {
+		_ = agent.SendChat("Usage: mine <x> <y> <z> | mine <blockName>")
+		return models.Done(nil), nil
+	}
+	x, err := parseFloat(args[0])
+	if err != nil {
+		_ = agent.SendChat("Invalid X coordinate")
+		return models.Done(nil), nil
+	}
+	y, err := parseFloat(args[1])
+	if err != nil {
+		_ = agent.SendChat("Invalid Y coordinate")
+		return models.Done(nil), nil
+	}
+	z, err := parseFloat(args[2])
+	if err != nil {
+		_ = agent.SendChat("Invalid Z coordinate")
+		return models.Done(nil), nil
+	}
+	return mineAt(ctx, agent, x, y, z), nil
+}
+
+// mineAt launches MineBlockAt in a goroutine (it blocks for the block's real
+// break time) and returns a Completion that resolves with the outcome —
+// mirrors FireBowAt's pattern for actions with real wait time. The face
+// argument to MineBlockAt is a placeholder: the real implementation
+// computes the best face itself from the agent's position (see
+// agent/actions.go's MineBlockAt doc comment).
+func mineAt(ctx context.Context, agent models.CommandAgent, x, y, z float64) models.Completion {
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.MineBlockAt(ctx, models.V3{X: x, Y: y, Z: z}, models.FaceDown)
+		if err != nil {
+			_ = agent.SendChat("Mine error: " + err.Error())
+		}
+		resolve(err)
+	}()
+	return completion
+}
+
+// lookAroundDefaultRadius is the search radius (in blocks) "lookAround"
+// uses when no explicit radius argument is given.
+const lookAroundDefaultRadius = 16.0
+
+// lookAroundChatLimit caps how many results "lookAround" lists in chat —
+// FindAllVisibleEntitiesInSphere itself returns the full, untruncated list
+// for programmatic callers (e.g. a future rlenv observation).
+const lookAroundChatLimit = 8
+
+type LookAround struct{}
+
+func (LookAround) Name() string  { return "lookaround" }
+func (LookAround) Usage() string { return "lookAround [radius]" }
+func (LookAround) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	radius := lookAroundDefaultRadius
+	if len(args) > 0 {
+		r, err := parseFloat(args[0])
+		if err != nil || r <= 0 {
+			_ = agent.SendChat("Usage: lookAround [radius] - radius must be a positive number")
+			return models.Done(nil), nil
+		}
+		radius = r
+	}
+
+	entities, err := agent.FindAllVisibleEntitiesInSphere(ctx, radius)
+	if err != nil {
+		_ = agent.SendChat("Look around error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if len(entities) == 0 {
+		_ = agent.SendChat(fmt.Sprintf("Nothing visible within %.0f blocks", radius))
+		return models.Done(nil), nil
+	}
+
+	shown := entities
+	if len(shown) > lookAroundChatLimit {
+		shown = shown[:lookAroundChatLimit]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Visible within %.0f blocks (%d total):", radius, len(entities))
+	for _, e := range shown {
+		fmt.Fprintf(&b, " %s@(%.0f,%.0f,%.0f,%.1fm)", e.TypeName, e.X, e.Y, e.Z, e.Distance)
+	}
+	if len(entities) > len(shown) {
+		fmt.Fprintf(&b, " ...+%d more", len(entities)-len(shown))
+	}
+	_ = agent.SendChat(b.String())
+	return models.Done(nil), nil
+}
+
+// pickUpNearbyItemDefaultMaxDistance is the search radius (in blocks)
+// "pickUpNearbyItem" uses when no explicit maxDistance argument is given —
+// see the item auto-pickup discussion in testing/mine_test.go's doc
+// comments for why this is deliberately larger than vanilla's much shorter
+// (~1.5 block) auto-pickup radius: this command finds a *visible* item and
+// walks to it, it doesn't require starting already in pickup range.
+const pickUpNearbyItemDefaultMaxDistance = 8.0
+
+type PickUpNearbyItem struct{}
+
+func (PickUpNearbyItem) Name() string  { return "pickupnearbyitem" }
+func (PickUpNearbyItem) Usage() string { return "pickUpNearbyItem [maxDistance]" }
+func (PickUpNearbyItem) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	maxDistance := pickUpNearbyItemDefaultMaxDistance
+	if len(args) > 0 {
+		d, err := parseFloat(args[0])
+		if err != nil || d <= 0 {
+			_ = agent.SendChat("Usage: pickUpNearbyItem [maxDistance] - maxDistance must be a positive number")
+			return models.Done(nil), nil
+		}
+		maxDistance = d
+	}
+
+	_, x, y, z, found, err := agent.FindNearestVisibleItem(ctx, maxDistance)
+	if err != nil {
+		_ = agent.SendChat("Find item error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if !found {
+		_ = agent.SendChat(fmt.Sprintf("No visible item found within %.0f blocks", maxDistance))
+		return models.Done(nil), nil
+	}
+
+	completion, resolve := models.NewCompletion()
+	go func() {
+		// Vanilla auto-collects any item the player walks within ~1 block
+		// of, so walking to the item's own position is sufficient — no
+		// separate "pick up" packet/interaction is needed once there.
+		err := agent.MoveToWithChat(ctx, x, y, z)
+		if err != nil {
+			_ = agent.SendChat("Pick up item error: " + err.Error())
+		}
+		resolve(err)
+	}()
+	return completion, nil
 }
 
 type Equip struct{}

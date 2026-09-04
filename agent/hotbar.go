@@ -57,26 +57,23 @@ func (a *agent) SelectHotbarSlot(ctx context.Context, slot int16) error {
 		return fmt.Errorf("send held item slot packet: %w", err)
 	}
 
-	for {
-		a.heldSlotMu.RLock()
-		currentSet = a.heldSlotSet
-		current = a.heldSlot
-		a.heldSlotMu.RUnlock()
-		if currentSet && current == int16(slot) {
-			return nil
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case ackSlot := <-a.heldSlotUpdates:
-				if ackSlot == int16(slot) {
-				a.logHotbarAck(slot, ackSlot)
-				a.emitHeldItemEquipment(slot)
-				return nil
-			}
-		}
-	}
+	// ServerboundHeldItemSlot has no vanilla acknowledgment: unlike this
+	// codebase's original assumption (this function used to block here
+	// waiting for a ClientboundHeldItemSlot echo), the server does not
+	// send that packet back to the client that requested the switch — it's
+	// a server-initiated notification (e.g. another game mechanic swapping
+	// what's in the player's hand), not an ack of the player's own request.
+	// Waiting for it here meant every switch to a slot other than the
+	// already-selected one blocked until ctx expired — confirmed live
+	// while adding testing/mine_test.go. Update the local state
+	// optimistically instead, the same way movement/rotation packets in
+	// this codebase are fire-and-forget.
+	a.heldSlotMu.Lock()
+	a.heldSlot = slot
+	a.heldSlotSet = true
+	a.heldSlotMu.Unlock()
+	a.emitHeldItemEquipment(slot)
+	return nil
 }
 
 func (a *agent) SelectEmptyHotbarSlot(ctx context.Context) error {

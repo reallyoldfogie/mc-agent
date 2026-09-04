@@ -22,7 +22,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.12.0
-	github.com/reallyoldfogie/cRL-go v0.8.0
+	github.com/reallyoldfogie/cRL-go v0.9.0
 	github.com/reallyoldfogie/mc-bot-go v0.1.0
 	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4

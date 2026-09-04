@@ -174,3 +174,16 @@ func (f *fakeAgent) SetFlying(context.Context, bool) error { return nil }
 
 func (f *fakeAgent) StartCamFollow(context.Context, string, float64) error { return nil }
 func (f *fakeAgent) StopCamFollow() error                                  { return nil }
+
+func (f *fakeAgent) FindVisibleBlock(context.Context, string, int) (x, y, z float64, found bool, err error) {
+	return 0, 0, 0, false, nil
+}
+func (f *fakeAgent) MineBlockAt(context.Context, models.V3, models.BlockFace) error { return nil }
+
+func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]models.VisibleEntityInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeAgent) FindNearestVisibleItem(context.Context, float64) (entityID int32, x, y, z float64, found bool, err error) {
+	return 0, 0, 0, 0, false, nil
+}

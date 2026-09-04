@@ -104,4 +104,27 @@ type CommandAgent interface {
 	// StopCamFollow stops any active StartCamFollow loop. No-op if not
 	// currently following.
 	StopCamFollow() error
+
+	// FindVisibleBlock searches for the nearest block named blockName
+	// (e.g. "minecraft:iron_ore") within maxDistance blocks that the agent
+	// has a clear line of sight to. found is false if none was located.
+	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
+
+	// MineBlockAt mines (breaks) the block at pos: looks at it, picks the
+	// best face itself (face is currently unused — see the agent package
+	// implementation's doc comment), waits for the calculated break time
+	// based on block hardness and the currently held tool, then finishes
+	// digging.
+	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
+
+	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
+	// within radius blocks that the agent has a clear line of sight to
+	// (the entity analogue of FindAllVisibleBlocksInSphere), sorted by
+	// distance from the agent's position.
+	FindAllVisibleEntitiesInSphere(ctx context.Context, radius float64) ([]VisibleEntityInfo, error)
+
+	// FindNearestVisibleItem searches for the nearest visible dropped-item
+	// entity (minecraft:item) within maxDistance blocks. found is false if
+	// none was located.
+	FindNearestVisibleItem(ctx context.Context, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 }

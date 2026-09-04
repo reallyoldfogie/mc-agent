@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -684,7 +685,17 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 		}
 
 		nextT := minFloat64(tMaxX, tMaxY, tMaxZ)
-		if nextT > dist {
+		// Compare with a small epsilon, not a strict >: when the target sits
+		// exactly on an integer voxel boundary (e.g. a dropped item summoned
+		// at Y=0.0, resting exactly on the floor block's top face), nextT can
+		// equal dist to within floating-point error. Without the epsilon,
+		// the strict "nextT > dist" comparison lets the walk take one more
+		// step past the destination, into the solid block just below/beside
+		// it, and the following iteration's occlusion check on that
+		// overshoot voxel falsely reports the target as not visible — found
+		// live via testing/lookaround_test.go summoning an item at integer
+		// coordinates right next to the bot.
+		if nextT > dist-1e-6 {
 			break
 		}
 		if tMaxX <= tMaxY && tMaxX <= tMaxZ {
@@ -712,7 +723,6 @@ func (a *agent) FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDi
 	if !ok {
 		return 0, 0, 0, 0, false, errors.New("position not initialized")
 	}
-	x, y, z := pos.X, pos.Y, pos.Z
 	bestDist := math.MaxFloat64
 	var bestID int32
 	var bestX, bestY, bestZ float64
@@ -720,7 +730,7 @@ func (a *agent) FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDi
 		if ent.Removed || ent.EntityType != entityTypeID {
 			continue
 		}
-		d := distance3D(x, y, z, ent.X, ent.Y, ent.Z)
+		d := pos.DistanceTo(models.V3{X: ent.X, Y: ent.Y, Z: ent.Z})
 		if maxDistance > 0 && d > maxDistance {
 			continue
 		}
@@ -743,6 +753,70 @@ func (a *agent) FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDi
 	return bestID, bestX, bestY, bestZ, true, nil
 }
 
+// FindAllVisibleEntitiesInSphere returns every tracked entity within radius
+// blocks that the agent has a clear line of sight to, sorted by distance —
+// the entity analogue of FindAllVisibleBlocksInSphere. Unlike
+// FindVisibleEntity/FindNearestVisibleItem, this isn't filtered to one
+// entity type: it's the general "look around" primitive.
+func (a *agent) FindAllVisibleEntitiesInSphere(ctx context.Context, radius float64) ([]models.VisibleEntityInfo, error) {
+	entities := a.GetTrackedEntities()
+	if len(entities) == 0 {
+		return []models.VisibleEntityInfo{}, nil
+	}
+	pos, _, _, ok := a.GetPosition()
+	if !ok {
+		return nil, errors.New("position not initialized")
+	}
+	results := make([]models.VisibleEntityInfo, 0, len(entities))
+	for _, ent := range entities {
+		if ent.Removed {
+			continue
+		}
+		d := pos.DistanceTo(models.V3{X: ent.X, Y: ent.Y, Z: ent.Z})
+		if radius > 0 && d > radius {
+			continue
+		}
+		visible, err := a.HasLineOfSight(ctx, ent.X, ent.Y, ent.Z)
+		if err != nil {
+			return nil, err
+		}
+		if !visible {
+			continue
+		}
+		typeName := "unknown"
+		if a.entityRegistry != nil {
+			typeName = string(a.entityRegistry.GetEntityType(ent.EntityID))
+		}
+		results = append(results, models.VisibleEntityInfo{
+			EntityID:   ent.EntityID,
+			EntityType: ent.EntityType,
+			TypeName:   typeName,
+			X:          ent.X,
+			Y:          ent.Y,
+			Z:          ent.Z,
+			Distance:   d,
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Distance < results[j].Distance
+	})
+	return results, nil
+}
+
+// FindNearestVisibleItem searches for the nearest visible dropped-item
+// entity (minecraft:item) within maxDistance blocks — a thin wrapper around
+// FindVisibleEntity that resolves the "minecraft:item" entity type ID
+// itself, so callers (chat actions in particular) don't need registry
+// access of their own.
+func (a *agent) FindNearestVisibleItem(ctx context.Context, maxDistance float64) (int32, float64, float64, float64, bool, error) {
+	itemTypeID, ok := a.GetEntityTypeID("minecraft:item")
+	if !ok {
+		return 0, 0, 0, 0, false, errors.New("minecraft:item entity type not found in registry")
+	}
+	return a.FindVisibleEntity(ctx, itemTypeID, maxDistance)
+}
+
 // FindVisibleBlock searches for the nearest visible block by name.
 func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (float64, float64, float64, bool, error) {
 	world := a.GetWorld()
@@ -756,7 +830,7 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 	if !ok {
 		return 0, 0, 0, false, errors.New("position not initialized")
 	}
-	x, y, z := pos.X, pos.Y, pos.Z
+
 	if maxDistance <= 0 {
 		maxDistance = 8
 	}
@@ -769,9 +843,9 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 				if ctx.Err() != nil {
 					return 0, 0, 0, false, ctx.Err()
 				}
-				cx := math.Floor(x) + float64(dx)
-				cy := math.Floor(y) + float64(dy)
-				cz := math.Floor(z) + float64(dz)
+				cx := math.Floor(pos.X) + float64(dx)
+				cy := math.Floor(pos.Y) + float64(dy)
+				cz := math.Floor(pos.Z) + float64(dz)
 				stateID, loaded := world.GetBlockAt(cx, cy, cz)
 				if !loaded {
 					continue
@@ -794,7 +868,8 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 				if !visible {
 					continue
 				}
-				d := distance3D(x, y, z, cx+0.5, cy+0.5, cz+0.5)
+				d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
+
 				if d < bestDist {
 					bestDist = d
 					bestX, bestY, bestZ = cx, cy, cz
@@ -1173,13 +1248,6 @@ func isOpenPassThroughBlock(name string, props map[string]string) bool {
 		return true
 	}
 	return false
-}
-
-func distance3D(x1, y1, z1, x2, y2, z2 float64) float64 {
-	dx := x1 - x2
-	dy := y1 - y2
-	dz := z1 - z2
-	return math.Sqrt(dx*dx + dy*dy + dz*dz)
 }
 
 func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, targetZ float64) (bool, float64, float64, float64, error) {
