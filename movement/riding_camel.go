@@ -47,8 +47,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	// Get world time from server (synchronized via ClientboundUpdateTime packets)
 	// Fall back to a default value if not yet initialized
 	worldTime := int64(0)
-	if pe.worldManager != nil {
-		if age, ok := pe.worldManager.GetWorldAge(); ok {
+	if pe.world != nil {
+		if age, ok := pe.world.GetWorldAge(); ok {
 			worldTime = age
 		}
 	}

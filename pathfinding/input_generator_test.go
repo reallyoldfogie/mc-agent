@@ -142,23 +142,23 @@ func (m *mockPhysicsState) SetSneaking(sneaking bool) {
 	m.sneaking = sneaking
 }
 
-func (m *mockPhysicsState) Tick(_ Inputs, _ models.PhysicsWorld) error {
+func (m *mockPhysicsState) Tick(_ Inputs, _ models.World) error {
 	return nil
 }
 
-func (m *mockPhysicsState) PredictMovement(_ []Inputs, _ int, _ models.PhysicsWorld) []models.PhysicsState {
+func (m *mockPhysicsState) PredictMovement(_ []Inputs, _ int, _ models.World) []models.PhysicsState {
 	return nil
 }
 
-func (m *mockPhysicsState) PredictPosition(_ models.V3, _ int, _ models.PhysicsWorld) models.V3 {
+func (m *mockPhysicsState) PredictPosition(_ models.V3, _ int, _ models.World) models.V3 {
 	return models.V3{}
 }
 
-func (m *mockPhysicsState) WillCollide(_ models.V3, _ models.PhysicsWorld) bool {
+func (m *mockPhysicsState) WillCollide(_ models.V3, _ models.World) bool {
 	return false
 }
 
-func (m *mockPhysicsState) HasGroundSupportAt(_ models.V3, _ models.PhysicsWorld) bool {
+func (m *mockPhysicsState) HasGroundSupportAt(_ models.V3, _ models.World) bool {
 	return false
 }
 
@@ -166,11 +166,11 @@ func (m *mockPhysicsState) IsLookingAtTarget(_, _ float64) bool {
 	return false
 }
 
-func (m *mockPhysicsState) GetSurroundingBoxes(_ models.AABB, _ models.PhysicsWorld) []models.AABB {
+func (m *mockPhysicsState) GetSurroundingBoxes(_ models.AABB, _ models.World) []models.AABB {
 	return nil
 }
 
-func (m *mockPhysicsState) ResolveCollision(entityBB models.AABB, vel models.V3, _ models.PhysicsWorld) (models.AABB, models.V3, bool, bool) {
+func (m *mockPhysicsState) ResolveCollision(entityBB models.AABB, vel models.V3, _ models.World) (models.AABB, models.V3, bool, bool) {
 	return entityBB.Offset(vel.X, vel.Y, vel.Z), vel, false, false
 }
 

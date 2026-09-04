@@ -47,6 +47,44 @@ func (m *mockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBound
 	return m.entities
 }
 
+// GetBlockAt, GetWorldAge/GetTimeOfDay/SetWorldTime, and the light/biome/
+// world-border/difficulty accessors below are stubbed to keep mockWorld
+// satisfying models.World post-merge — real implementations deferred, see
+// docs/plans/WORLD_STRUCT_CONSOLIDATION.md.
+
+func (m *mockWorld) GetBlockAt(x, y, z float64) (uint32, bool) {
+	return m.GetBlockStatus(int(math.Floor(x)), int(math.Floor(y)), int(math.Floor(z)))
+}
+
+func (m *mockWorld) GetWorldAge() (int64, bool)             { return 0, false }
+func (m *mockWorld) GetTimeOfDay() (int64, bool)            { return 0, false }
+func (m *mockWorld) SetWorldTime(worldAge, timeOfDay int64) {}
+
+func (m *mockWorld) GetLightLevel(x, y, z int) (skyLight, blockLight uint8, loaded bool) {
+	return 0, 0, false
+}
+
+func (m *mockWorld) GetBiomeAt(x, y, z int) (biomeID uint32, loaded bool) {
+	return 0, false
+}
+
+func (m *mockWorld) GetWorldBorder() (models.WorldBorder, bool) {
+	return models.WorldBorder{}, false
+}
+
+func (m *mockWorld) SetWorldBorder(b models.WorldBorder)                    {}
+func (m *mockWorld) SetWorldBorderCenter(x, z float64)                      {}
+func (m *mockWorld) SetWorldBorderSize(diameter float64)                    {}
+func (m *mockWorld) SetWorldBorderLerpSize(oldD, newD float64, speed int64) {}
+func (m *mockWorld) SetWorldBorderWarningDelay(warningTimeTicks int32)      {}
+func (m *mockWorld) SetWorldBorderWarningDistance(warningBlocks int32)      {}
+
+func (m *mockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
+	return 0, false, false
+}
+
+func (m *mockWorld) SetDifficulty(difficulty uint8, locked bool) {}
+
 // mockShapeProvider provides simple block collision data
 type mockShapeProvider struct {
 	passableBlocks    map[uint32]bool
@@ -222,7 +260,7 @@ func (m *mockShapeProvider) IsBlueIce(blockStateID uint32) bool {
 }
 
 // GetWaterFlowDirection stub (returns no flow for tests)
-func (m *mockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+func (m *mockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.World) models.V3 {
 	return models.V3{} // No flow in mock world
 }
 

@@ -59,8 +59,7 @@ type PhysicsMovementExecutor struct {
 	// Physics simulation
 	physicsState  models.PhysicsState
 	inputGen      models.InputGenerator
-	world         models.PhysicsWorld
-	worldManager  models.World // For accessing world time and other state
+	world         models.World
 	shapeProvider physics.BlockShapeProvider
 
 	// Continuous operation state
@@ -241,7 +240,6 @@ func NewPhysicsMovementExecutor(
 	getBotEntityID func() int32,
 	world physics.World,
 	shapeProvider physics.BlockShapeProvider,
-	worldManager models.World,
 ) *PhysicsMovementExecutor {
 	// Create movement packet sender
 	movementPacketSender := &movementPacketSender{
@@ -276,7 +274,6 @@ func NewPhysicsMovementExecutor(
 		physicsState:         physicsState,
 		inputGen:             pathfinding.NewInputGenerator(),
 		world:                world,
-		worldManager:         worldManager,
 		shapeProvider:        shapeProvider,
 		mode:                 PhysicsModeIdle,
 		running:              false,
@@ -379,8 +376,8 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 			if pe.entityPositionGetter.IsMountedEntityCamel(entityTypeID) {
 				// Get actual world time from server; falls back to 0 if not yet synchronized
 				worldTime := int64(0)
-				if pe.worldManager != nil {
-					if age, ok := pe.worldManager.GetWorldAge(); ok {
+				if pe.world != nil {
+					if age, ok := pe.world.GetWorldAge(); ok {
 						worldTime = age
 					}
 				}
@@ -463,8 +460,8 @@ func (pe *PhysicsMovementExecutor) NotifyVehiclePose(entityID int32, poseName st
 	}
 
 	worldTime := int64(0)
-	if pe.worldManager != nil {
-		if age, ok := pe.worldManager.GetWorldAge(); ok {
+	if pe.world != nil {
+		if age, ok := pe.world.GetWorldAge(); ok {
 			worldTime = age
 		}
 	}

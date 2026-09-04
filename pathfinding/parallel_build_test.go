@@ -69,6 +69,44 @@ func (w *testMockWorld) GetWorldAge() (int64, bool) {
 	return 5000, true
 }
 
+// GetBlockStatus, GetEntitiesInRange, GetLightLevel, GetBiomeAt, and the
+// world-border/difficulty accessors below are stubbed to keep testMockWorld
+// satisfying models.World post-merge — real implementations deferred, see
+// docs/plans/WORLD_STRUCT_CONSOLIDATION.md.
+
+func (w *testMockWorld) GetBlockStatus(x, y, z int) (uint32, bool) {
+	return w.GetBlockAt(float64(x), float64(y), float64(z))
+}
+
+func (w *testMockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBounds {
+	return []models.EntityBounds{}
+}
+
+func (w *testMockWorld) GetLightLevel(x, y, z int) (skyLight, blockLight uint8, loaded bool) {
+	return 0, 0, false
+}
+
+func (w *testMockWorld) GetBiomeAt(x, y, z int) (biomeID uint32, loaded bool) {
+	return 0, false
+}
+
+func (w *testMockWorld) GetWorldBorder() (models.WorldBorder, bool) {
+	return models.WorldBorder{}, false
+}
+
+func (w *testMockWorld) SetWorldBorder(b models.WorldBorder)                    {}
+func (w *testMockWorld) SetWorldBorderCenter(x, z float64)                      {}
+func (w *testMockWorld) SetWorldBorderSize(diameter float64)                    {}
+func (w *testMockWorld) SetWorldBorderLerpSize(oldD, newD float64, speed int64) {}
+func (w *testMockWorld) SetWorldBorderWarningDelay(warningTimeTicks int32)      {}
+func (w *testMockWorld) SetWorldBorderWarningDistance(warningBlocks int32)      {}
+
+func (w *testMockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
+	return 0, false, false
+}
+
+func (w *testMockWorld) SetDifficulty(difficulty uint8, locked bool) {}
+
 // testMockShapeManager is a simple mock block shape manager
 type testMockShapeManager struct{}
 
@@ -187,7 +225,7 @@ func (m *testMockShapeManager) IsBlueIce(stateID uint32) bool {
 	return false
 }
 
-func (m *testMockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+func (m *testMockShapeManager) GetWaterFlowDirection(x, y, z int, world models.World) models.V3 {
 	return models.V3{} // No flow in mock world
 }
 

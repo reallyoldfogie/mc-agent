@@ -4,7 +4,7 @@ import "github.com/reallyoldfogie/mc-agent/models"
 
 // Interface aliases to models.
 type (
-	World              = models.PhysicsWorld
+	World              = models.World
 	BlockShapeProvider = models.BlockShapeManager
 	AABB               = models.AABB
 	MinMax             = models.MinMax

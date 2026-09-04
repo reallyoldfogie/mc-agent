@@ -37,6 +37,5 @@ type (
 	TeleportAccepter = models.TeleportAccepter
 	TrackedEntity    = models.TrackedEntity
 	// World            = models.World
-	WorldManager    = models.WorldManager
 	WorldOperations = models.WorldOperations
 )

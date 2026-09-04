@@ -10,6 +10,10 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
+// var _ models.World = (*Manager)(nil) confirms Manager satisfies the full
+// merged World interface — see docs/plans/WORLD_STRUCT_CONSOLIDATION.md.
+var _ models.World = (*Manager)(nil)
+
 // ChunkPos represents a chunk position in the world.
 type ChunkPos struct {
 	X, Z int32
@@ -59,6 +63,24 @@ type Manager struct {
 	// Updated from ClientboundUpdateTime packets.
 	// -1 indicates not yet initialized (no Update Time packet received).
 	timeOfDay int64
+
+	// entityProviderMu protects entityProvider
+	entityProviderMu sync.RWMutex
+	// entityProvider supplies entity snapshots for GetEntitiesInRange.
+	// nil until WithEntityProvider is called; GetEntitiesInRange returns an
+	// empty slice while nil.
+	entityProvider models.EntityProvider
+
+	// worldBorderMu protects worldBorder and hasWorldBorder
+	worldBorderMu  sync.RWMutex
+	worldBorder    models.WorldBorder
+	hasWorldBorder bool
+
+	// difficultyMu protects difficulty, difficultyLocked, and hasDifficulty
+	difficultyMu     sync.RWMutex
+	difficulty       uint8
+	difficultyLocked bool
+	hasDifficulty    bool
 }
 
 // NewManager creates a new world manager.
@@ -154,6 +176,96 @@ func (m *Manager) GetBlockAt(x, y, z float64) (uint32, bool) {
 	return chunk.GetBlockAt(relX, int(by), relZ), true
 }
 
+// GetBiomeAt returns the biome registry ID at the given block coordinates.
+// The second return value mirrors GetBlockAt's chunk-loaded semantics.
+func (m *Manager) GetBiomeAt(x, y, z int) (uint32, bool) {
+	chunkX := int32(x) >> 4
+	chunkZ := int32(z) >> 4
+	pos := ChunkPos{X: chunkX, Z: chunkZ}
+
+	m.mu.RLock()
+	chunk, exists := m.Columns[pos]
+	m.mu.RUnlock()
+
+	if !exists || chunk == nil {
+		return 0, false
+	}
+
+	relX := x & 15
+	relZ := z & 15
+
+	return chunk.GetBiomeAt(relX, y, relZ), true
+}
+
+// GetLightLevel returns sky/block light (0-15 each) at the given block
+// coordinates. loaded is false if no light data has been received for the
+// containing chunk section.
+func (m *Manager) GetLightLevel(x, y, z int) (sky, block uint8, loaded bool) {
+	chunkX := int32(x) >> 4
+	chunkZ := int32(z) >> 4
+	pos := ChunkPos{X: chunkX, Z: chunkZ}
+
+	m.mu.RLock()
+	chunk, exists := m.Columns[pos]
+	m.mu.RUnlock()
+
+	if !exists || chunk == nil {
+		return 0, 0, false
+	}
+
+	relX := x & 15
+	relZ := z & 15
+
+	return chunk.GetLightLevel(relX, y, relZ)
+}
+
+// HandleChunkLight stores light data for a chunk, parsed from either
+// ClientboundLevelChunkWithLight (chunk load) or the standalone
+// ClientboundUpdateLight packet. If the chunk hasn't been loaded yet (light
+// arrived before/without its chunk — not expected on the chunk-load path,
+// possible in principle for a standalone update), a placeholder ChunkData is
+// created to hold the light; a subsequent HandleChunkLoad for the same
+// position replaces it wholesale and any such light is lost. Not expected to
+// matter in practice: light updates for a chunk the client hasn't loaded are
+// not useful data (nothing renders/queries it), and this repo doesn't
+// currently do anything with light besides record it.
+func (m *Manager) HandleChunkLight(chunkX, chunkZ int32, light models.ChunkLightData) {
+	pos := ChunkPos{X: chunkX, Z: chunkZ}
+
+	m.mu.Lock()
+	chunk, exists := m.Columns[pos]
+	if !exists || chunk == nil {
+		chunk = &ChunkData{X: chunkX, Z: chunkZ}
+		m.Columns[pos] = chunk
+	}
+	m.mu.Unlock()
+
+	chunk.SetLightData(light.SkyLightMask, light.BlockLightMask, light.SkyLight, light.BlockLight)
+}
+
+// HandleChunkBiomesUpdate applies post-load biome changes from a
+// ClientboundChunkBiomes packet to already-loaded chunks. Updates for a
+// chunk that isn't currently loaded are silently dropped — there is no
+// section data to patch, and the chunk's eventual real load will carry
+// correct up-to-date biome data of its own.
+func (m *Manager) HandleChunkBiomesUpdate(updates []models.ChunkBiomeUpdate) {
+	for _, u := range updates {
+		pos := ChunkPos{X: u.ChunkX, Z: u.ChunkZ}
+		m.mu.RLock()
+		chunk, exists := m.Columns[pos]
+		m.mu.RUnlock()
+		if !exists || chunk == nil {
+			continue
+		}
+		if err := chunk.ApplyBiomeUpdate(u.Data, m.useCalculatedDataLen); err != nil {
+			// Non-fatal: subsequent block/biome queries just fall back to
+			// whichever biome data was already loaded for the affected
+			// sections.
+			continue
+		}
+	}
+}
+
 // GetWorldAge returns the current server world age in ticks and whether it's been initialized.
 // Returns (0, false) if no Update Time packet has been received yet.
 // Returns (worldAge, true) when the value is valid from the server.
@@ -186,6 +298,157 @@ func (m *Manager) SetWorldTime(worldAge, timeOfDay int64) {
 	defer m.worldTimeMu.Unlock()
 	m.worldAge = worldAge
 	m.timeOfDay = timeOfDay
+}
+
+// GetBlockStatus is GetBlockAt with integer coordinates.
+//
+// Deprecated: thin wrapper kept for existing int-coordinate callers — see
+// models.World.GetBlockStatus's doc comment. Prefer GetBlockAt in new code.
+func (m *Manager) GetBlockStatus(x, y, z int) (uint32, bool) {
+	return m.GetBlockAt(float64(x), float64(y), float64(z))
+}
+
+// WithEntityProvider configures the source GetEntitiesInRange queries for
+// entity snapshots. Returns m for chaining. Safe to call at any time; takes
+// effect for subsequent GetEntitiesInRange calls.
+func (m *Manager) WithEntityProvider(provider models.EntityProvider) *Manager {
+	m.entityProviderMu.Lock()
+	m.entityProvider = provider
+	m.entityProviderMu.Unlock()
+	return m
+}
+
+// GetEntitiesInRange returns all entities whose AABBs overlap with the query
+// box. Returns an empty slice if no EntityProvider has been configured.
+func (m *Manager) GetEntitiesInRange(queryBB models.AABB) []models.EntityBounds {
+	m.entityProviderMu.RLock()
+	provider := m.entityProvider
+	m.entityProviderMu.RUnlock()
+
+	if provider == nil {
+		return []models.EntityBounds{}
+	}
+
+	snapshots := provider.GetEntitiesSnapshot()
+	result := make([]models.EntityBounds, 0, len(snapshots))
+
+	for entityID, snapshot := range snapshots {
+		dimensions := models.EntityDimensionsFor(snapshot.EntityType)
+		entityBB := models.AABB{
+			X: models.MinMax{
+				Min: snapshot.Pos.X - dimensions.Width/2,
+				Max: snapshot.Pos.X + dimensions.Width/2,
+			},
+			Y: models.MinMax{
+				Min: snapshot.Pos.Y,
+				Max: snapshot.Pos.Y + dimensions.Height,
+			},
+			Z: models.MinMax{
+				Min: snapshot.Pos.Z - dimensions.Width/2,
+				Max: snapshot.Pos.Z + dimensions.Width/2,
+			},
+		}
+
+		// Check for AABB overlap (separate on each axis)
+		if queryBB.X.Min < entityBB.X.Max && queryBB.X.Max > entityBB.X.Min &&
+			queryBB.Y.Min < entityBB.Y.Max && queryBB.Y.Max > entityBB.Y.Min &&
+			queryBB.Z.Min < entityBB.Z.Max && queryBB.Z.Max > entityBB.Z.Min {
+			result = append(result, models.EntityBounds{
+				EntityID:  entityID,
+				AABB:      entityBB,
+				Velocity:  snapshot.Vel,
+				Standable: snapshot.IsStandableSurface,
+			})
+		}
+	}
+
+	return result
+}
+
+// GetWorldBorder returns the current world border state and whether a
+// ClientboundInitializeWorldBorder packet has been received yet.
+func (m *Manager) GetWorldBorder() (models.WorldBorder, bool) {
+	m.worldBorderMu.RLock()
+	defer m.worldBorderMu.RUnlock()
+	return m.worldBorder, m.hasWorldBorder
+}
+
+// SetWorldBorder replaces the full world border state. Called when a
+// ClientboundInitializeWorldBorder packet is received.
+func (m *Manager) SetWorldBorder(b models.WorldBorder) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder = b
+	m.hasWorldBorder = true
+}
+
+// SetWorldBorderCenter updates the border's center. Called when a
+// ClientboundSetBorderCenter packet is received.
+func (m *Manager) SetWorldBorderCenter(x, z float64) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder.CenterX = x
+	m.worldBorder.CenterZ = z
+	m.hasWorldBorder = true
+}
+
+// SetWorldBorderSize updates the border's diameter (no lerp in progress).
+// Called when a ClientboundSetBorderSize packet is received.
+func (m *Manager) SetWorldBorderSize(diameter float64) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder.OldDiameter = diameter
+	m.worldBorder.NewDiameter = diameter
+	m.worldBorder.SpeedTicks = 0
+	m.hasWorldBorder = true
+}
+
+// SetWorldBorderLerpSize starts (or updates) a border resize animation.
+// Called when a ClientboundSetBorderLerpSize packet is received.
+func (m *Manager) SetWorldBorderLerpSize(oldDiameter, newDiameter float64, speedTicks int64) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder.OldDiameter = oldDiameter
+	m.worldBorder.NewDiameter = newDiameter
+	m.worldBorder.SpeedTicks = speedTicks
+	m.hasWorldBorder = true
+}
+
+// SetWorldBorderWarningDelay updates the border's warning time in ticks.
+// Called when a ClientboundSetBorderWarningDelay packet is received.
+func (m *Manager) SetWorldBorderWarningDelay(warningTimeTicks int32) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder.WarningTimeTicks = warningTimeTicks
+	m.hasWorldBorder = true
+}
+
+// SetWorldBorderWarningDistance updates the border's warning distance in
+// blocks. Called when a ClientboundSetBorderWarningDistance packet is
+// received.
+func (m *Manager) SetWorldBorderWarningDistance(warningBlocks int32) {
+	m.worldBorderMu.Lock()
+	defer m.worldBorderMu.Unlock()
+	m.worldBorder.WarningBlocks = warningBlocks
+	m.hasWorldBorder = true
+}
+
+// GetDifficulty returns the current difficulty, whether it's locked, and
+// whether a ClientboundChangeDifficulty packet has been received yet.
+func (m *Manager) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
+	m.difficultyMu.RLock()
+	defer m.difficultyMu.RUnlock()
+	return m.difficulty, m.difficultyLocked, m.hasDifficulty
+}
+
+// SetDifficulty updates difficulty and lock state. Called when a
+// ClientboundChangeDifficulty packet is received.
+func (m *Manager) SetDifficulty(difficulty uint8, locked bool) {
+	m.difficultyMu.Lock()
+	defer m.difficultyMu.Unlock()
+	m.difficulty = difficulty
+	m.difficultyLocked = locked
+	m.hasDifficulty = true
 }
 
 // HandleChunkLoad processes a chunk data packet and stores the chunk.

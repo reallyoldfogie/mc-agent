@@ -2,19 +2,18 @@ package agent
 
 import (
 	"github.com/reallyoldfogie/mc-agent/models"
-	"github.com/reallyoldfogie/mc-agent/movement"
 )
 
-// Ensure agent implements movement.EntityProvider for dependency injection
-var _ movement.EntityProvider = (*agent)(nil)
+// Ensure agent implements models.EntityProvider for dependency injection
+var _ models.EntityProvider = (*agent)(nil)
 
 // GetEntitiesSnapshot returns a snapshot of all tracked entities for physics collision queries.
 // Returns position and velocity for each entity, excluding the agent itself and removed entities.
-func (a *agent) GetEntitiesSnapshot() map[int32]movement.EntitySnapshot {
+func (a *agent) GetEntitiesSnapshot() map[int32]models.EntitySnapshot {
 	a.entitiesMu.RLock()
 	defer a.entitiesMu.RUnlock()
 
-	out := make(map[int32]movement.EntitySnapshot, len(a.entities))
+	out := make(map[int32]models.EntitySnapshot, len(a.entities))
 	agentID := a.entID // Read under existing lock (could add RLock for entIDMu, but agent's lifecycle is stable)
 
 	for id, e := range a.entities {
@@ -33,7 +32,7 @@ func (a *agent) GetEntitiesSnapshot() map[int32]movement.EntitySnapshot {
 			entityType = models.EntityTypeUnknown
 		}
 
-		out[id] = movement.EntitySnapshot{
+		out[id] = models.EntitySnapshot{
 			Pos:                models.V3{X: e.X, Y: e.Y, Z: e.Z},
 			Vel:                models.V3{X: e.VelX, Y: e.VelY, Z: e.VelZ},
 			EntityType:         entityType,

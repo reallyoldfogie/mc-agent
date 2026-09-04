@@ -318,7 +318,7 @@ func (msm *MockShapeManager) GetBlockProperties(blockStateID uint32) map[string]
 }
 
 // GetWaterFlowDirection returns the flow direction (stub for mock - returns zero vector)
-func (msm *MockShapeManager) GetWaterFlowDirection(x, y, z int, world agentmodels.PhysicsWorld) agentmodels.V3 {
+func (msm *MockShapeManager) GetWaterFlowDirection(x, y, z int, world agentmodels.World) agentmodels.V3 {
 	return agentmodels.V3{} // No flow in mock
 }
 

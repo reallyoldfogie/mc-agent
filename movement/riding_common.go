@@ -462,7 +462,7 @@ func ridingHasGroundSupport(pe *PhysicsMovementExecutor, pos models.V3, entityWi
 // tryEntityStepUp attempts to step an entity up a small obstacle.
 // Uses a step height of 1.0 to handle 1-block obstacles (entities are taller than players).
 // Returns the stepped-up bounding box and velocity if step-up is possible.
-func tryEntityStepUp(pe *PhysicsMovementExecutor, entityBB physics.AABB, vel models.V3, entityWidth float64, w models.PhysicsWorld) (physics.AABB, models.V3) {
+func tryEntityStepUp(pe *PhysicsMovementExecutor, entityBB physics.AABB, vel models.V3, entityWidth float64, w models.World) (physics.AABB, models.V3) {
 	// Use 1.0 for entity step height (larger than player's 0.6) to properly climb 1-block obstacles
 	const entityStepHeight = 1.0
 

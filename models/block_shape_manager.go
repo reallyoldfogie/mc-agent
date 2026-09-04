@@ -60,7 +60,7 @@ type BlockShapeManager interface {
 	// GetWaterFlowDirection returns the direction water flows at the given block position.
 	// Returns a normalized V3 vector (0,0,0) if not flowing water.
 	// For flowing water (age 1-7), calculates flow direction toward lower age blocks.
-	GetWaterFlowDirection(x, y, z int, world PhysicsWorld) V3
+	GetWaterFlowDirection(x, y, z int, world World) V3
 
 	// GetWaterFlowSpeed returns the flow speed multiplier (0.0-1.0) based on water state.
 	// Water sources (age 0) return 0.0 (no flow).

@@ -41,13 +41,12 @@ type ExecutorConfig struct {
 	Ctx            context.Context
 
 	// Required only for PhysicsExecutor
-	World          physics.World
-	ShapeProvider  physics.BlockShapeProvider
-	WorldManager   models.World // For accessing world time and other state
+	World         physics.World
+	ShapeProvider physics.BlockShapeProvider
 }
 
 // NewExecutor creates a movement executor of the specified type.
-// For PhysicsExecutor, config.World, config.ShapeProvider, and config.WorldManager must be provided.
+// For PhysicsExecutor, config.World and config.ShapeProvider must be provided.
 func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecutor {
 	return NewPhysicsMovementExecutor(
 		config.Ctx,
@@ -58,6 +57,5 @@ func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecu
 		config.GetBotEntityID,
 		config.World,
 		config.ShapeProvider,
-		config.WorldManager,
 	)
 }

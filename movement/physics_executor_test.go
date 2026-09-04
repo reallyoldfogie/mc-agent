@@ -11,14 +11,19 @@ import (
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
 
-// MockWorld implements physics.World for testing
+// MockWorld implements models.World for testing.
 type MockWorld struct {
-	blocks map[[3]int]uint32
+	mu        sync.RWMutex
+	blocks    map[[3]int]uint32
+	worldAge  int64 // -1 = not initialized
+	timeOfDay int64 // -1 = not initialized
 }
 
 func NewMockWorld() *MockWorld {
 	return &MockWorld{
-		blocks: make(map[[3]int]uint32),
+		blocks:    make(map[[3]int]uint32),
+		worldAge:  -1,
+		timeOfDay: -1,
 	}
 }
 
@@ -35,48 +40,63 @@ func (mw *MockWorld) GetEntitiesInRange(bb physics.AABB) []models.EntityBounds {
 	return []models.EntityBounds{} // No entities in mock world
 }
 
-// MockWorldManager implements models.World for testing
-type MockWorldManager struct {
-	mu        sync.RWMutex
-	worldAge  int64 // -1 = not initialized
-	timeOfDay int64 // -1 = not initialized
-}
-
-func NewMockWorldManager() *MockWorldManager {
-	return &MockWorldManager{
-		worldAge:  -1,
-		timeOfDay: -1,
-	}
-}
-
-func (mwm *MockWorldManager) GetWorldAge() (int64, bool) {
-	mwm.mu.RLock()
-	defer mwm.mu.RUnlock()
-	if mwm.worldAge < 0 {
-		return 0, false
-	}
-	return mwm.worldAge, true
-}
-
-func (mwm *MockWorldManager) GetTimeOfDay() (int64, bool) {
-	mwm.mu.RLock()
-	defer mwm.mu.RUnlock()
-	if mwm.timeOfDay < 0 {
-		return 0, false
-	}
-	return mwm.timeOfDay, true
-}
-
-func (mwm *MockWorldManager) SetWorldTime(worldAge, timeOfDay int64) {
-	mwm.mu.Lock()
-	defer mwm.mu.Unlock()
-	mwm.worldAge = worldAge
-	mwm.timeOfDay = timeOfDay
-}
-
-func (mwm *MockWorldManager) GetBlockAt(x, y, z float64) (uint32, bool) {
+func (mw *MockWorld) GetBlockAt(x, y, z float64) (uint32, bool) {
 	return 0, true // Not used in physics executor tests
 }
+
+func (mw *MockWorld) GetWorldAge() (int64, bool) {
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
+	if mw.worldAge < 0 {
+		return 0, false
+	}
+	return mw.worldAge, true
+}
+
+func (mw *MockWorld) GetTimeOfDay() (int64, bool) {
+	mw.mu.RLock()
+	defer mw.mu.RUnlock()
+	if mw.timeOfDay < 0 {
+		return 0, false
+	}
+	return mw.timeOfDay, true
+}
+
+func (mw *MockWorld) SetWorldTime(worldAge, timeOfDay int64) {
+	mw.mu.Lock()
+	defer mw.mu.Unlock()
+	mw.worldAge = worldAge
+	mw.timeOfDay = timeOfDay
+}
+
+// GetLightLevel, GetBiomeAt, and the world-border/difficulty accessors below
+// are stubbed to keep MockWorld satisfying models.World post-merge — real
+// implementations deferred, see docs/plans/WORLD_STRUCT_CONSOLIDATION.md.
+
+func (mw *MockWorld) GetLightLevel(x, y, z int) (skyLight, blockLight uint8, loaded bool) {
+	return 0, 0, false
+}
+
+func (mw *MockWorld) GetBiomeAt(x, y, z int) (biomeID uint32, loaded bool) {
+	return 0, false
+}
+
+func (mw *MockWorld) GetWorldBorder() (models.WorldBorder, bool) {
+	return models.WorldBorder{}, false
+}
+
+func (mw *MockWorld) SetWorldBorder(b models.WorldBorder)                    {}
+func (mw *MockWorld) SetWorldBorderCenter(x, z float64)                      {}
+func (mw *MockWorld) SetWorldBorderSize(diameter float64)                    {}
+func (mw *MockWorld) SetWorldBorderLerpSize(oldD, newD float64, speed int64) {}
+func (mw *MockWorld) SetWorldBorderWarningDelay(warningTimeTicks int32)      {}
+func (mw *MockWorld) SetWorldBorderWarningDistance(warningBlocks int32)      {}
+
+func (mw *MockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
+	return 0, false, false
+}
+
+func (mw *MockWorld) SetDifficulty(difficulty uint8, locked bool) {}
 
 // MockShapeProvider implements physics.BlockShapeProvider for testing
 type MockShapeProvider struct{}
@@ -207,7 +227,7 @@ func (msp *MockShapeProvider) GetWaterFlowSpeed(blockStateID uint32) float64 {
 	return 0.0 // No water in mock
 }
 
-func (msp *MockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+func (msp *MockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.World) models.V3 {
 	return models.V3{} // No water flow in mock
 }
 
@@ -240,7 +260,6 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 
 	world := NewMockWorld()
 	shapeProvider := &MockShapeProvider{}
-	worldManager := NewMockWorldManager()
 
 	// Build a solid world floor at Y=63 (bot starts at Y=64, standing on Y=63 ground)
 	// Also add blocks below to prevent falling through
@@ -261,7 +280,6 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 		getBotEntityID,
 		world,
 		shapeProvider,
-		worldManager,
 	)
 }
 

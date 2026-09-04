@@ -32,7 +32,6 @@ import (
 	"github.com/reallyoldfogie/mc-bot-go/bot/basic"
 	"github.com/reallyoldfogie/mc-bot-go/bot/playerlist"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
-	"github.com/reallyoldfogie/mc-bot-go/bot/world"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
 
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
@@ -577,32 +576,26 @@ func (a *agent) Init(ctx context.Context) error {
 			}
 		}
 
-		// Create World Manager (for chunk management)
-		if a.versionHandler != nil {
-			// Use mc-agent world with version handler for packet parsing
-			a.mcAgentWorld = mcworld.NewManager(a.versionHandler, mcworld.EventsListener{
-				LoadChunk: func(pos mcworld.ChunkPos) error {
-					return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
-				},
-				UnloadChunk: func(pos mcworld.ChunkPos) error {
-					return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
-				},
-			})
-			a.worldMgr = a.mcAgentWorld // mc-agent world implements models.World
-			a.logf("[Agent %s] Using mc-agent world with version handler for %s", a.cfg.Name, a.versionHandler.Version())
-		} else {
-			// Fall back to mc-bot-go world (constructor requires concrete Player)
-			worldInterface := world.NewWorld(botClient, playerConcrete, world.EventsListener{
-				LoadChunk: func(pos world.ChunkPos) error {
-					return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
-				},
-				UnloadChunk: func(pos world.ChunkPos) error {
-					return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
-				},
-			}, a.packetMgr)
-			a.worldMgr = worldInterface
-			a.logf("[Agent %s] Using mc-bot-go world (no version handler)", a.cfg.Name)
-		}
+		// Create World Manager (for chunk management). mc-agent's own world.Manager
+		// is the sole implementation now (see docs/plans/WORLD_STRUCT_CONSOLIDATION.md):
+		// it's a complete, version-aware reimplementation that already supersedes
+		// mc-bot-go/bot/world's generic (non-version-aware) chunk parsing, and
+		// NewManager already tolerates a nil versionHandler. Note: worldPacketHandlers()
+		// still requires a real versionHandler to register any chunk/block/time
+		// packet handlers at all, so a Client supplied without a VersionHandler
+		// (the resolveVersionAndManagers escape hatch for tests using mock clients)
+		// now yields a world manager that never receives chunk data — accepted,
+		// since nothing in the current codebase exercises that combination.
+		a.mcAgentWorld = mcworld.NewManager(a.versionHandler, mcworld.EventsListener{
+			LoadChunk: func(pos mcworld.ChunkPos) error {
+				return a.HandleChunkLoad(models.ChunkPos{X: pos.X, Z: pos.Z})
+			},
+			UnloadChunk: func(pos mcworld.ChunkPos) error {
+				return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
+			},
+		})
+		a.worldMgr = a.mcAgentWorld
+		a.logf("[Agent %s] Using mc-agent world manager (versionHandler=%v)", a.cfg.Name, a.versionHandler != nil)
 
 		// Create Screen Manager (for inventory/containers)
 		a.screenMgr = screen.NewManager(botClient, containerEvents{agent: a}, a.packetMgr)
@@ -708,7 +701,6 @@ func (a *agent) Init(ctx context.Context) error {
 			SetBotPos:      a.UpdatePosition,
 			GetBotEntityID: a.GetEntityID,
 			Ctx:            a.ctx,
-			WorldManager:   a.worldMgr,
 		}
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
@@ -723,10 +715,8 @@ func (a *agent) Init(ctx context.Context) error {
 			executorType = movement.UnknownExecutor
 		} else {
 			// Physics executor can be used
-			// Create physics world adapter with entity collision support
-			physicsWorldAdapter := movement.NewPhysicsWorldAdapter(a.worldMgr)
-			physicsWorldAdapter.WithEntityProvider(a) // Agent implements EntityProvider
-			execConfig.World = physicsWorldAdapter
+			a.mcAgentWorld.WithEntityProvider(a) // Agent implements models.EntityProvider
+			execConfig.World = a.mcAgentWorld
 			execConfig.ShapeProvider = shapeMgr
 		}
 

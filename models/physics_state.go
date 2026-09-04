@@ -66,18 +66,18 @@ type PhysicsState interface {
 	// access of its own.
 	SetNoClip(noClip bool)
 	GetVelocity() V3
-	Tick(input Inputs, w PhysicsWorld) error
-	PredictMovement(inputs []Inputs, maxTicks int, w PhysicsWorld) []PhysicsState
-	PredictPosition(vel V3, ticks int, w PhysicsWorld) V3
-	WillCollide(targetPos V3, w PhysicsWorld) bool
-	HasGroundSupportAt(pos V3, w PhysicsWorld) bool
+	Tick(input Inputs, w World) error
+	PredictMovement(inputs []Inputs, maxTicks int, w World) []PhysicsState
+	PredictPosition(vel V3, ticks int, w World) V3
+	WillCollide(targetPos V3, w World) bool
+	HasGroundSupportAt(pos V3, w World) bool
 	IsLookingAtTarget(targetYaw, targetPitch float64) bool
-	GetSurroundingBoxes(queryBB AABB, w PhysicsWorld) []AABB
+	GetSurroundingBoxes(queryBB AABB, w World) []AABB
 
 	// ResolveCollision performs collision detection and resolution for an arbitrary
 	// AABB moving with the given velocity through the world. Returns the corrected
 	// AABB, corrected velocity, and whether horizontal/vertical collisions occurred.
 	// This is used by riding handlers to apply collision detection for ridden entities
 	// whose dimensions differ from the player's (e.g., strider 0.9×1.7, horse 1.4×1.6).
-	ResolveCollision(entityBB AABB, vel V3, w PhysicsWorld) (AABB, V3, bool, bool)
+	ResolveCollision(entityBB AABB, vel V3, w World) (AABB, V3, bool, bool)
 }

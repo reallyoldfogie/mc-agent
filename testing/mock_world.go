@@ -3,6 +3,8 @@ package testing
 import (
 	"log"
 	"sync"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // MockWorld implements a synthetic world for testing pathfinding and movement
@@ -128,3 +130,42 @@ func (mw *MockWorld) SetWorldTime(worldAge, timeOfDay int64) {
 	mw.worldAge = worldAge
 	mw.timeOfDay = timeOfDay
 }
+
+// GetBlockStatus is GetBlockAt with integer coordinates.
+func (mw *MockWorld) GetBlockStatus(x, y, z int) (uint32, bool) {
+	return mw.GetBlockAt(float64(x), float64(y), float64(z))
+}
+
+// GetEntitiesInRange, GetLightLevel, GetBiomeAt, and the world-border/
+// difficulty accessors below are stubbed to keep MockWorld satisfying
+// models.World post-merge — real implementations deferred, see
+// docs/plans/WORLD_STRUCT_CONSOLIDATION.md.
+
+func (mw *MockWorld) GetEntitiesInRange(queryBB models.AABB) []models.EntityBounds {
+	return []models.EntityBounds{}
+}
+
+func (mw *MockWorld) GetLightLevel(x, y, z int) (skyLight, blockLight uint8, loaded bool) {
+	return 0, 0, false
+}
+
+func (mw *MockWorld) GetBiomeAt(x, y, z int) (biomeID uint32, loaded bool) {
+	return 0, false
+}
+
+func (mw *MockWorld) GetWorldBorder() (models.WorldBorder, bool) {
+	return models.WorldBorder{}, false
+}
+
+func (mw *MockWorld) SetWorldBorder(b models.WorldBorder)                    {}
+func (mw *MockWorld) SetWorldBorderCenter(x, z float64)                      {}
+func (mw *MockWorld) SetWorldBorderSize(diameter float64)                    {}
+func (mw *MockWorld) SetWorldBorderLerpSize(oldD, newD float64, speed int64) {}
+func (mw *MockWorld) SetWorldBorderWarningDelay(warningTimeTicks int32)      {}
+func (mw *MockWorld) SetWorldBorderWarningDistance(warningBlocks int32)      {}
+
+func (mw *MockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
+	return 0, false, false
+}
+
+func (mw *MockWorld) SetDifficulty(difficulty uint8, locked bool) {}

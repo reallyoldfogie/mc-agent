@@ -44,6 +44,120 @@ type ChunkData struct {
 	// Cached decoded sections (lazy populated on first access)
 	sections     [SECTION_COUNT]*Section
 	sectionsLock sync.RWMutex
+
+	// Light data, keyed by light-section slot index — see lightSlotForY's
+	// doc comment for the slot<->world-Y mapping. Populated from
+	// ClientboundLevelChunkWithLight (chunk load) and the standalone
+	// ClientboundUpdateLight packet (SetLight is called for either). Absent
+	// from RawData/the block-section palette containers entirely — light is
+	// carried as separate fields on those packets, not part of the chunk
+	// section byte stream this file otherwise parses.
+	lightMu    sync.RWMutex
+	skyLight   map[int][]byte // slot -> 2048-byte nibble-packed array (4 bits/value)
+	blockLight map[int][]byte
+}
+
+// LIGHT_SECTION_COUNT is the number of light sections per chunk column: one
+// per block section (SECTION_COUNT), plus one extra below the lowest block
+// section and one extra above the highest — vanilla sends light for the
+// "cap" sections immediately outside the block range too, since light
+// propagates from/through them. Slot 0 is the below-bottom cap, slot
+// LIGHT_SECTION_COUNT-1 is the above-top cap.
+//
+// This range (SECTION_COUNT+2, i.e. one cap section on each side) is the
+// standard convention documented for LevelChunkWithLight/UpdateLight's
+// light masks; verify against a live capture during implementation review
+// if light values look off by one section (16 blocks) at column edges.
+const LIGHT_SECTION_COUNT = SECTION_COUNT + 2
+
+// lightSlotForY maps a world Y coordinate to its light-section slot index.
+func lightSlotForY(y int) int {
+	sectionIdx := y >> 4
+	return sectionIdx - (MIN_SECTION_Y - 1)
+}
+
+// SetLightData stores light data parsed from a ClientboundLevelChunkWithLight
+// or ClientboundUpdateLight packet, replacing any light this chunk already
+// had for the mask-indicated slots. Slots whose mask bit is unset (no light
+// data sent for that section) are left untouched — vanilla only resends
+// light for sections that actually changed since the previous update.
+// skyMask/blockMask are the section-presence
+// bitsets (as packed longs, LSB = lowest light slot); skyArrays/blockArrays
+// are the corresponding 2048-byte nibble-packed arrays, one per set bit, in
+// ascending slot order.
+func (c *ChunkData) SetLightData(skyMask, blockMask []int64, skyArrays, blockArrays [][]byte) {
+	c.lightMu.Lock()
+	defer c.lightMu.Unlock()
+	if c.skyLight == nil {
+		c.skyLight = make(map[int][]byte)
+	}
+	if c.blockLight == nil {
+		c.blockLight = make(map[int][]byte)
+	}
+	applyLightMask(skyMask, skyArrays, c.skyLight)
+	applyLightMask(blockMask, blockArrays, c.blockLight)
+}
+
+// applyLightMask walks a section-presence bitset (packed longs, LSB-first)
+// and assigns each set bit's next array from arrays, in order, into dst
+// keyed by slot index.
+func applyLightMask(mask []int64, arrays [][]byte, dst map[int][]byte) {
+	arrIdx := 0
+	slot := 0
+	for _, word := range mask {
+		for bit := 0; bit < 64; bit++ {
+			if word&(int64(1)<<uint(bit)) != 0 {
+				if arrIdx < len(arrays) {
+					dst[slot] = arrays[arrIdx]
+					arrIdx++
+				}
+			}
+			slot++
+		}
+	}
+}
+
+// GetLightLevel returns sky/block light (0-15 each) at the given
+// chunk-relative coordinates. x and z should be 0-15, y is the world Y
+// coordinate. ok is false if no light data has been received for the
+// containing section.
+func (c *ChunkData) GetLightLevel(x, y, z int) (sky, block uint8, ok bool) {
+	slot := lightSlotForY(y)
+	if slot < 0 || slot >= LIGHT_SECTION_COUNT {
+		return 0, 0, false
+	}
+
+	localY := y & 15
+	blockIdx := localY*SECTION_WIDTH*SECTION_WIDTH + z*SECTION_WIDTH + x
+
+	c.lightMu.RLock()
+	defer c.lightMu.RUnlock()
+
+	skyArr, skyOK := c.skyLight[slot]
+	blockArr, blockOK := c.blockLight[slot]
+	if !skyOK && !blockOK {
+		return 0, 0, false
+	}
+	if skyOK {
+		sky = readNibble(skyArr, blockIdx)
+	}
+	if blockOK {
+		block = readNibble(blockArr, blockIdx)
+	}
+	return sky, block, true
+}
+
+// readNibble unpacks the 4-bit value at idx from a nibble-packed byte array
+// (2 values per byte: idx's low nibble if idx is even, high nibble if odd).
+func readNibble(data []byte, idx int) uint8 {
+	byteIdx := idx / 2
+	if byteIdx < 0 || byteIdx >= len(data) {
+		return 0
+	}
+	if idx%2 == 0 {
+		return data[byteIdx] & 0x0F
+	}
+	return (data[byteIdx] >> 4) & 0x0F
 }
 
 // Direct-palette bit thresholds, cited from PaletteProvider.forBlockStates /
@@ -78,6 +192,14 @@ type Section struct {
 	Palette      []uint32 // Block state IDs (empty if BitsPerEntry == 0)
 	SingleValue  uint32   // Single state ID if BitsPerEntry == 0
 	DataArray    []uint64 // Packed block indices (empty if BitsPerEntry == 0)
+
+	// Biome palette container, same shape as the block fields above but at
+	// 4x4x4 granularity (BIOME_SECTION_SIZE = 64 entries per section).
+	BiomeBitsPerEntry uint8
+	BiomeIsDirect     bool
+	BiomePalette      []uint32
+	BiomeSingleValue  uint32
+	BiomeDataArray    []uint64
 }
 
 // GetBlockAt returns the block state ID at the given chunk-relative coordinates.
@@ -103,6 +225,56 @@ func (c *ChunkData) GetBlockAt(x, y, z int) uint32 {
 	blockIdx := localY*SECTION_WIDTH*SECTION_WIDTH + z*SECTION_WIDTH + x
 
 	return section.getBlockAt(blockIdx)
+}
+
+// ApplyBiomeUpdate re-parses a ClientboundChunkBiomes update's raw data (one
+// biome-only palette container per section, concatenated in section order
+// with no block data interleaved — the "data" field of one
+// ChunkBiomeUpdate) and swaps the biome fields into each of this chunk's
+// sections, forcing lazy-loading of any section not already loaded.
+func (c *ChunkData) ApplyBiomeUpdate(data []byte, useCalculatedLen bool) error {
+	r := bytes.NewReader(data)
+	for i := 0; i < SECTION_COUNT; i++ {
+		biomes, err := parsePaletteContainer(r, BIOME_SECTION_SIZE, useCalculatedLen)
+		if err != nil {
+			return err
+		}
+		section := c.getOrLoadSection(i)
+		if section == nil {
+			continue
+		}
+		c.sectionsLock.Lock()
+		section.BiomeBitsPerEntry = biomes.bitsPerEntry
+		section.BiomeIsDirect = biomes.isDirect
+		section.BiomePalette = biomes.palette
+		section.BiomeSingleValue = biomes.singleValue
+		section.BiomeDataArray = biomes.dataArray
+		c.sectionsLock.Unlock()
+	}
+	return nil
+}
+
+// GetBiomeAt returns the biome registry ID at the given chunk-relative
+// coordinates. x and z should be 0-15, y is the world Y coordinate. Biomes
+// are stored at 4x4x4 granularity, so this covers a 4x4x4 region of blocks
+// per distinct returned value.
+func (c *ChunkData) GetBiomeAt(x, y, z int) uint32 {
+	sectionIdx := y >> 4
+	sectionSlotIdx := sectionIdx - MIN_SECTION_Y
+
+	if sectionSlotIdx < 0 || sectionSlotIdx >= SECTION_COUNT {
+		return 0
+	}
+
+	section := c.getOrLoadSection(sectionSlotIdx)
+	if section == nil {
+		return 0
+	}
+
+	localY := (y & 15) / 4
+	biomeIdx := localY*4*4 + (z/4)*4 + (x / 4)
+
+	return section.getBiomeAt(biomeIdx)
 }
 
 func (c *ChunkData) getOrLoadSection(sectionSlotIdx int) *Section {
@@ -186,21 +358,49 @@ func (s *Section) getBlockAt(blockIdx int) uint32 {
 }
 
 func (s *Section) getPaletteIndex(blockIdx int) uint32 {
-	if s.BitsPerEntry == 0 {
+	return getPackedIndex(blockIdx, s.BitsPerEntry, s.DataArray)
+}
+
+// getBiomeAt returns the biome registry ID at the given biome-grid index
+// (0-63, 4x4x4 granularity — see ChunkData.GetBiomeAt for coordinate mapping).
+func (s *Section) getBiomeAt(biomeIdx int) uint32 {
+	if biomeIdx < 0 || biomeIdx >= BIOME_SECTION_SIZE {
 		return 0
 	}
 
-	bitsPerEntry := int(s.BitsPerEntry)
-	entriesPerLong := 64 / bitsPerEntry
-	longIdx := blockIdx / entriesPerLong
-	bitOffset := (blockIdx % entriesPerLong) * bitsPerEntry
+	if s.BiomeBitsPerEntry == 0 {
+		return s.BiomeSingleValue
+	}
 
-	if longIdx >= len(s.DataArray) {
+	if s.BiomeIsDirect {
+		return getPackedIndex(biomeIdx, s.BiomeBitsPerEntry, s.BiomeDataArray)
+	}
+
+	paletteIdx := getPackedIndex(biomeIdx, s.BiomeBitsPerEntry, s.BiomeDataArray)
+	if int(paletteIdx) >= len(s.BiomePalette) {
+		return 0
+	}
+	return s.BiomePalette[paletteIdx]
+}
+
+// getPackedIndex unpacks the entry at idx from a bits-per-entry-packed
+// []uint64 array, shared by both the block and biome palette containers.
+func getPackedIndex(idx int, bitsPerEntry uint8, dataArray []uint64) uint32 {
+	if bitsPerEntry == 0 {
 		return 0
 	}
 
-	mask := uint64((1 << bitsPerEntry) - 1)
-	return uint32((s.DataArray[longIdx] >> bitOffset) & mask)
+	bits := int(bitsPerEntry)
+	entriesPerLong := 64 / bits
+	longIdx := idx / entriesPerLong
+	bitOffset := (idx % entriesPerLong) * bits
+
+	if longIdx >= len(dataArray) {
+		return 0
+	}
+
+	mask := uint64((1 << bits) - 1)
+	return uint32((dataArray[longIdx] >> bitOffset) & mask)
 }
 
 // skipSection skips over a section in the reader.
@@ -248,64 +448,88 @@ func parseSection(r *bytes.Reader, useCalculatedLen bool, hasFluidCount bool) (*
 	}
 
 	// Parse block states palette container
-	if err := parsePaletteContainer(r, section, BLOCK_SECTION_SIZE, useCalculatedLen); err != nil {
+	blocks, err := parsePaletteContainer(r, BLOCK_SECTION_SIZE, useCalculatedLen)
+	if err != nil {
 		return nil, err
 	}
+	section.BitsPerEntry = blocks.bitsPerEntry
+	section.IsDirect = blocks.isDirect
+	section.Palette = blocks.palette
+	section.SingleValue = blocks.singleValue
+	section.DataArray = blocks.dataArray
 
-	// Skip biome container (we don't need it for block lookups)
-	if err := skipPaletteContainer(r, BIOME_SECTION_SIZE, useCalculatedLen); err != nil {
+	// Parse biome palette container (4x4x4 granularity, BIOME_SECTION_SIZE entries)
+	biomes, err := parsePaletteContainer(r, BIOME_SECTION_SIZE, useCalculatedLen)
+	if err != nil {
 		return nil, err
 	}
+	section.BiomeBitsPerEntry = biomes.bitsPerEntry
+	section.BiomeIsDirect = biomes.isDirect
+	section.BiomePalette = biomes.palette
+	section.BiomeSingleValue = biomes.singleValue
+	section.BiomeDataArray = biomes.dataArray
 
 	return section, nil
+}
+
+// paletteData holds a parsed palette container's fields (block or biome —
+// the wire shape is identical, just at different sectionSize granularity).
+type paletteData struct {
+	bitsPerEntry uint8
+	isDirect     bool
+	palette      []uint32
+	singleValue  uint32
+	dataArray    []uint64
 }
 
 // parsePaletteContainer parses a palette container (blocks or biomes).
 // sectionSize: BLOCK_SECTION_SIZE (4096) or BIOME_SECTION_SIZE (64)
 // useCalculatedLen: if true, calculate data array length (1.21.5+); if false, read as VarInt (pre-1.21.5)
-func parsePaletteContainer(r *bytes.Reader, section *Section, sectionSize int, useCalculatedLen bool) error {
+func parsePaletteContainer(r *bytes.Reader, sectionSize int, useCalculatedLen bool) (*paletteData, error) {
+	pd := &paletteData{}
+
 	// Read bits per entry
 	bpe, err := r.ReadByte()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	section.BitsPerEntry = bpe
+	pd.bitsPerEntry = bpe
 
 	if bpe == 0 {
 		// Single-valued palette
 		value, err := readVarInt(r)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		section.SingleValue = uint32(value)
+		pd.singleValue = uint32(value)
 		// In pre-1.21.5, there's a data array length VarInt (should be 0)
 		// In 1.21.5+, there's no data array length field
 		if !useCalculatedLen {
 			_, err = readVarInt(r)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
-		return nil
+		return pd, nil
 	}
 
 	// Direct (global-ID) container: no palette array on the wire at all.
 	if isDirectPalette(bpe, sectionSize) {
-		section.IsDirect = true
+		pd.isDirect = true
 	} else {
 		// Indirect: palette-based
 		paletteLen, err := readVarInt(r)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		section.Palette = make([]uint32, paletteLen)
+		pd.palette = make([]uint32, paletteLen)
 		for i := 0; i < int(paletteLen); i++ {
 			val, err := readVarInt(r)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			section.Palette[i] = uint32(val)
+			pd.palette[i] = uint32(val)
 		}
 	}
 
@@ -320,19 +544,19 @@ func parsePaletteContainer(r *bytes.Reader, section *Section, sectionSize int, u
 		// Pre-1.21.5: Read as VarInt
 		dataLenVar, err := readVarInt(r)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		dataLen = int(dataLenVar)
 	}
 
-	section.DataArray = make([]uint64, dataLen)
+	pd.dataArray = make([]uint64, dataLen)
 	for i := 0; i < dataLen; i++ {
-		if err := binary.Read(r, binary.BigEndian, &section.DataArray[i]); err != nil {
-			return err
+		if err := binary.Read(r, binary.BigEndian, &pd.dataArray[i]); err != nil {
+			return nil, err
 		}
 	}
 
-	return nil
+	return pd, nil
 }
 
 // skipPaletteContainer skips over a palette container in the reader.

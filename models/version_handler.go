@@ -500,10 +500,69 @@ type WorldHandler interface {
 	// harmless no-op, matching that version's own client, which applies it
 	// unconditionally).
 	ParseExplosion(p pk.Packet) (hasKnockback bool, knockbackX, knockbackY, knockbackZ float64, err error)
+
+	// ParseDifficulty parses the ClientboundChangeDifficulty packet.
+	ParseDifficulty(p pk.Packet) (difficulty uint8, locked bool, err error)
+
+	// ParseInitializeWorldBorder parses the ClientboundInitializeWorldBorder packet.
+	ParseInitializeWorldBorder(p pk.Packet) (b WorldBorder, err error)
+
+	// ParseWorldBorderCenter parses the ClientboundWorldBorderCenter packet.
+	ParseWorldBorderCenter(p pk.Packet) (x, z float64, err error)
+
+	// ParseWorldBorderSize parses the ClientboundWorldBorderSize packet.
+	ParseWorldBorderSize(p pk.Packet) (diameter float64, err error)
+
+	// ParseWorldBorderLerpSize parses the ClientboundWorldBorderLerpSize packet.
+	ParseWorldBorderLerpSize(p pk.Packet) (oldDiameter, newDiameter float64, speedTicks int64, err error)
+
+	// ParseWorldBorderWarningDelay parses the ClientboundWorldBorderWarningDelay packet.
+	ParseWorldBorderWarningDelay(p pk.Packet) (warningTimeTicks int32, err error)
+
+	// ParseWorldBorderWarningDistance parses the ClientboundWorldBorderWarningReach packet.
+	ParseWorldBorderWarningDistance(p pk.Packet) (warningBlocks int32, err error)
+
+	// ParseChunkBiomes parses the ClientboundChunkBiomes packet — post-load
+	// biome changes for one or more already-loaded chunks.
+	ParseChunkBiomes(p pk.Packet) (updates []ChunkBiomeUpdate, err error)
+
+	// ParseChunkLight parses the light payload (sky/block light masks and
+	// packed nibble arrays) embedded in a ClientboundLevelChunkWithLight
+	// packet — the same packet ParseChunkData reads, re-scanned rather than
+	// extending ParseChunkData's signature so the common no-light-needed
+	// caller path is unaffected.
+	ParseChunkLight(p pk.Packet) (light ChunkLightData, err error)
+
+	// ParseLightUpdate parses the standalone ClientboundUpdateLight packet
+	// (light changes independent of chunk load, e.g. sky light recalculation
+	// as time of day changes).
+	ParseLightUpdate(p pk.Packet) (chunkX, chunkZ int32, light ChunkLightData, err error)
 }
 
 // BlockUpdate represents a single block update within a section.
 type BlockUpdate struct {
 	X, Y, Z      int64
 	BlockStateID int32
+}
+
+// ChunkBiomeUpdate is one chunk's worth of post-load biome data from a
+// ClientboundChunkBiomes packet — Data is the raw per-section biome palette
+// container bytes (same wire shape as the biome half of a MapChunk section,
+// concatenated across all SECTION_COUNT sections with no block data
+// interleaved).
+type ChunkBiomeUpdate struct {
+	ChunkX, ChunkZ int32
+	Data           []byte
+}
+
+// ChunkLightData bundles the sky/block light masks and packed nibble arrays
+// carried by ClientboundLevelChunkWithLight and the standalone
+// ClientboundUpdateLight packet. Masks are section-presence bitsets (as
+// packed longs, LSB = lowest light section); SkyLight/BlockLight hold one
+// 2048-byte nibble-packed (4 bits/value, 2 values/byte) array per section
+// that has a set bit in the corresponding mask, in ascending section order.
+type ChunkLightData struct {
+	SkyLightMask, BlockLightMask           []int64
+	EmptySkyLightMask, EmptyBlockLightMask []int64
+	SkyLight, BlockLight                   [][]byte
 }

@@ -446,7 +446,7 @@ func (bsm *blockShapeManager) GetWaterFlowSpeed(blockStateID uint32) float64 {
 // GetWaterFlowDirection determines the direction water flows at a given position.
 // Returns normalized V3 vector (0,0,0) if not flowing water.
 // For flowing water, calculates direction toward neighboring blocks with lower age.
-func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.PhysicsWorld) models.V3 {
+func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.World) models.V3 {
 	if world == nil {
 		return models.V3{} // No direction
 	}

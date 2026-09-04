@@ -2404,7 +2404,15 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 					return nil // Don't fail on parse errors
 				}
 				a.logf("[Agent %s] Loaded chunk at (%d, %d), data size: %d", a.cfg.Name, chunkX, chunkZ, len(data))
-				return a.mcAgentWorld.HandleChunkLoad(chunkX, chunkZ, data)
+				if err := a.mcAgentWorld.HandleChunkLoad(chunkX, chunkZ, data); err != nil {
+					return err
+				}
+				if light, lerr := worldHandler.ParseChunkLight(p); lerr != nil {
+					a.logf("[Agent %s] Warning: failed to parse chunk light: %v", a.cfg.Name, lerr)
+				} else {
+					a.mcAgentWorld.HandleChunkLight(chunkX, chunkZ, light)
+				}
+				return nil
 			},
 		},
 		{
@@ -2465,6 +2473,123 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 				if int(a.chunkBatchCount)%10 == 0 || int(a.chunkBatchCount) <= 3 {
 					a.logf("[Agent %s] Acknowledged %d chunk batches", a.cfg.Name, int(a.chunkBatchCount))
 				}
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundDifficulty"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				difficulty, locked, err := worldHandler.ParseDifficulty(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse difficulty: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetDifficulty(difficulty, locked)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundInitializeWorldBorder"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				b, err := worldHandler.ParseInitializeWorldBorder(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse initialize world border: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorder(b)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundWorldBorderCenter"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				x, z, err := worldHandler.ParseWorldBorderCenter(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse world border center: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorderCenter(x, z)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundWorldBorderSize"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				diameter, err := worldHandler.ParseWorldBorderSize(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse world border size: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorderSize(diameter)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundWorldBorderLerpSize"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				oldD, newD, speed, err := worldHandler.ParseWorldBorderLerpSize(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse world border lerp size: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorderLerpSize(oldD, newD, speed)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundWorldBorderWarningDelay"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				warningTimeTicks, err := worldHandler.ParseWorldBorderWarningDelay(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse world border warning delay: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorderWarningDelay(warningTimeTicks)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundWorldBorderWarningReach"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				warningBlocks, err := worldHandler.ParseWorldBorderWarningDistance(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse world border warning distance: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.SetWorldBorderWarningDistance(warningBlocks)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundChunkBiomes"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				updates, err := worldHandler.ParseChunkBiomes(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse chunk biomes: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.HandleChunkBiomesUpdate(updates)
+				return nil
+			},
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundUpdateLight"),
+			Priority: 50,
+			F: func(p pk.Packet) error {
+				chunkX, chunkZ, light, err := worldHandler.ParseLightUpdate(p)
+				if err != nil {
+					a.logf("[Agent %s] Warning: failed to parse light update: %v", a.cfg.Name, err)
+					return nil
+				}
+				a.mcAgentWorld.HandleChunkLight(chunkX, chunkZ, light)
 				return nil
 			},
 		},
