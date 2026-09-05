@@ -2,16 +2,27 @@
 package v1_21_2
 
 import (
+	"fmt"
+	"io"
 	"log"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.2/basetypes"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.2/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.2/play/serverbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
+
+// componentTypeNameToID/componentTypeIDToName translate between 1.21.2's own
+// real protocol numeric component-type IDs (basetypes.SlotComponentTypeMappings)
+// and mc-bot-go's screen.SlotComponent.Type numeric ID space -- built once
+// from this version's own mapping, not a shared pre/post-1.21.5 bucket (see
+// docs/plans/SLOT_CODEC_IMPLEMENTATION_PLAN.md Phase 2).
+var componentTypeNameToID, componentTypeIDToName = common.BuildSlotComponentTypeMaps(basetypes.SlotComponentTypeMappings)
 
 // containerHandler implements common.ContainerHandler for 1.21.2.
 type containerHandler struct {
@@ -208,6 +219,141 @@ func (c *containerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 
 	// In 1.21.2, Slot is pk.Byte (int8)
 	return int16(pkt.Slot), nil
+}
+
+// DecodeSlot reads one full (non-hashed) Slot in 1.21.2's real wire format --
+// satisfies bot/screen.SlotCodec via versionHandlerAdapter. See
+// docs/plans/SLOT_CODEC_IMPLEMENTATION_PLAN.md Phase 2a.
+func (c *containerHandler) DecodeSlot(r io.Reader) (screen.Slot, int64, error) {
+	var wireSlot basetypes.Slot
+	n, err := wireSlot.ReadFrom(r)
+	if err != nil {
+		return screen.Slot{}, n, err
+	}
+	if wireSlot.ItemCount <= 0 {
+		return screen.Slot{}, n, nil
+	}
+
+	def, ok := wireSlot.UnnamedType0001.(*basetypes.SlotUnnamedType0001Default)
+	if !ok {
+		return screen.Slot{}, n, fmt.Errorf("v1_21_2: unexpected non-empty slot payload type %T", wireSlot.UnnamedType0001)
+	}
+
+	result := screen.Slot{ID: def.ItemId, Count: wireSlot.ItemCount}
+
+	if components := def.Components.Get(); components != nil {
+		for _, component := range *components {
+			typeID, ok := componentTypeNameToID[component.Type.Value]
+			if !ok {
+				return screen.Slot{}, n, fmt.Errorf("v1_21_2: unknown slot component type %q", component.Type.Value)
+			}
+			result.Components = append(result.Components, screen.SlotComponent{Type: pk.VarInt(typeID), Data: component.Data})
+		}
+	}
+
+	if removeComponents := def.RemoveComponents.Get(); removeComponents != nil {
+		for _, rc := range *removeComponents {
+			typeID, ok := componentTypeNameToID[rc.Type.Value]
+			if !ok {
+				return screen.Slot{}, n, fmt.Errorf("v1_21_2: unknown slot component type %q (remove)", rc.Type.Value)
+			}
+			result.RemoveComponents = append(result.RemoveComponents, pk.VarInt(typeID))
+		}
+	}
+
+	return result, n, nil
+}
+
+// slotFromScreenSlot converts mc-bot-go's screen.Slot into 1.21.2's own
+// plain-Slot wire format, encoding every component with its real payload
+// (data/1.21.2/basetypes.SlotComponent's generated per-type WriteTo) rather
+// than the hash-only summary HashedSlot uses -- this is the pre-1.21.5 wire
+// shape used by both ClientboundContainerSetContent-family packets and
+// ServerboundContainerClick.
+func slotFromScreenSlot(slot *screen.Slot) (basetypes.Slot, error) {
+	if slot == nil || slot.Count <= 0 {
+		return basetypes.Slot{
+			ItemCount:       0,
+			UnnamedType0001: &protocol_models.Void{},
+		}, nil
+	}
+
+	components := make([]basetypes.SlotComponent, 0, len(slot.Components))
+	for _, component := range slot.Components {
+		name, ok := componentTypeIDToName[int32(component.Type)]
+		if !ok {
+			return basetypes.Slot{}, fmt.Errorf("v1_21_2: unknown slot component type ID %d", component.Type)
+		}
+		field, ok := component.Data.(pk.Field)
+		if !ok {
+			return basetypes.Slot{}, fmt.Errorf("v1_21_2: slot component data does not implement pk.Field: %T", component.Data)
+		}
+		components = append(components, basetypes.SlotComponent{
+			Type: basetypes.SlotComponentType{Value: name},
+			Data: field,
+		})
+	}
+
+	removeComponents := make([]basetypes.SlotUnnamedType0001DefaultRemoveComponentsArrayType, 0, len(slot.RemoveComponents))
+	for _, componentType := range slot.RemoveComponents {
+		name, ok := componentTypeIDToName[int32(componentType)]
+		if !ok {
+			return basetypes.Slot{}, fmt.Errorf("v1_21_2: unknown slot component type ID %d (remove)", componentType)
+		}
+		removeComponents = append(removeComponents, basetypes.SlotUnnamedType0001DefaultRemoveComponentsArrayType{
+			Type: basetypes.SlotComponentType{Value: name},
+		})
+	}
+
+	def := &basetypes.SlotUnnamedType0001Default{
+		ItemId:                slot.ID,
+		AddedComponentCount:   pk.VarInt(len(components)),
+		RemovedComponentCount: pk.VarInt(len(removeComponents)),
+	}
+	def.Components.Set(&components)
+	def.RemoveComponents.Set(&removeComponents)
+
+	return basetypes.Slot{
+		ItemCount:       slot.Count,
+		UnnamedType0001: def,
+	}, nil
+}
+
+// SendContainerClickV2 builds and writes a complete ServerboundContainerClick
+// packet in 1.21.2's real wire format, using mc-bot-go's Slot type directly
+// so item components round-trip (unlike SendContainerClick/InventorySlot
+// above). Satisfies bot/screen.SlotCodec's SendContainerClick via
+// versionHandlerAdapter. See
+// docs/plans/SLOT_CODEC_IMPLEMENTATION_PLAN.md Phase 2b.
+func (c *containerHandler) SendContainerClickV2(conn bot.PacketWriter, windowID int, stateID int32, slot int16, button byte, mode int32, changedSlots screen.ChangedSlots, cursor *screen.Slot) error {
+	pkt := sb.NewWindowClick()
+	pkt.SetPacketID(int32(c.packetMgr.GetServerboundPacketID("ServerboundContainerClick")))
+	pkt.WindowId = basetypes.ContainerID(windowID)
+	pkt.StateId = pk.VarInt(stateID)
+	pkt.Slot = pk.Short(slot)
+	pkt.MouseButton = pk.Byte(button)
+	pkt.Mode = pk.VarInt(mode)
+
+	changedSlotsArr := make([]sb.WindowClickChangedSlotsArrayType, 0, len(changedSlots))
+	for location, slotData := range changedSlots {
+		item, err := slotFromScreenSlot(slotData)
+		if err != nil {
+			return err
+		}
+		changedSlotsArr = append(changedSlotsArr, sb.WindowClickChangedSlotsArrayType{
+			Location: pk.Short(location),
+			Item:     item,
+		})
+	}
+	pkt.ChangedSlots.Set(changedSlotsArr)
+
+	cursorItem, err := slotFromScreenSlot(cursor)
+	if err != nil {
+		return err
+	}
+	pkt.CursorItem = cursorItem
+
+	return conn.WritePacket(pkt.Marshal())
 }
 
 func (c *containerHandler) SendContainerButtonClick(conn models.PacketWriter, windowID int8, buttonID int8) error {
