@@ -496,6 +496,10 @@ func sliceHashValues(ops hashOps, value any) ([]hashCode, bool) {
 		return values, true
 	}
 
+	if rv.Kind() != reflect.Struct {
+		return nil, false
+	}
+
 	aryField := rv.FieldByName("Ary")
 	if aryField.IsValid() {
 		inner := aryField.FieldByName("Ary")
