@@ -57,6 +57,7 @@ func (f *fakeClient) PopResourcePack(pk.UUID)                                   
 func (f *fakeClient) PopAllResourcePack()                                             {}
 func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack                   { return nil }
 func (f *fakeClient) SetVersionHandler(bot.VersionHandler)                            {}
+func (f *fakeClient) VersionHandler() bot.VersionHandler                             { return nil }
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
 	expectedPackets := []string{
