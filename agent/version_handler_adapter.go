@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"io"
 	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 // versionHandlerAdapter adapts mc-agent's models.VersionHandler to mc-bot-go's bot.VersionHandler interface
@@ -31,6 +33,20 @@ func (a *versionHandlerAdapter) Login() bot.LoginHandler {
 
 func (a *versionHandlerAdapter) Configuration() bot.ConfigurationHandler {
 	return &configurationHandlerAdapter{handler: a.handler.Configuration()}
+}
+
+// DecodeSlot and SendContainerClick below give versionHandlerAdapter the
+// exact method set bot/screen.SlotCodec needs (no explicit "implements"
+// declaration is possible in Go; screen.NewManager's own
+// c.VersionHandler().(screen.SlotCodec) type assertion picks this up once
+// both methods exist with these exact signatures). They delegate to the
+// per-version models.ContainerHandler methods added alongside them.
+func (a *versionHandlerAdapter) DecodeSlot(r io.Reader) (screen.Slot, int64, error) {
+	return a.handler.Play().Containers().DecodeSlot(r)
+}
+
+func (a *versionHandlerAdapter) SendContainerClick(conn bot.PacketWriter, windowID int, stateID int32, slot int16, button byte, mode int32, changedSlots screen.ChangedSlots, cursor *screen.Slot) error {
+	return a.handler.Play().Containers().SendContainerClickV2(conn, windowID, stateID, slot, button, mode, changedSlots, cursor)
 }
 
 // loginHandlerAdapter adapts mc-agent's LoginHandler to mc-bot-go's bot.LoginHandler interface

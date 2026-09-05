@@ -1,7 +1,11 @@
 package models
 
 import (
+	"io"
+
 	pk "github.com/Tnze/go-mc/net/packet"
+	"github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
@@ -432,6 +436,21 @@ type ContainerHandler interface {
 	// windowID: container window ID
 	// buttonID: button/option to select (meaning depends on container type)
 	SendContainerButtonClick(conn PacketWriter, windowID int8, buttonID int8) error
+
+	// DecodeSlot reads one full (non-hashed) Slot in this version's real
+	// wire format -- satisfies bot/screen.SlotCodec via versionHandlerAdapter
+	// (agent/version_handler_adapter.go). This is the format used by
+	// ClientboundContainerSetContent, ClientboundContainerSetSlot, and
+	// ClientboundSetPlayerInventory in every version.
+	DecodeSlot(r io.Reader) (screen.Slot, int64, error)
+
+	// SendContainerClickV2 builds and writes a complete
+	// ServerboundContainerClick packet in this version's real wire format,
+	// using mc-bot-go's Slot type directly (unlike the older
+	// SendContainerClick/InventorySlot pair, this can carry full item
+	// components). Satisfies bot/screen.SlotCodec's SendContainerClick via
+	// versionHandlerAdapter.
+	SendContainerClickV2(conn bot.PacketWriter, windowID int, stateID int32, slot int16, button byte, mode int32, changedSlots screen.ChangedSlots, cursor *screen.Slot) error
 }
 
 // InventorySlot represents an inventory InventorySlot.
