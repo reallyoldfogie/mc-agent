@@ -116,10 +116,11 @@ func TestMoveForward_NegativeYaw0(t *testing.T) {
 	agent.UpdatePosition(models.V3{}, 0, 0)
 	agent.handleChatCommand("moveForward -0.2")
 	time.Sleep(70 * time.Millisecond)
-	if len(fm.posCalls) == 0 {
+	posCalls := fm.PosCalls()
+	if len(posCalls) == 0 {
 		t.Fatalf("no pos calls")
 	}
-	got := fm.posCalls[len(fm.posCalls)-1]
+	got := posCalls[len(posCalls)-1]
 	// With physics-based movement, expect backward movement (negative z) in the -0.3 to 0 range
 	// (one tick of ~0.215 blocks/tick movement in negative direction)
 	if got[2] >= 0 || got[2] < -0.3 {
@@ -142,10 +143,11 @@ func TestMoveForward_Yaw90(t *testing.T) {
 	agent.UpdatePosition(models.V3{}, 90, 0)
 	agent.handleChatCommand("moveForward 0.2")
 	time.Sleep(70 * time.Millisecond)
-	if len(fm.posCalls) == 0 {
+	posCalls := fm.PosCalls()
+	if len(posCalls) == 0 {
 		t.Fatalf("no pos calls")
 	}
-	got := fm.posCalls[len(fm.posCalls)-1]
+	got := posCalls[len(posCalls)-1]
 	// With physics-based movement, expect leftward movement (negative x) in the -0.3 to 0 range
 	// (one tick of ~0.215 blocks/tick movement at yaw=90)
 	if got[0] >= 0 || got[0] < -0.3 {
@@ -168,10 +170,11 @@ func TestMoveUp_Negative(t *testing.T) {
 	agent.UpdatePosition(models.V3{X: 0, Y: 1, Z: 0}, 0, 0)
 	agent.handleChatCommand("moveUp -0.2")
 	time.Sleep(70 * time.Millisecond)
-	if len(fm.posCalls) == 0 {
+	posCalls := fm.PosCalls()
+	if len(posCalls) == 0 {
 		t.Fatalf("no pos calls")
 	}
-	got := fm.posCalls[len(fm.posCalls)-1]
+	got := posCalls[len(posCalls)-1]
 	if math.Abs(got[1]-(1-0.2)) > 1e-6 {
 		t.Fatalf("expected y 0.8, got %#v", got)
 	}
@@ -237,9 +240,7 @@ func TestTracking_DoubleStart_And_StopNotActive(t *testing.T) {
 	})
 
 	// Speed up timers
-	trackingTickDur = 10 * time.Millisecond
-	trackingStatsDur = 20 * time.Millisecond
-	trackingNoPlayersInterval = 20 * time.Millisecond
+	setTrackingTestTunables(10*time.Millisecond, 20*time.Millisecond, 20*time.Millisecond)
 
 	agent.handleChatCommand("startTracking")
 	time.Sleep(50 * time.Millisecond)

@@ -207,6 +207,18 @@ testing/run_tests.sh -t TestChestInteraction -p 1 -T 5m
 
 ---
 
+## Crafting
+
+`CraftItem(ctx, itemName)` (`agent/craft.go`) crafts an item using whichever
+crafting surface its recipe needs: the player's own 2x2 inventory grid
+(window 0, no crafting table needed) when the recipe fits it, or a nearby
+`minecraft:crafting_table`'s 3x3 grid otherwise. It finds a visible table
+(`FindVisibleBlock`), walks to it, opens it (window type 12: slot 0 =
+output, slots 1-9 = the 3x3 grid, slots 10-45 = player inventory - the
+standard vanilla `CraftingMenu` slot order), places ingredients, waits for
+the result, and shift-clicks it into the inventory. See
+`docs/plans/CRAFTING_TABLE_3X3_PLAN.md` for the design behind this.
+
 ## Future Enhancements
 
 ### Additional Container Types (Not Yet Implemented)
@@ -217,12 +229,7 @@ testing/run_tests.sh -t TestChestInteraction -p 1 -T 5m
    - Slot 2: Output
    - Methods: `PutItemInFurnace()`, `TakeFurnaceOutput()`
 
-2. **Crafting Tables**:
-   - Slots 0-8: Crafting grid
-   - Slot 9: Output
-   - Methods: `PlaceCraftingPattern()`, `TakeCraftedItem()`
-
-3. **Hoppers/Droppers/Dispensers**:
+2. **Hoppers/Droppers/Dispensers**:
    - 5 slots
    - Methods: `FillHopper()`, `EmptyHopper()`
 

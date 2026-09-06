@@ -13,12 +13,18 @@ import (
 	agentutils "github.com/reallyoldfogie/mc-agent/utils"
 )
 
-// craftGridSize is the player-inventory crafting grid's width/height (a 2x2
-// grid, window 0 slots 1-4 - see agent/adapters.go's window-0 layout
-// comment: "0=craft output, 1-4=craft grid"). docs/plans/RL_ACTION_SPACE_EXPANSION.md
-// Phase 3 scopes this MVP to that grid only - a real 3x3 crafting-table
-// grid is a follow-up, not attempted here.
-const craftGridSize = 2
+// inventoryGridSize is the player-inventory crafting grid's width/height (a
+// 2x2 grid, window 0 slots 1-4 - see agent/adapters.go's window-0 layout
+// comment: "0=craft output, 1-4=craft grid"). tableGridSize is a real
+// crafting table's 3x3 grid (window type 12, slots 1-9 - see
+// craftingTableLayout). Every craftingRecipe is stored as a 3x3
+// (tableGridSize) row-major grid regardless of which layout it ends up
+// executing against; fitsInventoryGrid decides whether the smaller layout
+// suffices (see docs/plans/CRAFTING_TABLE_3X3_PLAN.md).
+const (
+	inventoryGridSize = 2
+	tableGridSize     = 3
+)
 
 const (
 	craftingShapedType    = "minecraft:crafting_shaped"
@@ -26,7 +32,7 @@ const (
 )
 
 // craftOutputTimeout bounds how long CraftItem waits for the server to
-// populate the result slot (window-0 slot 0) after ingredients are placed.
+// populate the result slot after ingredients are placed.
 const craftOutputTimeout = 2 * time.Second
 
 // craftIngredientSlotStart is the first main-inventory slot index in
@@ -48,13 +54,20 @@ const craftOutputTimeout = 2 * time.Second
 // single stray plank in the grid matches "oak_button", not "stick") rather
 // than erroring. Confirmed via testing/craft_test.go before this fix: an
 // oak_button appeared in inventory instead of the requested stick.
+//
+// A crafting table window has its own, larger inventory-start offset - see
+// craftTableContainerSlots - so this constant is only ever used via
+// inventoryGridLayout, never hardcoded elsewhere.
 const craftIngredientSlotStart = 9
 
-// findIngredientSlot searches window 0's main inventory + hotbar (slots
-// craftIngredientSlotStart and up) for itemName - mirroring FindSlotWith's
-// matching logic, but scoped to that range; see craftIngredientSlotStart's
-// doc comment for why FindSlotWith itself isn't safe to reuse here.
-func (a *agent) findIngredientSlot(itemName string) (int, bool, error) {
+// findIngredientSlot searches a window's main inventory + hotbar (slots
+// inventoryStart and up) for itemName - mirroring FindSlotWith's matching
+// logic, but scoped to that range; see craftIngredientSlotStart's doc
+// comment for why FindSlotWith itself isn't safe to reuse here. inventoryStart
+// is threaded through from the active craftWindowLayout so the same search
+// works whether the open window is the player's own (inventoryStart=9) or a
+// crafting table's (inventoryStart=craftTableContainerSlots).
+func (a *agent) findIngredientSlot(itemName string, inventoryStart int) (int, bool, error) {
 	inv := a.GetInventory()
 	if inv == nil {
 		return -1, false, fmt.Errorf("inventory not available")
@@ -68,7 +81,7 @@ func (a *agent) findIngredientSlot(itemName string) (int, bool, error) {
 
 	normalized := normalizeItemName(itemName)
 	slots := inv.GetSlots()
-	for idx := craftIngredientSlotStart; idx < len(slots); idx++ {
+	for idx := inventoryStart; idx < len(slots); idx++ {
 		if slots[idx].Count <= 0 {
 			continue
 		}
@@ -79,17 +92,64 @@ func (a *agent) findIngredientSlot(itemName string) (int, bool, error) {
 	return -1, false, nil
 }
 
-// craftingRecipe is a 2x2-grid-craftable recipe resolved from cached
-// datapack JSON (see loadCraftingRecipes) into exactly what CraftItem
-// needs: for each of the grid's 4 slots (index 0 = window-0 slot 1, ...
-// index 3 = window-0 slot 4), the list of item names that would satisfy
-// that position - a single name for a concrete-item ingredient, several
-// for a tag reference (e.g. "#minecraft:planks" resolves to every plank
-// variant - see resolveIngredient). A nil/empty entry means that grid slot
-// must stay empty for this recipe.
+// craftingRecipe is a recipe resolved from cached datapack JSON (see
+// loadCraftingRecipes) into exactly what CraftItem needs: a 3x3
+// (tableGridSize), row-major grid of ingredient candidates - grid[row*3+col]
+// - for each of tableGridSize*tableGridSize possible slots, the list of item
+// names that would satisfy that position (a single name for a
+// concrete-item ingredient, several for a tag reference, e.g.
+// "#minecraft:planks" resolves to every plank variant - see
+// resolveIngredient). A nil/empty entry means that grid cell must stay
+// empty for this recipe.
+//
+// Shaped recipes populate cells at their real pattern position. Shapeless
+// recipes have no real position - resolveIngredient's caller (recipeGrid)
+// packs them via shapelessGridSlotOrder so that a shapeless recipe with 4 or
+// fewer ingredients still lands entirely in the top-left 2x2 sub-region
+// (see fitsInventoryGrid) rather than spilling into column/row 2 by
+// coincidence of iteration order.
+//
+// fitsInventory is computed once, when the recipe is built (see
+// loadCraftingRecipes / fitsInventoryGrid), rather than recomputed on every
+// fitsInventoryGrid() call.
 type craftingRecipe struct {
-	grid [craftGridSize * craftGridSize][]string
+	grid          [tableGridSize * tableGridSize][]string
+	fitsInventory bool
 }
+
+// fitsInventoryGrid reports whether this recipe can be crafted using the
+// player's own 2x2 inventory grid (window 0) rather than needing a real
+// crafting table's 3x3 grid.
+func (r craftingRecipe) fitsInventoryGrid() bool {
+	return r.fitsInventory
+}
+
+// fitsInventoryGrid reports whether every populated cell of a raw 3x3
+// recipe grid falls within the top-left 2x2 sub-region (row < 2 && col < 2
+// in the row-major tableGridSize indexing) - a pure function of the grid's
+// shape, not the recipe it came from, so unit tests can call it directly
+// against recipeGrid's output.
+func fitsInventoryGrid(grid [tableGridSize * tableGridSize][]string) bool {
+	for i, candidates := range grid {
+		if len(candidates) == 0 {
+			continue
+		}
+		row, col := i/tableGridSize, i%tableGridSize
+		if row >= inventoryGridSize || col >= inventoryGridSize {
+			return false
+		}
+	}
+	return true
+}
+
+// shapelessGridSlotOrder maps a shapeless recipe's Nth ingredient (0-based -
+// order is otherwise irrelevant for shapeless matching) to a grid index.
+// The first 4 ingredients land on the top-left 2x2 sub-region (row-major:
+// (0,0),(0,1),(1,0),(1,1)) so a shapeless recipe with 4 or fewer ingredients
+// satisfies fitsInventoryGrid; the remaining 5 fill out the rest of the 3x3
+// grid row-major (row 0 col 2, then row 2), reachable only via a crafting
+// table.
+var shapelessGridSlotOrder = [tableGridSize * tableGridSize]int{0, 1, 3, 4, 2, 5, 6, 7, 8}
 
 // rawRecipeJSON mirrors the standard datapack recipe schema (verified
 // directly against this codebase's own cached data_generator output - see
@@ -165,19 +225,21 @@ func (a *agent) craftingRecipeDataDir() (string, error) {
 }
 
 // loadCraftingRecipes reads every cached recipe JSON file for the connected
-// version and returns an index of 2x2-grid-craftable recipes keyed by
-// normalized result item name.
+// version and returns an index of craftable recipes (2x2 inventory grid or
+// 3x3 crafting table - see fitsInventoryGrid) keyed by normalized result
+// item name.
 //
 // Known simplification, not solved here (docs/plans/RL_ACTION_SPACE_EXPANSION.md
 // Phase 3's MVP framing): reloaded from disk and re-parsed on every
 // CraftItem call rather than cached on the agent - a few hundred small JSON
 // files, acceptable for a command that isn't called in a tight loop; revisit
 // if that changes. Only minecraft:crafting_shaped/crafting_shapeless
-// recipes that fit within a 2x2 grid are indexed - smelting/stonecutting/
-// smithing/etc., and anything needing a real 3x3 crafting table, are out of
-// this MVP's scope. If multiple recipes produce the same result item, only
-// the first one encountered (directory iteration order, not otherwise
-// meaningful) is kept.
+// recipes that fit within a 3x3 grid are indexed - smelting/stonecutting/
+// smithing/etc., and dynamic crafting_special_* recipes (armor dye, book
+// cloning, ...), are out of scope entirely (see
+// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes). If multiple
+// recipes produce the same result item, only the first one encountered
+// (directory iteration order, not otherwise meaningful) is kept.
 func (a *agent) loadCraftingRecipes() (map[string]craftingRecipe, error) {
 	dataDir, err := a.craftingRecipeDataDir()
 	if err != nil {
@@ -216,23 +278,25 @@ func (a *agent) loadCraftingRecipes() (map[string]craftingRecipe, error) {
 		if _, exists := recipes[resultItem]; exists {
 			continue
 		}
-		recipes[resultItem] = craftingRecipe{grid: grid}
+		recipes[resultItem] = craftingRecipe{grid: grid, fitsInventory: fitsInventoryGrid(grid)}
 	}
 	return recipes, nil
 }
 
-// recipeGrid resolves one parsed recipe into 2x2 grid-slot ingredient
-// candidates, or ok=false if it isn't a crafting_shaped/crafting_shapeless
-// recipe that fits in a 2x2 grid (or references an ingredient that can't be
-// resolved at all - e.g. a tag file missing from the cache).
-func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) (grid [craftGridSize * craftGridSize][]string, ok bool) {
+// recipeGrid resolves one parsed recipe into 3x3 (tableGridSize) grid-slot
+// ingredient candidates, or ok=false if it isn't a
+// crafting_shaped/crafting_shapeless recipe that fits in a 3x3 grid (or
+// references an ingredient that can't be resolved at all - e.g. a tag file
+// missing from the cache). See shapelessGridSlotOrder for how a shapeless
+// recipe's position-independent ingredients are packed into the grid.
+func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) (grid [tableGridSize * tableGridSize][]string, ok bool) {
 	switch rj.Type {
 	case craftingShapedType:
-		if len(rj.Pattern) == 0 || len(rj.Pattern) > craftGridSize {
+		if len(rj.Pattern) == 0 || len(rj.Pattern) > tableGridSize {
 			return grid, false
 		}
 		for _, row := range rj.Pattern {
-			if len(row) > craftGridSize {
+			if len(row) > tableGridSize {
 				return grid, false
 			}
 		}
@@ -249,13 +313,13 @@ func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) 
 				if err != nil || len(candidates) == 0 {
 					return grid, false
 				}
-				grid[r*craftGridSize+c] = candidates
+				grid[r*tableGridSize+c] = candidates
 			}
 		}
 		return grid, true
 
 	case craftingShapelessType:
-		if len(rj.Ingredients) == 0 || len(rj.Ingredients) > craftGridSize*craftGridSize {
+		if len(rj.Ingredients) == 0 || len(rj.Ingredients) > tableGridSize*tableGridSize {
 			return grid, false
 		}
 		for i, descriptor := range rj.Ingredients {
@@ -263,7 +327,7 @@ func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) 
 			if err != nil || len(candidates) == 0 {
 				return grid, false
 			}
-			grid[i] = candidates
+			grid[shapelessGridSlotOrder[i]] = candidates
 		}
 		return grid, true
 
@@ -332,19 +396,112 @@ func resolveTag(dataDir, tagRef string, cache map[string][]string, depth int) ([
 	return resolved, nil
 }
 
-// CraftItem crafts itemName using the player's own 2x2 inventory crafting
-// grid (window 0, slots 1-4) - no crafting table needed. Looks up a
-// matching 2x2-fitting recipe (see loadCraftingRecipes), moves one of each
-// required ingredient from the main inventory into the grid, waits for the
-// server to populate the result slot (slot 0), then shift-clicks it to
-// collect the crafted item.
+// craftWindowLayout describes one crafting-capable window's slot numbering,
+// so the placement/collection logic in executeCraft can be shared between
+// the player's own 2x2 grid (always window 0) and an opened crafting
+// table's 3x3 grid (a dynamically-assigned window).
+type craftWindowLayout struct {
+	outputSlot     int16
+	gridSlotStart  int16
+	gridWidth      int
+	gridHeight     int
+	inventoryStart int
+}
+
+// inventoryGridLayout is window 0's always-present 2x2 crafting grid -
+// today's CraftItem behavior, unchanged.
+var inventoryGridLayout = craftWindowLayout{
+	outputSlot:     0,
+	gridSlotStart:  1,
+	gridWidth:      inventoryGridSize,
+	gridHeight:     inventoryGridSize,
+	inventoryStart: craftIngredientSlotStart,
+}
+
+// craftTableContainerSlots is a crafting table window's own slot count (1
+// output + 9 grid slots) before the player's 36-slot inventory section
+// begins - confirmed against mc-bot-go's window-type registry
+// (bot/screen/generic_container.go, type 12: "crafting", 10
+// container-specific slots) and asserted live in
+// testing/container_suite_crafting_test.go.
+const craftTableContainerSlots = 10
+
+// craftTableGridLayout is an opened crafting table's 3x3 grid - slot
+// numbering is the same regardless of which window ID the server assigned
+// this particular table (see openCraftingTable's a.SetWindow(windowID)
+// call, which points the invMgr at the right window before any clicks).
+var craftTableGridLayout = craftWindowLayout{
+	outputSlot:     0,
+	gridSlotStart:  1,
+	gridWidth:      tableGridSize,
+	gridHeight:     tableGridSize,
+	inventoryStart: craftTableContainerSlots,
+}
+
+// craftTableSearchRadius bounds how far CraftItem looks for a nearby
+// crafting table when a recipe doesn't fit the 2x2 inventory grid - mirrors
+// "mine <blockName>"'s mineSearchRadius (actions/commands.go).
+const craftTableSearchRadius = 32
+
+// craftTableOpenTimeout bounds how long opening the crafting table window
+// may take - mirrors the 5s timeout convention used by other
+// OpenContainer/OpenContainerAt call sites (see
+// testing/container_suite_test.go's openContainer helper).
+const craftTableOpenTimeout = 5 * time.Second
+
+// openCraftingTable finds the nearest visible crafting table, walks to it
+// if needed, opens it, and returns the craftWindowLayout for its 3x3 grid.
+// Callers are responsible for CloseContainer once done (success or
+// failure) - that already resets the window to 0 (see
+// agent.CloseContainer's doc comment).
 //
-// docs/plans/RL_ACTION_SPACE_EXPANSION.md Phase 3 MVP scope: only 2x2-grid
-// recipes (no crafting table / 3x3 shapes). On a missing-ingredient failure
-// partway through, whatever was already placed into the grid is left there
-// rather than moved back - matches what a player fumbling a recipe by hand
-// would see, and keeps this from needing rollback machinery for a first
-// pass.
+// No automatic crafting-table placement: if none is found, this errors
+// rather than placing one from inventory, even if the agent is carrying one
+// (see docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes).
+func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error) {
+	x, y, z, found, err := a.FindVisibleBlock(ctx, "minecraft:crafting_table", craftTableSearchRadius)
+	if err != nil {
+		return craftWindowLayout{}, fmt.Errorf("find crafting table: %w", err)
+	}
+	if !found {
+		return craftWindowLayout{}, fmt.Errorf("no crafting table found within %d blocks", craftTableSearchRadius)
+	}
+
+	// Mirrors pickUpNearbyItem's find-then-walk two-step (and
+	// agent/plan/steps.go's FindChest/FindBlock with MoveToTarget=true):
+	// FindVisibleBlock's search radius is much larger than interaction
+	// range, and OpenContainer itself has no distance-closing logic of its
+	// own. MoveTo no-ops if already standing on the target cell.
+	if err := a.MoveToWithChat(ctx, x, y, z); err != nil {
+		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", err)
+	}
+
+	windowID, err := a.OpenContainerAt(ctx, x, y, z, models.FaceUp, craftTableOpenTimeout)
+	if err != nil {
+		return craftWindowLayout{}, fmt.Errorf("open crafting table: %w", err)
+	}
+	a.SetWindow(windowID)
+	return craftTableGridLayout, nil
+}
+
+// CraftItem crafts itemName using whichever crafting surface its recipe
+// needs: the player's own 2x2 inventory grid (window 0, slots 1-4, no
+// crafting table needed) when the recipe fits it, or a nearby crafting
+// table's 3x3 grid otherwise (see openCraftingTable). Looks up a matching
+// recipe (see loadCraftingRecipes), moves one of each required ingredient
+// from the main inventory into the grid, waits for the server to populate
+// the result slot, then shift-clicks it to collect the crafted item.
+//
+// A recipe that fits the 2x2 grid always prefers it, even if a table
+// happens to be open/available: opening a container involves several
+// real-time waits (see agent.OpenContainer's doc comment), so the
+// zero-container-open path is the sensible default (see
+// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's Phase 3 design note).
+//
+// On a missing-ingredient failure partway through, whatever was already
+// placed into the grid is left there rather than moved back - matches what
+// a player fumbling a recipe by hand would see, and keeps this from needing
+// rollback machinery.
 func (a *agent) CraftItem(ctx context.Context, itemName string) error {
 	normalized := normalizeItemName(itemName)
 
@@ -354,40 +511,66 @@ func (a *agent) CraftItem(ctx context.Context, itemName string) error {
 	}
 	recipe, ok := recipes[normalized]
 	if !ok {
-		return fmt.Errorf("no known 2x2-craftable recipe for %s", itemName)
+		return fmt.Errorf("no known crafting recipe for %s", itemName)
 	}
 
+	if recipe.fitsInventoryGrid() {
+		return a.executeCraft(ctx, itemName, recipe, inventoryGridLayout)
+	}
+
+	layout, err := a.openCraftingTable(ctx)
+	if err != nil {
+		return fmt.Errorf("craft %s: %w", itemName, err)
+	}
+	defer a.CloseContainer()
+	return a.executeCraft(ctx, itemName, recipe, layout)
+}
+
+// executeCraft runs recipe's placement/collection sequence against layout -
+// shared between the player's 2x2 inventory grid and an opened crafting
+// table's 3x3 grid, so both run the exact same code with different slot
+// numbers rather than two parallel copies.
+func (a *agent) executeCraft(ctx context.Context, itemName string, recipe craftingRecipe, layout craftWindowLayout) error {
 	for i, candidates := range recipe.grid {
 		if len(candidates) == 0 {
 			continue
 		}
+		row, col := i/tableGridSize, i%tableGridSize
+		if row >= layout.gridHeight || col >= layout.gridWidth {
+			// CraftItem only ever selects a layout the recipe's
+			// fitsInventoryGrid() result already confirmed fits - a
+			// populated cell outside layout's bounds would mean that
+			// invariant broke.
+			return fmt.Errorf("craft %s: recipe cell (%d,%d) does not fit a %dx%d grid", itemName, row, col, layout.gridWidth, layout.gridHeight)
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		gridSlot := int16(1 + i)
-		if err := a.placeCraftIngredient(ctx, gridSlot, candidates); err != nil {
+		gridSlot := layout.gridSlotStart + int16(row*layout.gridWidth+col)
+		if err := a.placeCraftIngredient(ctx, gridSlot, layout.inventoryStart, candidates); err != nil {
 			return fmt.Errorf("craft %s: %w", itemName, err)
 		}
 	}
 
-	result, ok := a.waitForCraftOutput(ctx, craftOutputTimeout)
+	result, ok := a.waitForCraftOutput(ctx, layout.outputSlot, craftOutputTimeout)
 	if !ok {
 		return fmt.Errorf("craft %s: grid did not produce a result (ingredients may not actually match the recipe)", itemName)
 	}
-	if err := a.ShiftClickSlot(0, result); err != nil {
+	if err := a.ShiftClickSlot(layout.outputSlot, result); err != nil {
 		return fmt.Errorf("collect crafted %s: %w", itemName, err)
 	}
 	return nil
 }
 
 // placeCraftIngredient finds the first inventory item matching one of
-// candidates and moves a single unit of it into gridSlot (1-4).
-func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, candidates []string) error {
+// candidates (searching from inventoryStart onward - see
+// findIngredientSlot) and moves a single unit of it into gridSlot.
+func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, inventoryStart int, candidates []string) error {
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		srcSlot, found, err := a.findIngredientSlot(candidate)
+		srcSlot, found, err := a.findIngredientSlot(candidate, inventoryStart)
 		if err != nil {
 			return fmt.Errorf("search inventory for %s: %w", candidate, err)
 		}
@@ -413,19 +596,19 @@ func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, candid
 	return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 }
 
-// waitForCraftOutput polls the crafting result slot (window-0 slot 0) until
-// it becomes non-empty or timeout elapses. Doesn't check the item matches
-// the expected recipe result: the result slot in a real crafting UI only
-// ever shows a valid output for the grid's current contents (or stays
-// empty), so "non-empty" is already a sufficient, simpler signal than
-// resolving an item name back to an ID just to compare.
-func (a *agent) waitForCraftOutput(ctx context.Context, timeout time.Duration) (models.ItemStack, bool) {
+// waitForCraftOutput polls outputSlot until it becomes non-empty or timeout
+// elapses. Doesn't check the item matches the expected recipe result: the
+// result slot in a real crafting UI only ever shows a valid output for the
+// grid's current contents (or stays empty), so "non-empty" is already a
+// sufficient, simpler signal than resolving an item name back to an ID just
+// to compare.
+func (a *agent) waitForCraftOutput(ctx context.Context, outputSlot int16, timeout time.Duration) (models.ItemStack, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if inv := a.GetInventory(); inv != nil {
 			slots := inv.GetSlots()
-			if len(slots) > 0 && slots[0].Count > 0 {
-				return itemStackFromScreenSlot(slots[0]), true
+			if int(outputSlot) < len(slots) && slots[outputSlot].Count > 0 {
+				return itemStackFromScreenSlot(slots[outputSlot]), true
 			}
 		}
 		select {

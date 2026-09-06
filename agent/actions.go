@@ -817,7 +817,55 @@ func (a *agent) FindNearestVisibleItem(ctx context.Context, maxDistance float64)
 	return a.FindVisibleEntity(ctx, itemTypeID, maxDistance)
 }
 
-// FindVisibleBlock searches for the nearest visible block by name.
+// shellOffsets returns every integer (dx, dy, dz) offset whose Chebyshev
+// distance from the origin is exactly r - i.e. max(|dx|,|dy|,|dz|) == r -
+// the surface of a (2r+1)^3 cube, each cell visited exactly once (r==0 is
+// just the origin itself). Enumerating cells shell-by-shell like this,
+// rather than scanning the full (2r+1)^3 cube every time, lets a caller
+// search outward from a point and stop as soon as it can prove no closer
+// match remains, without ever re-visiting a cell already checked by a
+// smaller shell - the union of every shell 0..R is exactly the full cube
+// [-R,R]^3, so the total work across a full scan is unchanged; only the
+// early-exit behavior changes. See FindVisibleBlock for the caller that
+// motivated this (a brute-force full-cube scan at radius 32 - ~274,625
+// cells - was measured taking over a minute under `go test -race`, despite
+// realistic targets normally sitting within a few blocks).
+func shellOffsets(r int) [][3]int {
+	if r == 0 {
+		return [][3]int{{0, 0, 0}}
+	}
+	offsets := make([][3]int, 0, 24*r*r)
+	// +-X faces: full Y/Z range.
+	for _, dx := range [2]int{-r, r} {
+		for dy := -r; dy <= r; dy++ {
+			for dz := -r; dz <= r; dz++ {
+				offsets = append(offsets, [3]int{dx, dy, dz})
+			}
+		}
+	}
+	// +-Y faces: X range excludes the +-r edges the X faces already covered.
+	for _, dy := range [2]int{-r, r} {
+		for dx := -r + 1; dx <= r-1; dx++ {
+			for dz := -r; dz <= r; dz++ {
+				offsets = append(offsets, [3]int{dx, dy, dz})
+			}
+		}
+	}
+	// +-Z faces: X and Y ranges exclude the +-r edges already covered above.
+	for _, dz := range [2]int{-r, r} {
+		for dx := -r + 1; dx <= r-1; dx++ {
+			for dy := -r + 1; dy <= r-1; dy++ {
+				offsets = append(offsets, [3]int{dx, dy, dz})
+			}
+		}
+	}
+	return offsets
+}
+
+// FindVisibleBlock searches for the nearest visible block by name, scanning
+// outward shell-by-shell (see shellOffsets) so a nearby match - the common
+// case - short-circuits the search instead of always paying for the full
+// maxDistance cube.
 func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (float64, float64, float64, bool, error) {
 	world := a.GetWorld()
 	if world == nil {
@@ -835,45 +883,50 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 		maxDistance = 8
 	}
 	targetName := strings.ToLower(blockName)
+	baseX, baseY, baseZ := math.Floor(pos.X), math.Floor(pos.Y), math.Floor(pos.Z)
 	bestDist := math.MaxFloat64
 	var bestX, bestY, bestZ float64
-	for dx := -maxDistance; dx <= maxDistance; dx++ {
-		for dy := -maxDistance; dy <= maxDistance; dy++ {
-			for dz := -maxDistance; dz <= maxDistance; dz++ {
-				if ctx.Err() != nil {
-					return 0, 0, 0, false, ctx.Err()
-				}
-				cx := math.Floor(pos.X) + float64(dx)
-				cy := math.Floor(pos.Y) + float64(dy)
-				cz := math.Floor(pos.Z) + float64(dz)
-				stateID, loaded := world.GetBlockAt(cx, cy, cz)
-				if !loaded {
-					continue
-				}
-				if stateID == 0 {
-					continue
-				}
-				if blockID, ok := a.blockMgr.BlockIDByStateID(stateID); ok {
-					if block, ok := a.blockMgr.GetByID(blockID); ok {
-						if strings.ToLower(block.Name) != targetName {
-							continue
-						}
+
+	for r := 0; r <= maxDistance; r++ {
+		// Once a match is found, no cell in a farther shell can possibly be
+		// closer than it - see shellOffsets' doc comment.
+		if bestDist != math.MaxFloat64 && float64(r) > bestDist {
+			break
+		}
+		for _, off := range shellOffsets(r) {
+			if ctx.Err() != nil {
+				return 0, 0, 0, false, ctx.Err()
+			}
+			cx := baseX + float64(off[0])
+			cy := baseY + float64(off[1])
+			cz := baseZ + float64(off[2])
+			stateID, loaded := world.GetBlockAt(cx, cy, cz)
+			if !loaded {
+				continue
+			}
+			if stateID == 0 {
+				continue
+			}
+			if blockID, ok := a.blockMgr.BlockIDByStateID(stateID); ok {
+				if block, ok := a.blockMgr.GetByID(blockID); ok {
+					if strings.ToLower(block.Name) != targetName {
+						continue
 					}
 				}
+			}
 
-				visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, cx, cy, cz)
-				if err != nil {
-					return 0, 0, 0, false, err
-				}
-				if !visible {
-					continue
-				}
-				d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
+			visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, cx, cy, cz)
+			if err != nil {
+				return 0, 0, 0, false, err
+			}
+			if !visible {
+				continue
+			}
+			d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
 
-				if d < bestDist {
-					bestDist = d
-					bestX, bestY, bestZ = cx, cy, cz
-				}
+			if d < bestDist {
+				bestDist = d
+				bestX, bestY, bestZ = cx, cy, cz
 			}
 		}
 	}

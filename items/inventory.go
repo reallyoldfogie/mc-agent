@@ -242,7 +242,37 @@ func (im *inventoryManager) leftClickSlot(slot int16, slotItem models.ItemStack)
 
 	// Pass cursorNext (predicted cursor state after click) not carryBefore
 	// The Minecraft protocol expects the client's prediction of cursor state after the click
-	return im.clickWithChanges(im.windowID, slot, byte(LeftButton), ClickModeNormal, changedSlots, &cursorNext, true)
+	// - except when that prediction is empty: depositing the entire held
+	// stack onto a slot (cursor non-empty going in, empty coming out).
+	// carriedItemForClick falls back to carryBefore there - see its doc
+	// comment for why.
+	carried := carriedItemForClick(carryBefore, cursorNext)
+	return im.clickWithChanges(im.windowID, slot, byte(LeftButton), ClickModeNormal, changedSlots, &carried, true)
+}
+
+// carriedItemForClick returns the "carried item" value to send in a
+// ContainerClick packet for a normal left/right click. Protocol convention
+// is the client's prediction of cursor state AFTER the click (cursorNext) -
+// correct for pickup (empty->full) and partial-place (full->still-full)
+// clicks. But when cursorNext is empty because the click deposits the
+// *entire* held stack (cursor non-empty going in), sending "nothing
+// carried" produces an internally-inconsistent packet: it claims a slot is
+// receiving an item while also claiming nothing was held to place there.
+// The server rejects this silently, correcting the client only via a later,
+// unrelated full ContainerSetContent resync - by which point callers like
+// MoveSingle have already returned success on the wrong prediction.
+//
+// Found live via MC_AGENT_CLICK_DEBUG_PATH tracing MoveSingle's "return
+// unneeded remainder to source slot" step (docs/plans/CRAFTING_TABLE_3X3_PLAN.md-adjacent
+// investigation, 2026-09-06): a stack of 3 logs picked up to place 1 in a
+// crafting grid predicted the source slot would receive its 2 leftover
+// logs back, but the server's next full resync showed that slot empty -
+// the 2 logs were gone from every tracked slot, not just delayed.
+func carriedItemForClick(carryBefore, cursorNext models.ItemStack) models.ItemStack {
+	if cursorNext.IsEmpty() && !carryBefore.IsEmpty() {
+		return carryBefore
+	}
+	return cursorNext
 }
 
 // RightClickSlot picks up half a stack or places one item
@@ -258,6 +288,8 @@ func (im *inventoryManager) rightClickSlot(slot int16, slotItem models.ItemStack
 	im.SyncCursorFromScreen()
 	slotItem = im.slotItemFor(slot, slotItem)
 
+	carryBefore := im.cursor
+
 	slotNext, cursorNext := simulateNormalClick(slotItem, im.cursor, RightButton)
 	changedSlots := buildChangedSlots(slot, slotItem, slotNext)
 
@@ -268,8 +300,13 @@ func (im *inventoryManager) rightClickSlot(slot int16, slotItem models.ItemStack
 	// Apply prediction BEFORE sending - keeps original timing
 	im.applyPredictedClick(slot, slotNext, cursorNext)
 
-	// Pass cursorNext (predicted cursor state) not carryBefore
-	return im.clickWithChanges(im.windowID, slot, byte(RightButton), ClickModeNormal, changedSlots, &cursorNext, true)
+	// Pass cursorNext (predicted cursor state) not carryBefore - except when
+	// cursorNext is empty (placing the last single item off a cursor stack
+	// of exactly 1); see carriedItemForClick's doc comment (LeftClickSlot,
+	// above) for why - the same gap applies here structurally, just not yet
+	// reproduced against a live server for this button.
+	carried := carriedItemForClick(carryBefore, cursorNext)
+	return im.clickWithChanges(im.windowID, slot, byte(RightButton), ClickModeNormal, changedSlots, &carried, true)
 }
 
 // ShiftClickSlot performs a shift+click quick transfer
@@ -702,10 +739,10 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 		}
 		// OnSetSlot, not GetSlots()[slot] = data: GetSlots() now returns a
 		// defensive copy (mc-bot-go/bot/screen/inventory.go, fixed for a
-		// concurrent-read data race), so mutating its result would silently
-		// update a throwaway copy instead of the tracked inventory.
-		// OnSetSlot writes through to the real backing state under its own
-		// lock.
+		// concurrent-read data race - see docs/plans/CRAFTING_TABLE_3X3_PLAN.md-adjacent
+		// investigation), so mutating its result would silently update a
+		// throwaway copy instead of the tracked inventory. OnSetSlot writes
+		// through to the real backing state under its own lock.
 		if err := inventory.OnSetSlot(slot, data); err != nil {
 			return false
 		}
@@ -717,9 +754,6 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 	}
 	switch c := container.(type) {
 	case mcscreen.Inventory:
-		if slot >= len(c.GetSlots()) {
-			return false
-		}
 		if err := c.OnSetSlot(slot, data); err != nil {
 			return false
 		}

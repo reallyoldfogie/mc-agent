@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/reallyoldfogie/mc-agent/models"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
-	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	protocol_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
+	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +57,7 @@ func (f *fakeClient) PopResourcePack(pk.UUID)                                   
 func (f *fakeClient) PopAllResourcePack()                                             {}
 func (f *fakeClient) SelectDataPacks([]bot.DataPack) []bot.DataPack                   { return nil }
 func (f *fakeClient) SetVersionHandler(bot.VersionHandler)                            {}
-func (f *fakeClient) VersionHandler() bot.VersionHandler                             { return nil }
+func (f *fakeClient) VersionHandler() bot.VersionHandler                              { return nil }
 
 func TestInitRegistersCoreHandlers(t *testing.T) {
 	expectedPackets := []string{

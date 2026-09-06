@@ -26,17 +26,26 @@ func TestRecipeGrid_ShapedFitsIn2x2(t *testing.T) {
 	if !ok {
 		t.Fatalf("recipeGrid: want ok=true for a 2x2 shaped recipe")
 	}
-	for i, candidates := range grid {
-		if len(candidates) != 1 || candidates[0] != "minecraft:oak_planks" {
-			t.Fatalf("grid[%d] = %v, want [minecraft:oak_planks]", i, candidates)
+	// Row-major, stride tableGridSize(3): (0,0)=0 (0,1)=1 (1,0)=3 (1,1)=4.
+	for _, i := range []int{0, 1, 3, 4} {
+		if len(grid[i]) != 1 || grid[i][0] != "minecraft:oak_planks" {
+			t.Fatalf("grid[%d] = %v, want [minecraft:oak_planks]", i, grid[i])
 		}
+	}
+	for _, i := range []int{2, 5, 6, 7, 8} {
+		if len(grid[i]) != 0 {
+			t.Fatalf("grid[%d] should be empty, got %v", i, grid[i])
+		}
+	}
+	if !fitsInventoryGrid(grid) {
+		t.Fatalf("fitsInventoryGrid: want true for a 2x2-only shaped recipe")
 	}
 }
 
 func TestRecipeGrid_ShapedNarrowerThanGridLeavesSlotsEmpty(t *testing.T) {
-	// Mirrors the real "stick" recipe: a 1-wide, 2-tall pattern within the
-	// 2x2 grid — only slots 0 (window-0 slot 1) and 2 (window-0 slot 3)
-	// should get an ingredient; 1 and 3 stay empty.
+	// Mirrors the real "stick" recipe: a 1-wide, 2-tall pattern — only
+	// (row 0, col 0) and (row 1, col 0) should get an ingredient, i.e.
+	// grid[0] and grid[3] (row-major, stride 3); everything else empty.
 	rj := rawRecipeJSON{
 		Type:    craftingShapedType,
 		Key:     map[string]ingredientRef{"#": "minecraft:oak_planks"},
@@ -46,11 +55,47 @@ func TestRecipeGrid_ShapedNarrowerThanGridLeavesSlotsEmpty(t *testing.T) {
 	if !ok {
 		t.Fatalf("recipeGrid: want ok=true")
 	}
-	if len(grid[0]) == 0 || len(grid[2]) == 0 {
-		t.Fatalf("grid[0]/grid[2] should be populated, got %v / %v", grid[0], grid[2])
+	if len(grid[0]) == 0 || len(grid[3]) == 0 {
+		t.Fatalf("grid[0]/grid[3] should be populated, got %v / %v", grid[0], grid[3])
 	}
-	if len(grid[1]) != 0 || len(grid[3]) != 0 {
-		t.Fatalf("grid[1]/grid[3] should be empty (narrower-than-grid pattern), got %v / %v", grid[1], grid[3])
+	for _, i := range []int{1, 2, 4, 5, 6, 7, 8} {
+		if len(grid[i]) != 0 {
+			t.Fatalf("grid[%d] should be empty (narrower-than-grid pattern), got %v", i, grid[i])
+		}
+	}
+	if !fitsInventoryGrid(grid) {
+		t.Fatalf("fitsInventoryGrid: want true for a recipe fitting in one column of the 2x2 grid")
+	}
+}
+
+func TestRecipeGrid_ShapedFitsIn3x3Only(t *testing.T) {
+	// Mirrors the real "wooden_pickaxe" recipe: 3 planks across the top
+	// row, 2 sticks down the center column — a real recipe that does not
+	// fit in a 2x2 grid (docs/plans/CRAFTING_TABLE_3X3_PLAN.md Phase 5).
+	rj := rawRecipeJSON{
+		Type: craftingShapedType,
+		Key: map[string]ingredientRef{
+			"#": "minecraft:oak_planks",
+			"X": "minecraft:stick",
+		},
+		Pattern: []string{"###", " X ", " X "},
+	}
+	grid, ok := recipeGrid("", rj, map[string][]string{})
+	if !ok {
+		t.Fatalf("recipeGrid: want ok=true for a 3x3 shaped recipe")
+	}
+	for _, i := range []int{0, 1, 2} {
+		if len(grid[i]) != 1 || grid[i][0] != "minecraft:oak_planks" {
+			t.Fatalf("grid[%d] = %v, want [minecraft:oak_planks]", i, grid[i])
+		}
+	}
+	for _, i := range []int{4, 7} {
+		if len(grid[i]) != 1 || grid[i][0] != "minecraft:stick" {
+			t.Fatalf("grid[%d] = %v, want [minecraft:stick]", i, grid[i])
+		}
+	}
+	if fitsInventoryGrid(grid) {
+		t.Fatalf("fitsInventoryGrid: want false for a recipe using column 2 and row 2")
 	}
 }
 
@@ -58,10 +103,10 @@ func TestRecipeGrid_ShapedTooLargeRejected(t *testing.T) {
 	rj := rawRecipeJSON{
 		Type:    craftingShapedType,
 		Key:     map[string]ingredientRef{"#": "minecraft:oak_planks"},
-		Pattern: []string{"###", "###", "###"},
+		Pattern: []string{"####", "####", "####", "####"},
 	}
 	if _, ok := recipeGrid("", rj, map[string][]string{}); ok {
-		t.Fatalf("recipeGrid: want ok=false for a 3x3 pattern (out of 2x2 MVP scope)")
+		t.Fatalf("recipeGrid: want ok=false for a 4x4 pattern (out of 3x3 scope)")
 	}
 }
 
@@ -94,15 +139,36 @@ func TestRecipeGrid_ShapelessFitsIn2x2(t *testing.T) {
 	if len(grid[2]) != 0 || len(grid[3]) != 0 {
 		t.Fatalf("grid[2]/grid[3] should be empty, got %v / %v", grid[2], grid[3])
 	}
+	if !fitsInventoryGrid(grid) {
+		t.Fatalf("fitsInventoryGrid: want true for a 2-ingredient shapeless recipe")
+	}
 }
 
-func TestRecipeGrid_ShapelessTooManyIngredientsRejected(t *testing.T) {
+func TestRecipeGrid_ShapelessFitsIn3x3Only(t *testing.T) {
+	// 5 ingredients: fits a 3x3 grid but not a 2x2 one.
 	rj := rawRecipeJSON{
 		Type:        craftingShapelessType,
 		Ingredients: []ingredientRef{"minecraft:a", "minecraft:b", "minecraft:c", "minecraft:d", "minecraft:e"},
 	}
+	grid, ok := recipeGrid("", rj, map[string][]string{})
+	if !ok {
+		t.Fatalf("recipeGrid: want ok=true for a 5-ingredient shapeless recipe (fits 3x3)")
+	}
+	if fitsInventoryGrid(grid) {
+		t.Fatalf("fitsInventoryGrid: want false for 5 shapeless ingredients (needs a table)")
+	}
+}
+
+func TestRecipeGrid_ShapelessTooManyIngredientsRejected(t *testing.T) {
+	rj := rawRecipeJSON{
+		Type: craftingShapelessType,
+		Ingredients: []ingredientRef{
+			"minecraft:a", "minecraft:b", "minecraft:c", "minecraft:d", "minecraft:e",
+			"minecraft:f", "minecraft:g", "minecraft:h", "minecraft:i", "minecraft:j",
+		},
+	}
 	if _, ok := recipeGrid("", rj, map[string][]string{}); ok {
-		t.Fatalf("recipeGrid: want ok=false for 5 ingredients (doesn't fit a 2x2 grid)")
+		t.Fatalf("recipeGrid: want ok=false for 10 ingredients (doesn't fit a 3x3 grid)")
 	}
 }
 
@@ -248,11 +314,37 @@ func TestLoadCraftingRecipes_AgainstRealCache(t *testing.T) {
 	// tag) is a good end-to-end check that pattern-narrower-than-grid AND
 	// tag resolution both work against real cached data.
 	if stick, ok := recipes["minecraft:stick"]; ok {
-		if len(stick.grid[0]) == 0 || len(stick.grid[2]) == 0 {
-			t.Errorf("minecraft:stick recipe: grid[0]/grid[2] should be populated (tag-resolved plank candidates), got %v / %v", stick.grid[0], stick.grid[2])
+		// Row-major, stride tableGridSize(3): (0,0)=0, (1,0)=3.
+		if len(stick.grid[0]) == 0 || len(stick.grid[3]) == 0 {
+			t.Errorf("minecraft:stick recipe: grid[0]/grid[3] should be populated (tag-resolved plank candidates), got %v / %v", stick.grid[0], stick.grid[3])
 		}
-		if len(stick.grid[1]) != 0 || len(stick.grid[3]) != 0 {
-			t.Errorf("minecraft:stick recipe: grid[1]/grid[3] should be empty, got %v / %v", stick.grid[1], stick.grid[3])
+		if len(stick.grid[1]) != 0 || len(stick.grid[2]) != 0 {
+			t.Errorf("minecraft:stick recipe: grid[1]/grid[2] should be empty, got %v / %v", stick.grid[1], stick.grid[2])
+		}
+		if !stick.fitsInventoryGrid() {
+			t.Errorf("minecraft:stick recipe: fitsInventoryGrid() should be true")
+		}
+	}
+
+	// "wooden_pickaxe" (real recipe: 3 planks across the top row, 2 sticks
+	// down the center column) is a real 3x3-only shaped recipe — confirms
+	// recipeGrid's raised shaped-pattern limit and fitsInventoryGrid's
+	// rejection both work against real cached data, not just synthetic
+	// fixtures (see TestRecipeGrid_ShapedFitsIn3x3Only for the synthetic
+	// version of this same shape).
+	if pickaxe, ok := recipes["minecraft:wooden_pickaxe"]; ok {
+		for _, i := range []int{0, 1, 2} {
+			if len(pickaxe.grid[i]) == 0 {
+				t.Errorf("minecraft:wooden_pickaxe recipe: grid[%d] should be populated (top row planks), got %v", i, pickaxe.grid[i])
+			}
+		}
+		for _, i := range []int{4, 7} {
+			if len(pickaxe.grid[i]) == 0 {
+				t.Errorf("minecraft:wooden_pickaxe recipe: grid[%d] should be populated (center-column sticks), got %v", i, pickaxe.grid[i])
+			}
+		}
+		if pickaxe.fitsInventoryGrid() {
+			t.Errorf("minecraft:wooden_pickaxe recipe: fitsInventoryGrid() should be false (needs a table)")
 		}
 	}
 }

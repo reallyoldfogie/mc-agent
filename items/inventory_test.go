@@ -291,6 +291,38 @@ func TestMoveSingle(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, im.cursor.IsEmpty())
 	require.Len(t, screen.calls, 3)
+
+	// The third click ("return the unneeded remainder to the source slot")
+	// must send the remainder (3 units) as its carried item, not an empty
+	// one - found live via MC_AGENT_CLICK_DEBUG_PATH: sending an empty
+	// carried item here produced a packet the server silently rejected
+	// (see carriedItemForClick's doc comment). Regression coverage for that
+	// fix.
+	returnCall := screen.calls[2]
+	require.Equal(t, int16(1), returnCall.slot, "third click should return to the source slot")
+	require.NotNil(t, returnCall.carried, "return click must declare a carried item")
+	require.Equal(t, int32(5), int32(returnCall.carried.ID))
+	require.Equal(t, int32(3), int32(returnCall.carried.Count), "must carry the 3 leftover units, not an empty stack")
+}
+
+func TestCarriedItemForClick(t *testing.T) {
+	held := models.ItemStack{ItemID: 5, Count: 3}
+	empty := models.ItemStack{}
+
+	// Depositing the entire held stack (cursorNext empty, something was
+	// actually held): must fall back to what was carried in, not send empty.
+	require.Equal(t, held, carriedItemForClick(held, empty))
+
+	// Pickup (nothing held before, something held after): cursorNext as-is.
+	require.Equal(t, held, carriedItemForClick(empty, held))
+
+	// Still holding something after the click (partial place/stack): use
+	// the post-click prediction as-is, per real protocol convention.
+	remainder := models.ItemStack{ItemID: 5, Count: 1}
+	require.Equal(t, remainder, carriedItemForClick(held, remainder))
+
+	// Nothing held before or after: stays empty either way.
+	require.Equal(t, empty, carriedItemForClick(empty, empty))
 }
 
 func TestDistributeItems(t *testing.T) {

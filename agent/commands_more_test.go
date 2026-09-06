@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,7 +19,14 @@ import (
 )
 
 // fakes for movement and pathfinding
+//
+// mu guards every field below: EnterManualMode's background ticker
+// goroutine reads/writes manualThrottle/currentPos/manualMode concurrently
+// with the test goroutine's SetManualThrottle/ExitManualMode/PosCalls
+// calls - found live via `go test -race` (WARNING: DATA RACE between
+// ExitManualMode and the ticker goroutine's reads), not hypothetical.
 type fakeMoveExec struct {
+	mu             sync.Mutex
 	posCalls       [][3]float64
 	lookCalls      [][3]float64
 	manualMode     bool
@@ -33,6 +41,28 @@ type fakeMoveExec struct {
 	agent *agent
 }
 
+// PosCalls returns a snapshot of every position recorded via SendPosition
+// so far. Safe to call concurrently with the manual-mode ticker goroutine
+// (see EnterManualMode) - unlike reading the posCalls field directly, which
+// is exactly the pattern that used to race.
+func (f *fakeMoveExec) PosCalls() [][3]float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][3]float64, len(f.posCalls))
+	copy(out, f.posCalls)
+	return out
+}
+
+// LookCalls returns a snapshot of every target recorded via LookAt so far -
+// see PosCalls' doc comment.
+func (f *fakeMoveExec) LookCalls() [][3]float64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([][3]float64, len(f.lookCalls))
+	copy(out, f.lookCalls)
+	return out
+}
+
 // Compile-time assertions that the fake satisfies the executor interfaces the
 // agent commands require. Without these, a missing method silently downgrades
 // the fake to a plain MovementExecutor and manual-mode commands fail at runtime.
@@ -42,10 +72,17 @@ var (
 )
 
 func (f *fakeMoveExec) SendPosition(x, y, z float64, onGround bool) error {
+	f.mu.Lock()
 	f.posCalls = append(f.posCalls, [3]float64{x, y, z})
 	f.currentPos = [3]float64{x, y, z}
-	// Update agent position for manual mode testing
-	if f.manualMode && f.agent != nil {
+	manual := f.manualMode
+	f.mu.Unlock()
+	// Update agent position for manual mode testing - outside the lock:
+	// agent.UpdatePosition takes the agent's own locks, and this method is
+	// also called from EnterManualMode's ticker goroutine, so holding
+	// fakeMoveExec's lock across an unrelated subsystem call is worth
+	// avoiding on general principle even though nothing calls back in.
+	if manual && f.agent != nil {
 		f.agent.UpdatePosition(models.V3{X: x, Y: y, Z: z}, 0, 0)
 	}
 	return nil
@@ -58,7 +95,9 @@ func (f *fakeMoveExec) MoveTowards(tx, ty, tz float64, d float64, og bool) (floa
 	return 0, 0, 0, nil
 }
 func (f *fakeMoveExec) LookAt(x, y, z float64, onGround bool) error {
+	f.mu.Lock()
 	f.lookCalls = append(f.lookCalls, [3]float64{x, y, z})
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeMoveExec) StartSprinting() error { return nil }
@@ -90,11 +129,20 @@ func (f *fakeMoveExec) SetMovementHandler(models.MovementHandler) {}
 
 // ManualMovementExecutor implementation for testing
 func (f *fakeMoveExec) EnterManualMode() error {
+	f.mu.Lock()
 	if f.manualMode {
+		f.mu.Unlock()
 		return nil // already in manual mode
 	}
 	f.manualMode = true
 	f.stopChan = make(chan struct{})
+	// Captured locally rather than read as f.stopChan inside the select
+	// below: select re-evaluates its case expressions every loop
+	// iteration, so reading the field directly would race
+	// ExitManualMode's write of f.stopChan = nil. A local copy, read once,
+	// sidesteps that entirely.
+	stop := f.stopChan
+	f.mu.Unlock()
 
 	// Start a goroutine to simulate physics ticks
 	go func() {
@@ -107,17 +155,19 @@ func (f *fakeMoveExec) EnterManualMode() error {
 				// Simulate movement based on current throttle
 				// Walk speed: ~0.215 blocks/tick
 				const speed = 0.215
+				f.mu.Lock()
 				throttleX := f.manualThrottle[0] * speed
 				throttleZ := f.manualThrottle[1] * speed
-
 				// Update position (no gravity in fake mode, just horizontal movement)
 				f.currentPos[0] += throttleX
 				f.currentPos[2] += throttleZ
+				pos := f.currentPos
+				f.mu.Unlock()
 
 				// Report position to maintain ground contact
-				_ = f.SendPosition(f.currentPos[0], f.currentPos[1], f.currentPos[2], true)
+				_ = f.SendPosition(pos[0], pos[1], pos[2], true)
 
-			case <-f.stopChan:
+			case <-stop:
 				return
 			}
 		}
@@ -127,6 +177,8 @@ func (f *fakeMoveExec) EnterManualMode() error {
 }
 
 func (f *fakeMoveExec) ExitManualMode() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if !f.manualMode {
 		return nil
 	}
@@ -139,17 +191,23 @@ func (f *fakeMoveExec) ExitManualMode() error {
 }
 
 func (f *fakeMoveExec) SetManualThrottle(westEastThrottle, northSouthThrottle float64) error {
+	f.mu.Lock()
 	f.manualThrottle = [2]float64{westEastThrottle, northSouthThrottle}
+	f.mu.Unlock()
 	return nil
 }
 
 func (f *fakeMoveExec) SetManualRotation(yaw, pitch float64) error {
+	f.mu.Lock()
 	f.manualRotation = [2]float64{yaw, pitch}
+	f.mu.Unlock()
 	return nil
 }
 
 func (f *fakeMoveExec) SetManualJump(enabled bool) error {
+	f.mu.Lock()
 	f.manualJump = enabled
+	f.mu.Unlock()
 	return nil
 }
 
@@ -171,17 +229,39 @@ func (f *fakeMoveExec) SetDismounted() error {
 	return nil
 }
 
+// fakePF's FindPath is called from the goroutine FindPath.Execute spawns
+// for the async chat command (actions/commands.go), while the test reads
+// called/pathGoal from its own goroutine after a fixed sleep - mu guards
+// both sides; use Called()/PathGoal() from tests rather than the raw
+// fields.
 type fakePF struct {
+	mu              sync.Mutex
 	start, pathGoal models.V3
 	called          bool
 }
 
 func (f *fakePF) FindPath(ctx context.Context, s, g models.V3, _ int) (*models.Path, error) {
+	f.mu.Lock()
 	f.start, f.pathGoal, f.called = s, g, true
+	f.mu.Unlock()
 	return &models.Path{}, nil
 }
 func (f *fakePF) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
 	return startY
+}
+
+// Called reports whether FindPath has been invoked yet.
+func (f *fakePF) Called() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.called
+}
+
+// PathGoal returns the most recent goal FindPath was called with.
+func (f *fakePF) PathGoal() models.V3 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pathGoal
 }
 
 type fakeSBPacketMgr struct {
@@ -260,27 +340,45 @@ func (f fakeSBPacketMgr) GetEntityTypeID(name string) int32 {
 	return 0
 }
 
-// fakeConn is a minimal fake that implements WritePacket
+// fakeConn is a minimal fake that implements WritePacket. It shares
+// fakeClientWriter's mutex (not just its pkts slice) since both can be
+// invoked from the goroutine an async chat command (e.g. FireBow) spawns,
+// concurrently with a test reading pkts after a fixed sleep.
 type fakeConn struct {
+	mu   *sync.Mutex
 	pkts *[]pk.Packet
 }
 
 func (f *fakeConn) WritePacket(p pk.Packet) error {
-	if f.pkts != nil {
-		*f.pkts = append(*f.pkts, p)
+	if f.pkts == nil {
+		return nil
 	}
+	f.mu.Lock()
+	*f.pkts = append(*f.pkts, p)
+	f.mu.Unlock()
 	return nil
 }
 
 type fakeClientWriter struct {
+	mu       sync.Mutex
 	pkts     []pk.Packet
 	fakeConn *fakeConn
 }
 
 func newFakeClientWriter() *fakeClientWriter {
 	f := &fakeClientWriter{}
-	f.fakeConn = &fakeConn{pkts: &f.pkts}
+	f.fakeConn = &fakeConn{mu: &f.mu, pkts: &f.pkts}
 	return f
+}
+
+// Pkts returns a snapshot of every packet written so far - safe to call
+// concurrently with WritePacket, unlike reading the pkts field directly.
+func (f *fakeClientWriter) Pkts() []pk.Packet {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]pk.Packet, len(f.pkts))
+	copy(out, f.pkts)
+	return out
 }
 
 func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, bot.JoinOptions) error {
@@ -289,8 +387,13 @@ func (f *fakeClientWriter) JoinServerWithOptions(context.Context, string, bot.Jo
 func (f *fakeClientWriter) Events() bot.Events               { return nil }
 func (f *fakeClientWriter) Name() string                     { return "BOT" }
 func (f *fakeClientWriter) HandleGame(context.Context) error { return nil }
-func (f *fakeClientWriter) WritePacket(p pk.Packet) error    { f.pkts = append(f.pkts, p); return nil }
-func (f *fakeClientWriter) Close() error                     { return nil }
+func (f *fakeClientWriter) WritePacket(p pk.Packet) error {
+	f.mu.Lock()
+	f.pkts = append(f.pkts, p)
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeClientWriter) Close() error { return nil }
 func (f *fakeClientWriter) Conn() *bot.Conn {
 	// Return nil - getPacketWriter() will detect fakeClientWriter implements PacketWriter
 	return nil
@@ -318,7 +421,7 @@ func (f *fakeClientWriter) PopResourcePack(pk.UUID)                          {}
 func (f *fakeClientWriter) PopAllResourcePack()                              {}
 func (f *fakeClientWriter) SelectDataPacks([]bot.DataPack) []bot.DataPack    { return nil }
 func (f *fakeClientWriter) SetVersionHandler(bot.VersionHandler)             {}
-func (f *fakeClientWriter) VersionHandler() bot.VersionHandler              { return nil }
+func (f *fakeClientWriter) VersionHandler() bot.VersionHandler               { return nil }
 
 // Movement: moveForward 0.1 should send one position packet forward (yaw=0 => +Z)
 func TestCommand_MoveForward_SmallStep(t *testing.T) {
@@ -335,10 +438,11 @@ func TestCommand_MoveForward_SmallStep(t *testing.T) {
 	agent.SetMovementExecutor(fm)
 	agent.handleChatCommand("moveForward 0.1")
 	time.Sleep(70 * time.Millisecond) // allow one step
-	if len(fm.posCalls) == 0 {
+	posCalls := fm.PosCalls()
+	if len(posCalls) == 0 {
 		t.Fatalf("expected a SendPosition call")
 	}
-	got := fm.posCalls[len(fm.posCalls)-1]
+	got := posCalls[len(posCalls)-1]
 	// With physics-based movement, expect forward movement (positive z) in the 0.1-0.3 range
 	// (one tick of ~0.215 blocks/tick movement towards the target)
 	if got[2] <= 0 || got[2] > 0.3 {
@@ -379,11 +483,11 @@ func TestCommand_FindPath(t *testing.T) {
 	agent.SetPathFinder(pf)
 	agent.handleChatCommand("findPath 1 0 0")
 	time.Sleep(10 * time.Millisecond)
-	if !pf.called {
+	if !pf.Called() {
 		t.Fatalf("expected FindPath call")
 	}
-	if pf.pathGoal.X != 1 || pf.pathGoal.Y != 0 || pf.pathGoal.Z != 0 {
-		t.Fatalf("unexpected goal: %#v", pf.pathGoal)
+	if pathGoal := pf.PathGoal(); pathGoal.X != 1 || pathGoal.Y != 0 || pathGoal.Z != 0 {
+		t.Fatalf("unexpected goal: %#v", pathGoal)
 	}
 }
 
@@ -424,14 +528,15 @@ func TestCommand_StartStopTracking(t *testing.T) {
 	agent.SetMovementExecutor(fm)
 	agent.handleChatCommand("startTracking")
 	time.Sleep(250 * time.Millisecond)
-	assert.Greater(t, len(fm.lookCalls), 0, "expected at least one LookAt call")
+	assert.Greater(t, len(fm.LookCalls()), 0, "expected at least one LookAt call")
 
 	agent.handleChatCommand("stopTracking")
-	n := len(fm.lookCalls)
+	n := len(fm.LookCalls())
 
 	// Allow for one more tick that may have been in flight
 	time.Sleep(250 * time.Millisecond)
-	assert.LessOrEqual(t, len(fm.lookCalls), n+1, "expected LookAt calls to stop after stopTracking, had %d, now have %d", n, len(fm.lookCalls))
+	finalLookCalls := len(fm.LookCalls())
+	assert.LessOrEqual(t, finalLookCalls, n+1, "expected LookAt calls to stop after stopTracking, had %d, now have %d", n, finalLookCalls)
 }
 
 // FireBow: immediately sends a UseItem packet
@@ -453,11 +558,12 @@ func TestCommand_FireBow_UseItemFirst(t *testing.T) {
 	agent.client = fc
 	agent.handleChatCommand("fireBow")
 	time.Sleep(20 * time.Millisecond)
-	if len(fc.pkts) == 0 {
+	pkts := fc.Pkts()
+	if len(pkts) == 0 {
 		t.Fatalf("expected at least one packet write")
 	}
-	if fc.pkts[0].ID != useItemID {
-		t.Fatalf("expected first packet ID %d (UseItem), got %d", useItemID, fc.pkts[0].ID)
+	if pkts[0].ID != useItemID {
+		t.Fatalf("expected first packet ID %d (UseItem), got %d", useItemID, pkts[0].ID)
 	}
 }
 
@@ -477,15 +583,15 @@ func TestCommand_FireBow_ShootAfterHold(t *testing.T) {
 
 	fc := newFakeClientWriter()
 	agent.client = fc
-	bowHoldIterations = 0
-	bowHoldSleep = 1 * time.Millisecond
+	setBowHoldTestTunables(0, 1*time.Millisecond)
 	agent.handleChatCommand("fireBow")
 	time.Sleep(50 * time.Millisecond)
-	if len(fc.pkts) < 2 {
-		t.Fatalf("expected multiple packets (use + shoot), got %d", len(fc.pkts))
+	pkts := fc.Pkts()
+	if len(pkts) < 2 {
+		t.Fatalf("expected multiple packets (use + shoot), got %d", len(pkts))
 	}
 	foundPlayerAction := false
-	for _, p := range fc.pkts {
+	for _, p := range pkts {
 		if p.ID == playerActionID {
 			foundPlayerAction = true
 			break

@@ -129,11 +129,12 @@ type CommandAgent interface {
 	FindNearestVisibleItem(ctx context.Context, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 
 	// CraftItem crafts itemName (e.g. "minecraft:stick") using the player's
-	// own 2x2 inventory crafting grid — no crafting table needed. Returns
-	// an error if no known 2x2-fitting recipe produces itemName, or if a
-	// required ingredient isn't in the inventory. See the agent package
+	// own 2x2 inventory grid when the recipe fits it, or a nearby crafting
+	// table's 3x3 grid otherwise. Returns an error if no known recipe
+	// produces itemName, no crafting table can be found when one is needed,
+	// or a required ingredient isn't in the inventory. See the agent package
 	// implementation's doc comment for the exact placement/collection
-	// sequence and its known MVP limitations (2x2 grid only, no rollback on
-	// partial failure).
+	// sequence and its known limitations (no rollback on partial failure,
+	// dynamic crafting_special_* recipes like armor dye out of scope).
 	CraftItem(ctx context.Context, itemName string) error
 }

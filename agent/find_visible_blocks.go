@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -210,9 +213,27 @@ func calculateDirection(origin models.V3, target models.V3) models.V3 {
 	}
 }
 
+// findAllVisibleSurfaceBlocksWorkerCount returns how many goroutines
+// findAllVisibleSurfaceBlocks should split its raycasting across, given
+// numTargets rays to trace. Each ray is an independent, read-only query
+// against world/block-registry state (no shared mutable state written
+// mid-trace), so this is embarrassingly parallel - capped at NumCPU since
+// more workers than cores can't speed up CPU-bound raycasting, and at
+// numTargets so a small sphere doesn't spin up idle goroutines.
+func findAllVisibleSurfaceBlocksWorkerCount(numTargets int) int {
+	workers := max(runtime.NumCPU(), 1)
+	return min(workers, numTargets)
+}
+
 // findAllVisibleSurfaceBlocks orchestrates raycasting to points on a SPHERE and collects visible blocks.
 // Uses sphere-based sampling (Fibonacci sphere algorithm) to uniformly sample directions at radius R,
 // ensuring better coverage than cube-shell sampling and avoiding geometric gaps.
+//
+// The ray traces themselves run across a small worker pool (see
+// findAllVisibleSurfaceBlocksWorkerCount): each worker owns a contiguous
+// slice of targets and accumulates its own hits into a local slice, so
+// there's no shared map/lock contention between workers - results are only
+// merged, sequentially, after every worker finishes.
 func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoord models.V3, R int) ([]models.VisibleBlockInfo, error) {
 	world := a.GetWorld()
 	if world == nil {
@@ -226,31 +247,63 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 		Z: originBlockCoord.Z + 0.5,
 	}
 
-	visibleMap := make(map[models.V3]bool)
 	// Generate sphere targets centered at the agent's block position
 	targets := getSurfaceTargets(R, originBlockCoord.X, originBlockCoord.Y, originBlockCoord.Z)
+	if len(targets) == 0 {
+		return nil, nil
+	}
 
-	for idx, target := range targets {
-		if ctx.Err() != nil {
+	numWorkers := findAllVisibleSurfaceBlocksWorkerCount(len(targets))
+	chunkSize := (len(targets) + numWorkers - 1) / numWorkers
+
+	type workerResult struct {
+		hits []models.V3
+		err  error
+	}
+	workerResults := make([]workerResult, numWorkers)
+	var castCount atomic.Int64
+	var wg sync.WaitGroup
+
+	for w := range numWorkers {
+		start := w * chunkSize
+		if start >= len(targets) {
 			break
 		}
+		end := min(start+chunkSize, len(targets))
 
-		if idx%1000 == 0 && idx > 0 {
-			a.logf("[FindAllVisibleBlocksInSphere] Cast %d/%d rays", idx, len(targets))
+		wg.Add(1)
+		go func(w, start, end int) {
+			defer wg.Done()
+			var hits []models.V3
+			for _, target := range targets[start:end] {
+				if ctx.Err() != nil {
+					workerResults[w] = workerResult{err: ctx.Err()}
+					return
+				}
+				if n := castCount.Add(1); n%1000 == 0 {
+					a.logf("[FindAllVisibleBlocksInSphere] Cast %d/%d rays", n, len(targets))
+				}
+
+				// Calculate normalized direction vector
+				dir := calculateDirection(originEye, target.Add(models.V3{X: 0.5, Y: 0.5, Z: 0.5}))
+
+				// Trace ray to find first obscuring block
+				if hit, found := a.traceRay(Ray{originEye, dir}, float64(R), world); found {
+					hits = append(hits, hit)
+				}
+			}
+			workerResults[w] = workerResult{hits: hits}
+		}(w, start, end)
+	}
+	wg.Wait()
+
+	visibleMap := make(map[models.V3]bool)
+	for _, res := range workerResults {
+		if res.err != nil {
+			return nil, fmt.Errorf("context cancelled in findAllVisibleSurfaceBlocks: %v", res.err)
 		}
-
-		// Calculate normalized direction vector
-		dir := calculateDirection(originEye, target.Add(models.V3{X: 0.5, Y: 0.5, Z: 0.5}))
-
-		// Trace ray to find first obscuring block
-		if hit, found := a.traceRay(Ray{originEye, dir}, float64(R), world); found {
+		for _, hit := range res.hits {
 			visibleMap[hit] = true
-		}
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("context cancelled in findAllVisibleSurfaceBlocks: %v", ctx.Err())
-		default:
-			continue
 		}
 	}
 

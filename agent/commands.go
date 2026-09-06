@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -327,14 +328,71 @@ func (a *agent) cmdFindPath(xs, ys, zs string) {
 
 // Tracking loop: look at nearest tracked entity periodically
 
-// Tunables for testing and legacy parity
+// Tunables for testing and legacy parity.
+//
+// testTunablesMu guards every var in this block: tests overwrite them to
+// speed up otherwise real-time loops (e.g. a tracking tick every 50ms
+// instead of every second), but the async command goroutine a *previous*
+// test spawned (tracking, fireBow's hold loop, ...) isn't awaited or
+// cancelled before that test returns, so it can still be reading these
+// vars - via the getters below, never the raw vars - when the next test
+// starts and writes new values. Found live via `go test -race`.
 var (
+	testTunablesMu            sync.RWMutex
 	trackingTickDur           = time.Second / 20
 	trackingStatsDur          = 15 * time.Second
 	trackingNoPlayersInterval = 30 * time.Second
 	bowHoldIterations         = 10
 	bowHoldSleep              = time.Second
 )
+
+func getTrackingTickDur() time.Duration {
+	testTunablesMu.RLock()
+	defer testTunablesMu.RUnlock()
+	return trackingTickDur
+}
+
+func getTrackingStatsDur() time.Duration {
+	testTunablesMu.RLock()
+	defer testTunablesMu.RUnlock()
+	return trackingStatsDur
+}
+
+func getTrackingNoPlayersInterval() time.Duration {
+	testTunablesMu.RLock()
+	defer testTunablesMu.RUnlock()
+	return trackingNoPlayersInterval
+}
+
+func getBowHoldIterations() int {
+	testTunablesMu.RLock()
+	defer testTunablesMu.RUnlock()
+	return bowHoldIterations
+}
+
+func getBowHoldSleep() time.Duration {
+	testTunablesMu.RLock()
+	defer testTunablesMu.RUnlock()
+	return bowHoldSleep
+}
+
+// setTrackingTestTunables and setBowHoldTestTunables let tests override the
+// above under testTunablesMu's protection instead of assigning the raw
+// vars directly.
+func setTrackingTestTunables(tick, stats, noPlayers time.Duration) {
+	testTunablesMu.Lock()
+	defer testTunablesMu.Unlock()
+	trackingTickDur = tick
+	trackingStatsDur = stats
+	trackingNoPlayersInterval = noPlayers
+}
+
+func setBowHoldTestTunables(iterations int, sleep time.Duration) {
+	testTunablesMu.Lock()
+	defer testTunablesMu.Unlock()
+	bowHoldIterations = iterations
+	bowHoldSleep = sleep
+}
 
 func (a *agent) cmdStartTracking() {
 	a.trackMu.Lock()
@@ -356,8 +414,8 @@ func (a *agent) cmdStartTracking() {
 	_ = a.SendChat("Started tracking nearest player...")
 	a.logln("Started tracking nearest player")
 
-	tick := time.NewTicker(trackingTickDur)
-	statsTick := time.NewTicker(trackingStatsDur)
+	tick := time.NewTicker(getTrackingTickDur())
+	statsTick := time.NewTicker(getTrackingStatsDur())
 	go func() {
 		defer tick.Stop()
 		defer statsTick.Stop()
@@ -375,7 +433,7 @@ func (a *agent) cmdStartTracking() {
 				nearest, ok := a.findNearestPlayer(true)
 				if !ok {
 					now := time.Now()
-					if now.Sub(a.lastNoPlayersMsg) >= trackingNoPlayersInterval {
+					if now.Sub(a.lastNoPlayersMsg) >= getTrackingNoPlayersInterval() {
 						stats := a.getEntityStats()
 						_ = a.SendChat("No players nearby. " + a.formatEntityStats(stats))
 						a.lastNoPlayersMsg = now

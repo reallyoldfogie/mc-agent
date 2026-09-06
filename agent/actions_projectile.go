@@ -201,9 +201,10 @@ func (a *agent) FireBowWithPitch(ctx context.Context, pitch, yaw float64, callba
 
 	// Hold for maximum duration to get full power
 	go func() {
-		for i := 0; i < bowHoldIterations; i++ {
+		iterations := getBowHoldIterations()
+		for i := 0; i < iterations; i++ {
 			_ = actions.SendPlayerAction(conn, 0, 0, 0, 0, 0, a.getNextSequence())
-			time.Sleep(maxBowHoldDuration / time.Duration(bowHoldIterations))
+			time.Sleep(maxBowHoldDuration / time.Duration(iterations))
 		}
 		_ = actions.SendPlayerAction(conn, 5, 0, 0, 0, 0, a.getNextSequence())
 	}()
@@ -245,9 +246,10 @@ func (a *agent) FireBow(ctx context.Context) error {
 
 	// Hold for some ticks, then shoot
 	go func() {
-		for i := 0; i < bowHoldIterations; i++ {
+		iterations, sleep := getBowHoldIterations(), getBowHoldSleep()
+		for i := 0; i < iterations; i++ {
 			_ = actions.SendPlayerAction(conn, 0, 0, 0, 0, 0, a.getNextSequence())
-			time.Sleep(bowHoldSleep)
+			time.Sleep(sleep)
 		}
 		_ = actions.SendPlayerAction(conn, 5, 0, 0, 0, 0, a.getNextSequence())
 	}()
@@ -390,9 +392,10 @@ func (a *agent) FireBowAt(ctx context.Context, targetX, targetY, targetZ float64
 
 	// Hold for maximum duration to get full power
 	go func() {
-		for i := 0; i < bowHoldIterations; i++ {
+		iterations := getBowHoldIterations()
+		for i := 0; i < iterations; i++ {
 			_ = actions.SendPlayerAction(conn, 0, 0, 0, 0, 0, a.getNextSequence())
-			time.Sleep(holdDuration / time.Duration(bowHoldIterations))
+			time.Sleep(holdDuration / time.Duration(iterations))
 		}
 		_ = actions.SendPlayerAction(conn, 5, 0, 0, 0, 0, a.getNextSequence())
 	}()
