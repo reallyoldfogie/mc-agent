@@ -696,12 +696,19 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 		return false
 	}
 	if windowID == 0 {
-		if slot >= len(s.manager.Inventory().GetSlots()) {
+		inventory := s.manager.Inventory()
+		if slot >= len(inventory.GetSlots()) {
 			return false
 		}
-		inventory := s.manager.Inventory()
-		inventory.GetSlots()[slot] = data
-		s.manager.SetInventory(inventory)
+		// OnSetSlot, not GetSlots()[slot] = data: GetSlots() now returns a
+		// defensive copy (mc-bot-go/bot/screen/inventory.go, fixed for a
+		// concurrent-read data race), so mutating its result would silently
+		// update a throwaway copy instead of the tracked inventory.
+		// OnSetSlot writes through to the real backing state under its own
+		// lock.
+		if err := inventory.OnSetSlot(slot, data); err != nil {
+			return false
+		}
 		return true
 	}
 	container, ok := s.manager.Screens()[windowID]
@@ -713,7 +720,9 @@ func (s screenManagerAdapter) SetSlotAt(windowID int, slot int, data mcscreen.Sl
 		if slot >= len(c.GetSlots()) {
 			return false
 		}
-		c.GetSlots()[slot] = data
+		if err := c.OnSetSlot(slot, data); err != nil {
+			return false
+		}
 		return true
 	case *mcscreen.Chest:
 		if slot >= len(c.Slots) {

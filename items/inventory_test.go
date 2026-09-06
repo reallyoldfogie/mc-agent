@@ -547,7 +547,11 @@ func TestScreenManagerAdapterSlotAt(t *testing.T) {
 	chest.Slots[2] = *slotFromItemStack(models.ItemStack{ItemID: 3, Count: 1})
 	fakeScreenMgr.screens[1] = chest
 
-	fakeScreenMgr.inventory.GetSlots()[4] = *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})
+	// GetSlots() returns a defensive copy (mc-bot-go/bot/screen/inventory.go,
+	// fixed for a concurrent-read data race), so seed via OnSetSlot instead
+	// of mutating GetSlots()'s result, which would silently write to a
+	// throwaway copy.
+	require.NoError(t, fakeScreenMgr.inventory.OnSetSlot(4, *slotFromItemStack(models.ItemStack{ItemID: 8, Count: 1})))
 
 	adapter := screenManagerAdapter{manager: fakeScreenMgr}
 	slot, ok := adapter.SlotAt(0, 4)
