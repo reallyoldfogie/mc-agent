@@ -2,7 +2,7 @@ module github.com/reallyoldfogie/mc-agent
 
 go 1.27.0
 
-replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
+// replace github.com/reallyoldfogie/mc-bot-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-bot-go
 
 // replace github.com/reallyoldfogie/mc-protocol-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-protocol-go
 
@@ -21,7 +21,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/reallyoldfogie/cRL-go v0.9.0
-	github.com/reallyoldfogie/mc-bot-go v0.2.0
+	github.com/reallyoldfogie/mc-bot-go v0.2.1
 	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4
 	github.com/reallyoldfogie/mc-protocol-go v0.1.0
