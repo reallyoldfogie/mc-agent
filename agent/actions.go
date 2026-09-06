@@ -1304,6 +1304,36 @@ func isOpenPassThroughBlock(name string, props map[string]string) bool {
 }
 
 func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, targetZ float64) (bool, float64, float64, float64, error) {
+	pos, _, _, ok := a.GetPosition()
+	if !ok {
+		return false, 0, 0, 0, errors.New("position not initialized")
+	}
+	ox := pos.X
+	oy := pos.Y + a.getEyeHeight()
+	oz := pos.Z
+	return a.hasLineOfSightForAccessFrom(ctx, ox, oy, oz, targetX, targetY, targetZ)
+}
+
+// CanInteractFromPosition reports whether a bot standing (feet position) at
+// (fromX, fromY, fromZ) would have line-of-sight to interact with the block
+// at (targetX, targetY, targetZ) - the same check blockInteractionSetup
+// performs live from the agent's actual position, but evaluable for a
+// hypothetical position before actually walking there. Used by
+// models.FindInteractPosition to rank candidate walk-to positions near a
+// block instead of pathfinding straight to the block's own (solid, and
+// therefore unreachable) coordinates - see docs/bugs/hpa-star-slowness.
+func (a *agent) CanInteractFromPosition(ctx context.Context, fromX, fromY, fromZ, targetX, targetY, targetZ float64) (bool, error) {
+	ox := fromX
+	oy := fromY + a.getEyeHeight()
+	oz := fromZ
+	visible, _, _, _, err := a.hasLineOfSightForAccessFrom(ctx, ox, oy, oz, targetX, targetY, targetZ)
+	return visible, err
+}
+
+// hasLineOfSightForAccessFrom is hasLineOfSightForAccess's origin-agnostic
+// core - separated out so CanInteractFromPosition can evaluate LOS from an
+// arbitrary hypothetical eye position, not only the agent's current one.
+func (a *agent) hasLineOfSightForAccessFrom(ctx context.Context, ox, oy, oz, targetX, targetY, targetZ float64) (bool, float64, float64, float64, error) {
 	world := a.GetWorld()
 	if world == nil {
 		return false, 0, 0, 0, errors.New("world not available")
@@ -1311,14 +1341,6 @@ func (a *agent) hasLineOfSightForAccess(ctx context.Context, targetX, targetY, t
 	if a.blockMgr == nil {
 		return false, 0, 0, 0, errors.New("block manager not available")
 	}
-	pos, _, _, ok := a.GetPosition()
-	if !ok {
-		return false, 0, 0, 0, errors.New("position not initialized")
-	}
-	x, y, z := pos.X, pos.Y, pos.Z
-	ox := x
-	oy := y + a.getEyeHeight()
-	oz := z
 	// Convert target position to block coordinates using floor division to handle
 	// both integer and float inputs correctly. This ensures that:
 	// - Integer block coordinates (5, 3, 7) work correctly

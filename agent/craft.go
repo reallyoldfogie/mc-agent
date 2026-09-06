@@ -471,8 +471,23 @@ func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error
 	// agent/plan/steps.go's FindChest/FindBlock with MoveToTarget=true):
 	// FindVisibleBlock's search radius is much larger than interaction
 	// range, and OpenContainer itself has no distance-closing logic of its
-	// own. MoveTo no-ops if already standing on the target cell.
-	if err := a.MoveToWithChat(ctx, x, y, z); err != nil {
+	// own.
+	//
+	// Unlike a dropped item (an entity, not a block), the crafting table
+	// itself is solid - MoveTo can never get within its ~0.5-block goal
+	// radius of the table's own coordinates, since that would mean standing
+	// inside it. Walking straight to (x, y, z) here made A* search
+	// exhaustively outward (never converging - see the "distToGoal keeps
+	// growing" progress-log evidence in docs/bugs/hpa-star-slowness) until
+	// it exhausted its step budget, every single time, regardless of how
+	// close the table actually was. FindInteractPosition finds a walkable,
+	// line-of-sight-verified position near the table instead.
+	target := models.V3{X: x, Y: y, Z: z}
+	moveTarget := target
+	if pos, ok, err := models.FindInteractPosition(ctx, a, target); err == nil && ok {
+		moveTarget = pos
+	}
+	if err := a.MoveToWithChat(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z); err != nil {
 		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", err)
 	}
 

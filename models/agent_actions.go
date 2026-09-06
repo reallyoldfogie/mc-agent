@@ -20,6 +20,14 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	FollowStatus(ctx context.Context) string
 	ChatEvents(ctx context.Context) <-chan string
 	HasLineOfSight(ctx context.Context, x, y, z float64) (bool, error)
+
+	// CanInteractFromPosition reports whether a bot standing at
+	// (fromX, fromY, fromZ) would have line-of-sight to interact with the
+	// block at (targetX, targetY, targetZ) - unlike HasLineOfSight, it does
+	// not use the agent's own current position, so callers can evaluate a
+	// hypothetical standing position before actually moving there. See
+	// FindInteractPosition (interact_position.go).
+	CanInteractFromPosition(ctx context.Context, fromX, fromY, fromZ, targetX, targetY, targetZ float64) (bool, error)
 	FindVisibleEntity(ctx context.Context, entityTypeID int32, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 	FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (x, y, z float64, found bool, err error)
 	FindAllVisibleBlocksInSphere(ctx context.Context, radius int) ([]VisibleBlockInfo, error)

@@ -166,6 +166,25 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		}, nil
 	}
 
+	// Cheap upfront reachability check: if nothing within goalRadius of the
+	// goal is even walkable (e.g. the goal is a solid block's own
+	// coordinates), the search below is guaranteed to exhaust its entire
+	// step budget without success, every time, regardless of maxSteps or
+	// context deadline - because the termination condition can never be
+	// satisfied. Fail fast instead of proving that the slow way. See
+	// docs/bugs/hpa-star-slowness: a real caller did exactly this (passed a
+	// crafting table's own coordinates as the MoveTo target) and every call
+	// burned 100s-900s before finally reporting failure.
+	if pf.goalUnreachable(goal) {
+		return &Path{
+			Found:      false,
+			StartPos:   start,
+			GoalPos:    goal,
+			SearchTime: float64(time.Since(startTime).Milliseconds()),
+		}, fmt.Errorf("path not found: goal (%.1f,%.1f,%.1f) has no walkable cell within goal radius %.2f (likely inside a solid block or missing ground support)",
+			goal.X, goal.Y, goal.Z, pf.goalRadius)
+	}
+
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),
@@ -213,6 +232,8 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		if stepsProcessed%pf.contextCheckFreq == 0 {
 			select {
 			case <-ctx.Done():
+				log.Printf("[A*] context deadline exceeded: steps=%d elapsed=%s open=%d closed=%d",
+					stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet))
 				return &Path{
 					Found:      false,
 					StartPos:   start,
@@ -225,6 +246,8 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 
 		// Check step limit
 		if maxSteps > 0 && stepsProcessed > maxSteps {
+			log.Printf("[A*] exceeded max steps: steps=%d elapsed=%s open=%d closed=%d",
+				stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet))
 			return &Path{
 				Found:      false,
 				StartPos:   start,
@@ -235,6 +258,29 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 
 		// Get node with lowest f-cost
 		current := heap.Pop(openSet).(*node)
+
+		// Skip stale heap entries: this position was already expanded via a
+		// better (or equal) path, or a cheaper entry for it is still pending.
+		// The heap has no decrease-key, so re-discovering a position pushes a
+		// new *node instead of updating the existing one - without this check
+		// every superseded duplicate gets fully re-expanded (recomputing
+		// GetPossibleMoves) when it eventually reaches the front of the heap.
+		if closedSet[current.pos] {
+			continue
+		}
+		if bestKnown, ok := gScores[current.pos]; ok && current.gCost > bestKnown {
+			continue
+		}
+
+		// Progress logging: a_star.go's main loop previously had zero
+		// visibility between the "possible moves from start" dump and
+		// success/failure, making a genuinely slow/failing search
+		// indistinguishable from a hung one. See docs/bugs/hpa-star-slowness.
+		if stepsProcessed%500 == 0 {
+			log.Printf("[A*] progress: steps=%d elapsed=%s open=%d closed=%d current=(%.1f,%.1f,%.1f) distToGoal=%.2f fCost=%.2f",
+				stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet),
+				current.pos.X, current.pos.Y, current.pos.Z, current.pos.DistanceTo(goal), current.fCost)
+		}
 
 		// Check if we reached the goal
 		if current.pos.DistanceTo(goal) <= pf.goalRadius {
@@ -300,6 +346,36 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 // FindGroundBelow delegates to the movement validator to find valid ground
 func (pf *aStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
 	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
+}
+
+// goalUnreachable reports whether goal is *definitely* unreachable: no
+// walkable cell (passable feet+head, solid ground support) exists anywhere
+// within goalRadius of it. Cells in an unloaded chunk are treated as
+// "unknown" rather than unwalkable, so this never produces a false
+// negative that blocks a legitimately pending world - it only fires when
+// every candidate cell's data is available and none of them qualify.
+func (pf *aStarPathFinder) goalUnreachable(goal models.V3) bool {
+	r := int(math.Ceil(pf.goalRadius))
+	for dx := -r; dx <= r; dx++ {
+		for dy := -r; dy <= r; dy++ {
+			for dz := -r; dz <= r; dz++ {
+				candidate := models.V3{X: goal.X + float64(dx), Y: goal.Y + float64(dy), Z: goal.Z + float64(dz)}
+				if candidate.DistanceTo(goal) > pf.goalRadius {
+					continue
+				}
+				feetID, feetLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y, candidate.Z)
+				headID, headLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y+1, candidate.Z)
+				groundID, groundLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y-1, candidate.Z)
+				if !feetLoaded || !headLoaded || !groundLoaded {
+					return false // unknown - don't block, let the real search decide
+				}
+				if pf.shapeMgr.IsPassable(feetID) && pf.shapeMgr.IsPassable(headID) && !pf.shapeMgr.IsPassable(groundID) {
+					return false // found a walkable cell within goalRadius
+				}
+			}
+		}
+	}
+	return true
 }
 
 // reconstructPath builds the path from the goal node back to the start

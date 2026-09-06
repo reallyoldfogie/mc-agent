@@ -511,7 +511,19 @@ func (s FindChest) Run(ctx context.Context, agent models.Agent) (StepResult, err
 		return StepResult{Status: StepFailed, Details: "chest not found"}, errors.New("chest not found")
 	}
 	if s.MoveToTarget {
-		if err := agent.MoveTo(ctx, x, y, z, false); err != nil {
+		// The chest itself is solid - MoveTo can never reach its own
+		// coordinates (no walkable cell is ever within a pathfinder's goal
+		// radius of a position you can't stand inside). Walk to a nearby
+		// walkable, line-of-sight-verified position instead. See
+		// docs/bugs/hpa-star-slowness for how this exact pattern turned a
+		// 5-block walk into an A* search that ran to its step limit every
+		// time.
+		target := models.V3{X: x, Y: y, Z: z}
+		moveTarget := target
+		if pos, ok, err := models.FindInteractPosition(ctx, agent, target); err == nil && ok {
+			moveTarget = pos
+		}
+		if err := agent.MoveTo(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z, false); err != nil {
 			return StepResult{Status: StepFailed, Details: err.Error()}, err
 		}
 	}
@@ -555,7 +567,15 @@ func (s FindBlock) Run(ctx context.Context, agent models.Agent) (StepResult, err
 		return StepResult{Status: StepFailed, Details: "block not found"}, errors.New("block not found")
 	}
 	if s.MoveToTarget {
-		if err := agent.MoveTo(ctx, x, y, z, false); err != nil {
+		// See FindChest.Run above: a found block is generally solid, so
+		// MoveTo must target a walkable position near it, not its own
+		// coordinates.
+		target := models.V3{X: x, Y: y, Z: z}
+		moveTarget := target
+		if pos, ok, err := models.FindInteractPosition(ctx, agent, target); err == nil && ok {
+			moveTarget = pos
+		}
+		if err := agent.MoveTo(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z, false); err != nil {
 			return StepResult{Status: StepFailed, Details: err.Error()}, err
 		}
 	}
