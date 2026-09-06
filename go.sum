@@ -163,8 +163,8 @@ github.com/rabbitmq/amqp091-go v1.14.0 h1:RSaT7aOKt/OrkVUyswPDW29lnRz9psuGmfZFBm
 github.com/rabbitmq/amqp091-go v1.14.0/go.mod h1:Hy4jKW5kQART1u+JkDTF9YYOQUHXqMuhrgxOEeS7G4o=
 github.com/reallyoldfogie/cRL-go v0.9.0 h1:5809tTdD1ig+9tFU2AeMK/TtGvsc728URsmj7a07kd0=
 github.com/reallyoldfogie/cRL-go v0.9.0/go.mod h1:qirLO/t/yHDS8MhMbs7qAOJBiEU8vBcuRJyix+X30Tc=
-github.com/reallyoldfogie/mc-bot-go v0.2.2 h1:g4Ufw8b4OBuOeBA0SV91FIeoPeAtzZ3jn3+YR2cUYuY=
-github.com/reallyoldfogie/mc-bot-go v0.2.2/go.mod h1:a1PEyOa8tw4vgLPQHSKKYUkQmyxNV5Btdt9e+UVuDgA=
+github.com/reallyoldfogie/mc-bot-go v0.2.3 h1:zTVjzsLtXukkcadTup6GFYlmXumF6jQ+Bb8M904tdDs=
+github.com/reallyoldfogie/mc-bot-go v0.2.3/go.mod h1:a1PEyOa8tw4vgLPQHSKKYUkQmyxNV5Btdt9e+UVuDgA=
 github.com/reallyoldfogie/mc-client-test-go v0.1.0 h1:cajCq69/ijsnDhRFPOvuwgvWOLt8RCx8ItE2ce6bR68=
 github.com/reallyoldfogie/mc-client-test-go v0.1.0/go.mod h1:dL6Ts3HmHcQLJ733f7xwAeWIuR7pHhBgSxrYBl7KFHU=
 github.com/reallyoldfogie/mc-data-gen/loader v0.0.4 h1:UfLayatot4n1EhW6MKbm9vouHg9/QUsToXcExea9HFI=
