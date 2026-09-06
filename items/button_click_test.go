@@ -1,10 +1,13 @@
 package items
 
 import (
+	"io"
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-bot-go/bot"
+	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +57,12 @@ func (m *mockContainerHandler) ParseContainerSetSlot(p pk.Packet) (windowID int8
 }
 func (m *mockContainerHandler) ParseHeldItemSlot(p pk.Packet) (int16, error) {
 	return 0, nil
+}
+func (m *mockContainerHandler) DecodeSlot(r io.Reader) (screen.Slot, int64, error) {
+	return screen.Slot{}, 0, nil
+}
+func (m *mockContainerHandler) SendContainerClickV2(conn bot.PacketWriter, windowID int, stateID int32, slot int16, button byte, mode int32, changedSlots screen.ChangedSlots, cursor *screen.Slot) error {
+	return nil
 }
 
 func TestClickButton(t *testing.T) {

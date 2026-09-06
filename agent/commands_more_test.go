@@ -318,6 +318,7 @@ func (f *fakeClientWriter) PopResourcePack(pk.UUID)                          {}
 func (f *fakeClientWriter) PopAllResourcePack()                              {}
 func (f *fakeClientWriter) SelectDataPacks([]bot.DataPack) []bot.DataPack    { return nil }
 func (f *fakeClientWriter) SetVersionHandler(bot.VersionHandler)             {}
+func (f *fakeClientWriter) VersionHandler() bot.VersionHandler              { return nil }
 
 // Movement: moveForward 0.1 should send one position packet forward (yaw=0 => +Z)
 func TestCommand_MoveForward_SmallStep(t *testing.T) {
