@@ -11,6 +11,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	agentutils "github.com/reallyoldfogie/mc-agent/utils"
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
 // inventoryGridSize is the player-inventory crafting grid's width/height (a
@@ -61,16 +62,15 @@ const craftOutputTimeout = 2 * time.Second
 const craftIngredientSlotStart = 9
 
 // findIngredientSlot searches a window's main inventory + hotbar (slots
-// inventoryStart and up) for itemName - mirroring FindSlotWith's matching
-// logic, but scoped to that range; see craftIngredientSlotStart's doc
-// comment for why FindSlotWith itself isn't safe to reuse here. inventoryStart
-// is threaded through from the active craftWindowLayout so the same search
-// works whether the open window is the player's own (inventoryStart=9) or a
-// crafting table's (inventoryStart=craftTableContainerSlots).
-func (a *agent) findIngredientSlot(itemName string, inventoryStart int) (int, bool, error) {
-	inv := a.GetInventory()
-	if inv == nil {
-		return -1, false, fmt.Errorf("inventory not available")
+// layout.inventoryStart and up) for itemName - mirroring FindSlotWith's
+// matching logic, but scoped to that range; see craftIngredientSlotStart's
+// doc comment for why FindSlotWith itself isn't safe to reuse here. Reads
+// via craftWindowSlots (not a.GetInventory() directly) so the search looks
+// at the right window whether it's the player's own or a crafting table's.
+func (a *agent) findIngredientSlot(itemName string, layout craftWindowLayout) (int, bool, error) {
+	slots, err := a.craftWindowSlots(layout)
+	if err != nil {
+		return -1, false, err
 	}
 	a.itemMgrMu.RLock()
 	itemMgr := a.itemMgr
@@ -80,8 +80,7 @@ func (a *agent) findIngredientSlot(itemName string, inventoryStart int) (int, bo
 	}
 
 	normalized := normalizeItemName(itemName)
-	slots := inv.GetSlots()
-	for idx := inventoryStart; idx < len(slots); idx++ {
+	for idx := layout.inventoryStart; idx < len(slots); idx++ {
 		if slots[idx].Count <= 0 {
 			continue
 		}
@@ -399,8 +398,11 @@ func resolveTag(dataDir, tagRef string, cache map[string][]string, depth int) ([
 // craftWindowLayout describes one crafting-capable window's slot numbering,
 // so the placement/collection logic in executeCraft can be shared between
 // the player's own 2x2 grid (always window 0) and an opened crafting
-// table's 3x3 grid (a dynamically-assigned window).
+// table's 3x3 grid (a dynamically-assigned window). windowID is which
+// window craftWindowSlots reads from - see its doc comment for why this
+// matters beyond just which window MoveSingle's clicks target.
 type craftWindowLayout struct {
+	windowID       byte
 	outputSlot     int16
 	gridSlotStart  int16
 	gridWidth      int
@@ -408,9 +410,55 @@ type craftWindowLayout struct {
 	inventoryStart int
 }
 
+// craftWindowSlots returns the raw slot contents for layout's window.
+// a.GetInventory() (agent/subsystems.go) always returns the player's own
+// window-0 inventory regardless of what's actually open - correct for
+// inventoryGridLayout, but wrong for an opened crafting table's window, a
+// completely separate tracked object with its own slot numbering.
+//
+// Found live: CraftItem's table path was silently reading window 0's own
+// tracked slots for ingredient search *and* output-slot polling (both
+// previously called a.GetInventory() unconditionally) while sending its
+// actual placement clicks to the table's real window. Ingredient search
+// still "worked" (window 0 happens to carry the same 36 physical
+// main+hotbar slots, just starting at index 9 instead of the table
+// window's 10, so a scan starting from either offset still finds
+// something), so placeCraftIngredient never errored - but every slot index
+// it handed to MoveSingle was one off from where that item actually lives
+// in the table's real window, so ingredients landed in the wrong grid
+// cells: no recipe matched, and waitForCraftOutput (also reading window 0)
+// could never have seen a real result even if one had appeared. Symptom:
+// "grid did not produce a result" despite every ingredient being found.
+//
+// Uses GenericContainer.GetSlots(), not its Slots field directly: the
+// field has the same no-defensive-copy exposure the player-inventory type
+// had before mc-bot-go v0.2.1 (GenericContainer wasn't part of that fix) -
+// caught live via `go test -race` the first time this function actually
+// ran against a real server (WARNING: DATA RACE between this read and
+// GenericContainer.OnSetSlot), fixed the same way as a mc-bot-go follow-up.
+func (a *agent) craftWindowSlots(layout craftWindowLayout) ([]mcscreen.Slot, error) {
+	if layout.windowID == 0 {
+		inv := a.GetInventory()
+		if inv == nil {
+			return nil, fmt.Errorf("inventory not available")
+		}
+		return inv.GetSlots(), nil
+	}
+	scr := a.GetScreen(int(layout.windowID))
+	if scr == nil {
+		return nil, fmt.Errorf("window %d not open", layout.windowID)
+	}
+	container, ok := scr.(*mcscreen.GenericContainer)
+	if !ok {
+		return nil, fmt.Errorf("window %d is not a crafting-table-shaped container (got %T)", layout.windowID, scr)
+	}
+	return container.GetSlots(), nil
+}
+
 // inventoryGridLayout is window 0's always-present 2x2 crafting grid -
 // today's CraftItem behavior, unchanged.
 var inventoryGridLayout = craftWindowLayout{
+	windowID:       0,
 	outputSlot:     0,
 	gridSlotStart:  1,
 	gridWidth:      inventoryGridSize,
@@ -426,16 +474,18 @@ var inventoryGridLayout = craftWindowLayout{
 // testing/container_suite_crafting_test.go.
 const craftTableContainerSlots = 10
 
-// craftTableGridLayout is an opened crafting table's 3x3 grid - slot
-// numbering is the same regardless of which window ID the server assigned
-// this particular table (see openCraftingTable's a.SetWindow(windowID)
-// call, which points the invMgr at the right window before any clicks).
-var craftTableGridLayout = craftWindowLayout{
-	outputSlot:     0,
-	gridSlotStart:  1,
-	gridWidth:      tableGridSize,
-	gridHeight:     tableGridSize,
-	inventoryStart: craftTableContainerSlots,
+// craftingTableLayout describes an opened crafting table's 3x3 grid at
+// windowID (the window ID the server assigned this particular table) -
+// slot numbering itself is fixed, only windowID varies per call.
+func craftingTableLayout(windowID byte) craftWindowLayout {
+	return craftWindowLayout{
+		windowID:       windowID,
+		outputSlot:     0,
+		gridSlotStart:  1,
+		gridWidth:      tableGridSize,
+		gridHeight:     tableGridSize,
+		inventoryStart: craftTableContainerSlots,
+	}
 }
 
 // craftTableSearchRadius bounds how far CraftItem looks for a nearby
@@ -496,7 +546,7 @@ func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error
 		return craftWindowLayout{}, fmt.Errorf("open crafting table: %w", err)
 	}
 	a.SetWindow(windowID)
-	return craftTableGridLayout, nil
+	return craftingTableLayout(windowID), nil
 }
 
 // CraftItem crafts itemName using whichever crafting surface its recipe
@@ -562,12 +612,12 @@ func (a *agent) executeCraft(ctx context.Context, itemName string, recipe crafti
 			return err
 		}
 		gridSlot := layout.gridSlotStart + int16(row*layout.gridWidth+col)
-		if err := a.placeCraftIngredient(ctx, gridSlot, layout.inventoryStart, candidates); err != nil {
+		if err := a.placeCraftIngredient(ctx, gridSlot, layout, candidates); err != nil {
 			return fmt.Errorf("craft %s: %w", itemName, err)
 		}
 	}
 
-	result, ok := a.waitForCraftOutput(ctx, layout.outputSlot, craftOutputTimeout)
+	result, ok := a.waitForCraftOutput(ctx, layout, craftOutputTimeout)
 	if !ok {
 		return fmt.Errorf("craft %s: grid did not produce a result (ingredients may not actually match the recipe)", itemName)
 	}
@@ -578,14 +628,15 @@ func (a *agent) executeCraft(ctx context.Context, itemName string, recipe crafti
 }
 
 // placeCraftIngredient finds the first inventory item matching one of
-// candidates (searching from inventoryStart onward - see
-// findIngredientSlot) and moves a single unit of it into gridSlot.
-func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, inventoryStart int, candidates []string) error {
+// candidates (searching layout's window from layout.inventoryStart onward -
+// see findIngredientSlot) and moves a single unit of it into gridSlot
+// (also in layout's window - see craftWindowSlots).
+func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, layout craftWindowLayout, candidates []string) error {
 	for _, candidate := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		srcSlot, found, err := a.findIngredientSlot(candidate, inventoryStart)
+		srcSlot, found, err := a.findIngredientSlot(candidate, layout)
 		if err != nil {
 			return fmt.Errorf("search inventory for %s: %w", candidate, err)
 		}
@@ -593,11 +644,10 @@ func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, invent
 			continue
 		}
 
-		inv := a.GetInventory()
-		if inv == nil {
-			return fmt.Errorf("inventory not available")
+		slots, err := a.craftWindowSlots(layout)
+		if err != nil {
+			return err
 		}
-		slots := inv.GetSlots()
 		if srcSlot < 0 || srcSlot >= len(slots) || int(gridSlot) >= len(slots) {
 			return fmt.Errorf("invalid slot index")
 		}
@@ -611,17 +661,17 @@ func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, invent
 	return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 }
 
-// waitForCraftOutput polls outputSlot until it becomes non-empty or timeout
-// elapses. Doesn't check the item matches the expected recipe result: the
-// result slot in a real crafting UI only ever shows a valid output for the
-// grid's current contents (or stays empty), so "non-empty" is already a
-// sufficient, simpler signal than resolving an item name back to an ID just
-// to compare.
-func (a *agent) waitForCraftOutput(ctx context.Context, outputSlot int16, timeout time.Duration) (models.ItemStack, bool) {
+// waitForCraftOutput polls layout's output slot (in layout's window - see
+// craftWindowSlots) until it becomes non-empty or timeout elapses. Doesn't
+// check the item matches the expected recipe result: the result slot in a
+// real crafting UI only ever shows a valid output for the grid's current
+// contents (or stays empty), so "non-empty" is already a sufficient,
+// simpler signal than resolving an item name back to an ID just to compare.
+func (a *agent) waitForCraftOutput(ctx context.Context, layout craftWindowLayout, timeout time.Duration) (models.ItemStack, bool) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if inv := a.GetInventory(); inv != nil {
-			slots := inv.GetSlots()
+		if slots, err := a.craftWindowSlots(layout); err == nil {
+			outputSlot := layout.outputSlot
 			if int(outputSlot) < len(slots) && slots[outputSlot].Count > 0 {
 				return itemStackFromScreenSlot(slots[outputSlot]), true
 			}
