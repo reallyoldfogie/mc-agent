@@ -10,6 +10,8 @@ go 1.27.0
 
 // replace github.com/reallyoldfogie/mc-replay-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/mc-replay-go
 
+// replace github.com/reallyoldfogie/cRL-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/cRL-go
+
 require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
 	github.com/aquasecurity/go-version v0.0.1
@@ -22,7 +24,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.14.0
-	github.com/reallyoldfogie/cRL-go v0.10.0
+	github.com/reallyoldfogie/cRL-go v0.10.1
 	github.com/reallyoldfogie/mc-bot-go v0.2.3
 	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4

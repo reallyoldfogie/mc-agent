@@ -634,6 +634,246 @@ func TestResetPropagatesSeederError(t *testing.T) {
 	}
 }
 
+// --- Config.ResetOrigin ---
+
+func TestResetWithoutResetOriginDoesNotTeleport(t *testing.T) {
+	agent := newFakeAgent(10, 0, 10)
+	cfg := testConfig()
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.teleportCalls) != 0 {
+		t.Fatalf("teleportCalls = %d, want 0 (Config.ResetOrigin unset)", len(agent.teleportCalls))
+	}
+}
+
+func TestResetTeleportsToConfiguredOrigin(t *testing.T) {
+	agent := newFakeAgent(10, 0, 10)
+	cfg := testConfig()
+	origin := [3]float64{0, 4, 0}
+	cfg.ResetOrigin = &origin
+	env := newTestEnvironment(t, agent, cfg)
+
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.teleportCalls) != 1 || agent.teleportCalls[0] != (teleportCall{x: 0, y: 4, z: 0}) {
+		t.Fatalf("teleportCalls = %v, want [{0 4 0}]", agent.teleportCalls)
+	}
+	// TargetOffset is {5,0,0}: the target should be relative to the
+	// post-teleport origin (0,4,0), not the pre-teleport position (10,0,10)
+	// — dx should read 5, not -5.
+	if got := obs.Values[0]; got != 5 {
+		t.Fatalf("post-teleport dx = %v, want 5 (target computed from post-teleport origin)", got)
+	}
+}
+
+func TestResetPropagatesTeleportError(t *testing.T) {
+	agent := newFakeAgent(10, 0, 10)
+	agent.teleportErr = context.DeadlineExceeded
+	cfg := testConfig()
+	origin := [3]float64{0, 4, 0}
+	cfg.ResetOrigin = &origin
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err == nil {
+		t.Fatalf("Reset with failing TeleportTo: want error, got nil")
+	}
+}
+
+// --- Config.Jitter ---
+
+func TestResetJitterVariesTargetAcrossEpisodes(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.Jitter = [3]float64{2, 0, 2}
+	cfg.JitterSeed = 42
+	env := newTestEnvironment(t, agent, cfg)
+
+	obs1, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset 1: %v", err)
+	}
+	obs2, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset 2: %v", err)
+	}
+	if obs1.Values[0] == obs2.Values[0] && obs1.Values[2] == obs2.Values[2] {
+		t.Fatalf("dx/dz identical across two Resets with Jitter set: %v vs %v — want variation", obs1.Values, obs2.Values)
+	}
+}
+
+func TestResetJitterIsDeterministicForFixedSeed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Jitter = [3]float64{2, 0, 2}
+	cfg.JitterSeed = 42
+
+	agent1 := newFakeAgent(0, 0, 0)
+	env1 := newTestEnvironment(t, agent1, cfg)
+	obs1, err := env1.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset (env1): %v", err)
+	}
+
+	agent2 := newFakeAgent(0, 0, 0)
+	env2 := newTestEnvironment(t, agent2, cfg)
+	obs2, err := env2.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset (env2): %v", err)
+	}
+
+	if obs1.Values[0] != obs2.Values[0] || obs1.Values[2] != obs2.Values[2] {
+		t.Fatalf("jittered dx/dz differ across two Environments built with the same JitterSeed: %v vs %v — want identical", obs1.Values, obs2.Values)
+	}
+}
+
+func TestResetJitterAppliesToResetOrigin(t *testing.T) {
+	agent := newFakeAgent(10, 0, 10)
+	cfg := testConfig()
+	origin := [3]float64{0, 0, 0}
+	cfg.ResetOrigin = &origin
+	cfg.Jitter = [3]float64{5, 0, 5}
+	cfg.JitterSeed = 42
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.teleportCalls) != 1 {
+		t.Fatalf("teleportCalls = %d, want 1", len(agent.teleportCalls))
+	}
+	got := agent.teleportCalls[0]
+	if got.x == 0 && got.z == 0 {
+		t.Fatalf("teleport target = %+v, want jittered away from exact origin (0,_,0)", got)
+	}
+	if got.y != 0 {
+		t.Fatalf("teleport Y = %v, want unchanged (Jitter[1]=0)", got.y)
+	}
+}
+
+func TestResetJitterStaysWithinConfiguredMagnitude(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig() // TargetOffset = {5, 0, 0}
+	cfg.Jitter = [3]float64{3, 0, 0}
+	cfg.JitterSeed = 1
+	env := newTestEnvironment(t, agent, cfg)
+
+	for i := 0; i < 200; i++ {
+		obs, err := env.Reset(context.Background())
+		if err != nil {
+			t.Fatalf("Reset %d: %v", i, err)
+		}
+		dx := obs.Values[0]
+		if dx < 2 || dx > 8 {
+			t.Fatalf("Reset %d: dx = %v, want within [2, 8] (TargetOffset.X=5 +/- Jitter.X=3)", i, dx)
+		}
+	}
+}
+
+// --- Config.StuckTimeout ---
+
+func TestStepEndsEpisodeAfterStuckTimeout(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	// Large offset so the bot never arrives via ActionWait's zero movement,
+	// isolating the effect under test.
+	cfg.TargetOffset = [3]float64{100, 0, 0}
+	cfg.StuckTimeout = 3
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	for i := 1; i <= 3; i++ {
+		result, err := env.Step(context.Background(), rlenv.ActionWait)
+		if err != nil {
+			t.Fatalf("Step %d: %v", i, err)
+		}
+		wantDone := i == 3
+		if result.Done != wantDone {
+			t.Fatalf("Step %d: Done = %v, want %v", i, result.Done, wantDone)
+		}
+	}
+}
+
+func TestStepDoesNotEndEpisodeBeforeStuckTimeout(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{100, 0, 0}
+	cfg.StuckTimeout = 5
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	for i := 1; i <= 4; i++ {
+		result, err := env.Step(context.Background(), rlenv.ActionWait)
+		if err != nil {
+			t.Fatalf("Step %d: %v", i, err)
+		}
+		if result.Done {
+			t.Fatalf("Step %d: Done = true, want false (below StuckTimeout)", i)
+		}
+	}
+}
+
+func TestStepDisablesStuckTimeoutWhenZero(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{100, 0, 0}
+	// StuckTimeout left at its zero value (disabled).
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	for i := 1; i <= 20; i++ {
+		result, err := env.Step(context.Background(), rlenv.ActionWait)
+		if err != nil {
+			t.Fatalf("Step %d: %v", i, err)
+		}
+		if result.Done {
+			t.Fatalf("Step %d: Done = true, want false (StuckTimeout disabled)", i)
+		}
+	}
+}
+
+func TestResetClearsStuckCounterAcrossEpisodes(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{100, 0, 0}
+	cfg.StuckTimeout = 2
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if result, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step 1: %v", err)
+	} else if result.Done {
+		t.Fatalf("Step 1: Done = true, want false")
+	}
+	if result, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step 2: %v", err)
+	} else if !result.Done {
+		t.Fatalf("Step 2: Done = false, want true (StuckTimeout=2 reached)")
+	}
+
+	// A fresh episode should start with a clean stuck counter, not
+	// immediately re-trigger from leftover state.
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if result, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step after Reset: %v", err)
+	} else if result.Done {
+		t.Fatalf("Step after Reset: Done = true, want false (stuck counter should have cleared)")
+	}
+}
+
 // compile-time check that fakeAgent satisfies both interfaces rlenv.LiveAgent
 // requires.
 var (
@@ -641,4 +881,5 @@ var (
 	_ models.HealthProvider = (*fakeAgent)(nil)
 	_ rlenv.LiveAgent       = (*fakeAgent)(nil)
 	_ rlenv.SeedAgent       = (*fakeAgent)(nil)
+	_ rlenv.ResetAgent      = (*fakeAgent)(nil)
 )

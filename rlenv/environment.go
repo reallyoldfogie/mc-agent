@@ -3,6 +3,7 @@ package rlenv
 import (
 	"context"
 	"fmt"
+	"math/rand"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -46,11 +47,27 @@ type Environment struct {
 	// the observation returned to the caller (see craftReadyNow).
 	craftCount int
 	craftReady bool
+
+	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
+	// lastObsValues is the previous Step's (or Reset's) observation vector,
+	// stepsWithoutObservationChange counts how many consecutive Steps have
+	// reproduced it bit-for-bit. Both reset to their zero value at Reset,
+	// same as prevDistance/prevHealth/mineVisible/craftReady above.
+	lastObsValues                 []float32
+	stepsWithoutObservationChange int
+
+	// rng backs Config.Jitter — one per Environment, seeded once in New
+	// from Config.JitterSeed, not reseeded per Reset (successive Resets
+	// must draw different jitter values from each other, which reseeding
+	// to the same JitterSeed every time would defeat).
+	rng *rand.Rand
 }
 
 // New constructs an Environment. registry is typically actions.NewRegistry()
 // (or a test double registering only what's needed); it must dispatch
-// "moveto" the way actions.MoveTo does (parseFloat'd x/y/z args) for
+// "movetoquiet" the way actions.MoveToQuiet does (parseFloat'd x/y/z args,
+// no chat narration — see that action's own doc comment on why this
+// environment uses the quiet variant, not "moveto") for
 // ActionGoToTarget/ActionReturnHome to work.
 func New(agent LiveAgent, registry models.ActionRegistry[models.CommandAgent], cfg Config) (*Environment, error) {
 	if agent == nil {
@@ -62,7 +79,7 @@ func New(agent LiveAgent, registry models.ActionRegistry[models.CommandAgent], c
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	return &Environment{agent: agent, registry: registry, cfg: cfg}, nil
+	return &Environment{agent: agent, registry: registry, cfg: cfg, rng: rand.New(rand.NewSource(cfg.JitterSeed))}, nil
 }
 
 // ObservationSize implements rl.Environment.
@@ -84,10 +101,36 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	}
 	x, y, z := pos.X, pos.Y, pos.Z
 
+	if e.cfg.ResetOrigin != nil {
+		resetAgent, ok := e.agent.(ResetAgent)
+		if !ok {
+			return rl.Observation{}, errResetOriginRequiresResetAgent
+		}
+		origin := *e.cfg.ResetOrigin
+		for i := range origin {
+			origin[i] = e.jitter(origin[i], i)
+		}
+		if err := resetAgent.TeleportTo(ctx, origin[0], origin[1], origin[2]); err != nil {
+			return rl.Observation{}, fmt.Errorf("rlenv: resetting to origin: %w", err)
+		}
+		pos, yaw, pitch, ok = e.agent.GetPosition()
+		if !ok {
+			return rl.Observation{}, errPositionUnknown
+		}
+		x, y, z = pos.X, pos.Y, pos.Z
+	}
+
+	e.stepsWithoutObservationChange = 0
+
+	targetOffset := e.cfg.TargetOffset
+	for i := range targetOffset {
+		targetOffset[i] = e.jitter(targetOffset[i], i)
+	}
+
 	e.originX, e.originY, e.originZ = x, y, z
-	e.targetX = x + e.cfg.TargetOffset[0]
-	e.targetY = y + e.cfg.TargetOffset[1]
-	e.targetZ = z + e.cfg.TargetOffset[2]
+	e.targetX = x + targetOffset[0]
+	e.targetY = y + targetOffset[1]
+	e.targetZ = z + targetOffset[2]
 	e.prevDistance = distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
 	e.episodeStarted = true
 
@@ -109,7 +152,14 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	}
 	e.craftCount = e.craftCountNow()
 	e.craftReady = e.craftReadyNow()
-	return buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady), nil
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady)
+	// Seed Config.StuckTimeout's baseline with this episode's starting
+	// observation, not nil — a bot that's already idle from the very first
+	// Step (nothing moved it since Reset) should count toward the timeout
+	// starting there, not only once a second Step happens to repeat the
+	// first Step's own result. See Step's own use of lastObsValues.
+	e.lastObsValues = append(e.lastObsValues[:0], obs.Values...)
+	return obs, nil
 }
 
 // craftCountNow returns the bot's current held count of
@@ -169,10 +219,11 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 
 // Step implements rl.Environment.
 //
-// Movement completion, resolved via models.Completion: actions.MoveTo.Execute
-// (what "moveto" dispatches to) launches MoveToWithChat in its own
-// goroutine and returns immediately, but as of models.ActionRegistry's
-// uniform completion signal (see models/completion.go), that goroutine's
+// Movement completion, resolved via models.Completion: actions.MoveToQuiet.Execute
+// (what "movetoquiet" dispatches to) launches MoveTo (notifyChat=false)
+// in its own goroutine and returns immediately, but as of
+// models.ActionRegistry's uniform completion signal (see
+// models/completion.go), that goroutine's
 // eventual outcome is available via the models.Completion Execute
 // returns — closing the "done signal" gap RL_POLICY_INTEGRATION_PLAN.md
 // item 3 flagged. Step waits on that Completion, bounded by
@@ -286,7 +337,51 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow()
 	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady)
+
+	// Config.StuckTimeout: force the episode done once too many consecutive
+	// Steps have reproduced the exact same observation — see its doc
+	// comment for why (traced to a REINFORCE gradient collapse, 2026-09-08).
+	if same := observationsEqual(obs.Values, e.lastObsValues); same {
+		e.stepsWithoutObservationChange++
+	} else {
+		e.stepsWithoutObservationChange = 0
+	}
+	e.lastObsValues = append(e.lastObsValues[:0], obs.Values...)
+	if e.cfg.StuckTimeout > 0 && e.stepsWithoutObservationChange >= e.cfg.StuckTimeout {
+		done = true
+	}
+
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
+}
+
+// jitter adds a uniform-random offset in [-Config.Jitter[axis],
+// +Config.Jitter[axis]] to base — see Config.Jitter's own doc comment. A
+// zero magnitude (the default for any axis Jitter doesn't set) returns
+// base unchanged without consuming from e.rng, so a Config with no jitter
+// configured behaves identically, including exact RNG-call-count
+// determinism for any other future rng use, to one built before Jitter
+// existed.
+func (e *Environment) jitter(base float64, axis int) float64 {
+	magnitude := e.cfg.Jitter[axis]
+	if magnitude == 0 {
+		return base
+	}
+	return base + (e.rng.Float64()*2-1)*magnitude
+}
+
+// observationsEqual reports whether a and b are the same length and every
+// element compares bit-for-bit equal — backs Config.StuckTimeout's
+// "identical observation" signal (see Step).
+func observationsEqual(a, b []float32) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // awaitStep waits, bounded by Config.StepTimeout, for completion (the

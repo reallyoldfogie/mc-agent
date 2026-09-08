@@ -27,6 +27,21 @@ const (
 	seedSyncPollInterval = 100 * time.Millisecond
 )
 
+// teleportSyncTimeout/teleportSyncPollInterval bound how long TeleportTo
+// waits for this bot's own client-tracked position to catch up with an
+// RCON teleport it just issued — the same client-sync race
+// SeedNearbyBlock's doc comment describes, here for a
+// player-position-update packet instead of a block-update one.
+// teleportSyncThreshold is how close (in blocks) the tracked position
+// must land to the requested destination to count as "arrived" — not
+// exact float equality, since the server may round/clamp the landing
+// spot (e.g. to solid ground).
+const (
+	teleportSyncTimeout      = 2 * time.Second
+	teleportSyncPollInterval = 100 * time.Millisecond
+	teleportSyncThreshold    = 0.5
+)
+
 // SeedNearbyBlock ensures a block named blockName exists within radius
 // blocks of the bot's current position, via RCON — training convenience
 // only (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4's minimum-viable
@@ -140,4 +155,44 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 		}
 	}
 	return nil
+}
+
+// TeleportTo moves the bot to the given world coordinates via RCON
+// (testenv.RCONHelper.Teleport), used by rlenv.Environment.Reset
+// (rlenv.Config.ResetOrigin) to restore a known starting position each
+// episode — training convenience only, same scope note as
+// SeedNearbyBlock/SeedCraftIngredients above: never used by any chat
+// command or other real gameplay path. Requires RCON (a.cfg.RCON) to be
+// configured.
+//
+// Waits (bounded by teleportSyncTimeout) for the bot's own tracked
+// position to land within teleportSyncThreshold blocks of the requested
+// destination before returning, not just for the RCON command to succeed
+// server-side — the same client-sync race SeedNearbyBlock's doc comment
+// describes, here for a player-position-update packet.
+func (a *agent) TeleportTo(ctx context.Context, x, y, z float64) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("teleport: RCON not configured for this agent")
+	}
+	if _, err := a.cfg.RCON.Teleport(ctx, a.cfg.Name, x, y, z).Exec(ctx); err != nil {
+		return fmt.Errorf("teleport via RCON: %w", err)
+	}
+
+	deadline := time.Now().Add(teleportSyncTimeout)
+	for {
+		if pos, ok := a.GetPositionSimple(); ok {
+			dx, dy, dz := pos.X-x, pos.Y-y, pos.Z-z
+			if dx*dx+dy*dy+dz*dz <= teleportSyncThreshold*teleportSyncThreshold {
+				return nil
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("teleport: position never synced to (%.2f, %.2f, %.2f) within %s", x, y, z, teleportSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(teleportSyncPollInterval):
+		}
+	}
 }

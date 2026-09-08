@@ -73,6 +73,35 @@ func TestEnvSettingsToRlenvConfigConvertsStepTimeoutAndSeeder(t *testing.T) {
 	}
 }
 
+func TestEnvSettingsToRlenvConfigConvertsResetOriginAndStuckTimeout(t *testing.T) {
+	e := EnvSettings{StuckTimeout: 20}
+	cfg := e.ToRlenvConfig()
+	if cfg.ResetOrigin != nil {
+		t.Fatalf("ResetOrigin should be nil when UseResetOrigin is false")
+	}
+	if cfg.StuckTimeout != 20 {
+		t.Fatalf("StuckTimeout = %d, want 20", cfg.StuckTimeout)
+	}
+
+	e.UseResetOrigin = true
+	e.ResetOrigin = [3]float64{1, 2, 3}
+	cfg = e.ToRlenvConfig()
+	if cfg.ResetOrigin == nil || *cfg.ResetOrigin != [3]float64{1, 2, 3} {
+		t.Fatalf("ResetOrigin = %v, want &{1 2 3}", cfg.ResetOrigin)
+	}
+}
+
+func TestEnvSettingsToRlenvConfigConvertsJitter(t *testing.T) {
+	e := EnvSettings{Jitter: [3]float64{2, 0, 2}, JitterSeed: 42}
+	cfg := e.ToRlenvConfig()
+	if cfg.Jitter != [3]float64{2, 0, 2} {
+		t.Fatalf("Jitter = %v, want {2 0 2}", cfg.Jitter)
+	}
+	if cfg.JitterSeed != 42 {
+		t.Fatalf("JitterSeed = %d, want 42", cfg.JitterSeed)
+	}
+}
+
 func TestApplyEnvOverridesNestedFields(t *testing.T) {
 	t.Setenv("MCAGENT_CONNECTION_ADDRESS", "10.0.0.1:25566")
 	t.Setenv("MCAGENT_RCON_PASSWORD", "hunter2")

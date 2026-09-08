@@ -17,11 +17,11 @@ const (
 	// ActionWait performs no dispatch: the policy chooses to not move this
 	// step. See Environment.Step for why this doesn't block on anything.
 	ActionWait rl.Action = iota
-	// ActionGoToTarget dispatches "moveto" toward the episode's target
+	// ActionGoToTarget dispatches "movetoquiet" toward the episode's target
 	// position (Environment.targetX/Y/Z, set at Reset — see task.go).
 	ActionGoToTarget
-	// ActionReturnHome dispatches "moveto" back toward the position the
-	// bot was at when Reset was called (Environment.originX/Y/Z).
+	// ActionReturnHome dispatches "movetoquiet" back toward the position
+	// the bot was at when Reset was called (Environment.originX/Y/Z).
 	ActionReturnHome
 	// ActionMine dispatches "mine <Config.MineTargetBlock>" — mc-agent's
 	// own Mine action (actions/commands.go) resolves the nearest visible
@@ -49,10 +49,18 @@ const (
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
-// action names MoveTo/Mine/Craft (actions/commands.go) are keyed under (see
-// actions.actionRegistry.Register: lowercased Name()).
+// action names MoveToQuiet/Mine/Craft (actions/commands.go) are keyed
+// under (see actions.actionRegistry.Register: lowercased Name()).
+//
+// moveToActionName dispatches to "movetoquiet", not "moveto": found live,
+// not anticipated — an RL-driven session dispatching "moveto" every Step
+// got kicked from a real server for spamming once rollout collection
+// dispatched movement fast enough to repeat "Already at target
+// position"/"Navigating..." past vanilla's anti-spam threshold. See
+// actions.MoveToQuiet's own doc comment and
+// docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName = "moveto"
+	moveToActionName = "movetoquiet"
 	mineActionName   = "mine"
 	craftActionName  = "craft"
 )
@@ -100,7 +108,7 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 	}
 }
 
-// moveToArgs formats x, y, z as the string args actions.MoveTo.Execute
+// moveToArgs formats x, y, z as the string args actions.MoveToQuiet.Execute
 // expects (see actions/commands.go: parseFloat(args[0..2])).
 func moveToArgs(x, y, z float64) []string {
 	return []string{formatCoord(x), formatCoord(y), formatCoord(z)}

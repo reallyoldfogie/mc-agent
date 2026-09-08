@@ -62,6 +62,71 @@ type Config struct {
 	// behavior unchanged. Requires the Environment's agent to also satisfy
 	// SeedAgent — Reset returns an error if Seeder is set but it doesn't.
 	Seeder EpisodeSeeder
+
+	// ResetOrigin, if set, is where Environment.Reset teleports the bot
+	// (via RCON — see ResetAgent) before capturing this episode's
+	// origin/target, replacing TargetOffset's own doc comment's "wherever
+	// Reset found the bot" workaround with an actual reset. nil (the
+	// default) leaves that workaround in place, unchanged, for callers
+	// without RCON wired up (e.g. unit tests, or a chat-command-driven
+	// session). Requires the Environment's agent to also satisfy
+	// ResetAgent — Reset returns an error if ResetOrigin is set but it
+	// doesn't.
+	//
+	// Found necessary, not merely nice-to-have: without a real teleport, a
+	// policy that converges on a non-progressing action has no way to
+	// escape that spot across episode boundaries either — every Reset
+	// just re-poses the same relative target from the same stuck
+	// position, so the observation the policy sees never changes and
+	// neither does its behavior. Traced live to a REINFORCE gradient
+	// collapse (a collaborative debugging session with cRL-go, 2026-09-08)
+	// — StuckTimeout below addresses the within-episode half of that,
+	// this field addresses the across-episode half.
+	ResetOrigin *[3]float64
+
+	// StuckTimeout, if > 0, ends the current episode (Step returns
+	// Done=true) once this many consecutive Steps have produced a
+	// bit-for-bit identical observation vector to the previous Step's — a
+	// generic, task-agnostic "no progress of any kind is happening"
+	// signal (position, health/food, mine/craft state all unchanged).
+	// Found necessary by the same debugging session ResetOrigin's doc
+	// comment references: without this, a stalled policy could run an
+	// entire episode producing a batch of identical (observation, action,
+	// advantage) triples whose REINFORCE gradient contributions cancel to
+	// the float32 noise floor. 0 (the default) disables the check,
+	// matching the previous unbounded (episode_len-only) behavior.
+	StuckTimeout int
+
+	// Jitter adds a uniform-random offset in [-Jitter[i], +Jitter[i]] to
+	// axis i of both ResetOrigin (if set) and TargetOffset, drawn fresh
+	// every Reset — see JitterSeed for the source. [3]float64{} (the
+	// default) disables jitter entirely: every axis stays exactly as
+	// configured, matching pre-Jitter behavior bit-for-bit.
+	//
+	// Found necessary, not merely nice-to-have, by the same debugging
+	// session ResetOrigin/StuckTimeout's own doc comments reference: fixing
+	// the across-episode "stuck forever" bug (ResetOrigin) and the
+	// within-episode one (StuckTimeout) turned out not to be sufficient for
+	// a policy to actually learn anything. A fixed ResetOrigin/TargetOffset
+	// pair, once the policy converges toward a single dominant action, has
+	// every episode replay the *exact* same trajectory — still an
+	// exact-repeat, gradient-cancelling batch every epoch, just now bounded
+	// instead of unbounded. Jitter closes that gap: even a fully
+	// deterministic policy now sees a genuinely different (origin, target)
+	// pair, and therefore a genuinely different observation, every episode
+	// — confirmed live: without Jitter, GradientNorm stayed pinned at the
+	// float32 noise floor for 1999 of 2000 epochs even with ResetOrigin and
+	// StuckTimeout both configured.
+	Jitter [3]float64
+
+	// JitterSeed seeds Jitter's random source (one per Environment,
+	// created in New). Zero is a perfectly valid, deterministic seed
+	// (matches math/rand.NewSource(0)) — not a sentinel for "disabled";
+	// Jitter's own zero value ([3]float64{}) is what disables jitter, not
+	// this field. A fixed JitterSeed makes a training run's episode
+	// starting conditions reproducible run to run, the same way
+	// cRL-go/crlconfig's own Train.Seed does for the policy side.
+	JitterSeed int64
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

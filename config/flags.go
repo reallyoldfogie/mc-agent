@@ -205,6 +205,11 @@ type EnvFlagOverrides struct {
 	MineSearchRadius                            int
 	CraftTargetItem                             string
 	SeedEpisodes                                bool
+	UseResetOrigin                              bool
+	ResetOriginX, ResetOriginY, ResetOriginZ    float64
+	StuckTimeout                                int
+	JitterX, JitterY, JitterZ                   float64
+	JitterSeed                                  int64
 }
 
 func RegisterEnvFlags(fs *flag.FlagSet) *EnvFlagOverrides {
@@ -218,6 +223,15 @@ func RegisterEnvFlags(fs *flag.FlagSet) *EnvFlagOverrides {
 	fs.IntVar(&o.MineSearchRadius, "mine-search-radius", 0, "FindVisibleBlock search radius for the mine task (overrides config file/env)")
 	fs.StringVar(&o.CraftTargetItem, "craft-target-item", "", "item name the craft task targets, e.g. minecraft:stick (overrides config file/env)")
 	fs.BoolVar(&o.SeedEpisodes, "seed-episodes", false, "seed mine/craft tasks via RCON at Reset, requires -rcon-address (overrides config file/env)")
+	fs.BoolVar(&o.UseResetOrigin, "use-reset-origin", false, "teleport to reset-origin-x/y/z via RCON at every Reset, requires -rcon-address (overrides config file/env)")
+	fs.Float64Var(&o.ResetOriginX, "reset-origin-x", 0, "Reset teleport destination, X — only used if -use-reset-origin (overrides config file/env)")
+	fs.Float64Var(&o.ResetOriginY, "reset-origin-y", 0, "Reset teleport destination, Y — only used if -use-reset-origin (overrides config file/env)")
+	fs.Float64Var(&o.ResetOriginZ, "reset-origin-z", 0, "Reset teleport destination, Z — only used if -use-reset-origin (overrides config file/env)")
+	fs.IntVar(&o.StuckTimeout, "stuck-timeout", 0, "consecutive identical-observation Steps before an episode is forced done, 0 disables (overrides config file/env)")
+	fs.Float64Var(&o.JitterX, "jitter-x", 0, "random offset magnitude applied to reset-origin-x/target-offset-x every Reset, 0 disables (overrides config file/env)")
+	fs.Float64Var(&o.JitterY, "jitter-y", 0, "random offset magnitude applied to reset-origin-y/target-offset-y every Reset, 0 disables (overrides config file/env)")
+	fs.Float64Var(&o.JitterZ, "jitter-z", 0, "random offset magnitude applied to reset-origin-z/target-offset-z every Reset, 0 disables (overrides config file/env)")
+	fs.Int64Var(&o.JitterSeed, "jitter-seed", 0, "seed for Jitter's random source (overrides config file/env)")
 	return o
 }
 
@@ -242,6 +256,24 @@ func ApplyEnvFlags(s *EnvSettings, fs *flag.FlagSet, o *EnvFlagOverrides) {
 			s.CraftTargetItem = o.CraftTargetItem
 		case "seed-episodes":
 			s.SeedEpisodes = o.SeedEpisodes
+		case "use-reset-origin":
+			s.UseResetOrigin = o.UseResetOrigin
+		case "reset-origin-x":
+			s.ResetOrigin[0] = o.ResetOriginX
+		case "reset-origin-y":
+			s.ResetOrigin[1] = o.ResetOriginY
+		case "reset-origin-z":
+			s.ResetOrigin[2] = o.ResetOriginZ
+		case "stuck-timeout":
+			s.StuckTimeout = o.StuckTimeout
+		case "jitter-x":
+			s.Jitter[0] = o.JitterX
+		case "jitter-y":
+			s.Jitter[1] = o.JitterY
+		case "jitter-z":
+			s.Jitter[2] = o.JitterZ
+		case "jitter-seed":
+			s.JitterSeed = o.JitterSeed
 		}
 	})
 }

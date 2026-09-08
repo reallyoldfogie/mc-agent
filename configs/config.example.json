@@ -58,6 +58,11 @@
     "mine_target_block": "",
     "mine_search_radius": 32,
     "craft_target_item": "",
-    "seed_episodes": false
+    "seed_episodes": false,
+    "use_reset_origin": false,
+    "reset_origin": [0, 0, 0],
+    "stuck_timeout": 0,
+    "jitter": [0, 0, 0],
+    "jitter_seed": 0
   }
 }

@@ -16,6 +16,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(Say{})
 	reg.Register(TestMove{})
 	reg.Register(MoveTo{})
+	reg.Register(MoveToQuiet{})
 	reg.Register(LineTo{})
 	reg.Register(MoveForward{})
 	reg.Register(MoveUp{})

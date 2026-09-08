@@ -95,6 +95,45 @@ func (MoveTo) Execute(ctx context.Context, agent models.CommandAgent, args []str
 	return completion, nil
 }
 
+// MoveToQuiet is MoveTo without the chat narration — for callers that
+// dispatch movement far more often than a human types a chat command (in
+// particular, rlenv's RL training loop; see rlenv/action.go's
+// ActionGoToTarget/ActionReturnHome). Found live, not anticipated: an
+// RL-driven session that dispatched "moveto" every Step got kicked from a
+// real server for spamming once rollout collection reached the same
+// "Already at target position"/"Navigating..." message fast enough for
+// vanilla's anti-spam to flag it — see docs/plans/RL_TRAINING_LOOP_PLAN.md.
+// Registered like any other action (reachable via chat as
+// "movetoquiet <x> <y> <z>" too, same as "moveto"), but exists
+// specifically so rlenv can dispatch to it by name; not intended as a
+// documented player-facing command.
+type MoveToQuiet struct{}
+
+func (MoveToQuiet) Name() string  { return "movetoquiet" }
+func (MoveToQuiet) Usage() string { return "movetoquiet <x> <y> <z>" }
+func (MoveToQuiet) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 3 {
+		return models.Done(fmt.Errorf("movetoquiet: usage: movetoquiet <x> <y> <z>")), nil
+	}
+	tx, err := parseFloat(args[0])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoquiet: invalid X coordinate: %w", err)), nil
+	}
+	ty, err := parseFloat(args[1])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoquiet: invalid Y coordinate: %w", err)), nil
+	}
+	tz, err := parseFloat(args[2])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoquiet: invalid Z coordinate: %w", err)), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		resolve(agent.MoveTo(ctx, tx, ty, tz, false))
+	}()
+	return completion, nil
+}
+
 type LineTo struct{}
 
 func (LineTo) Name() string  { return "lineto" }

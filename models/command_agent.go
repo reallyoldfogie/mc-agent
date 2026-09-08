@@ -7,7 +7,21 @@ type CommandAgent interface {
 	MovementAgent
 	ChatOperations
 
+	// MoveToWithChat is MoveTo(ctx, x, y, z, notifyChat=true) — narrates
+	// progress/arrival/failure to chat, appropriate for a human-issued
+	// "moveTo" chat command. See MoveTo for the quiet alternative.
 	MoveToWithChat(ctx context.Context, x, y, z float64) error
+	// MoveTo is MoveToWithChat's own underlying implementation, exposed
+	// directly so a caller that dispatches movement far more often than a
+	// human types a chat command (rlenv's RL training loop, via
+	// actions.MoveToQuiet — docs/plans/RL_TRAINING_LOOP_PLAN.md) can pass
+	// notifyChat=false. Found live, not anticipated: MoveToWithChat's
+	// "Already at target position"/"Navigating..." chat messages, sent on
+	// every dispatch, got an RL-driven session kicked from a real server
+	// for spamming once rollout collection started dispatching movement
+	// actions fast enough to repeat the same message many times a second —
+	// see MoveToWithChat's own doc comment.
+	MoveTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 	LineTo(ctx context.Context, x, y, z float64, notifyChat bool) error
 
 	TestMove()

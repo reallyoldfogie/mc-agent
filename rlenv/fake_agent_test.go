@@ -11,12 +11,13 @@ import (
 // fakeAgent is a minimal, in-memory models.CommandAgent + models.HealthProvider
 // for testing rlenv.Environment without a live server, per
 // RL_POLICY_INTEGRATION_PLAN.md's verification requirement ("unit-testable
-// without a live server"). MoveToWithChat is the only method Environment's
-// tests actually exercise the effect of; every other CommandAgent method
-// exists solely so fakeAgent satisfies the interface actions.NewRegistry()'s
-// real actions (in particular actions.MoveTo) require, matching how the real
-// dispatch path is exercised end to end in environment_test.go rather than
-// mocking the registry away.
+// without a live server"). MoveTo is the only method Environment's tests
+// actually exercise the effect of (via ActionGoToTarget/ActionReturnHome's
+// "movetoquiet" dispatch — see rlenv/action.go); every other CommandAgent
+// method exists solely so fakeAgent satisfies the interface
+// actions.NewRegistry()'s real actions (in particular actions.MoveToQuiet)
+// require, matching how the real dispatch path is exercised end to end in
+// environment_test.go rather than mocking the registry away.
 type fakeAgent struct {
 	mu                  sync.Mutex
 	x, y, z             float64
@@ -65,11 +66,25 @@ type fakeAgent struct {
 	seedNearbyBlockCalls      []seedNearbyBlockCall
 	seedCraftIngredientsCalls []string
 	seedErr                   error
+
+	// Teleport simulation (rlenv.Config.ResetOrigin): records calls so
+	// tests can assert Reset actually teleported, and optionally returns
+	// teleportErr to exercise Reset's error path — same shape as
+	// seedErr above. Unlike seedErr, a successful TeleportTo also mutates
+	// x/y/z, mirroring MoveTo's "actually move the tracked position"
+	// precedent (see this file's own top doc comment) rather than just
+	// recording the call.
+	teleportCalls []teleportCall
+	teleportErr   error
 }
 
 type seedNearbyBlockCall struct {
 	blockName string
 	radius    int
+}
+
+type teleportCall struct {
+	x, y, z float64
 }
 
 func newFakeAgent(x, y, z float64) *fakeAgent {
@@ -171,11 +186,18 @@ func (f *fakeAgent) FollowStatus(context.Context) string                     { r
 
 // --- models.CommandAgent (beyond MovementAgent/ChatOperations) ---
 
-// MoveToWithChat simulates instant arrival: production movement is real
+// MoveTo simulates instant arrival: production movement is real
 // pathfinding over many ticks, but this fake only needs to prove
 // rlenv.Environment reacts correctly to *some* position change reaching the
-// target, not to simulate pathfinding itself.
-func (f *fakeAgent) MoveToWithChat(_ context.Context, x, y, z float64) error {
+// target, not to simulate pathfinding itself. notifyChat is ignored (this
+// fake never sends real chat) — it exists only so fakeAgent satisfies
+// models.CommandAgent's full MoveTo/MoveToWithChat pair. The
+// moveToWithChat* fields/counter are shared by both entry points, mirroring
+// how the real *agent's MoveToWithChat is just MoveTo(ctx,x,y,z,true) —
+// see rlenv/action.go's ActionGoToTarget/ActionReturnHome, which dispatch
+// through the quiet path (actions.MoveToQuiet) exactly like production
+// rlenv training does.
+func (f *fakeAgent) MoveTo(_ context.Context, x, y, z float64, _ bool) error {
 	f.mu.Lock()
 	f.moveToWithChatCalls++
 	err := f.moveToWithChatErr
@@ -192,6 +214,10 @@ func (f *fakeAgent) MoveToWithChat(_ context.Context, x, y, z float64) error {
 		f.mu.Unlock()
 	}
 	return err
+}
+
+func (f *fakeAgent) MoveToWithChat(ctx context.Context, x, y, z float64) error {
+	return f.MoveTo(ctx, x, y, z, true)
 }
 
 func (f *fakeAgent) LineTo(context.Context, float64, float64, float64, bool) error {
@@ -341,4 +367,18 @@ func (f *fakeAgent) SeedCraftIngredients(_ context.Context, itemName string) err
 	defer f.mu.Unlock()
 	f.seedCraftIngredientsCalls = append(f.seedCraftIngredientsCalls, itemName)
 	return f.seedErr
+}
+
+// --- rlenv.ResetAgent (Config.ResetOrigin) ---
+
+func (f *fakeAgent) TeleportTo(_ context.Context, x, y, z float64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.teleportCalls = append(f.teleportCalls, teleportCall{x: x, y: y, z: z})
+	if f.teleportErr != nil {
+		return f.teleportErr
+	}
+	f.x, f.y, f.z = x, y, z
+	f.posKnown = true
+	return nil
 }

@@ -132,6 +132,29 @@ type EnvSettings struct {
 	// rlenv.Config.Seeder — requires RCON.Address to be set (checked by
 	// whichever command uses this, not here).
 	SeedEpisodes bool `json:"seed_episodes"`
+
+	// UseResetOrigin/ResetOrigin together mirror rlenv.Config.ResetOrigin's
+	// *[3]float64 (JSON has no natural "unset" for a bare array — a plain
+	// [0,0,0] is itself a plausible, valid origin, e.g. world spawn — so
+	// this uses SeedEpisodes/Seeder's own bool-gate pattern instead of
+	// overloading the zero value). Requires RCON.Address to be set (checked
+	// by whichever command uses this, not here) — rlenv.Environment.Reset
+	// also requires the live agent to implement rlenv.ResetAgent, which
+	// *agent already satisfies unconditionally.
+	UseResetOrigin bool       `json:"use_reset_origin"`
+	ResetOrigin    [3]float64 `json:"reset_origin"`
+
+	// StuckTimeout mirrors rlenv.Config.StuckTimeout directly — 0 (the
+	// default) disables it, matching that field's own zero-value contract,
+	// so no separate bool gate is needed here the way ResetOrigin needs one.
+	StuckTimeout int `json:"stuck_timeout"`
+
+	// Jitter/JitterSeed mirror rlenv.Config.Jitter/JitterSeed directly —
+	// [3]float64{} (the default) disables jitter, matching that field's
+	// own zero-value contract, so no separate bool gate is needed here
+	// either.
+	Jitter     [3]float64 `json:"jitter"`
+	JitterSeed int64      `json:"jitter_seed"`
 }
 
 // ToRlenvConfig converts e into an rlenv.Config, ready to pass to
@@ -145,9 +168,16 @@ func (e EnvSettings) ToRlenvConfig() rlenv.Config {
 		MineTargetBlock:  e.MineTargetBlock,
 		MineSearchRadius: e.MineSearchRadius,
 		CraftTargetItem:  e.CraftTargetItem,
+		StuckTimeout:     e.StuckTimeout,
+		Jitter:           e.Jitter,
+		JitterSeed:       e.JitterSeed,
 	}
 	if e.SeedEpisodes {
 		cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	}
+	if e.UseResetOrigin {
+		origin := e.ResetOrigin
+		cfg.ResetOrigin = &origin
 	}
 	return cfg
 }
