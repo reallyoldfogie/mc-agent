@@ -26,7 +26,7 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 ### Prerequisites
 
 - Go 1.21 or later
-- Access to a Minecraft Java Edition server (1.21-1.21.8)
+- Access to a Minecraft Java Edition server (1.21-26.1)
 - Microsoft account for authentication (or use offline mode)
 
 ### Installation
