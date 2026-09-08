@@ -24,7 +24,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/rabbitmq/amqp091-go v1.14.0
-	github.com/reallyoldfogie/cRL-go v0.10.1
+	github.com/reallyoldfogie/cRL-go v0.10.2
 	github.com/reallyoldfogie/mc-bot-go v0.2.3
 	github.com/reallyoldfogie/mc-client-test-go v0.1.0
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4
