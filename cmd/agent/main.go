@@ -5,16 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
-	msauth "github.com/maxsupermanhd/go-mc-ms-auth"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
@@ -23,39 +20,35 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
-	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	// _ "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 )
 
+// envPrefix is this command's ENV-override prefix (config.ApplyEnv's
+// second layer, docs/plans/UNIFIED_CONFIG_PLAN.md) — e.g.
+// MCAGENT_CONNECTION_ADDRESS.
+const envPrefix = "MCAGENT"
+
 var (
-	address      = flag.String("address", "127.0.0.1:25565", "The server address")
-	name         = flag.String("name", "Daze", "The player's name")
-	playerID     = flag.String("uuid", "", "The player's UUID")
-	mcVersion    = flag.String("version", "", "target MC version (empty = auto-detect from server)")
-	offline      = flag.Bool("offline", false, "use offline mode")
-	accessToken  = flag.String("token", "", "AccessToken - offline mode only")
-	mcDataPath   = flag.String("data-path", "", "Path to mc-data-gen data directory (empty=auto-detect; use 'build/cache/mc-data-gen' for centralized cache)")
-	protoGoPath  = flag.String("protocol-path", "", "Path to mc-protocol-go directory")
-	enableClutch = flag.Bool("clutch", false, "Enable clutch assist during physics movement")
-
-	// replay flags
-	enableReplay    = flag.Bool("replay", false, "Enable ReplayMod recording (.mcpr)")
-	replayOut       = flag.String("replay-out", "", "Replay output file path")
-	replayGenerator = flag.String("replay-generator", "mc-agent", "Replay generator string")
-
-	skinCacheDir   = flag.String("skin-cache", "skins", "Directory to cache player/default skins")
-	skinNetEnabled = flag.Bool("skin-net", false, "Allow network skin fetches from Mojang (default off)")
-
-	// RCON flags - only needed for -follow-cam
-	rconAddress  = flag.String("rcon-address", "", "RCON host:port (e.g. localhost:25575) - required for -follow-cam")
-	rconPassword = flag.String("rcon-password", "", "RCON password")
-
-	// cam-follow flags
-	followCamTarget   = flag.String("follow-cam", "", "Player name to follow in spectator camera mode (requires -rcon-address/-rcon-password)")
-	followCamDistance = flag.Float64("follow-cam-distance", 8.0, "Max distance (blocks) to maintain from the followed player")
+	configPath  *string
+	connOv      *config.ConnectionFlagOverrides
+	rconOv      *config.RCONFlagOverrides
+	replayOv    *config.ReplayFlagOverrides
+	skinOv      *config.SkinFlagOverrides
+	movementOv  *config.MovementFlagOverrides
+	followCamOv *config.FollowCamFlagOverrides
 
 	help = flag.Bool("help", false, "Display help")
 )
+
+func init() {
+	configPath = config.RegisterConfigPathFlag(flag.CommandLine)
+	connOv = config.RegisterConnectionFlags(flag.CommandLine)
+	rconOv = config.RegisterRCONFlags(flag.CommandLine)
+	replayOv = config.RegisterReplayFlags(flag.CommandLine)
+	skinOv = config.RegisterSkinFlags(flag.CommandLine)
+	movementOv = config.RegisterMovementFlags(flag.CommandLine)
+	followCamOv = config.RegisterFollowCamFlags(flag.CommandLine)
+}
 
 func main() {
 	flag.Parse()
@@ -65,38 +58,39 @@ func main() {
 		return
 	}
 
-	// Build Auth from flags (offline support - online auth is handled later, when bot client is created)
-	auth := models.Auth{}
-	if *offline {
-		auth = models.Auth{AccessToken: *accessToken, Name: *name, UUID: *playerID}
+	settings, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if err := config.ApplyEnv(&settings, envPrefix); err != nil {
+		log.Fatalf("%v", err)
+	}
+	config.ApplyConnectionFlags(&settings.Connection, flag.CommandLine, connOv)
+	config.ApplyRCONFlags(&settings.RCON, flag.CommandLine, rconOv)
+	config.ApplyReplayFlags(&settings.Replay, flag.CommandLine, replayOv)
+	config.ApplySkinFlags(&settings.Skin, flag.CommandLine, skinOv)
+	config.ApplyMovementFlags(&settings.Movement, flag.CommandLine, movementOv)
+	config.ApplyFollowCamFlags(&settings.FollowCam, flag.CommandLine, followCamOv)
+
+	// Build Auth from flags (offline mode) or Microsoft authentication
+	// (cached under settings.Auth.CacheDir) — see agent.ResolveAuth's doc
+	// comment.
+	auth, err := agent.ResolveAuth(settings.Connection.Offline, settings.Connection.Name, settings.Connection.UUID, settings.Connection.Token, settings.Auth)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if settings.Connection.Offline {
 		fmt.Printf("Offline mode => using name=%s uuid=%s\n", auth.Name, auth.UUID)
+	} else {
+		log.Printf("Authenticated as %s (%s)", auth.Name, auth.UUID)
 	}
 
 	// Create skin provider for replay texture embedding
 	skinProvider := agent.NewSkinFetcher(agent.SkinFetcherConfig{
-		AllowNetwork: *skinNetEnabled,
-		CacheRoot:    *skinCacheDir,
+		AllowNetwork: settings.Skin.AllowNetwork,
+		CacheRoot:    settings.Skin.CacheDir,
 		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 	})
-
-	// Handle Microsoft authentication if not in offline mode
-	// This must happen before agent creation to get player name/UUID
-	if !*offline {
-		cfg, err := config.Load("configs/config.yaml")
-		if err != nil {
-			log.Fatalf("config load failed: %v", err)
-		}
-
-		credCachePath := filepath.Join(cfg.CacheDir, ".credCacheFile")
-		fmt.Printf("Using credential cache path: %s\n", credCachePath)
-
-		mauth, err := msauth.GetMCcredentials(credCachePath, cfg.ClientID)
-		if err != nil {
-			log.Fatalf("auth failed: %v", err)
-		}
-		log.Printf("Authenticated as %s (%s)", mauth.Name, mauth.UUID)
-		auth = models.Auth{AccessToken: mauth.AsTk, Name: mauth.Name, UUID: mauth.UUID}
-	}
 
 	// Prepare rotating log for packet logging
 	cacheDir, err := utils.FindOrCreateCacheDir()
@@ -117,56 +111,42 @@ func main() {
 	log.Printf("Packet log: %s", packetLogWriter.Filename)
 
 	// auto-detect version (if not provided)
-	if *mcVersion == "" {
-		detectedVersion, _, err := rof_utils.CheckServerVersion(*address, 0)
+	if settings.Connection.Version == "" {
+		detectedVersion, _, err := rof_utils.CheckServerVersion(settings.Connection.Address, 0)
 		if err != nil {
-			panic(fmt.Sprintf("auto-detect version from %s failed: %v", *address, err))
+			panic(fmt.Sprintf("auto-detect version from %s failed: %v", settings.Connection.Address, err))
 		}
-		*mcVersion = detectedVersion
+		settings.Connection.Version = detectedVersion
 	}
 
-	if *replayOut == "" {
-		replayDir := filepath.Join(cacheDir, "replays", *mcVersion)
-		*replayOut = filepath.Join(replayDir, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
+	if settings.Replay.Output == "" {
+		replayDir := filepath.Join(cacheDir, "replays", settings.Connection.Version)
+		settings.Replay.Output = filepath.Join(replayDir, auth.Name+"_"+time.Now().Format("20060102_150405")+".mcpr")
 	}
 
-	// Dial RCON if configured - only needed for -follow-cam, but dialing
-	// eagerly here (rather than lazily inside StartCamFollow) surfaces a
-	// bad address/password immediately instead of after the agent has
-	// already fully connected and joined.
-	var camRCON testenv.RCONHelper
-	if *rconAddress != "" {
-		host, portStr, err := net.SplitHostPort(*rconAddress)
-		if err != nil {
-			log.Fatalf("invalid -rcon-address %q: %v", *rconAddress, err)
-		}
-		port, err := strconv.Atoi(portStr)
-		if err != nil {
-			log.Fatalf("invalid -rcon-address port %q: %v", portStr, err)
-		}
-		rconCtx, rconCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		camRCON, err = testenv.DialRCON(rconCtx, host, port, *rconPassword)
-		rconCancel()
-		if err != nil {
-			log.Fatalf("dial RCON at %s: %v", *rconAddress, err)
-		}
-		log.Printf("Connected to RCON at %s", *rconAddress)
+	// Dial RCON if configured - only needed for -follow-cam.
+	camRCON, err := agent.DialRCON(context.Background(), settings.RCON.Address, settings.RCON.Password)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if camRCON != nil {
+		log.Printf("Connected to RCON at %s", settings.RCON.Address)
 	}
 
 	// Build agent config - version detection, manager resolution, and client creation
 	// are now handled automatically by agent.Init() if not provided
 	cfg := models.AgentConfig{
 		Name:               auth.Name, // Use authenticated name
-		Address:            *address,
-		Version:            *mcVersion, // Empty = auto-detect from server
+		Address:            settings.Connection.Address,
+		Version:            settings.Connection.Version, // Empty = auto-detect from server
 		Auth:               auth,
-		MCDataGenPath:      *mcDataPath,
-		MCProtocolGoPath:   *protoGoPath,
-		EnableClutchAssist: *enableClutch,
+		MCDataGenPath:      settings.Connection.MCDataGenPath,
+		MCProtocolGoPath:   settings.Connection.MCProtocolGoPath,
+		EnableClutchAssist: settings.Movement.EnableClutch,
 		StopFilePath:       ".agentStop", // Enable graceful shutdown via stop file
-		EnableReplay:       *enableReplay,
-		ReplayOutput:       *replayOut,
-		ReplayGenerator:    *replayGenerator,
+		EnableReplay:       settings.Replay.Enable,
+		ReplayOutput:       settings.Replay.Output,
+		ReplayGenerator:    settings.Replay.Generator,
 		SkinProvider:       skinProvider,
 		LogWriter:          packetLogWriter,
 		RCON:               camRCON,
@@ -198,12 +178,12 @@ func main() {
 		return
 	}
 
-	if *followCamTarget != "" {
+	if settings.FollowCam.Target != "" {
 		// A cam-follow failure isn't fatal to the agent process itself -
 		// log it clearly and keep running normally, just without the
 		// follow behavior. It's the operator's responsibility to ensure
 		// RCON access and the necessary server permissions are in place.
-		if err := a.StartCamFollow(ctx, *followCamTarget, *followCamDistance); err != nil {
+		if err := a.StartCamFollow(ctx, settings.FollowCam.Target, settings.FollowCam.Distance); err != nil {
 			log.Printf("cam-follow disabled: %v", err)
 		}
 	}

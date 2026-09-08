@@ -22,18 +22,19 @@
 //     sure a minable block of the target type exists reachable at Reset)
 //     is also still open — RL_ACTION_SPACE_EXPANSION.md Phase 2e, deferred
 //     to mc-rsi-trainer's task generator.
-//   - A four-action vocabulary (Wait, GoToTarget, ReturnHome, Mine), not
-//     yet the full GO_TO/MINE/CRAFT/RETURN_HOME/WAIT set
-//     RL_POLICY_INTEGRATION_PLAN.md sketched — CRAFT has no mapped
-//     capability yet (RL_ACTION_SPACE_EXPANSION.md Phase 3, not started).
-//   - Goal-conditioning for the mine task is coarse (RL_ACTION_SPACE_EXPANSION.md
-//     Phase 2a option (a)): one fixed target block name per Environment
-//     instance, set once via Config, not a per-episode observation feature
-//     a policy could vary. The finer-grained version (docs/plans/06's
-//     "Note: on the observation side..." / cRL-go's
+//   - A five-action vocabulary (Wait, GoToTarget, ReturnHome, Mine, Craft) —
+//     the full GO_TO/MINE/CRAFT/RETURN_HOME/WAIT set
+//     RL_POLICY_INTEGRATION_PLAN.md sketched, as of
+//     docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wiring Craft in.
+//   - Goal-conditioning for the mine/craft tasks is coarse
+//     (RL_ACTION_SPACE_EXPANSION.md Phase 2a option (a),
+//     RL_TRAINING_LOOP_PLAN.md Phase 1a): one fixed target block/item name
+//     per Environment instance, set once via Config, not a per-episode
+//     observation feature a policy could vary. The finer-grained version
+//     (docs/plans/06's "Note: on the observation side..." / cRL-go's
 //     docs/archive/plans/13's "goal block appended to Observation.Values")
-//     is still the path once a second block type or task type actually
-//     needs to vary within a single training run — don't build it
+//     is still the path once a second block/item type or task type
+//     actually needs to vary within a single training run — don't build it
 //     speculatively.
 //   - No persistent world-knowledge memory (RL_POLICY_INTEGRATION_PLAN.md's
 //     "Does the Observation Builder need access to *persistent* world

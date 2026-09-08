@@ -684,3 +684,87 @@ func (a *agent) waitForCraftOutput(ctx context.Context, layout craftWindowLayout
 	}
 	return models.ItemStack{}, false
 }
+
+// InventoryCount returns how many units of itemName the player currently
+// holds in the main inventory + hotbar (window 0, slots
+// craftIngredientSlotStart and up) — never the 2x2 crafting grid, output, or
+// armor slots (0-8), since an item sitting in the output slot or a partially
+// placed ingredient isn't "held" any more than one still in a chest would
+// be. 0 if the inventory or item manager isn't available, or nothing
+// matches — mirrors BlockNameAt's "never errors, just reports the empty
+// case" contract (models.WorldOperations, agent/actions.go), since rlenv
+// only needs an approximate signal here (see Craftable), not fine-grained
+// failure diagnosis.
+//
+// Used by rlenv's craft reward to judge "did crafting actually produce more
+// of the target item" from an inventory-count delta — the craft analogue of
+// how BlockNameAt's before/after diff judges mine (see
+// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1d).
+func (a *agent) InventoryCount(itemName string) int {
+	inv := a.GetInventory()
+	if inv == nil {
+		return 0
+	}
+	a.itemMgrMu.RLock()
+	itemMgr := a.itemMgr
+	a.itemMgrMu.RUnlock()
+	if itemMgr == nil {
+		return 0
+	}
+
+	normalized := normalizeItemName(itemName)
+	slots := inv.GetSlots()
+	count := 0
+	for idx := craftIngredientSlotStart; idx < len(slots); idx++ {
+		if slots[idx].Count <= 0 {
+			continue
+		}
+		if normalizeItemName(itemMgr.GetItemNameByID(int32(slots[idx].ID))) == normalized {
+			count += int(slots[idx].Count)
+		}
+	}
+	return count
+}
+
+// Craftable reports an approximate "does the player currently hold at least
+// one of each required ingredient" check for itemName's recipe — used as
+// rlenv's craftReady observation bit (docs/plans/RL_TRAINING_LOOP_PLAN.md
+// Phase 1c) so a policy can learn when attempting the craft action is even
+// worth trying, the same role FindVisibleBlock's result plays for mine's
+// mineVisible bit.
+//
+// Deliberately approximate, not a guarantee CraftItem would actually
+// succeed: it checks each grid cell's ingredient candidates independently
+// via InventoryCount rather than reserving counts across cells, so a recipe
+// needing two units of the *same* scarce item when only one is held reports
+// true even though CraftItem would still fail partway through placement.
+// Acceptable for a coarse "worth trying" signal; CraftItem's own real
+// placement/error handling remains the source of truth for whether a craft
+// actually succeeds. false if itemName has no known recipe or the recipe
+// cache can't be read — mirrors InventoryCount's no-error contract.
+func (a *agent) Craftable(itemName string) bool {
+	recipes, err := a.loadCraftingRecipes()
+	if err != nil {
+		return false
+	}
+	recipe, ok := recipes[normalizeItemName(itemName)]
+	if !ok {
+		return false
+	}
+	for _, candidates := range recipe.grid {
+		if len(candidates) == 0 {
+			continue
+		}
+		found := false
+		for _, candidate := range candidates {
+			if a.InventoryCount(candidate) > 0 {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}

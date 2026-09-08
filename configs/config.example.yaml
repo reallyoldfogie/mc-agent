@@ -1,6 +1,0 @@
-# MC-Agent Configuration
-# Copy this file to config.yaml and fill in your values
-
-# Microsoft OAuth client ID for Minecraft authentication
-# If not specified, defaults to the maxsupermanhd token
-client_id: ""

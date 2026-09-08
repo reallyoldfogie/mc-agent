@@ -7,11 +7,12 @@ import (
 )
 
 // Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md sketched
-// GO_TO/MINE/CRAFT/RETURN_HOME/WAIT; this environment now maps four of the
-// five (everything but CRAFT — docs/plans/RL_ACTION_SPACE_EXPANSION.md
-// Phase 3, not started). Extend this list (and NumActions, resolveDispatch)
-// once more mapped capabilities exist — do not add placeholder actions that
-// don't dispatch to anything real.
+// GO_TO/MINE/CRAFT/RETURN_HOME/WAIT; this environment now maps all five —
+// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wired ActionCraft in, closing
+// the last gap RL_ACTION_SPACE_EXPANSION.md Phase 3 left open. Extend this
+// list (and NumActions, resolveDispatch) if a future capability needs a new
+// action — do not add placeholder actions that don't dispatch to anything
+// real.
 const (
 	// ActionWait performs no dispatch: the policy chooses to not move this
 	// step. See Environment.Step for why this doesn't block on anything.
@@ -33,17 +34,27 @@ const (
 	// option (a), mirrors TargetOffset's "environment poses the task"
 	// pattern), not a free-form "mine anything" capability.
 	ActionMine
+	// ActionCraft dispatches "craft <Config.CraftTargetItem>" — mc-agent's
+	// own Craft action (actions/commands.go) resolves ingredient placement
+	// itself (agent.CraftItem); Environment separately tracks inventory
+	// count/craftability for observation/reward purposes (see
+	// Environment.craftCountNow/craftReadyNow). A safe no-op (like
+	// ActionWait/an unconfigured ActionMine) when Config.CraftTargetItem is
+	// unset — docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1a, mirroring
+	// ActionMine's "environment poses the task" pattern exactly.
+	ActionCraft
 
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionMine) + 1
+	NumActions = int(ActionCraft) + 1
 )
 
-// moveToActionName and mineActionName are the registered action names
-// MoveTo/Mine (actions/commands.go) are keyed under (see
+// moveToActionName, mineActionName, and craftActionName are the registered
+// action names MoveTo/Mine/Craft (actions/commands.go) are keyed under (see
 // actions.actionRegistry.Register: lowercased Name()).
 const (
 	moveToActionName = "moveto"
 	mineActionName   = "mine"
+	craftActionName  = "craft"
 )
 
 // actionDispatch describes what Step should send through the
@@ -79,6 +90,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: mineActionName, args: []string{e.cfg.MineTargetBlock}}, true, nil
+	case ActionCraft:
+		if e.cfg.CraftTargetItem == "" {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: craftActionName, args: []string{e.cfg.CraftTargetItem}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}

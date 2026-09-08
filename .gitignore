@@ -33,7 +33,7 @@ testing/vehicles/data
 testing/vehicles/libraries
 testing/vehicles/versions
 .agent/
-ollama
+/ollama
 
 
 
@@ -88,7 +88,7 @@ rof_botCreds.json
 .env
 .env.local
 *.local
-configs/config.yaml
+configs/config.json
 
 # OS-specific files
 Thumbs.db

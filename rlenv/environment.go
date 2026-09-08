@@ -37,6 +37,15 @@ type Environment struct {
 	// re-resolved multiple times within one call.
 	mineX, mineY, mineZ float64
 	mineVisible         bool
+
+	// craftCount caches the last-known held count of Config.CraftTargetItem
+	// (see craftCountNow), read at the start of each Step as "before this
+	// step" state — the craft analogue of prevDistance/prevHealth's caching
+	// shape, simpler than mine's since there's no position to resolve, just
+	// a count. craftReady caches the last-computed Craftable() result, for
+	// the observation returned to the caller (see craftReadyNow).
+	craftCount int
+	craftReady bool
 }
 
 // New constructs an Environment. registry is typically actions.NewRegistry()
@@ -85,10 +94,43 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	health, food, saturation, healthKnown := e.agent.Health()
 	e.prevHealth, e.prevHealthKnown = health, healthKnown
 
+	if e.cfg.Seeder != nil {
+		seedAgent, ok := e.agent.(SeedAgent)
+		if !ok {
+			return rl.Observation{}, errSeederRequiresSeedAgent
+		}
+		if err := e.cfg.Seeder(ctx, seedAgent, e.cfg); err != nil {
+			return rl.Observation{}, fmt.Errorf("rlenv: episode seeding: %w", err)
+		}
+	}
+
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
-	return buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible), nil
+	e.craftCount = e.craftCountNow()
+	e.craftReady = e.craftReadyNow()
+	return buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady), nil
+}
+
+// craftCountNow returns the bot's current held count of
+// Config.CraftTargetItem (see LiveAgent.InventoryCount), or 0 if
+// Config.CraftTargetItem is unset — mirrors refreshMineTarget's
+// empty-target handling.
+func (e *Environment) craftCountNow() int {
+	if e.cfg.CraftTargetItem == "" {
+		return 0
+	}
+	return e.agent.InventoryCount(e.cfg.CraftTargetItem)
+}
+
+// craftReadyNow reports whether Environment's currently configured craft
+// target (if any) looks assembleable right now (see LiveAgent.Craftable),
+// or false if Config.CraftTargetItem is unset.
+func (e *Environment) craftReadyNow() bool {
+	if e.cfg.CraftTargetItem == "" {
+		return false
+	}
+	return e.agent.Craftable(e.cfg.CraftTargetItem)
 }
 
 // refreshMineTarget re-resolves the nearest currently-visible instance of
@@ -162,6 +204,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		prevMineBlockName = e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 	}
+	// e.craftCount still holds whatever the previous Step (or Reset) last
+	// resolved — read here as "before this step's action" state, regardless
+	// of whether that action was ActionCraft (mirrors prevMineVisible's own
+	// reasoning above).
+	prevCraftCount := e.craftCount
 
 	if shouldDispatch {
 		completion, err := e.registry.Execute(ctx, dispatch.name, e.agent, dispatch.args)
@@ -190,6 +237,15 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		mined = newMineBlockName != prevMineBlockName
 	}
 
+	// craftedThisStep is judged from an actual inventory-count increase,
+	// not from whether ActionCraft was the dispatched action — mirrors
+	// mined's own reasoning above (see reward.go's craftRewardBonus doc
+	// comment). Guarded on CraftTargetItem being set so an unconfigured
+	// instance's permanently-zero craftCount never spuriously reads as
+	// "increased."
+	newCraftCount := e.craftCountNow()
+	craftedThisStep := e.cfg.CraftTargetItem != "" && newCraftCount > prevCraftCount
+
 	newDistance := distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
 	reward, done := computeReward(stepOutcome{
 		prevDistance:      e.prevDistance,
@@ -207,6 +263,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		reward += mineRewardBonus
 		done = true
 	}
+	if craftedThisStep {
+		reward += craftRewardBonus
+		done = true
+	}
 	e.prevDistance = newDistance
 	e.prevHealth, e.prevHealthKnown = newHealth, newHealthKnown
 
@@ -218,7 +278,14 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible)
+	// Same refresh for craft state: newCraftCount is already this step's
+	// post-dispatch value, so it becomes the next Step's "before" read
+	// directly; craftReady is recomputed since inventory contents may have
+	// changed even when craftedThisStep is false (e.g. an ingredient was
+	// picked up, not the target item itself).
+	e.craftCount = newCraftCount
+	e.craftReady = e.craftReadyNow()
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady)
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
 }
 

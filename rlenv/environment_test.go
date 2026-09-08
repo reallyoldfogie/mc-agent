@@ -48,8 +48,8 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	if got := env.ObservationSize(); got != 13 {
-		t.Fatalf("ObservationSize() = %d, want 13", got)
+	if got := env.ObservationSize(); got != 14 {
+		t.Fatalf("ObservationSize() = %d, want 14", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -64,8 +64,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 13 {
-		t.Fatalf("len(obs.Values) = %d, want 13", len(obs.Values))
+	if len(obs.Values) != 14 {
+		t.Fatalf("len(obs.Values) = %d, want 14", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -428,10 +428,217 @@ func TestStepMineDoesNotAwardBonusWhenActionMineFailsToBreakIt(t *testing.T) {
 	}
 }
 
+// --- ActionCraft (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1) ---
+
+func TestStepCraftWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", true, 0) // ready in the world, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCraft)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 0 {
+		t.Fatalf("CraftItem calls = %d, want 0 (Config.CraftTargetItem unset, safe no-op like ActionWait)", agent.craftItemCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if ready := result.Observation.Values[13]; ready != 0 {
+		t.Fatalf("craftReady = %v, want 0 (no task configured)", ready)
+	}
+}
+
+func TestStepCraftWithIngredientsNotReadyStillDispatches(t *testing.T) {
+	// Unlike ActionMine (which never dispatches without a visible target),
+	// ActionCraft always dispatches once Config.CraftTargetItem is set —
+	// CraftItem itself is the source of truth for whether ingredients are
+	// actually available (see agent.Craftable's doc comment on why the
+	// craftReady signal is approximate), so Environment doesn't withhold
+	// dispatch based on its own coarser check.
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", false, 0)
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCraft)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 1 {
+		t.Fatalf("CraftItem calls = %d, want 1", agent.craftItemCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (not ready, nothing crafted)")
+	}
+	if ready := result.Observation.Values[13]; ready != 0 {
+		t.Fatalf("craftReady = %v, want 0 (ingredients not ready)", ready)
+	}
+}
+
+func TestStepCraftActionCraftsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCraft)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 1 {
+		t.Fatalf("CraftItem calls = %d, want 1", agent.craftItemCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target item was crafted)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (craftRewardBonus)", result.Reward)
+	}
+	if got := agent.InventoryCount("minecraft:stick"); got != 1 {
+		t.Fatalf("held count after Step = %d, want 1", got)
+	}
+}
+
+func TestStepObservationReflectsCraftReadyRegardlessOfAction(t *testing.T) {
+	// craftReady is populated every step once configured, not only on steps
+	// that dispatch ActionCraft — mirrors mineVisible's equivalent test.
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if ready := obs.Values[13]; ready != 1 {
+		t.Fatalf("craftReady at Reset = %v, want 1", ready)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 0 {
+		t.Fatalf("CraftItem calls = %d, want 0 (ActionWait doesn't dispatch craft)", agent.craftItemCalls)
+	}
+	if ready := result.Observation.Values[13]; ready != 1 {
+		t.Fatalf("craftReady after ActionWait = %v, want 1 (still ready, nothing consumed)", ready)
+	}
+}
+
+func TestStepCraftDoesNotAwardBonusWhenActionCraftFailsToProduceIt(t *testing.T) {
+	// Judged from an actual inventory-count increase, not from the
+	// dispatched action: if CraftItem itself errors (e.g. a real missing
+	// ingredient), the held count never changes and no bonus/Done should be
+	// granted — mirrors TestStepMineDoesNotAwardBonusWhenActionMineFailsToBreakIt.
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	agent.craftItemErr = context.DeadlineExceeded
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCraft)
+	if err != nil {
+		t.Fatalf("Step: %v, want nil (a failed dispatched action is not an environment error)", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (nothing was actually crafted)")
+	}
+}
+
+// --- Config.Seeder (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
+
+func TestResetWithNoSeederConfiguredDoesNotSeed(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedNearbyBlockCalls) != 0 {
+		t.Fatalf("SeedNearbyBlock calls = %d, want 0 (Config.Seeder unset)", len(agent.seedNearbyBlockCalls))
+	}
+}
+
+func TestResetCallsSeederForConfiguredTasks(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.MineSearchRadius = 20
+	cfg.CraftTargetItem = "minecraft:stick"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedNearbyBlockCalls) != 1 {
+		t.Fatalf("SeedNearbyBlock calls = %d, want 1", len(agent.seedNearbyBlockCalls))
+	}
+	if got := agent.seedNearbyBlockCalls[0]; got.blockName != "minecraft:stone" || got.radius != 20 {
+		t.Fatalf("SeedNearbyBlock call = %+v, want {minecraft:stone 20}", got)
+	}
+	if len(agent.seedCraftIngredientsCalls) != 1 || agent.seedCraftIngredientsCalls[0] != "minecraft:stick" {
+		t.Fatalf("SeedCraftIngredients calls = %v, want [minecraft:stick]", agent.seedCraftIngredientsCalls)
+	}
+}
+
+func TestResetSkipsSeedingUnconfiguredTasks(t *testing.T) {
+	// DefaultEpisodeSeeder should only seed the tasks this instance
+	// actually poses — mirrors how ActionMine/ActionCraft themselves stay
+	// no-ops when unconfigured.
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedCraftIngredientsCalls) != 0 {
+		t.Fatalf("SeedCraftIngredients calls = %d, want 0 (Config.CraftTargetItem unset)", len(agent.seedCraftIngredientsCalls))
+	}
+}
+
+func TestResetPropagatesSeederError(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.seedErr = context.DeadlineExceeded
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err == nil {
+		t.Fatalf("Reset with failing Seeder: want error, got nil")
+	}
+}
+
 // compile-time check that fakeAgent satisfies both interfaces rlenv.LiveAgent
 // requires.
 var (
 	_ models.CommandAgent   = (*fakeAgent)(nil)
 	_ models.HealthProvider = (*fakeAgent)(nil)
 	_ rlenv.LiveAgent       = (*fakeAgent)(nil)
+	_ rlenv.SeedAgent       = (*fakeAgent)(nil)
 )

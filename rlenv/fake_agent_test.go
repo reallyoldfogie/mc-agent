@@ -42,6 +42,34 @@ type fakeAgent struct {
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
 	findVisibleBlockCalls              int
+
+	// Craft simulation: a single target item, craftTargetName, whose
+	// currently-held count is craftHeldCount. Craftable reports true only
+	// once craftIngredientsReady is set (simulating "ingredients are in
+	// inventory"), and CraftItem increments craftHeldCount by one when
+	// called with a matching item name while ready — mirrors
+	// mineBlockName's single-target simplicity (see its own doc comment)
+	// and MineBlockAt's "actually mutates state" precedent, so
+	// Environment's real craft dispatch/reward logic is exercised for real
+	// rather than stubbed out (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1).
+	craftTargetName       string
+	craftIngredientsReady bool
+	craftHeldCount        int
+	craftItemErr          error
+	craftItemCalls        int
+
+	// Seeding simulation (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4):
+	// records calls so tests can assert an EpisodeSeeder was actually
+	// invoked with the expected arguments, and optionally returns
+	// seedErr to exercise Reset's error path.
+	seedNearbyBlockCalls      []seedNearbyBlockCall
+	seedCraftIngredientsCalls []string
+	seedErr                   error
+}
+
+type seedNearbyBlockCall struct {
+	blockName string
+	radius    int
 }
 
 func newFakeAgent(x, y, z float64) *fakeAgent {
@@ -67,6 +95,18 @@ func (f *fakeAgent) setMineBlock(name string, x, y, z float64) {
 	f.mu.Lock()
 	f.mineBlockName = name
 	f.mineBlockX, f.mineBlockY, f.mineBlockZ = x, y, z
+	f.mu.Unlock()
+}
+
+// setCraftTarget configures the simulated craft target — see
+// craftTargetName's doc comment. ingredientsReady controls Craftable's
+// result; initialHeldCount seeds craftHeldCount (0 for "the bot holds none
+// of the target item yet").
+func (f *fakeAgent) setCraftTarget(name string, ingredientsReady bool, initialHeldCount int) {
+	f.mu.Lock()
+	f.craftTargetName = name
+	f.craftIngredientsReady = ingredientsReady
+	f.craftHeldCount = initialHeldCount
 	f.mu.Unlock()
 }
 
@@ -241,11 +281,43 @@ func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 	return "minecraft:air"
 }
 
-// CraftItem is not exercised by rlenv's tests (crafting isn't wired into
-// rlenv — docs/plans/RL_ACTION_SPACE_EXPANSION.md Phase 3 only adds the
-// chat command, not RL wiring); this stub exists solely so fakeAgent keeps
-// satisfying models.CommandAgent/rlenv.LiveAgent.
-func (f *fakeAgent) CraftItem(context.Context, string) error { return nil }
+// CraftItem "crafts" the simulated target item by incrementing
+// craftHeldCount by one, if itemName matches craftTargetName and
+// craftIngredientsReady is set — mirrors MineBlockAt's "actually mutates
+// state" precedent (see mineBlockName's doc comment) rather than being a
+// no-op stub, since Environment's craft dispatch is now exercised for real
+// by rlenv's own tests (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1).
+func (f *fakeAgent) CraftItem(_ context.Context, itemName string) error {
+	f.mu.Lock()
+	f.craftItemCalls++
+	err := f.craftItemErr
+	if err == nil && f.craftTargetName != "" && itemName == f.craftTargetName && f.craftIngredientsReady {
+		f.craftHeldCount++
+	}
+	f.mu.Unlock()
+	return err
+}
+
+// InventoryCount returns the simulated held count of the craft target item
+// if itemName matches craftTargetName, 0 otherwise — mirrors the real
+// implementation's "0 for anything not tracked" contract.
+func (f *fakeAgent) InventoryCount(itemName string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.craftTargetName != "" && itemName == f.craftTargetName {
+		return f.craftHeldCount
+	}
+	return 0
+}
+
+// Craftable reports craftIngredientsReady if itemName matches
+// craftTargetName, false otherwise — mirrors the real implementation's
+// "false for anything not tracked/no known recipe" contract.
+func (f *fakeAgent) Craftable(itemName string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.craftTargetName != "" && itemName == f.craftTargetName && f.craftIngredientsReady
+}
 
 func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]models.VisibleEntityInfo, error) {
 	return nil, nil
@@ -253,4 +325,20 @@ func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]
 
 func (f *fakeAgent) FindNearestVisibleItem(context.Context, float64) (entityID int32, x, y, z float64, found bool, err error) {
 	return 0, 0, 0, 0, false, nil
+}
+
+// --- rlenv.SeedAgent (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
+
+func (f *fakeAgent) SeedNearbyBlock(_ context.Context, blockName string, radius int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedNearbyBlockCalls = append(f.seedNearbyBlockCalls, seedNearbyBlockCall{blockName: blockName, radius: radius})
+	return f.seedErr
+}
+
+func (f *fakeAgent) SeedCraftIngredients(_ context.Context, itemName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedCraftIngredientsCalls = append(f.seedCraftIngredientsCalls, itemName)
+	return f.seedErr
 }

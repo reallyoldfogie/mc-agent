@@ -1,0 +1,63 @@
+{
+  "auth": {
+    "client_id": "",
+    "cache_dir": ".",
+    "cred_cache_file": ""
+  },
+  "connection": {
+    "address": "127.0.0.1:25565",
+    "name": "Daze",
+    "uuid": "",
+    "version": "",
+    "offline": false,
+    "token": "",
+    "mc_data_gen_path": "",
+    "mc_protocol_go_path": ""
+  },
+  "rcon": {
+    "address": "",
+    "password": ""
+  },
+  "replay": {
+    "enable": false,
+    "output": "",
+    "generator": "mc-agent"
+  },
+  "skin": {
+    "cache_dir": "skins",
+    "allow_network": false
+  },
+  "movement": {
+    "enable_clutch": false
+  },
+  "follow_cam": {
+    "target": "",
+    "distance": 8.0
+  },
+  "train": {
+    "epochs": 2000,
+    "rollout_size": 8,
+    "episode_len": 100,
+    "gamma": 0.99,
+    "learning_rate": 0.0003,
+    "grid_size": 36,
+    "hidden_size": 128,
+    "seed": 42,
+    "workers": 1,
+    "clip_eps": 0.2,
+    "entropy_coef": 0.01,
+    "value_coef": 0.5,
+    "gae_lambda": 0.95,
+    "ppo_epochs": 4,
+    "minibatch_size": 64
+  },
+  "env": {
+    "target_offset": [5, 0, 0],
+    "arrival_threshold": 1.5,
+    "step_timeout_seconds": 10,
+    "mine_target_block": "",
+    "mine_search_radius": 32,
+    "craft_target_item": "",
+    "seed_episodes": false
+  }
+}

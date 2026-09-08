@@ -35,6 +35,16 @@ const (
 	// which action was chosen (see TestStepReflectsExternalPositionChange
 	// in environment_test.go for the movement-side precedent).
 	mineRewardBonus float32 = 10.0
+	// craftRewardBonus is added once, the step Config.CraftTargetItem's held
+	// inventory count is observed to increase (see Environment.Step's
+	// before/after InventoryCount comparison) — same magnitude as
+	// arrivalBonus/mineRewardBonus, marking "this episode's task was
+	// accomplished." Not gated on the dispatched action having been
+	// ActionCraft specifically, matching mineRewardBonus's philosophy of
+	// judging outcomes from actual world-state (here, inventory) deltas
+	// rather than which action was chosen — see
+	// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1d.
+	craftRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

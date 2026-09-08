@@ -43,6 +43,25 @@ type Config struct {
 	// built-in default (8 blocks, see agent/actions.go) rather than being
 	// validated here.
 	MineSearchRadius int
+
+	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
+	// this episode's crafting task targets — enables ActionCraft, following
+	// MineTargetBlock's exact "environment poses the task" pattern
+	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1a). Empty (the default)
+	// means this Environment instance doesn't pose a crafting task:
+	// ActionCraft becomes a safe no-op, not an error — see action.go's
+	// resolveDispatch. Independent of MineTargetBlock/TargetOffset: one
+	// instance can pose a move-to target, a mine task, and a craft task
+	// simultaneously.
+	CraftTargetItem string
+
+	// Seeder, if set, is called once per Reset to prepare the world for
+	// this episode's configured task(s) — see EpisodeSeeder's doc comment
+	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) for exactly what this
+	// does and doesn't cover. nil (the default) leaves Reset's existing
+	// behavior unchanged. Requires the Environment's agent to also satisfy
+	// SeedAgent — Reset returns an error if Seeder is set but it doesn't.
+	Seeder EpisodeSeeder
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
