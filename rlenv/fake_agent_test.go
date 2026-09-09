@@ -12,8 +12,8 @@ import (
 // for testing rlenv.Environment without a live server, per
 // RL_POLICY_INTEGRATION_PLAN.md's verification requirement ("unit-testable
 // without a live server"). MoveTo is the only method Environment's tests
-// actually exercise the effect of (via ActionGoToTarget/ActionReturnHome's
-// "movetoquiet" dispatch — see rlenv/action.go); every other CommandAgent
+// actually exercise the effect of (via ActionGoToTarget's "movetoquiet"
+// dispatch — see rlenv/action.go); every other CommandAgent
 // method exists solely so fakeAgent satisfies the interface
 // actions.NewRegistry()'s real actions (in particular actions.MoveToQuiet)
 // require, matching how the real dispatch path is exercised end to end in
@@ -194,9 +194,9 @@ func (f *fakeAgent) FollowStatus(context.Context) string                     { r
 // models.CommandAgent's full MoveTo/MoveToWithChat pair. The
 // moveToWithChat* fields/counter are shared by both entry points, mirroring
 // how the real *agent's MoveToWithChat is just MoveTo(ctx,x,y,z,true) —
-// see rlenv/action.go's ActionGoToTarget/ActionReturnHome, which dispatch
-// through the quiet path (actions.MoveToQuiet) exactly like production
-// rlenv training does.
+// see rlenv/action.go's ActionGoToTarget, which dispatches through the
+// quiet path (actions.MoveToQuiet) exactly like production rlenv training
+// does.
 func (f *fakeAgent) MoveTo(_ context.Context, x, y, z float64, _ bool) error {
 	f.mu.Lock()
 	f.moveToWithChatCalls++

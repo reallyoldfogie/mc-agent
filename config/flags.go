@@ -214,9 +214,9 @@ type EnvFlagOverrides struct {
 
 func RegisterEnvFlags(fs *flag.FlagSet) *EnvFlagOverrides {
 	o := &EnvFlagOverrides{}
-	fs.Float64Var(&o.TargetOffsetX, "target-offset-x", 0, "GoToTarget/ReturnHome target offset, X (overrides config file/env)")
-	fs.Float64Var(&o.TargetOffsetY, "target-offset-y", 0, "GoToTarget/ReturnHome target offset, Y (overrides config file/env)")
-	fs.Float64Var(&o.TargetOffsetZ, "target-offset-z", 0, "GoToTarget/ReturnHome target offset, Z (overrides config file/env)")
+	fs.Float64Var(&o.TargetOffsetX, "target-offset-x", 0, "GoToTarget target offset, X (overrides config file/env)")
+	fs.Float64Var(&o.TargetOffsetY, "target-offset-y", 0, "GoToTarget target offset, Y (overrides config file/env)")
+	fs.Float64Var(&o.TargetOffsetZ, "target-offset-z", 0, "GoToTarget target offset, Z (overrides config file/env)")
 	fs.Float64Var(&o.ArrivalThreshold, "arrival-threshold", 0, "distance in blocks counting as target arrival (overrides config file/env)")
 	fs.Float64Var(&o.StepTimeoutSeconds, "step-timeout-seconds", 0, "per-Step dispatch timeout, seconds (overrides config file/env)")
 	fs.StringVar(&o.MineTargetBlock, "mine-target-block", "", "block name the mine task targets, e.g. minecraft:stone (overrides config file/env)")

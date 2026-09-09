@@ -98,7 +98,7 @@ func (MoveTo) Execute(ctx context.Context, agent models.CommandAgent, args []str
 // MoveToQuiet is MoveTo without the chat narration — for callers that
 // dispatch movement far more often than a human types a chat command (in
 // particular, rlenv's RL training loop; see rlenv/action.go's
-// ActionGoToTarget/ActionReturnHome). Found live, not anticipated: an
+// ActionGoToTarget). Found live, not anticipated: an
 // RL-driven session that dispatched "moveto" every Step got kicked from a
 // real server for spamming once rollout collection reached the same
 // "Already at target position"/"Navigating..." message fast enough for

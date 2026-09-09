@@ -24,7 +24,6 @@ type Environment struct {
 	registry models.ActionRegistry[models.CommandAgent]
 	cfg      Config
 
-	originX, originY, originZ float64
 	targetX, targetY, targetZ float64
 	prevDistance              float64
 	prevHealth                float32
@@ -67,8 +66,8 @@ type Environment struct {
 // (or a test double registering only what's needed); it must dispatch
 // "movetoquiet" the way actions.MoveToQuiet does (parseFloat'd x/y/z args,
 // no chat narration — see that action's own doc comment on why this
-// environment uses the quiet variant, not "moveto") for
-// ActionGoToTarget/ActionReturnHome to work.
+// environment uses the quiet variant, not "moveto") for ActionGoToTarget to
+// work.
 func New(agent LiveAgent, registry models.ActionRegistry[models.CommandAgent], cfg Config) (*Environment, error) {
 	if agent == nil {
 		return nil, errNilAgent
@@ -88,12 +87,15 @@ func (e *Environment) ObservationSize() int { return observationSize }
 // ActionSpace implements rl.Environment.
 func (e *Environment) ActionSpace() int { return NumActions }
 
-// Reset implements rl.Environment. It does not move or respawn the bot —
-// per Config.TargetOffset's doc comment, there is no real reset/teleport
-// mechanism wired up yet (RSI_TRAINING_PLAN.md item 2 is still open), so
-// "starting a fresh episode" means capturing wherever the bot currently is
-// as this episode's origin and posing a new target relative to it, not
-// actually repositioning anything.
+// Reset implements rl.Environment. If Config.ResetOrigin is set, it
+// actually teleports the bot there first (see ResetAgent); otherwise it
+// falls back to TargetOffset's original workaround — capturing wherever
+// the bot currently is as this episode's origin and posing a new target
+// relative to it, without repositioning anything. Either way, the posed
+// target is then checked against Config.ArrivalThreshold (see the
+// Config.Jitter retry loop below) so an episode never starts already
+// "arrived" — see Config.Jitter's own doc comment for why that's a real
+// risk once jitter is in play, not a hypothetical one.
 func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -126,8 +128,25 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	for i := range targetOffset {
 		targetOffset[i] = e.jitter(targetOffset[i], i)
 	}
+	if e.cfg.Jitter != ([3]float64{}) {
+		// Jitter is active: without this guard, an unlucky draw could pose
+		// a target already within ArrivalThreshold of x/y/z, handing out
+		// arrivalBonus for an episode the agent did nothing to earn — see
+		// Config.Jitter's own doc comment. A disabled (all-zero) Jitter
+		// skips this entirely: a deterministic TargetOffset that happens to
+		// be within ArrivalThreshold is the caller's explicit, visible
+		// choice, not a trap to guard against.
+		for attempt := 0; distance3(x, y, z, x+targetOffset[0], y+targetOffset[1], z+targetOffset[2]) <= e.cfg.ArrivalThreshold; attempt++ {
+			if attempt >= maxJitterRetries {
+				return rl.Observation{}, fmt.Errorf("rlenv: %d consecutive jittered targets landed within ArrivalThreshold (%.2f) of the reset position — check Config.TargetOffset/Jitter/ArrivalThreshold", maxJitterRetries, e.cfg.ArrivalThreshold)
+			}
+			targetOffset = e.cfg.TargetOffset
+			for i := range targetOffset {
+				targetOffset[i] = e.jitter(targetOffset[i], i)
+			}
+		}
+	}
 
-	e.originX, e.originY, e.originZ = x, y, z
 	e.targetX = x + targetOffset[0]
 	e.targetY = y + targetOffset[1]
 	e.targetZ = z + targetOffset[2]
@@ -353,6 +372,13 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
 }
+
+// maxJitterRetries bounds Reset's already-arrived guard (see its call
+// site): how many times to redraw a jittered target before giving up and
+// returning an error, rather than retrying forever against a
+// TargetOffset/Jitter/ArrivalThreshold combination that can never
+// possibly produce a valid (non-arrived) target.
+const maxJitterRetries = 20
 
 // jitter adds a uniform-random offset in [-Config.Jitter[axis],
 // +Config.Jitter[axis]] to base — see Config.Jitter's own doc comment. A

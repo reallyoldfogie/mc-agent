@@ -6,13 +6,28 @@ import (
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 )
 
-// Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md sketched
-// GO_TO/MINE/CRAFT/RETURN_HOME/WAIT; this environment now maps all five —
-// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wired ActionCraft in, closing
-// the last gap RL_ACTION_SPACE_EXPANSION.md Phase 3 left open. Extend this
-// list (and NumActions, resolveDispatch) if a future capability needs a new
-// action — do not add placeholder actions that don't dispatch to anything
-// real.
+// Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md originally sketched
+// GO_TO/MINE/CRAFT/RETURN_HOME/WAIT; ActionReturnHome (RETURN_HOME) was
+// dropped (2026-09-09) — it was structurally just ActionGoToTarget with a
+// hardcoded destination (Environment.originX/Y/Z instead of targetX/Y/Z,
+// same "movetoquiet" dispatch either way — see resolveDispatch's old
+// case), no reward component ever referenced origin/"home" at all, and no
+// design doc gave it a job beyond being part of the original five-action
+// sketch. Its real cost: an untrained policy has a real chance of
+// initializing toward whichever action turns out to be reward-irrelevant,
+// and every reward-irrelevant action in the vocabulary is pure wasted
+// probability mass that a live debugging session traced directly to a
+// training run that never learned anything (2026-09-08/09, see
+// cRL-go/docs/plans/19-training-time-action-masking.md for the
+// longer-term fix, action masking — not yet built). Reintroduce a
+// "return to a point" action only alongside an actual reward reason for
+// it, not speculatively.
+//
+// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wired ActionCraft in,
+// closing the last gap RL_ACTION_SPACE_EXPANSION.md Phase 3 left open.
+// Extend this list (and NumActions, resolveDispatch) if a future
+// capability needs a new action — do not add placeholder actions that
+// don't dispatch to anything real.
 const (
 	// ActionWait performs no dispatch: the policy chooses to not move this
 	// step. See Environment.Step for why this doesn't block on anything.
@@ -20,9 +35,6 @@ const (
 	// ActionGoToTarget dispatches "movetoquiet" toward the episode's target
 	// position (Environment.targetX/Y/Z, set at Reset — see task.go).
 	ActionGoToTarget
-	// ActionReturnHome dispatches "movetoquiet" back toward the position
-	// the bot was at when Reset was called (Environment.originX/Y/Z).
-	ActionReturnHome
 	// ActionMine dispatches "mine <Config.MineTargetBlock>" — mc-agent's
 	// own Mine action (actions/commands.go) resolves the nearest visible
 	// instance of that block name itself via FindVisibleBlock, the same
@@ -91,8 +103,6 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		return actionDispatch{}, false, nil
 	case ActionGoToTarget:
 		return actionDispatch{name: moveToActionName, args: moveToArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
-	case ActionReturnHome:
-		return actionDispatch{name: moveToActionName, args: moveToArgs(e.originX, e.originY, e.originZ)}, true, nil
 	case ActionMine:
 		if e.cfg.MineTargetBlock == "" {
 			return actionDispatch{}, false, nil

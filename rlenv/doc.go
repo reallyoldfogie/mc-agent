@@ -11,21 +11,32 @@
 // concretely enough to produce a real, testable environment, but
 // deliberately narrowly:
 //
-//   - Two task types, independently configurable and both optional on any
+//   - Three task types, independently configurable and all optional on any
 //     given instance: reach a target position a fixed offset from wherever
-//     the bot was standing at Reset (Config.TargetOffset), and mine the
+//     the bot was standing at Reset (Config.TargetOffset), mine the
 //     nearest visible instance of a configured block name
 //     (Config.MineTargetBlock — docs/plans/RL_ACTION_SPACE_EXPANSION.md
-//     Phase 2). Real episode resets (reconnect/respawn/teleport, or a
-//     restored world snapshot — RSI_TRAINING_PLAN.md item 2) aren't wired
-//     up yet — see Environment.Reset. Posing an actual mine episode (making
-//     sure a minable block of the target type exists reachable at Reset)
-//     is also still open — RL_ACTION_SPACE_EXPANSION.md Phase 2e, deferred
-//     to mc-rsi-trainer's task generator.
-//   - A five-action vocabulary (Wait, GoToTarget, ReturnHome, Mine, Craft) —
-//     the full GO_TO/MINE/CRAFT/RETURN_HOME/WAIT set
-//     RL_POLICY_INTEGRATION_PLAN.md sketched, as of
-//     docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wiring Craft in.
+//     Phase 2), and craft a configured item (Config.CraftTargetItem —
+//     docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1). Real episode resets
+//     (RSI_TRAINING_PLAN.md item 2) are now wired for the "reach a target"
+//     task — Config.ResetOrigin teleports the bot via RCON, Config.Jitter
+//     varies the posed origin/target per episode — see Environment.Reset;
+//     a restored-world-snapshot alternative is still open. Posing an
+//     actual mine episode (making sure a minable block of the target type
+//     exists reachable at Reset) is also still open —
+//     RL_ACTION_SPACE_EXPANSION.md Phase 2e, deferred to mc-rsi-trainer's
+//     task generator.
+//   - A four-action vocabulary (Wait, GoToTarget, Mine, Craft).
+//     RL_POLICY_INTEGRATION_PLAN.md originally sketched a fifth,
+//     RETURN_HOME, but it was dropped (2026-09-09, see rlenv/action.go's
+//     own doc comment) — no reward component ever gave it a job, and an
+//     always-reward-irrelevant action is pure wasted action-space
+//     probability. Note that all four actions are always present on every
+//     Environment instance regardless of which of the three task types
+//     above are actually configured — an unconfigured Mine/Craft becomes a
+//     safe no-op (see resolveDispatch), not an excluded action; real
+//     per-instance action masking would need cRL-go support that doesn't
+//     exist yet (see cRL-go's docs/plans/19-training-time-action-masking.md).
 //   - Goal-conditioning for the mine/craft tasks is coarse
 //     (RL_ACTION_SPACE_EXPANSION.md Phase 2a option (a),
 //     RL_TRAINING_LOOP_PLAN.md Phase 1a): one fixed target block/item name

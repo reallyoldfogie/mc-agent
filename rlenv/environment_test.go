@@ -139,29 +139,6 @@ func TestStepGoToTargetReachesAndEndsEpisode(t *testing.T) {
 	}
 }
 
-func TestStepReturnHomeDispatchesToOriginNotTarget(t *testing.T) {
-	agent := newFakeAgent(0, 0, 0)
-	env := newTestEnvironment(t, agent, testConfig())
-	if _, err := env.Reset(context.Background()); err != nil {
-		t.Fatalf("Reset: %v", err)
-	}
-	if _, err := env.Step(context.Background(), rlenv.ActionGoToTarget); err != nil {
-		t.Fatalf("Step(GoToTarget): %v", err)
-	}
-
-	result, err := env.Step(context.Background(), rlenv.ActionReturnHome)
-	if err != nil {
-		t.Fatalf("Step(ReturnHome): %v", err)
-	}
-	pos, _, _, _ := agent.GetPosition()
-	if pos.X != 0 || pos.Y != 0 || pos.Z != 0 {
-		t.Fatalf("position after ReturnHome = %v, want (0,0,0) (origin)", pos)
-	}
-	if result.Reward >= 0 {
-		t.Fatalf("Reward = %v, want negative (moved away from the GoToTarget objective)", result.Reward)
-	}
-}
-
 func TestStepAppliesDamagePenaltyBetweenSteps(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setHealth(20, 20, 5)
@@ -770,6 +747,44 @@ func TestResetJitterStaysWithinConfiguredMagnitude(t *testing.T) {
 		if dx < 2 || dx > 8 {
 			t.Fatalf("Reset %d: dx = %v, want within [2, 8] (TargetOffset.X=5 +/- Jitter.X=3)", i, dx)
 		}
+	}
+}
+
+func TestResetNeverPosesAnAlreadyArrivedTarget(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig() // ArrivalThreshold = 0.5
+	// TargetOffset.X=1 with Jitter.X=3 means a naive single draw lands
+	// within ArrivalThreshold (0.5) a large fraction of the time (X drawn
+	// uniformly from [-2,4], and any |X|<0.5 with Z=0 qualifies) — this
+	// configuration only passes if Reset's retry guard is actually doing
+	// its job on the draws that would otherwise be degenerate.
+	cfg.TargetOffset = [3]float64{1, 0, 0}
+	cfg.Jitter = [3]float64{3, 0, 0}
+	cfg.JitterSeed = 7
+	env := newTestEnvironment(t, agent, cfg)
+
+	for i := 0; i < 200; i++ {
+		obs, err := env.Reset(context.Background())
+		if err != nil {
+			t.Fatalf("Reset %d: %v", i, err)
+		}
+		if dx := float64(obs.Values[0]); dx > -cfg.ArrivalThreshold && dx < cfg.ArrivalThreshold {
+			t.Fatalf("Reset %d: dx = %v, posed an already-arrived target (within ArrivalThreshold %v)", i, dx, cfg.ArrivalThreshold)
+		}
+	}
+}
+
+func TestResetErrorsWhenJitterCannotAvoidArrival(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.ArrivalThreshold = 10 // no draw below can ever exceed this
+	cfg.TargetOffset = [3]float64{0, 0, 0}
+	cfg.Jitter = [3]float64{0.1, 0, 0.1}
+	cfg.JitterSeed = 1
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err == nil {
+		t.Fatalf("Reset with a TargetOffset/Jitter/ArrivalThreshold combination that can never avoid arrival: want error, got nil")
 	}
 }
 

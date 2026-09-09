@@ -89,7 +89,6 @@ func TestComputeRewardDeathAppliesPenaltyAndEndsEpisode(t *testing.T) {
 
 func TestResolveDispatchMapsActionsToTheRightTargetsAndArgs(t *testing.T) {
 	e := &Environment{
-		originX: 1, originY: 2, originZ: 3,
 		targetX: 10, targetY: 20, targetZ: 30,
 	}
 
@@ -99,10 +98,6 @@ func TestResolveDispatchMapsActionsToTheRightTargetsAndArgs(t *testing.T) {
 	if dispatch, ok, err := e.resolveDispatch(ActionGoToTarget); err != nil || !ok || dispatch.name != moveToActionName ||
 		dispatch.args[0] != formatCoord(10) || dispatch.args[1] != formatCoord(20) || dispatch.args[2] != formatCoord(30) {
 		t.Fatalf("ActionGoToTarget: got (%+v,%v,%v), want moveto(10,20,30)", dispatch, ok, err)
-	}
-	if dispatch, ok, err := e.resolveDispatch(ActionReturnHome); err != nil || !ok || dispatch.name != moveToActionName ||
-		dispatch.args[0] != formatCoord(1) || dispatch.args[1] != formatCoord(2) || dispatch.args[2] != formatCoord(3) {
-		t.Fatalf("ActionReturnHome: got (%+v,%v,%v), want moveto(1,2,3)", dispatch, ok, err)
 	}
 	if dispatch, ok, err := e.resolveDispatch(ActionMine); err != nil || ok {
 		t.Fatalf("ActionMine with no Config.MineTargetBlock: got (%+v,%v,%v), want ok=false, err=nil (safe no-op)", dispatch, ok, err)

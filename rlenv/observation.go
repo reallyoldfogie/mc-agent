@@ -47,9 +47,9 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // package produces, whether or not the episode's Config sets
 // MineTargetBlock/CraftTargetItem, and regardless of which action was
 // actually dispatched a given step — mirrors how dx/dy/dz always reflect
-// the GoToTarget target even on steps that dispatch ActionWait or
-// ActionReturnHome, not only on ActionGoToTarget steps. There is otherwise
-// no task-type feature: MineTargetBlock/CraftTargetItem are this
+// the GoToTarget target even on steps that dispatch ActionWait, not only
+// on ActionGoToTarget steps. There is otherwise no task-type feature:
+// MineTargetBlock/CraftTargetItem are this
 // environment's second and third tasks, layered onto the existing "reach a
 // point" one rather than replacing it (all three can be configured on the
 // same instance; see task.go). See doc.go.
