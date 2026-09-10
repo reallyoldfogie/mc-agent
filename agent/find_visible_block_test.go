@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -109,4 +110,45 @@ func TestShellOffsets_CountMatchesShellVolumeFormula(t *testing.T) {
 			t.Fatalf("len(shellOffsets(%d)) = %d, want %d", r, got, want)
 		}
 	}
+}
+
+// TestShellOffsets_CachesResultAcrossCalls verifies the memoization added
+// per docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md item 1 (local,
+// untracked): shellOffsets(r) depends only on r, so a second call for the
+// same r must return the exact same backing array, not merely an
+// equal-but-freshly-recomputed one - asserted here via pointer identity of
+// the first element, since Go slices aren't otherwise comparable. A
+// regression that accidentally dropped the cache (e.g. a refactor that
+// recomputes on every call again) would still pass every other
+// shellOffsets test in this file, since they only check contents.
+func TestShellOffsets_CachesResultAcrossCalls(t *testing.T) {
+	for _, r := range []int{0, 1, 5} {
+		first := shellOffsets(r)
+		second := shellOffsets(r)
+		if len(first) == 0 || len(second) == 0 {
+			t.Fatalf("shellOffsets(%d) returned an empty slice", r)
+		}
+		if &first[0] != &second[0] {
+			t.Fatalf("shellOffsets(%d) returned a different backing array on the second call - not cached", r)
+		}
+	}
+}
+
+// TestShellOffsets_ConcurrentCallsAreRaceFree exercises the cache's
+// read/write locking under concurrent access from multiple goroutines -
+// this codebase's README notes multiple agent instances can run in one
+// process, so FindVisibleBlock (and therefore shellOffsets) may genuinely
+// be called concurrently. Run with `go test -race` to be meaningful.
+func TestShellOffsets_ConcurrentCallsAreRaceFree(t *testing.T) {
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := 0; r <= 6; r++ {
+				_ = shellOffsets(r)
+			}
+		}()
+	}
+	wg.Wait()
 }

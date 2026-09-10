@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/agent/mining"
@@ -803,6 +804,13 @@ func (a *agent) FindNearestVisibleItem(ctx context.Context, maxDistance float64)
 	return a.FindVisibleEntity(ctx, itemTypeID, maxDistance)
 }
 
+// shellOffsetsCache memoizes computeShellOffsets by radius - see
+// shellOffsets' own doc comment on why this is safe and worth doing.
+var (
+	shellOffsetsCacheMu sync.RWMutex
+	shellOffsetsCache   = map[int][][3]int{}
+)
+
 // shellOffsets returns every integer (dx, dy, dz) offset whose Chebyshev
 // distance from the origin is exactly r - i.e. max(|dx|,|dy|,|dz|) == r -
 // the surface of a (2r+1)^3 cube, each cell visited exactly once (r==0 is
@@ -816,7 +824,42 @@ func (a *agent) FindNearestVisibleItem(ctx context.Context, maxDistance float64)
 // motivated this (a brute-force full-cube scan at radius 32 - ~274,625
 // cells - was measured taking over a minute under `go test -race`, despite
 // realistic targets normally sitting within a few blocks).
+//
+// Memoized per r (see docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md
+// item 1, local/untracked): the result depends only on r, never on world
+// state or caller identity, yet FindVisibleBlock calls this once per shell
+// on every invocation - once per rlenv.Step during RL training, typically
+// at a small, fixed handful of distinct maxDistance values
+// (Config.MineSearchRadius, mineSearchRadius, craftTableSearchRadius).
+// Recomputing (and, since this session's nearest-first sort was added,
+// re-sorting) the same shell geometry on every call was pure waste. Safe
+// to share the cached slice across callers: nothing mutates a returned
+// slice in place today (FindVisibleBlock only ranges over it) - if a
+// future caller ever needs to reorder or filter its own copy, it must
+// copy first rather than mutate what this returns.
 func shellOffsets(r int) [][3]int {
+	shellOffsetsCacheMu.RLock()
+	cached, ok := shellOffsetsCache[r]
+	shellOffsetsCacheMu.RUnlock()
+	if ok {
+		return cached
+	}
+
+	shellOffsetsCacheMu.Lock()
+	defer shellOffsetsCacheMu.Unlock()
+	// Re-check under the write lock: another goroutine may have computed
+	// and cached r while this one was waiting for the lock.
+	if cached, ok := shellOffsetsCache[r]; ok {
+		return cached
+	}
+	offsets := computeShellOffsets(r)
+	shellOffsetsCache[r] = offsets
+	return offsets
+}
+
+// computeShellOffsets does the actual enumeration shellOffsets memoizes -
+// see shellOffsets' own doc comment for the geometry and caching rationale.
+func computeShellOffsets(r int) [][3]int {
 	if r == 0 {
 		return [][3]int{{0, 0, 0}}
 	}
@@ -927,13 +970,26 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 	}
 	targetName := strings.ToLower(blockName)
 	baseX, baseY, baseZ := math.Floor(pos.X), math.Floor(pos.Y), math.Floor(pos.Z)
-	bestDist := math.MaxFloat64
+	// Tracked squared, not as an actual distance: every use below is a
+	// comparison (">", ">="), never an output value - FindVisibleBlock
+	// returns coordinates, not a distance - and a > b iff a*a > b*b for
+	// non-negative a, b, so comparing squared values gives the identical
+	// answer without ever calling math.Sqrt on the per-candidate hot path
+	// (see docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md item 3,
+	// local/untracked).
+	bestDistSq := math.MaxFloat64
 	var bestX, bestY, bestZ float64
+	// Memoizes blockStateMatchesName per state ID for this call only - see
+	// that method's own doc comment (docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md
+	// item 2, local/untracked).
+	nameMatchCache := make(map[uint32]bool)
 
 	for r := 0; r <= maxDistance; r++ {
 		// Once a match is found, no cell in a farther shell can possibly be
-		// closer than it - see shellOffsets' doc comment.
-		if bestDist != math.MaxFloat64 && float64(r) > bestDist {
+		// closer than it - see shellOffsets' doc comment. rr compares
+		// against bestDistSq the same way r would against bestDist.
+		rr := float64(r) * float64(r)
+		if bestDistSq != math.MaxFloat64 && rr > bestDistSq {
 			break
 		}
 		for _, off := range shellOffsets(r) {
@@ -953,16 +1009,20 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 			if stateID == 0 {
 				continue
 			}
-			if blockID, ok := a.blockMgr.BlockIDByStateID(stateID); ok {
-				if block, ok := a.blockMgr.GetByID(blockID); ok {
-					if strings.ToLower(block.Name) != targetName {
-						continue
-					}
-				}
+			matches, cached := nameMatchCache[stateID]
+			if !cached {
+				matches = a.blockStateMatchesName(stateID, targetName)
+				nameMatchCache[stateID] = matches
+			}
+			if !matches {
+				continue
 			}
 
-			d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
-			if d >= bestDist {
+			ddx := (cx + 0.5) - pos.X
+			ddy := (cy + 0.5) - pos.Y
+			ddz := (cz + 0.5) - pos.Z
+			distSq := ddx*ddx + ddy*ddy + ddz*ddz
+			if distSq >= bestDistSq {
 				// Already can't beat the best match found so far, in this
 				// shell or an earlier one - skip the LOS raycast (the
 				// expensive part: up to several surface-point rays) rather
@@ -982,14 +1042,40 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 				continue
 			}
 
-			bestDist = d
+			bestDistSq = distSq
 			bestX, bestY, bestZ = cx, cy, cz
 		}
 	}
-	if bestDist == math.MaxFloat64 {
+	if bestDistSq == math.MaxFloat64 {
 		return 0, 0, 0, false, nil
 	}
 	return bestX, bestY, bestZ, true, nil
+}
+
+// blockStateMatchesName reports whether stateID's block name matches
+// targetName (already lowercased) - factored out of FindVisibleBlock so its
+// result can be memoized per state ID for the duration of one call
+// (nameMatchCache): resolving a name costs two blockMgr lookups plus a
+// fresh strings.ToLower allocation, and real terrain repeats very few
+// distinct state IDs across huge numbers of cells, so paying this cost once
+// per distinct material instead of once per cell is a real, low-risk win
+// (docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md item 2,
+// local/untracked).
+//
+// Preserves the exact pre-existing behavior of the inline check this
+// replaces, not introduced fresh here: a state ID this agent's blockMgr
+// can't resolve (BlockIDByStateID or GetByID returning ok=false) is treated
+// as matching, not filtered out.
+func (a *agent) blockStateMatchesName(stateID uint32, targetName string) bool {
+	blockID, ok := a.blockMgr.BlockIDByStateID(stateID)
+	if !ok {
+		return true
+	}
+	block, ok := a.blockMgr.GetByID(blockID)
+	if !ok {
+		return true
+	}
+	return strings.ToLower(block.Name) == targetName
 }
 
 // FindAllVisibleBlocksInSphere returns all non-air blocks within the given radius that have line of sight.
