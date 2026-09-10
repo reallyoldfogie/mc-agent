@@ -44,6 +44,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -237,10 +238,26 @@ func TestTransferItemAcrossServers(t *testing.T) {
 	const sourceSlot = "0"
 	const itemID = "minecraft:diamond"
 	const itemCount = 5
-	_, err = instA.RCON.Exec(ctx, fmt.Sprintf(
-		`data merge entity %s {Inventory:[{Slot:%sb,id:"%s",count:%d}]}`,
-		botName, sourceSlot, itemID, itemCount))
+	// `/data merge|modify entity` is rejected by vanilla for a live,
+	// connected player ("Unable to modify player data" - confirmed via RCON,
+	// not assumed), so seeding has to go through `/item replace entity`
+	// instead. That command uses its own slot vocabulary (hotbar.0-8 for the
+	// hotbar, inventory.0-26 for the rest of the main inventory) rather than
+	// the raw Inventory NBT Slot index TransferManager indexes with (see the
+	// file doc comment above), so the raw index is translated here.
+	rawSlot, err := strconv.Atoi(sourceSlot)
+	require.NoError(t, err, "parse sourceSlot")
+	var slotArg string
+	if rawSlot < 9 {
+		slotArg = fmt.Sprintf("hotbar.%d", rawSlot)
+	} else {
+		slotArg = fmt.Sprintf("inventory.%d", rawSlot-9)
+	}
+
+	seedResp, err := instA.RCON.Exec(ctx, fmt.Sprintf(
+		"item replace entity %s %s with %s %d", botName, slotArg, itemID, itemCount))
 	require.NoError(t, err, "seed source inventory")
+	require.NotContains(t, seedResp, "Unable to modify", "seed command rejected: %s", seedResp)
 	time.Sleep(500 * time.Millisecond) // give the server a moment to process
 
 	before, err := GetInventoryItems(ctx, instA.RCON, botName)
