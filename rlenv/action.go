@@ -35,16 +35,27 @@ const (
 	// ActionGoToTarget dispatches "movetoquiet" toward the episode's target
 	// position (Environment.targetX/Y/Z, set at Reset — see task.go).
 	ActionGoToTarget
-	// ActionMine dispatches "mine <Config.MineTargetBlock>" — mc-agent's
-	// own Mine action (actions/commands.go) resolves the nearest visible
-	// instance of that block name itself via FindVisibleBlock, the same
-	// call Environment separately makes for observation/reward purposes
-	// (see Environment.resolveMineTarget) — nothing moves between those two
-	// calls within one Step, so they agree. A safe no-op (like ActionWait)
-	// when Config.MineTargetBlock is unset: this environment poses at most
-	// one mining task per instance (RL_ACTION_SPACE_EXPANSION.md Phase 2a
-	// option (a), mirrors TargetOffset's "environment poses the task"
-	// pattern), not a free-form "mine anything" capability.
+	// ActionMine dispatches "mine <x> <y> <z>" at Environment's own
+	// already-resolved e.mineX/Y/Z (see refreshMineTarget) — not "mine
+	// <Config.MineTargetBlock>" by name, which would make mc-agent's Mine
+	// action (actions/commands.go) re-run its own independent
+	// FindVisibleBlock search. Found necessary, not merely tidy: that
+	// by-name form's own default search radius (32,
+	// actions/commands.go's mineSearchRadius) is a plain package constant,
+	// entirely disconnected from Config.MineSearchRadius — dispatching by
+	// name when nothing is within Config.MineSearchRadius (Environment's
+	// own, typically much smaller, search) let the dispatched action
+	// re-search a much larger, effectively unbounded volume, which stalled
+	// a live RL training run for minutes at a time per mine attempt
+	// (2026-09-10). Dispatching Environment's own already-resolved
+	// coordinates instead makes this genuinely a single shared search, not
+	// two independently-radius'd ones that merely "usually agree." A safe
+	// no-op (like ActionWait) when Config.MineTargetBlock is unset OR
+	// nothing is currently visible (!e.mineVisible) — this environment
+	// poses at most one mining task per instance
+	// (RL_ACTION_SPACE_EXPANSION.md Phase 2a option (a), mirrors
+	// TargetOffset's "environment poses the task" pattern), not a
+	// free-form "mine anything, searching as far as it takes" capability.
 	ActionMine
 	// ActionCraft dispatches "craft <Config.CraftTargetItem>" — mc-agent's
 	// own Craft action (actions/commands.go) resolves ingredient placement
@@ -80,8 +91,8 @@ const (
 // actionDispatch describes what Step should send through the
 // models.ActionRegistry for one rl.Action: which registered action name to
 // call, and the string args that action's Execute expects (see
-// actions/commands.go — MoveTo needs 3 parseFloat'able coordinates, Mine's
-// single-arg form needs one block name).
+// actions/commands.go — MoveToQuiet and Mine's coordinate form both need 3
+// parseFloat'able coordinates; Craft needs one item name).
 type actionDispatch struct {
 	name string
 	args []string
@@ -89,25 +100,27 @@ type actionDispatch struct {
 
 // resolveDispatch maps action to what Step should dispatch through the
 // registry this step, and whether it should dispatch anything at all.
-// ok=false covers two cases: ActionWait (never dispatches, by design) and
-// ActionMine with no configured target (Config.MineTargetBlock == "") —
-// both are silent no-ops, not errors, the same way an unconfigured mine
-// task shouldn't punish a policy for trying it. This replaces the old
-// movementTarget/isMovement pair (RL_ACTION_SPACE_EXPANSION.md Phase 2b):
-// ActionMine's args aren't a movement target at all, so a single
-// dispatch-table shape covers both cases better than the old "give me an
-// (x,y,z)" signature could.
+// ok=false covers three cases, all silent no-ops rather than errors, the
+// same way a task a policy can't currently act on shouldn't punish it for
+// trying: ActionWait (never dispatches, by design), ActionMine with no
+// configured target (Config.MineTargetBlock == "") or nothing currently
+// visible (!e.mineVisible — see ActionMine's own doc comment for why this
+// dispatches Environment's own already-resolved coordinates rather than
+// redispatching by name), and ActionCraft with no configured target. This
+// replaces the old movementTarget/isMovement pair
+// (RL_ACTION_SPACE_EXPANSION.md Phase 2b) with a single dispatch-table
+// shape covering all cases.
 func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch, ok bool, err error) {
 	switch action {
 	case ActionWait:
 		return actionDispatch{}, false, nil
 	case ActionGoToTarget:
-		return actionDispatch{name: moveToActionName, args: moveToArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
+		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 	case ActionMine:
-		if e.cfg.MineTargetBlock == "" {
+		if e.cfg.MineTargetBlock == "" || !e.mineVisible {
 			return actionDispatch{}, false, nil
 		}
-		return actionDispatch{name: mineActionName, args: []string{e.cfg.MineTargetBlock}}, true, nil
+		return actionDispatch{name: mineActionName, args: coordArgs(e.mineX, e.mineY, e.mineZ)}, true, nil
 	case ActionCraft:
 		if e.cfg.CraftTargetItem == "" {
 			return actionDispatch{}, false, nil
@@ -118,9 +131,10 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 	}
 }
 
-// moveToArgs formats x, y, z as the string args actions.MoveToQuiet.Execute
-// expects (see actions/commands.go: parseFloat(args[0..2])).
-func moveToArgs(x, y, z float64) []string {
+// coordArgs formats x, y, z as the string args actions.MoveToQuiet.Execute
+// and Mine's coordinate form both expect (see actions/commands.go:
+// parseFloat(args[0..2])).
+func coordArgs(x, y, z float64) []string {
 	return []string{formatCoord(x), formatCoord(y), formatCoord(z)}
 }
 

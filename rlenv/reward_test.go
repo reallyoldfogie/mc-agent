@@ -103,9 +103,14 @@ func TestResolveDispatchMapsActionsToTheRightTargetsAndArgs(t *testing.T) {
 		t.Fatalf("ActionMine with no Config.MineTargetBlock: got (%+v,%v,%v), want ok=false, err=nil (safe no-op)", dispatch, ok, err)
 	}
 	e.cfg.MineTargetBlock = "minecraft:stone"
+	if dispatch, ok, err := e.resolveDispatch(ActionMine); err != nil || ok {
+		t.Fatalf("ActionMine with Config.MineTargetBlock set but nothing visible: got (%+v,%v,%v), want ok=false, err=nil (safe no-op)", dispatch, ok, err)
+	}
+	e.mineVisible = true
+	e.mineX, e.mineY, e.mineZ = 40, 50, 60
 	if dispatch, ok, err := e.resolveDispatch(ActionMine); err != nil || !ok || dispatch.name != mineActionName ||
-		len(dispatch.args) != 1 || dispatch.args[0] != "minecraft:stone" {
-		t.Fatalf("ActionMine with Config.MineTargetBlock set: got (%+v,%v,%v), want mine(minecraft:stone)", dispatch, ok, err)
+		dispatch.args[0] != formatCoord(40) || dispatch.args[1] != formatCoord(50) || dispatch.args[2] != formatCoord(60) {
+		t.Fatalf("ActionMine with a visible target: got (%+v,%v,%v), want mine(40,50,60) — Environment's own already-resolved coordinates, not the block name", dispatch, ok, err)
 	}
 	if _, _, err := e.resolveDispatch(rl.Action(99)); err == nil {
 		t.Fatalf("out-of-range action: want error, got nil")
