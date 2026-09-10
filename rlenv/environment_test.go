@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/reallyoldfogie/mc-agent/actions"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/rlenv"
@@ -889,12 +890,107 @@ func TestResetClearsStuckCounterAcrossEpisodes(t *testing.T) {
 	}
 }
 
+// --- ActionMask (cRL-go rl.ActionMasker, docs/plans/19-training-time-action-masking.md) ---
+
+func TestActionMaskAllLegalWhenNoTaskConfigured(t *testing.T) {
+	// Wait/GoToTarget are always legal; Mine/Craft are illegal with no
+	// task configured — mirrors resolveDispatch's own no-op conditions
+	// (see actionLegal's doc comment for why the two must never drift).
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	mask := env.ActionMask()
+	if len(mask) != rlenv.NumActions {
+		t.Fatalf("len(ActionMask()) = %d, want %d", len(mask), rlenv.NumActions)
+	}
+	want := map[rl.Action]bool{
+		rlenv.ActionWait:       true,
+		rlenv.ActionGoToTarget: true,
+		rlenv.ActionMine:       false,
+		rlenv.ActionCraft:      false,
+	}
+	for action, wantLegal := range want {
+		if got := mask[action]; got != wantLegal {
+			t.Fatalf("mask[%d] = %v, want %v", action, got, wantLegal)
+		}
+	}
+}
+
+func TestActionMaskMineLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMine]; legal {
+		t.Fatalf("ActionMine legal = true, want false (configured but nothing currently visible)")
+	}
+	// Cross-check the mask against what Step actually does with it, not
+	// just the mask's own internal logic: a masked-illegal action must
+	// also be the safe no-op resolveDispatch already makes it.
+	if _, err := env.Step(context.Background(), rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.mineBlockAtCalls != 0 {
+		t.Fatalf("MineBlockAt calls = %d, want 0 (mask reported ActionMine illegal)", agent.mineBlockAtCalls)
+	}
+
+	agent.setMineBlock("minecraft:stone", 5, 0, 0)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[12]; visible != 1 {
+		t.Fatalf("mineVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMine]; !legal {
+		t.Fatalf("ActionMine legal = false, want true (target now visible)")
+	}
+}
+
+func TestActionMaskCraftLegalIffConfigured(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	// Craft target exists and is ready in the world, but Config never
+	// asks for it — legality tracks configuration, not world readiness
+	// (mirrors resolveDispatch: no craftReady gate on ActionCraft).
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionCraft]; legal {
+		t.Fatalf("ActionCraft legal = true, want false (Config.CraftTargetItem unset)")
+	}
+	if _, err := unconfigured.Step(context.Background(), rlenv.ActionCraft); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 0 {
+		t.Fatalf("CraftItem calls = %d, want 0 (mask reported ActionCraft illegal)", agent.craftItemCalls)
+	}
+
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	configured := newTestEnvironment(t, agent, cfg)
+	if _, err := configured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := configured.ActionMask()[rlenv.ActionCraft]; !legal {
+		t.Fatalf("ActionCraft legal = false, want true (Config.CraftTargetItem set)")
+	}
+}
+
 // compile-time check that fakeAgent satisfies both interfaces rlenv.LiveAgent
-// requires.
+// requires, and that Environment satisfies cRL-go's rl.ActionMasker.
 var (
 	_ models.CommandAgent   = (*fakeAgent)(nil)
 	_ models.HealthProvider = (*fakeAgent)(nil)
 	_ rlenv.LiveAgent       = (*fakeAgent)(nil)
 	_ rlenv.SeedAgent       = (*fakeAgent)(nil)
 	_ rlenv.ResetAgent      = (*fakeAgent)(nil)
+	_ rl.ActionMasker       = (*rlenv.Environment)(nil)
 )
