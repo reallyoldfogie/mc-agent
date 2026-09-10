@@ -48,6 +48,17 @@ func (a *agent) handleChatCommandWithContext(ctx context.Context, cmd string) {
 	}
 }
 
+// RegisterAction adds action to this agent's own chat-command registry
+// (built in agent.New via actions.NewRegistry) — implements
+// models.ActionRegistrar. A no-op if the registry somehow isn't set (agent.New
+// always sets one in practice).
+func (a *agent) RegisterAction(action models.Action[models.CommandAgent]) {
+	if a.commandRegistry == nil {
+		return
+	}
+	a.commandRegistry.Register(action)
+}
+
 // parse helpers
 func parseFloat(s string) (float64, error) { return strconv.ParseFloat(s, 64) }
 

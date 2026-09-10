@@ -20,6 +20,8 @@ type Agent interface {
 	ManualMovement
 	EntityCallbackRegistry
 	MountState
+	PluginMessaging
+	ActionRegistrar
 
 	// Lifecycle
 	Init(ctx context.Context) error

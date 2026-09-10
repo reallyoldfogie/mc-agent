@@ -1,0 +1,6 @@
+# Ignore all mod jars and their per-version subdirectories.
+# Users place jars in version-specific subdirectories: v1_21_5/, v1_21_11/, etc.
+# The testing framework will automatically detect and mount them when the server starts.
+*
+!.gitignore
+!README.md

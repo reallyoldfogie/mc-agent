@@ -64,5 +64,11 @@
     "stuck_timeout": 0,
     "jitter": [0, 0, 0],
     "jitter_seed": 0
+  },
+  "courier": {
+    "servers": [
+      { "label": "survival-main", "address": "127.0.0.1:25565", "version": "" },
+      { "label": "creative-vault", "address": "127.0.0.1:25566", "version": "" }
+    ]
   }
 }
