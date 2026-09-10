@@ -4,11 +4,13 @@ package v1_21_7
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 	agent_models "github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/basetypes"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.7/play/serverbound"
@@ -25,6 +27,7 @@ const (
 // Handler implements models.VersionHandler for Minecraft 1.21.7.
 type Handler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 
 	// Sub-handlers (lazily initialized)
 	loginHandler  *loginHandler
@@ -34,9 +37,11 @@ type Handler struct {
 
 // NewHandler creates a new version handler for 1.21.7.
 // The packetMgr parameter should be the mc-protocol-go PacketMgr for 1.21.7.
-func NewHandler(packetMgr protocol_models.PacketMgr) *Handler {
+func NewHandler(packetMgr protocol_models.PacketMgr, logger *slog.Logger) *Handler {
+	logger = utils.SafeLogger(logger)
 	return &Handler{
 		packetMgr: packetMgr,
+		logger:    logger,
 	}
 }
 
@@ -58,7 +63,7 @@ func (h *Handler) PacketMgr() protocol_models.PacketMgr {
 // Login returns the login phase handler.
 func (h *Handler) Login() models.LoginHandler {
 	if h.loginHandler == nil {
-		h.loginHandler = &loginHandler{packetMgr: h.packetMgr}
+		h.loginHandler = &loginHandler{packetMgr: h.packetMgr, logger: h.logger}
 	}
 	return h.loginHandler
 }
@@ -66,7 +71,7 @@ func (h *Handler) Login() models.LoginHandler {
 // Configuration returns the configuration phase handler.
 func (h *Handler) Configuration() models.ConfigurationHandler {
 	if h.configHandler == nil {
-		h.configHandler = &configurationHandler{packetMgr: h.packetMgr}
+		h.configHandler = &configurationHandler{packetMgr: h.packetMgr, logger: h.logger}
 	}
 	return h.configHandler
 }
@@ -74,7 +79,7 @@ func (h *Handler) Configuration() models.ConfigurationHandler {
 // Play returns the play phase handler.
 func (h *Handler) Play() models.PlayHandler {
 	if h.playHandler == nil {
-		h.playHandler = &playHandler{packetMgr: h.packetMgr}
+		h.playHandler = &playHandler{packetMgr: h.packetMgr, logger: h.logger}
 	}
 	return h.playHandler
 }
@@ -86,6 +91,7 @@ func (h *Handler) Play() models.PlayHandler {
 // playHandler implements models.PlayHandler for 1.21.7.
 type playHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 
 	// Sub-handlers (lazily initialized)
 	movement   *movementHandler
@@ -99,49 +105,49 @@ type playHandler struct {
 
 func (p *playHandler) Lifecycle() models.LifecycleHandler {
 	if p.lifecycle == nil {
-		p.lifecycle = &lifecycleHandler{packetMgr: p.packetMgr}
+		p.lifecycle = &lifecycleHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.lifecycle
 }
 
 func (p *playHandler) Movement() models.MovementHandler {
 	if p.movement == nil {
-		p.movement = &movementHandler{packetMgr: p.packetMgr}
+		p.movement = &movementHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.movement
 }
 
 func (p *playHandler) Entities() models.EntityHandler {
 	if p.entities == nil {
-		p.entities = &entityHandler{packetMgr: p.packetMgr}
+		p.entities = &entityHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.entities
 }
 
 func (p *playHandler) Containers() models.ContainerHandler {
 	if p.containers == nil {
-		p.containers = &containerHandler{packetMgr: p.packetMgr}
+		p.containers = &containerHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.containers
 }
 
 func (p *playHandler) Chat() models.ChatHandler {
 	if p.chat == nil {
-		p.chat = &chatHandler{packetMgr: p.packetMgr}
+		p.chat = &chatHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.chat
 }
 
 func (p *playHandler) World() models.WorldHandler {
 	if p.world == nil {
-		p.world = &worldHandler{packetMgr: p.packetMgr}
+		p.world = &worldHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.world
 }
 
 func (p *playHandler) Actions() models.ActionHandler {
 	if p.actions == nil {
-		p.actions = &actionHandler{packetMgr: p.packetMgr}
+		p.actions = &actionHandler{packetMgr: p.packetMgr, logger: p.logger}
 	}
 	return p.actions
 }
@@ -466,8 +472,8 @@ func (p *playHandler) BuildEntityEquipmentPacket(entityID int32, slot models.Equ
 	if count > 0 {
 		entry.Item.ItemCount = pk.VarInt(count)
 		entry.Item.UnnamedType0001 = &basetypes.SlotUnnamedType0001Default{
-			ItemId:              pk.VarInt(itemID),
-			AddedComponentCount: 0,
+			ItemId:                pk.VarInt(itemID),
+			AddedComponentCount:   0,
 			RemovedComponentCount: 0,
 		}
 	} else {

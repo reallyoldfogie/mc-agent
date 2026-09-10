@@ -1,7 +1,9 @@
 package v1_21_4
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -14,6 +16,7 @@ import (
 // loginHandler implements models.LoginHandler for 1.21.4.
 type loginHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendLoginStart sends a login start packet with username and UUID.
@@ -23,7 +26,7 @@ func (l *loginHandler) SendLoginStart(conn models.PacketWriter, username string,
 	pkt.Username = pk.String(username)
 	pkt.PlayerUUID = pk.UUID(uuid)
 
-	log.Printf("[v1.21.4 Login] SendLoginStart: username=%s uuid=%x", username, uuid)
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Login] SendLoginStart: username=%s uuid=%x", username, uuid))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "LoginStart", Cause: err}
@@ -38,8 +41,8 @@ func (l *loginHandler) SendEncryptionResponse(conn models.PacketWriter, sharedSe
 	pkt.SharedSecret = pk.ByteArray(sharedSecret)
 	pkt.VerifyToken = pk.ByteArray(verifyToken)
 
-	log.Printf("[v1.21.4 Login] SendEncryptionResponse: sharedSecretLen=%d verifyTokenLen=%d",
-		len(sharedSecret), len(verifyToken))
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Login] SendEncryptionResponse: sharedSecretLen=%d verifyTokenLen=%d",
+		len(sharedSecret), len(verifyToken)))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "EncryptionBegin", Cause: err}
@@ -52,7 +55,7 @@ func (l *loginHandler) SendEncryptionResponse(conn models.PacketWriter, sharedSe
 func (l *loginHandler) SendLoginAcknowledged(conn models.PacketWriter) error {
 	pkt := sb.NewLoginAcknowledged()
 
-	log.Printf("[v1.21.4 Login] SendLoginAcknowledged")
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Login] SendLoginAcknowledged"))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "LoginAcknowledged", Cause: err}
@@ -72,7 +75,7 @@ func (l *loginHandler) ParseLoginSuccess(p pk.Packet) (username string, uuid [16
 	username = string(pkt.Username)
 	uuid = [16]byte(pkt.Uuid)
 
-	log.Printf("[v1.21.4 Login] ParseLoginSuccess: username=%s uuid=%x", username, uuid)
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Login] ParseLoginSuccess: username=%s uuid=%x", username, uuid))
 
 	return
 }
@@ -90,8 +93,8 @@ func (l *loginHandler) ParseEncryptionRequest(p pk.Packet) (serverID string, pub
 	publicKey = []byte(pkt.PublicKey)
 	verifyToken = []byte(pkt.VerifyToken)
 
-	log.Printf("[v1.21.4 Login] ParseEncryptionRequest: serverID=%s publicKeyLen=%d verifyTokenLen=%d",
-		serverID, len(publicKey), len(verifyToken))
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Login] ParseEncryptionRequest: serverID=%s publicKeyLen=%d verifyTokenLen=%d",
+		serverID, len(publicKey), len(verifyToken)))
 
 	return
 }

@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -26,7 +27,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
 	// (1) Send PlayerInput
-	log.Printf("[handleRidingModeCamel] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	// Hold lock for entire read-compute-write cycle
@@ -37,7 +38,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	camelSt := pe.camelState
 	if camelSt == nil {
 		// Safety: should never happen if dispatch is correct
-		log.Printf("[handleRidingModeCamel] WARNING: camelState is nil, falling back to horse handler")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] WARNING: camelState is nil, falling back to horse handler"))
 		pe.mountedEntityMu.Unlock()
 		horseResult := pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, entityGetter)
 		pe.mountedEntityMu.Lock()
@@ -61,7 +62,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		camelSt.EndDash()
 	}
 	if camelSt.TickDashCooldown() {
-		log.Printf("[handleRidingModeCamel] Dash cooldown expired — ready for new dash")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Dash cooldown expired — ready for new dash"))
 		if pe.onDashReady != nil {
 			pe.onDashReady()
 		}
@@ -69,22 +70,22 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	// Auto-stand in water
 	if camelSt.IsSitting() && isInFluid {
 		camelSt.SetStanding(worldTime)
-		log.Printf("[handleRidingModeCamel] Auto-stood in water")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Auto-stood in water"))
 	}
 
 	// --- Stationary check ---
 	if camelSt.IsStationary(worldTime) {
 		if forward && camelSt.IsSitting() && !camelSt.IsChangingPose(worldTime) {
 			camelSt.StartStanding(worldTime)
-			log.Printf("[handleRidingModeCamel] Started standing (rider forward input)")
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Started standing (rider forward input)"))
 		}
 
 		pe.ridingVelX = 0
 		pe.ridingVelZ = 0
 		pe.lastRidingJumpState = jump
 
-		log.Printf("[handleRidingModeCamel] Stationary: sitting=%v changingPose=%v pos=(%.2f,%.2f,%.2f)",
-			camelSt.IsSitting(), camelSt.IsChangingPose(worldTime), currentPos.X, currentPos.Y, currentPos.Z)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Stationary: sitting=%v changingPose=%v pos=(%.2f,%.2f,%.2f)",
+			camelSt.IsSitting(), camelSt.IsChangingPose(worldTime), currentPos.X, currentPos.Y, currentPos.Z))
 
 		// Update physicsState inside the lock so a concurrent TurnTowards
 		// cannot race with this write-back (see applyRidingTickState).
@@ -155,9 +156,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		if camelSt.CanStartDash(true) {
 			camelSt.SetCharging(true)
 			camelSt.SetJumpChargeTicks(0)
-			log.Printf("[handleRidingModeCamel] Dash charging started")
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Dash charging started"))
 		} else {
-			log.Printf("[handleRidingModeCamel] Dash blocked: cooldown=%d", camelSt.GetDashCooldownTicks())
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Dash blocked: cooldown=%d", camelSt.GetDashCooldownTicks()))
 		}
 	}
 
@@ -187,8 +188,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 			ridingVelZ = newRidingVelZ
 
 			camelSt.ApplyDash()
-			log.Printf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d strengthPercent=%d deltaVelY=%.3f forwardVel=%.4f",
-				strength, jumpTicks, strengthPercent, deltaVelY, ridingVelZ)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Dash applied: strength=%.3f charge=%d strengthPercent=%d deltaVelY=%.3f forwardVel=%.4f",
+				strength, jumpTicks, strengthPercent, deltaVelY, ridingVelZ))
 		}
 	}
 
@@ -217,7 +218,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 		correctedVel.Y = 0
 		onGround = true
 		pe.ridingGroundY = newPos.Y
-		log.Printf("[handleRidingModeCamel] Landed at Y=%.2f", newPos.Y)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] Landed at Y=%.2f", newPos.Y))
 	}
 
 	// Use corrected horizontal velocity for next tick
@@ -237,8 +238,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeCamel(
 	if camelSt.GetIsCamelHusk() {
 		vehicleKind = "camel_husk"
 	}
-	log.Printf("[handleRidingModeCamel] %s physics: water=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f airborne=%v newPos=(%.2f,%.2f,%.2f)",
-		vehicleKind, waterParams.IsInWater, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, ridingAirborne, newPos.X, newPos.Y, newPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeCamel] %s physics: water=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f airborne=%v newPos=(%.2f,%.2f,%.2f)",
+		vehicleKind, waterParams.IsInWater, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, ridingAirborne, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

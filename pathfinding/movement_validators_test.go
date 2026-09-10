@@ -16,12 +16,12 @@ func TestCanSwim_SolidToWater(t *testing.T) {
 	stoneID := registry.GetStateID("minecraft:stone", nil)
 
 	world := mctesting.NewWorldBuilder(registry).
-		FlatGroundDirect(0, 0, 10, 10, 64, stoneID).          // Stone floor at Y=64
-		WaterDirect(1, 65, 2, 4, 66, 8, waterID).             // Water pool from X=1-4, Y=65-66, Z=2-8
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID). // Stone floor at Y=64
+		WaterDirect(1, 65, 2, 4, 66, 8, waterID).    // Water pool from X=1-4, Y=65-66, Z=2-8
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	validator := pathfinding.NewMovementValidator(world, shapeMgr)
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
 
 	testCases := []struct {
 		name     string
@@ -92,12 +92,12 @@ func TestCanSwimUp_SolidToWater(t *testing.T) {
 	stoneID := registry.GetStateID("minecraft:stone", nil)
 
 	world := mctesting.NewWorldBuilder(registry).
-		FlatGroundDirect(0, 0, 10, 10, 64, stoneID).         // Stone floor at Y=64
-		WaterDirect(1, 65, 2, 4, 66, 8, waterID).            // Water from Y=65-66 only
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID). // Stone floor at Y=64
+		WaterDirect(1, 65, 2, 4, 66, 8, waterID).    // Water from Y=65-66 only
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	validator := pathfinding.NewMovementValidator(world, shapeMgr)
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
 
 	testCases := []struct {
 		name     string
@@ -154,12 +154,12 @@ func TestCanSwimDown_SolidToWater(t *testing.T) {
 	stoneID := registry.GetStateID("minecraft:stone", nil)
 
 	world := mctesting.NewWorldBuilder(registry).
-		FlatGroundDirect(0, 0, 10, 10, 62, stoneID).         // Stone floor at Y=62
-		WaterDirect(1, 60, 2, 4, 65, 8, waterID).            // Water from Y=60-65
+		FlatGroundDirect(0, 0, 10, 10, 62, stoneID). // Stone floor at Y=62
+		WaterDirect(1, 60, 2, 4, 65, 8, waterID).    // Water from Y=60-65
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	validator := pathfinding.NewMovementValidator(world, shapeMgr)
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
 
 	testCases := []struct {
 		name     string

@@ -3,7 +3,8 @@ package visualize
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 	"strings"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -32,18 +33,22 @@ type RCONCommandExecutor interface {
 
 // VisualizerAdapter bridges RCON to the DisplayEntitySummoner interface
 type VisualizerAdapter struct {
-	rcon RCONCommandExecutor
+	rcon   RCONCommandExecutor
+	logger *slog.Logger
 }
 
-func NewVisualizerAdapter(rcon RCONCommandExecutor) *VisualizerAdapter {
-	return &VisualizerAdapter{rcon: rcon}
+func NewVisualizerAdapter(rcon RCONCommandExecutor, logger *slog.Logger) *VisualizerAdapter {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &VisualizerAdapter{rcon: rcon, logger: logger}
 }
 
 func (a *VisualizerAdapter) SummonEntity(ctx context.Context, x, y, z float64, entityType, nbtData string) {
 	cmd := fmt.Sprintf("summon minecraft:%s %f %f %f %s", entityType, x, y, z, nbtData)
 	_, err := a.rcon.Exec(ctx, cmd)
 	if err != nil {
-		log.Printf("[DisplayEntity] Failed to summon %s at (%.1f, %.1f, %.1f): %v", entityType, x, y, z, err)
+		utils.SafeLogger(a.logger).Debug("[DisplayEntity] failed to summon", "entityType", entityType, "x", x, "y", y, "z", z, "error", err)
 	}
 }
 
@@ -60,7 +65,7 @@ func VisualizeExpectedPath(ctx context.Context, summoner DisplayEntitySummoner, 
 		blockType = fmt.Sprintf("minecraft:%s_stained_glass", blockType)
 	}
 
-	log.Printf("[PathViz] Visualizing %d waypoints with %s", len(waypoints), blockType)
+	slog.Default().Debug("[PathViz] visualizing waypoints", "count", len(waypoints), "blockType", blockType)
 
 	for i, wp := range waypoints {
 		// Block display for waypoint position
@@ -75,13 +80,12 @@ func VisualizeExpectedPath(ctx context.Context, summoner DisplayEntitySummoner, 
 		}
 
 		if i < 5 || (i+1)%5 == 0 {
-			log.Printf("[PathViz]   Waypoint %d: (%.2f, %.2f, %.2f) %s",
-				i, wp.Pos.X, wp.Pos.Y, wp.Pos.Z, wp.Label)
+			slog.Default().Debug("[PathViz] waypoint", "index", i, "x", wp.Pos.X, "y", wp.Pos.Y, "z", wp.Pos.Z, "label", wp.Label)
 		}
 	}
 
 	if len(waypoints) > 5 {
-		log.Printf("[PathViz]   ... and %d more waypoints", len(waypoints)-5)
+		slog.Default().Debug("[PathViz] more waypoints omitted", "count", len(waypoints)-5)
 	}
 }
 
@@ -103,9 +107,9 @@ func ClearPathVisualizations(ctx context.Context, rcon RCONCommandExecutor) {
 	cmd := "/kill @e[tag=path_viz]"
 	_, err := rcon.Exec(ctx, cmd)
 	if err != nil {
-		log.Printf("[PathViz] Failed to clear visualizations: %v", err)
+		slog.Default().Debug("[PathViz] failed to clear visualizations", "error", err)
 	} else {
-		log.Printf("[PathViz] Cleared all path visualizations")
+		slog.Default().Debug("[PathViz] cleared all path visualizations")
 	}
 }
 
@@ -123,7 +127,7 @@ func normalizeBlockColor(color string) string {
 	if isColorAllowed(trimmed) {
 		return trimmed
 	}
-	log.Printf("[PathViz] Invalid color %q; falling back to lime", color)
+	slog.Default().Debug("[PathViz] invalid color, falling back to lime", "color", color)
 	return "lime"
 }
 

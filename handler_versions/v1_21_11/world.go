@@ -7,11 +7,13 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.11/play/clientbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	"log/slog"
 )
 
 // worldHandler implements common.WorldHandler for 1.21.11.
 type worldHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // ParseBlockUpdate parses a single block update packet.

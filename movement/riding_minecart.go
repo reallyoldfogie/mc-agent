@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 	"strings"
 
@@ -45,7 +46,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 		pe.movementPacketSender.client.Conn(),
 		forward, backward, false, false, false, sneak,
 	); err != nil {
-		log.Printf("[handleRidingModeMinecart] SendVehicleInput error: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeMinecart] SendVehicleInput error: %v", err))
 	}
 
 	// Hold lock for entire read-compute-write cycle
@@ -56,11 +57,11 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 
 	// Sanitize NaN yaw/pitch that may come from uninitialized physics state
 	if math.IsNaN(yaw) {
-		log.Printf("[handleRidingModeMinecart] WARNING: yaw is NaN, defaulting to 0.")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeMinecart] WARNING: yaw is NaN, defaulting to 0."))
 		yaw = 0
 	}
 	if math.IsNaN(pitch) {
-		log.Printf("[handleRidingModeMinecart] WARNING: pitch is NaN, defaulting to 0.")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeMinecart] WARNING: pitch is NaN, defaulting to 0."))
 		pitch = 0
 	}
 
@@ -236,8 +237,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMinecart(
 		finalPos = models.V3{X: newX, Y: newY, Z: newZ}
 	}
 
-	log.Printf("[handleRidingModeMinecart] rail=%v shape=%s isSlope=%v vel=(%.4f,%.4f) pos=(%.3f,%.3f,%.3f)",
-		rail.found, rail.shape, rail.found && isSlope(rail.shape), newVelX, newVelZ, finalPos.X, finalPos.Y, finalPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeMinecart] rail=%v shape=%s isSlope=%v vel=(%.4f,%.4f) pos=(%.3f,%.3f,%.3f)",
+		rail.found, rail.shape, rail.found && isSlope(rail.shape), newVelX, newVelZ, finalPos.X, finalPos.Y, finalPos.Z))
 
 	// Final NaN safety check for the packet pose.
 	sendYaw := yaw

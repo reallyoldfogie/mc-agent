@@ -2,23 +2,21 @@ package pathfinding
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"testing"
 
+	"github.com/reallyoldfogie/mc-agent/utils"
 	mdl "github.com/reallyoldfogie/mc-data-gen/loader"
 )
 
-// captureLogOutput redirects the standard library's shared log output to a
-// buffer for the duration of the test, restoring it on cleanup — needed
-// because blockShapeManager logs via the plain "log" package (see its own
-// verbose field's doc comment), not a per-instance logger.
-func captureLogOutput(t *testing.T) *bytes.Buffer {
-	t.Helper()
+// newTestLogger builds a *slog.Logger writing to a buffer at the given
+// minimum level, for asserting on a blockShapeManager's own per-instance
+// log output (see docs/bugs/global-log-output-not-per-agent.md) instead of
+// the plain "log" package's process-global output.
+func newTestLogger(level slog.Level) (*slog.Logger, *bytes.Buffer) {
 	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: level, ReplaceAttr: utils.ReplaceDebugVerboseLevelAttr})
+	return slog.New(handler), &buf
 }
 
 // TestBlockShapeManagerGetInfoSkipsLoggingByDefault verifies the fix for a
@@ -29,41 +27,42 @@ func captureLogOutput(t *testing.T) *bytes.Buffer {
 // passability query — hot paths invoked constantly during pathfinding,
 // movement, and physics. That compounded into gigabytes of log output and
 // dominated a live RL training run's wall-clock time even after the
-// separate LOS fix landed. Default (verbose=false) must now be silent, on
-// both the found and not-found paths.
+// separate LOS fix landed. Default (Info level) must now be silent, on
+// both the found and not-found paths, since these are logged at
+// utils.LevelDebugVerbose.
 func TestBlockShapeManagerGetInfoSkipsLoggingByDefault(t *testing.T) {
-	buf := captureLogOutput(t)
+	logger, buf := newTestLogger(slog.LevelInfo)
 	bsm := &blockShapeManager{
 		shapeData: map[mdl.StateKey]mdl.ShapeInfo{
 			{BlockID: "minecraft:stone", PropsKey: ""}: {},
 		},
-		verbose: false,
+		logger: logger,
 	}
 
 	bsm.getInfo("minecraft:stone", nil)   // found path
 	bsm.getInfo("minecraft:unknown", nil) // not-found path
 
 	if buf.Len() != 0 {
-		t.Fatalf("getInfo logged %d bytes with verbose=false, want 0: %s", buf.Len(), buf.String())
+		t.Fatalf("getInfo logged %d bytes at Info level, want 0: %s", buf.Len(), buf.String())
 	}
 }
 
 // TestBlockShapeManagerGetInfoLogsWhenVerbose verifies the diagnostic is
-// still available, not simply deleted, when explicitly enabled
-// (MC_AGENT_BLOCKSHAPE_DEBUG at construction — see NewBlockShapeManager).
+// still available, not simply deleted, when the logger is configured down
+// to utils.LevelDebugVerbose.
 func TestBlockShapeManagerGetInfoLogsWhenVerbose(t *testing.T) {
-	buf := captureLogOutput(t)
+	logger, buf := newTestLogger(utils.LevelDebugVerbose)
 	bsm := &blockShapeManager{
 		shapeData: map[mdl.StateKey]mdl.ShapeInfo{
 			{BlockID: "minecraft:stone", PropsKey: ""}: {},
 		},
-		verbose: true,
+		logger: logger,
 	}
 
 	bsm.getInfo("minecraft:stone", nil)
 
-	if !bytes.Contains(buf.Bytes(), []byte("[BlockShapeManager.getInfo] Found StateKey")) {
-		t.Fatalf("getInfo with verbose=true wrote nothing matching the expected message: %s", buf.String())
+	if !bytes.Contains(buf.Bytes(), []byte("found StateKey")) {
+		t.Fatalf("getInfo at LevelDebugVerbose wrote nothing matching the expected message: %s", buf.String())
 	}
 }
 
@@ -72,12 +71,12 @@ func TestBlockShapeManagerGetInfoLogsWhenVerbose(t *testing.T) {
 // blockInfoFromStateID's own nil-blockMgr early-return path (the cheapest
 // way to exercise it without a real mc_versions.BlockMgr).
 func TestBlockShapeManagerBlockInfoFromStateIDSkipsLoggingByDefault(t *testing.T) {
-	buf := captureLogOutput(t)
-	bsm := &blockShapeManager{verbose: false}
+	logger, buf := newTestLogger(slog.LevelInfo)
+	bsm := &blockShapeManager{logger: logger}
 
 	bsm.blockInfoFromStateID(1)
 
 	if buf.Len() != 0 {
-		t.Fatalf("blockInfoFromStateID logged %d bytes with verbose=false, want 0: %s", buf.Len(), buf.String())
+		t.Fatalf("blockInfoFromStateID logged %d bytes at Info level, want 0: %s", buf.Len(), buf.String())
 	}
 }

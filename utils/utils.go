@@ -3,7 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"strings"
 
@@ -71,7 +71,7 @@ func GetYawAndPitch(src, dest models.V3) (yaw, pitch float64) {
 	yaw = -math.Atan2(delta.X, delta.Z) / math.Pi * 180
 	pitch = -math.Asin(delta.Y/distanceFromSrcToDest) / math.Pi * 180
 
-	log.Printf("GetYawAndPitch: src=%s, dest=%s, delta=%s, r=%.2f => yaw=%.2f, pitch=%.2f", src, dest, delta, distanceFromSrcToDest, yaw, pitch)
+	DebugVerbose(slog.Default(), "GetYawAndPitch", "src", src, "dest", dest, "delta", delta, "r", distanceFromSrcToDest, "yaw", yaw, "pitch", pitch)
 	return
 }
 

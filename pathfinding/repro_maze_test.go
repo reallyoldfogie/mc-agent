@@ -32,10 +32,10 @@ func TestReproHPASlownessEnclosedGoal(t *testing.T) {
 
 	world := wb.Build()
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
-	start := models.V3{X: 0, Y: 0, Z: 0}   // inside the enclosed room
-	goal := models.V3{X: 10, Y: 0, Z: 0}   // outside the room - unreachable
+	start := models.V3{X: 0, Y: 0, Z: 0} // inside the enclosed room
+	goal := models.V3{X: 10, Y: 0, Z: 0} // outside the room - unreachable
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -99,7 +99,7 @@ func TestRepeatedContainerOpen(t *testing.T) {
 			t.Logf("spawn point: %+v", spawnPoint)
 
 			// Create container helpers
-			itemUsage := items.NewItemUsage(botClient.Conn(), agent.Config.PacketMgr)
+			itemUsage := items.NewItemUsage(botClient.Conn(), agent.Config.PacketMgr, nil)
 			// Set version-specific container handler
 			if agent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(agent.Config.VersionHandler.Play().Containers())

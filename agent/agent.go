@@ -372,7 +372,7 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 	// RegistriesPath warnings below, and stable for the agent's whole
 	// lifetime: setupLogging/closeLogging only ever redirect its writer, so
 	// nothing in the package needs to reload a.logger after Init or Close.
-	logger, logWriter := newAgentLogger(name)
+	logger, logWriter := newAgentLogger(name, cfg.LogLevel)
 
 	// Ensure RegistriesPath is set and data is available
 	// If not set, defaults to ~/.agent/cache/mc-agent/registries/{version}/
@@ -510,7 +510,7 @@ func (a *agent) Init(ctx context.Context) error {
 	// Pose registry is injected later (after data path is resolved) via
 	// the BasicMetadataProcessor.SetPoseRegistry hook below.
 	if a.entityRegistry != nil {
-		a.metadataHandler = models.NewBasicMetadataProcessor(a.entityRegistry)
+		a.metadataHandler = models.NewBasicMetadataProcessor(a.entityRegistry, a.logger)
 		a.logf("[Agent] Entity metadata handler initialized")
 	}
 
@@ -593,7 +593,7 @@ func (a *agent) Init(ctx context.Context) error {
 			UnloadChunk: func(pos mcworld.ChunkPos) error {
 				return a.HandleChunkUnload(models.ChunkPos{X: pos.X, Z: pos.Z})
 			},
-		})
+		}, a.logger)
 		a.worldMgr = a.mcAgentWorld
 		a.logf("[Agent %s] Using mc-agent world manager (versionHandler=%v)", a.cfg.Name, a.versionHandler != nil)
 
@@ -638,7 +638,7 @@ func (a *agent) Init(ctx context.Context) error {
 			}
 
 			// Use new unified Minecraft data cache for block properties
-			dataCache := agentutils.NewMinecraftDataCache(a.cfg.Version)
+			dataCache := agentutils.NewMinecraftDataCache(a.cfg.Version, a.logger)
 			if err := dataCache.EnsureDataGenerated(); err == nil {
 				blocksJSONPath, err := dataCache.GetBlocksJSONPath()
 				if err == nil {
@@ -654,7 +654,7 @@ func (a *agent) Init(ctx context.Context) error {
 			} else {
 				a.logf("[Agent %s] Warning: failed to generate Minecraft data cache: %v", a.cfg.Name, err)
 			}
-			shapeMgr, err = pathfinding.NewBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps)
+			shapeMgr, err = pathfinding.NewBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps, a.logger)
 			if err != nil {
 				a.logf("[Agent %s] Warning: failed to create block shape manager: %v", a.cfg.Name, err)
 			} else {
@@ -701,6 +701,7 @@ func (a *agent) Init(ctx context.Context) error {
 			SetBotPos:      a.UpdatePosition,
 			GetBotEntityID: a.GetEntityID,
 			Ctx:            a.ctx,
+			Logger:         a.logger,
 		}
 
 		// Check if physics executor can be used (requires world manager, shape data, block manager)
@@ -743,6 +744,7 @@ func (a *agent) Init(ctx context.Context) error {
 				usage := items.NewItemUsage(
 					botClient.Conn(),
 					a.packetMgr,
+					a.logger,
 				)
 				clutchSetter.SetClutchCallback(func(plan physics.ClutchPlan) {
 					a.logf("[Clutch] plan=%s fall=%.2f ticks=%d place=(%.0f,%.0f,%.0f)",
@@ -781,7 +783,7 @@ func (a *agent) Init(ctx context.Context) error {
 		// Create low-level A* pathfinder
 		lowLevelPathfinder := pathfinding.NewAStarPathFinderWithConfig(a.worldMgr, shapeMgr, pathfinding.PathfinderConfig{
 			GoalRadius: a.cfg.PathfinderGoalRadius,
-		})
+		}, a.logger)
 
 		// Set up stuck recovery callback for physics executor
 		// This enables automatic re-pathfinding when the agent gets stuck
@@ -850,7 +852,7 @@ func (a *agent) Init(ctx context.Context) error {
 		// Larger cluster size = fewer clusters, faster building (but more entrances per cluster)
 		// 32x32x32 aligns with Minecraft chunks (16x16) and is power-of-2 for CPU efficiency
 		clusterSize := 32 // 32x32x32 blocks per cluster (2x2 chunks horizontally)
-		hpaPathfinder := pathfinding.NewHPAPathFinder(a.worldMgr, shapeMgr, lowLevelPathfinder, clusterSize)
+		hpaPathfinder := pathfinding.NewHPAPathFinder(a.worldMgr, shapeMgr, lowLevelPathfinder, clusterSize, a.logger)
 		if limiter, ok := hpaPathfinder.(interface {
 			SetEntranceLimits(maxCount int, maxCost float64)
 		}); ok {
@@ -865,6 +867,7 @@ func (a *agent) Init(ctx context.Context) error {
 			a.worldMgr, // World for terrain checking
 			shapeMgr,   // Shape manager for vehicle movement validation
 			32.0,       // Default search radius for vehicles
+			a.logger,
 		)
 		a.pathfind = vehicleAwarePathfinder
 
@@ -884,7 +887,7 @@ func (a *agent) Init(ctx context.Context) error {
 				debugViz := pathfinding.NewHPADebugVisualizer(adapter, pathfinding.HPADebugVisualizerConfig{
 					PathBlock: a.cfg.HPADebugPathBlock,
 					PathColor: a.cfg.HPADebugPathColor,
-				})
+				}, a.logger)
 				// Set visualizer on both pathfinder and builder
 				if setter, ok := hpaPathfinder.(interface {
 					SetDebugVisualizer(*pathfinding.HPADebugVisualizer)
@@ -921,6 +924,7 @@ func (a *agent) Init(ctx context.Context) error {
 					a.SendChat,
 					followCfg,
 					func() string { return a.cfg.Name },
+					a.logger,
 				)
 			}
 		}
@@ -1733,7 +1737,7 @@ func (a *agent) initializeContainerHelper() {
 	}
 
 	// Now that connection is established, we can safely use a.client.Conn()
-	itemUsage := items.NewItemUsage(a.client.Conn(), a.packetMgr)
+	itemUsage := items.NewItemUsage(a.client.Conn(), a.packetMgr, a.logger)
 
 	// Set version-specific handlers
 	if a.versionHandler != nil {
@@ -1849,7 +1853,7 @@ func (a *agent) resolveVersionAndManagers() (versionAutoDetected bool, err error
 
 	// Step 5: Derive VersionHandler if not provided
 	if a.cfg.VersionHandler == nil {
-		vh, err := common.GetVersionHandler(a.cfg.Version)
+		vh, err := common.GetVersionHandler(a.cfg.Version, a.logger)
 		if err != nil {
 			// VersionHandler is required unless a Client is already provided
 			// (for testing scenarios where mock clients don't need version-specific handling)

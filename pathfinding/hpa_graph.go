@@ -4,11 +4,12 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // AbstractNode represents a node in the abstract graph (an entrance point)
@@ -68,6 +69,12 @@ type AbstractGraph struct {
 	ClusterSize int
 	// mu protects nodes map for concurrent access during parallel builds
 	mu sync.RWMutex
+	// logger defaults to slog.Default() here (NewAbstractGraph itself takes
+	// no logger param to keep this type's zero-arg construction simple for
+	// tests) - NewHPABuilder overwrites it with its own injected per-agent
+	// logger immediately after construction, so production callers still
+	// get proper attribution.
+	logger *slog.Logger
 }
 
 // NewAbstractGraph creates a new abstract graph
@@ -75,6 +82,7 @@ func NewAbstractGraph(clusterSize int) *AbstractGraph {
 	return &AbstractGraph{
 		Nodes:       make(map[*Entrance]*AbstractNode),
 		ClusterSize: clusterSize,
+		logger:      utils.SafeLogger(nil),
 	}
 }
 
@@ -239,7 +247,7 @@ func (g *AbstractGraph) SearchAbstractGraph(ctx context.Context, startNodes, goa
 		if nodesExpanded%100 == 0 {
 			select {
 			case <-ctx.Done():
-				log.Printf("[HPA* Graph] Abstract search cancelled: expanded %d nodes", nodesExpanded)
+				utils.SafeLogger(g.logger).Debug("[HPA* Graph] abstract search cancelled", "nodesExpanded", nodesExpanded)
 				return nil
 			default:
 			}
@@ -287,7 +295,7 @@ func (g *AbstractGraph) SearchAbstractGraph(ctx context.Context, startNodes, goa
 	}
 
 	// No path found
-	log.Printf("[HPA* Graph] Abstract search failed: expanded %d nodes, no path found", nodesExpanded)
+	utils.SafeLogger(g.logger).Debug("[HPA* Graph] abstract search failed, no path found", "nodesExpanded", nodesExpanded)
 	return nil
 }
 

@@ -101,7 +101,7 @@ func TestBoatSteering(t *testing.T) {
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON, nil)
 			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
 
 			phases := []steeringPhase{
@@ -199,7 +199,7 @@ func TestHorseSteering(t *testing.T) {
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON, nil)
 			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
 
 			phases := []steeringPhase{
@@ -289,7 +289,7 @@ func TestVehicleSteeringInputs(t *testing.T) {
 			err = helper.EnterManualMode()
 			require.NoError(t, err, "enter manual mode")
 
-			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON)
+			visualizerRCON := visualize.NewVisualizerAdapter(helper.Instance.RCON, nil)
 			visualize.ClearPathVisualizations(ctx, helper.Instance.RCON)
 
 			phases := []steeringPhase{

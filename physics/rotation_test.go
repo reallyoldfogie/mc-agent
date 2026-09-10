@@ -402,9 +402,9 @@ func TestRotationGradualProgress(t *testing.T) {
 
 func TestYawToCardinal(t *testing.T) {
 	tests := []struct {
-		name      string
-		yaw       float64
-		expected  CardinalDirection
+		name     string
+		yaw      float64
+		expected CardinalDirection
 	}{
 		// Cardinal centres
 		{"Exact south (0°)", 0, CardinalSouth},

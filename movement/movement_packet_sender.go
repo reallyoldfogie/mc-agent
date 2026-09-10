@@ -4,7 +4,7 @@ package movement
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"sync"
 
@@ -39,6 +39,8 @@ type movementPacketSender struct {
 	// Optional version-specific movement handler. When set, uses version-aware packet
 	// construction instead of the generic packets.go functions.
 	movementHandler models.MovementHandler
+
+	logger *slog.Logger
 }
 
 // NewBaseMovementExecutor creates a new MovementExecutor
@@ -48,6 +50,7 @@ func newMovementPacketSender(
 	getBotPos func() (models.V3, float64, float64, bool),
 	setBotPos func(models.V3, float64, float64),
 	getBotEntityID func() int32,
+	logger *slog.Logger,
 ) *movementPacketSender {
 	return &movementPacketSender{
 		client:         client,
@@ -58,6 +61,7 @@ func newMovementPacketSender(
 		isSprinting:    false,
 		isSneaking:     false,
 		onPacketSent:   nil,
+		logger:         utils.SafeLogger(logger),
 	}
 }
 
@@ -121,10 +125,9 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 	if me.client != nil {
 		// Gated: called on every movement dispatch, at least once per
 		// physics tick during any movement — see
-		// utils.VerboseLoggingEnabled's own doc comment.
-		if utils.VerboseLoggingEnabled() {
-			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation received: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
-		}
+		// utils.DebugVerboseEnabled's own doc comment.
+		utils.DebugVerbose(me.logger, "[YAW DEBUG] executor.SendPositionAndRotation received",
+			"client", me.client.Name(), "x", x, "y", y, "z", z, "yaw", yaw, "pitch", pitch)
 		// Use version-specific handler if available, otherwise fall back to generic packets
 		if me.movementHandler != nil {
 			err = me.movementHandler.SendPositionAndRotation(me.client.Conn(), x, y, z, yaw, pitch, onGround)
@@ -142,12 +145,13 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 
 	if err == nil {
 		// Update tracked position and rotation
-		if me.client != nil && utils.VerboseLoggingEnabled() {
-			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation calling setBotPosition: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
+		if me.client != nil {
+			utils.DebugVerbose(me.logger, "[YAW DEBUG] executor.SendPositionAndRotation calling setBotPosition",
+				"client", me.client.Name(), "x", x, "y", y, "z", z, "yaw", yaw, "pitch", pitch)
 		}
 		me.setBotPosition(models.V3{X: x, Y: y, Z: z}, yaw, pitch)
-		if me.client != nil && utils.VerboseLoggingEnabled() {
-			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation setBotPosition done", me.client.Name())
+		if me.client != nil {
+			utils.DebugVerbose(me.logger, "[YAW DEBUG] executor.SendPositionAndRotation setBotPosition done", "client", me.client.Name())
 		}
 	}
 	return err

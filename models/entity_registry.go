@@ -45,11 +45,11 @@ const (
 	// tracked-data flag set (metadata index 16, shared with every other
 	// AnimalEntity-chain mount); see PHASE_6_PLAN.md §3.4.
 	EntityTypeHappyGhast EntityType = "happy_ghast"
-	EntityTypeBoat           EntityType = "boat"
-	EntityTypeChestBoat      EntityType = "chest_boat"
-	EntityTypePig            EntityType = "pig"
-	EntityTypeStrider        EntityType = "strider"
-	EntityTypeMinecart       EntityType = "minecart"
+	EntityTypeBoat       EntityType = "boat"
+	EntityTypeChestBoat  EntityType = "chest_boat"
+	EntityTypePig        EntityType = "pig"
+	EntityTypeStrider    EntityType = "strider"
+	EntityTypeMinecart   EntityType = "minecart"
 
 	// Projectiles
 	EntityTypeArrow            EntityType = "arrow"

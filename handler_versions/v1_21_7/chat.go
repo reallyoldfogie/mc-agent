@@ -3,6 +3,7 @@ package v1_21_7
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -16,6 +17,7 @@ import (
 // chatHandler implements common.ChatHandler for 1.21.7.
 type chatHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendChat sends a chat message.

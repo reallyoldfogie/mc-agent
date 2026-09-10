@@ -39,7 +39,7 @@ func createWaterPool(poolDepth int) (*mockWorld, *mockShapeProvider) {
 
 func TestSwimming_DetectionHeadInWater(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player deep in water: feet at Y=2, head at Y=2+eyeHeight (~3.62)
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 2.0, Z: 0.5}, 0, 0, false)
@@ -56,7 +56,7 @@ func TestSwimming_DetectionHeadInWater(t *testing.T) {
 func TestSwimming_DetectionFeetOnlyInWater(t *testing.T) {
 	// Pool only 1 block deep: water at Y=1, head is above at Y=1+eyeHeight (~2.62) which is air
 	world, shapes := createWaterPool(1)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player with feet in water at Y=1
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 1.0, Z: 0.5}, 0, 0, false)
@@ -71,7 +71,7 @@ func TestSwimming_DetectionFeetOnlyInWater(t *testing.T) {
 
 func TestSwimming_NotInWater(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player on ground above water (Y=6 is air since pool depth is 5)
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 6.0, Z: 0.5}, 0, 0, true)
@@ -86,7 +86,7 @@ func TestSwimming_NotInWater(t *testing.T) {
 
 func TestSwimming_SwimUp(t *testing.T) {
 	world, shapes := createWaterPool(10)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player deep in water
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 3.0, Z: 0.5}, 0, 0, false)
@@ -106,7 +106,7 @@ func TestSwimming_SwimUp(t *testing.T) {
 
 func TestSwimming_SwimDown(t *testing.T) {
 	world, shapes := createWaterPool(10)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player near top of water
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 8.0, Z: 0.5}, 0, 0, false)
@@ -126,7 +126,7 @@ func TestSwimming_SwimDown(t *testing.T) {
 
 func TestSwimming_FallDistanceResetsInWater(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player above water with accumulated fall distance
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 10.0, Z: 0.5}, 0, 0, false)
@@ -154,7 +154,7 @@ func TestSwimming_FallDistanceResetsInWater(t *testing.T) {
 
 func TestSwimming_JumpOnGroundStillWorks(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player on ground OUTSIDE the water pool (X=8 is outside -5 to +5 range)
 	physicsState.SetPosition(models.V3{X: 8.0, Y: 1.0, Z: 0.5}, 0, 0, true)
@@ -180,7 +180,7 @@ func TestSwimming_JumpOnGroundStillWorks(t *testing.T) {
 
 func TestSwimming_NoJumpWithoutGroundOutsideWater(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player in air outside the water pool
 	physicsState.SetPosition(models.V3{X: 8.0, Y: 5.0, Z: 0.5}, 0, 0, false)
@@ -196,7 +196,7 @@ func TestSwimming_NoJumpWithoutGroundOutsideWater(t *testing.T) {
 
 func TestSwimming_SwimUpReachesSurface(t *testing.T) {
 	world, shapes := createWaterPool(5)
-	physicsState := NewState(shapes)
+	physicsState := NewState(shapes, nil)
 
 	// Place player at bottom of water pool
 	physicsState.SetPosition(models.V3{X: 0.5, Y: 1.5, Z: 0.5}, 0, 0, false)

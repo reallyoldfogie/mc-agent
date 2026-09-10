@@ -383,7 +383,7 @@ func createFlatWorld() (*mockWorld, *mockShapeProvider) {
 
 func TestNewState(t *testing.T) {
 	shapes := newMockShapeProvider()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	if state == nil {
 		t.Fatal("NewState returned nil")
@@ -403,7 +403,7 @@ func TestNewState(t *testing.T) {
 
 func TestState_SetPosition(t *testing.T) {
 	shapes := newMockShapeProvider()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	pos := models.V3{X: 10.5, Y: 64.0, Z: 20.3}
 	yaw, pitch := 45.0, -30.0
@@ -433,7 +433,7 @@ func TestState_SetPosition(t *testing.T) {
 
 func TestState_GetAABB(t *testing.T) {
 	shapes := newMockShapeProvider()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 
 	bb := state.GetAABB()
@@ -462,7 +462,7 @@ func TestState_GetAABB(t *testing.T) {
 
 func TestState_Freefall(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place player in the air
 	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
@@ -500,7 +500,7 @@ func TestState_Freefall(t *testing.T) {
 
 func TestState_HorizontalMovement(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place player well above ground and let physics settle them
 	state.SetPositionSimple(models.V3{X: 0, Y: 5, Z: 0})
@@ -556,7 +556,7 @@ func TestState_HorizontalMovement(t *testing.T) {
 
 func TestState_Jump(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place player on ground and let them settle
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
@@ -605,7 +605,7 @@ func TestState_Jump(t *testing.T) {
 
 func TestState_JumpCooldown(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place player on ground and let them settle
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
@@ -668,7 +668,7 @@ func TestState_StepUp_Success(t *testing.T) {
 	}
 	customShapes.SetPassable(BlockHalfSlab, false)
 
-	state := NewState(customShapes)
+	state := NewState(customShapes, nil)
 
 	// Place half slab in front of player
 	world.SetBlock(1, 1, 0, BlockHalfSlab)
@@ -702,7 +702,7 @@ func TestState_StepUp_Success(t *testing.T) {
 
 func TestState_StepUp_TooHigh(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place a full-height block as obstacle
 	world.SetBlock(1, 1, 0, BlockStone)
@@ -740,7 +740,7 @@ func TestState_StepUp_TooHigh(t *testing.T) {
 
 func TestState_LadderClimbing(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place a ladder column
 	world.SetBlock(0, 1, 0, BlockLadder)
@@ -786,7 +786,7 @@ func TestState_LadderClimbing(t *testing.T) {
 
 func TestState_LadderSneakingPreventsDescend(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place a ladder column
 	world.SetBlock(0, 1, 0, BlockLadder)
@@ -826,7 +826,7 @@ func TestState_LadderSneakingPreventsDescend(t *testing.T) {
 
 func TestState_LadderDescendWithoutSneak(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Place a ladder column
 	world.SetBlock(0, 1, 0, BlockLadder)
@@ -874,7 +874,7 @@ func TestState_ScaffoldingClimbing(t *testing.T) {
 	shapes.SetClimbable(BlockScaffolding, true)
 	shapes.SetScaffolding(BlockScaffolding, true)
 	shapes.SetPassable(BlockScaffolding, true) // matches BlockLadder's mock treatment: no collision-box modeling in this mock, only real IsPassable/IsClimbable behavior
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	world.SetBlock(0, 1, 0, BlockScaffolding)
 	world.SetBlock(0, 2, 0, BlockScaffolding)
@@ -909,7 +909,7 @@ func TestState_ScaffoldingSneakingDoesNotPreventDescend(t *testing.T) {
 	shapes.SetClimbable(BlockScaffolding, true)
 	shapes.SetScaffolding(BlockScaffolding, true)
 	shapes.SetPassable(BlockScaffolding, true) // matches BlockLadder's mock treatment: no collision-box modeling in this mock, only real IsPassable/IsClimbable behavior
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	world.SetBlock(0, 1, 0, BlockScaffolding)
 	world.SetBlock(0, 2, 0, BlockScaffolding)
@@ -946,7 +946,7 @@ func TestState_ScaffoldingJumpToClimb(t *testing.T) {
 	shapes.SetClimbable(BlockScaffolding, true)
 	shapes.SetScaffolding(BlockScaffolding, true)
 	shapes.SetPassable(BlockScaffolding, true)
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	world.SetBlock(0, 1, 0, BlockScaffolding)
 	world.SetBlock(0, 2, 0, BlockScaffolding)
@@ -973,7 +973,7 @@ func TestState_ScaffoldingJumpToClimb(t *testing.T) {
 
 func TestState_VelocityDeadzone(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	// Set very small velocities (below deadzone threshold)
 	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
@@ -1019,7 +1019,7 @@ func TestState_CollisionDetection(t *testing.T) {
 	for _, dir := range directions {
 		t.Run(dir.name, func(t *testing.T) {
 			// Create a fresh state for each subtest
-			state := NewState(shapes)
+			state := NewState(shapes, nil)
 
 			// Start player on ground at origin (same as TestState_StepUp_TooHigh)
 			state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
@@ -1062,7 +1062,7 @@ func TestState_CollisionDetection(t *testing.T) {
 
 func TestState_IsLookingAtTarget(t *testing.T) {
 	shapes := newMockShapeProvider()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	state.SetYaw(90.0)
 	state.SetPitch(0.0)
@@ -1093,7 +1093,7 @@ func TestState_IsLookingAtTarget(t *testing.T) {
 
 func TestState_LookRateLimiting(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetYaw(0.0)
@@ -1119,7 +1119,7 @@ func TestState_LookRateLimiting(t *testing.T) {
 
 func TestState_SprintMultiplier(t *testing.T) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetVelocity(models.V3{})
@@ -1153,7 +1153,7 @@ func TestState_SprintMultiplier(t *testing.T) {
 
 func BenchmarkState_Tick(b *testing.B) {
 	world, shapes := createFlatWorld()
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
 	input := Inputs{
@@ -1180,7 +1180,7 @@ func BenchmarkState_Tick_WithCollisions(b *testing.B) {
 		}
 	}
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetOnGround(true)
 
@@ -1207,7 +1207,7 @@ func BenchmarkState_GetSurroundingBoxes(b *testing.B) {
 		}
 	}
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	queryBB := NewAABB(-1, 0, -1, 1, 2, 1)
 
 	b.ResetTimer()

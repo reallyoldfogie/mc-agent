@@ -138,7 +138,7 @@ func TestRingBufferLargeCapacity(t *testing.T) {
 
 	items := rb.Items()
 	assert.Len(t, items, 1000)
-	assert.Equal(t, 1, items[0])   // Oldest
+	assert.Equal(t, 1, items[0])      // Oldest
 	assert.Equal(t, 1000, items[999]) // Newest
 }
 

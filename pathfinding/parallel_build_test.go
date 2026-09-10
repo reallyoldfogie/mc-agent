@@ -275,7 +275,7 @@ func TestParallelClusterBuilding(t *testing.T) {
 
 	t.Run("SequentialVsParallel", func(t *testing.T) {
 		// Test sequential building (buildClusterRegion calls BuildClustersInRegion)
-		seqPathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize).(*hpaPathFinder)
+		seqPathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize, nil).(*hpaPathFinder)
 		seqStart := time.Now()
 		seqPathfinder.buildClusterRegion(
 			ClusterID{X: 0, Y: 4, Z: 0},
@@ -284,7 +284,7 @@ func TestParallelClusterBuilding(t *testing.T) {
 		seqDuration := time.Since(seqStart)
 
 		// Test parallel building (uses new parallel implementation directly)
-		parPathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize).(*hpaPathFinder)
+		parPathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize, nil).(*hpaPathFinder)
 		parStart := time.Now()
 		err := parPathfinder.BuildClustersInRegionWithContext(
 			context.Background(),
@@ -332,7 +332,7 @@ func TestParallelClusterBuilding(t *testing.T) {
 
 	t.Run("ConcurrentBuildSameCluster", func(t *testing.T) {
 		// Test that concurrent builds of the same cluster don't cause issues
-		pathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize).(*hpaPathFinder)
+		pathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize, nil).(*hpaPathFinder)
 		clusterID := ClusterID{X: 0, Y: 4, Z: 0}
 
 		// Launch multiple goroutines to build the same cluster
@@ -360,7 +360,7 @@ func TestParallelClusterBuilding(t *testing.T) {
 	})
 
 	t.Run("ContextCancellation", func(t *testing.T) {
-		pathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize).(*hpaPathFinder)
+		pathfinder := NewHPAPathFinderWithAStar(world, shapeMgr, clusterSize, nil).(*hpaPathFinder)
 
 		// Create a context that cancels immediately
 		ctx, cancel := context.WithCancel(context.Background())

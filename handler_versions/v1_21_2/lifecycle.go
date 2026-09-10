@@ -3,6 +3,7 @@ package v1_21_2
 import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
+	"log/slog"
 )
 
 // lifecycleHandler implements models.LifecycleHandler for 1.21.2.
@@ -12,6 +13,7 @@ import (
 // nothing for the client to send, so SendPlayerLoaded is a no-op.
 type lifecycleHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendPlayerLoaded is a no-op on 1.21.2 (packet does not exist in this

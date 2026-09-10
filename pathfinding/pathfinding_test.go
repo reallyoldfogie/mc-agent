@@ -42,7 +42,7 @@ func TestFlatGroundPathfinding(t *testing.T) {
 	shapeMgr := mctesting.NewMockShapeManager()
 
 	// Create pathfinder
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	// Test: Find path from (0, 65, 0) to (10, 65, 10)
 	start := models.V3{X: 0, Y: 65, Z: 0}
@@ -87,7 +87,7 @@ func TestNegativeYCoordinates(t *testing.T) {
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	// Test: Find path at negative Y
 	start := models.V3{X: 0, Y: -59, Z: 0}
@@ -188,8 +188,8 @@ func TestEPEAStarVsAStar(t *testing.T) {
 	shapeMgr := mctesting.NewMockShapeManager()
 
 	// Create both pathfinders
-	aStarPathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
-	epeaStarPathFinder := pathfinding.NewEPEAStarPathFinder(world, shapeMgr)
+	aStarPathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
+	epeaStarPathFinder := pathfinding.NewEPEAStarPathFinder(world, shapeMgr, nil)
 
 	resultsLog := []string{}
 
@@ -387,7 +387,7 @@ func TestAscendStairsMovement(t *testing.T) {
 	}
 
 	// Create movement validator
-	mv := pathfinding.NewMovementValidator(world, shapeMgr)
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
 
 	// Test CanAscendStairs: from (4, 65, 5) to (5, 66, 5)
 	// - Bot is at (4, 65, 5) standing on ground at Y=64
@@ -449,7 +449,7 @@ func TestContextCancellation(t *testing.T) {
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	// Create a context that's already cancelled
 	ctx, cancel := context.WithCancel(context.Background())
@@ -487,7 +487,7 @@ func TestContextDeadline(t *testing.T) {
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	// Create a context with a very short deadline (1ms)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
@@ -528,9 +528,15 @@ type PathFinderFactory func(w models.World, shapeMgr models.BlockShapeManager) m
 
 // algorithmTestSuite defines all available pathfinding algorithms for comparison
 var algorithmTestSuite = map[string]PathFinderFactory{
-	"A*":            pathfinding.NewAStarPathFinder,
-	"EPEA*":         pathfinding.NewEPEAStarPathFinder,
-	"Bidirectional": pathfinding.NewBidirAStarPathFinder,
+	"A*": func(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
+		return pathfinding.NewAStarPathFinder(w, shapeMgr, nil)
+	},
+	"EPEA*": func(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
+		return pathfinding.NewEPEAStarPathFinder(w, shapeMgr, nil)
+	},
+	"Bidirectional": func(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
+		return pathfinding.NewBidirAStarPathFinder(w, shapeMgr, nil)
+	},
 }
 
 // TestAlgorithmCorrectness verifies all pathfinding algorithms find valid paths
@@ -741,11 +747,11 @@ func TestBidirectionalNodeReduction(t *testing.T) {
 	maxSteps := 500000
 
 	// Run standard A*
-	aStarPF := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	aStarPF := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 	aStarPath, aStarErr := aStarPF.FindPath(context.Background(), start, goal, maxSteps)
 
 	// Run bidirectional A*
-	bidirPF := pathfinding.NewBidirAStarPathFinder(world, shapeMgr)
+	bidirPF := pathfinding.NewBidirAStarPathFinder(world, shapeMgr, nil)
 	bidirPath, bidirErr := bidirPF.FindPath(context.Background(), start, goal, maxSteps)
 
 	if aStarErr != nil {
@@ -788,7 +794,7 @@ func TestBidirectionalContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	pathFinder := pathfinding.NewBidirAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewBidirAStarPathFinder(world, shapeMgr, nil)
 
 	start := models.V3{X: 0, Y: 65, Z: 0}
 	goal := models.V3{X: 50, Y: 65, Z: 50}
@@ -813,9 +819,15 @@ type HPAPathFinderFactory func(w models.World, shapeMgr models.BlockShapeManager
 
 // hpaAlgorithmSuite defines HPA* variants with different low-level pathfinders
 var hpaAlgorithmSuite = map[string]HPAPathFinderFactory{
-	"HPA*+A*":            pathfinding.NewHPAPathFinderWithAStar,
-	"HPA*+Bidirectional": pathfinding.NewHPAPathFinderWithBidirectional,
-	"HPA*+EPEA*":         pathfinding.NewHPAPathFinderWithEPEAStar,
+	"HPA*+A*": func(w models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+		return pathfinding.NewHPAPathFinderWithAStar(w, shapeMgr, clusterSize, nil)
+	},
+	"HPA*+Bidirectional": func(w models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+		return pathfinding.NewHPAPathFinderWithBidirectional(w, shapeMgr, clusterSize, nil)
+	},
+	"HPA*+EPEA*": func(w models.World, shapeMgr models.BlockShapeManager, clusterSize int) models.PathFinder {
+		return pathfinding.NewHPAPathFinderWithEPEAStar(w, shapeMgr, clusterSize, nil)
+	},
 }
 
 // TestHPAVariantsCorrectness verifies all HPA* variants find valid paths

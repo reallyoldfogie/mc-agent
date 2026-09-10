@@ -27,7 +27,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 		}
 
 		// Bot starts in center of platform
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		state.SetPositionSimple(models.V3{X: 0.5, Y: 1.0, Z: 0.5})
 		state.SetOnGround(true)
 		state.SetSneaking(true)
@@ -74,7 +74,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			}
 		}
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		state.SetPositionSimple(models.V3{X: 0.5, Y: 1.0, Z: 0.5})
 		state.SetOnGround(true)
 		state.SetSneaking(true)
@@ -107,7 +107,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			}
 		}
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		state.SetPositionSimple(models.V3{X: 0.0, Y: 1.0, Z: 0.0})
 		state.SetOnGround(true)
 		state.SetSneaking(true)
@@ -138,7 +138,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			}
 		}
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		state.SetPositionSimple(models.V3{X: 0.5, Y: 1.0, Z: 0.5})
 		state.SetOnGround(true)
 		state.SetSneaking(false) // NOT sneaking
@@ -182,7 +182,7 @@ func TestState_SneakEdgePrevention(t *testing.T) {
 			}
 		}
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		// On top of block
 		state.SetPositionSimple(models.V3{X: 0.5, Y: 1.0, Z: 0.5})
 		state.SetOnGround(true)
@@ -212,7 +212,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		world, shapes := createFlatWorld()
 		world.SetBlock(0, 0, 0, BlockStone)
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
 		assert.True(t, state.HasGroundSupportAt(pos, world), "Should detect ground directly below")
@@ -228,7 +228,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 			}
 		}
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
 		assert.False(t, state.HasGroundSupportAt(pos, world), "Should not detect ground when over void")
@@ -245,7 +245,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		}
 		world.SetBlock(0, 0, 0, BlockStone)
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		// Position just above block (within 0.05 blocks)
 		pos := models.V3{X: 0.5, Y: 1.02, Z: 0.5}
 
@@ -257,7 +257,7 @@ func TestHasGroundSupportAt(t *testing.T) {
 		// Set air block (passable) below
 		world.SetBlock(0, 0, 0, BlockAir)
 
-		state := NewState(shapes)
+		state := NewState(shapes, nil)
 		pos := models.V3{X: 0.5, Y: 1.0, Z: 0.5}
 
 		assert.False(t, state.HasGroundSupportAt(pos, world), "Should not detect air as ground support")

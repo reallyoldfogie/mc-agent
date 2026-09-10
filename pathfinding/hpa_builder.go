@@ -2,10 +2,11 @@ package pathfinding
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // HPABuilder builds the hierarchical pathfinding structures
@@ -17,6 +18,7 @@ type HPABuilder struct {
 	abstractGraph      *AbstractGraph
 	movementValidator  *MovementValidator
 	DebugViz           *HPADebugVisualizer
+	logger             *slog.Logger
 
 	// buildMu protects concurrent cluster building
 	buildMu sync.Mutex
@@ -25,14 +27,18 @@ type HPABuilder struct {
 }
 
 // NewHPABuilder creates a new HPA* builder
-func NewHPABuilder(world models.World, shapeMgr models.BlockShapeManager, lowLevelPathfinder models.PathFinder, clusterSize int) *HPABuilder {
+func NewHPABuilder(world models.World, shapeMgr models.BlockShapeManager, lowLevelPathfinder models.PathFinder, clusterSize int, logger *slog.Logger) *HPABuilder {
+	logger = utils.SafeLogger(logger)
+	abstractGraph := NewAbstractGraph(clusterSize)
+	abstractGraph.logger = logger
 	return &HPABuilder{
 		world:              world,
 		shapeMgr:           shapeMgr,
 		lowLevelPathfinder: lowLevelPathfinder,
 		clusterManager:     NewClusterManager(clusterSize),
-		abstractGraph:      NewAbstractGraph(clusterSize),
-		movementValidator:  NewMovementValidator(world, shapeMgr),
+		abstractGraph:      abstractGraph,
+		movementValidator:  NewMovementValidator(world, shapeMgr, logger),
+		logger:             logger,
 		building:           make(map[ClusterID]bool),
 	}
 }
@@ -78,7 +84,7 @@ func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 		b.buildMu.Unlock()
 	}()
 
-	log.Printf("[HPABuilder] Building cluster %s", cluster.String())
+	utils.SafeLogger(b.logger).Debug("[HPABuilder] building cluster", "cluster", cluster.String())
 
 	// Clear old data
 	cluster.Clear()
@@ -92,15 +98,16 @@ func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 		cluster.AddEntrance(entrance)
 	}
 
-	log.Printf("[HPABuilder] Found %d entrances (%d grouped from %d) for %s",
-		len(groupedEntrances), len(groupedEntrances), len(entrances), cluster.ID.String())
+	utils.SafeLogger(b.logger).Debug("[HPABuilder] found entrances", "grouped", len(groupedEntrances), "raw", len(entrances), "cluster", cluster.ID.String())
 
 	// Log entrance positions for debugging
-	for i, entrance := range groupedEntrances {
-		pos1 := entrance.GetPosInCluster(cluster.ID)
-		otherCluster := entrance.GetOtherCluster(cluster.ID)
-		log.Printf("[HPABuilder]   Entrance %d/%d: pos=(%.0f, %.0f, %.0f) connects to %s",
-			i+1, len(groupedEntrances), pos1.X, pos1.Y, pos1.Z, otherCluster.String())
+	if utils.DebugVerboseEnabled(b.logger) {
+		for i, entrance := range groupedEntrances {
+			pos1 := entrance.GetPosInCluster(cluster.ID)
+			otherCluster := entrance.GetOtherCluster(cluster.ID)
+			utils.DebugVerbose(b.logger, "[HPABuilder] entrance",
+				"index", i+1, "total", len(groupedEntrances), "x", pos1.X, "y", pos1.Y, "z", pos1.Z, "connectsTo", otherCluster.String())
+		}
 	}
 
 	// Visualize entrances
@@ -111,7 +118,7 @@ func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 	// Phase 2: Compute internal paths between entrances
 	b.computeInternalPaths(cluster)
 
-	log.Printf("[HPABuilder] Computed %d internal paths for %s", len(cluster.InternalPaths), cluster.ID.String())
+	utils.SafeLogger(b.logger).Debug("[HPABuilder] computed internal paths", "count", len(cluster.InternalPaths), "cluster", cluster.ID.String())
 
 	// Phase 3: Add edges to abstract graph
 	b.addClusterToAbstractGraph(cluster)
@@ -389,7 +396,7 @@ func (b *HPABuilder) hasLegalMove(from, to models.V3) bool {
 func (b *HPABuilder) computeInternalPaths(cluster *Cluster) {
 	// Skip precomputation - paths will be computed when needed during refinePath
 	// This reduces cluster build time from 30-40s to ~100ms
-	log.Printf("[HPABuilder] Skipping precomputation of internal paths (lazy evaluation)")
+	utils.DebugVerbose(b.logger, "[HPABuilder] skipping precomputation of internal paths (lazy evaluation)")
 }
 
 // getOrComputeInternalPath returns a cached path or computes it on-demand

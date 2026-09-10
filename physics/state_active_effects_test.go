@@ -17,11 +17,11 @@ import (
 func TestState_SlowFallingSlowsDescent(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	normal.SetVelocity(models.V3{})
 
-	slowed := NewState(shapes)
+	slowed := NewState(shapes, nil)
 	slowed.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	slowed.SetVelocity(models.V3{})
 	slowed.SetActiveEffects(models.ActiveEffects{HasSlowFalling: true})
@@ -54,11 +54,11 @@ func TestState_SlowFallingWhileRisingIsNotCapped(t *testing.T) {
 	// Slow Falling active. See EffectiveGravity's doc comment.
 	world, shapes := createFlatWorld()
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	normal.SetVelocity(models.V3{Y: JumpVelocity})
 
-	slowFalling := NewState(shapes)
+	slowFalling := NewState(shapes, nil)
 	slowFalling.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	slowFalling.SetVelocity(models.V3{Y: JumpVelocity})
 	slowFalling.SetActiveEffects(models.ActiveEffects{HasSlowFalling: true})
@@ -73,7 +73,7 @@ func TestState_SlowFallingWhileRisingIsNotCapped(t *testing.T) {
 func TestState_LevitationLiftsPlayer(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	state.SetVelocity(models.V3{})
 	state.SetActiveEffects(models.ActiveEffects{HasLevitation: true, LevitationAmplifier: 0})
@@ -91,11 +91,11 @@ func TestState_LevitationLiftsPlayer(t *testing.T) {
 func TestState_LevitationHigherAmplifierLiftsFaster(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	level1 := NewState(shapes)
+	level1 := NewState(shapes, nil)
 	level1.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	level1.SetActiveEffects(models.ActiveEffects{HasLevitation: true, LevitationAmplifier: 0})
 
-	level3 := NewState(shapes)
+	level3 := NewState(shapes, nil)
 	level3.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	level3.SetActiveEffects(models.ActiveEffects{HasLevitation: true, LevitationAmplifier: 2})
 
@@ -123,11 +123,11 @@ func TestState_JumpBoostRaisesJumpVelocity(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before jumping")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal)
 	require.NoError(t, normal.Tick(Inputs{Jump: true}, world))
 
-	boosted := NewState(shapes)
+	boosted := NewState(shapes, nil)
 	boosted.SetActiveEffects(models.ActiveEffects{HasJumpBoost: true, JumpBoostAmplifier: 0})
 	settle(boosted)
 	require.NoError(t, boosted.Tick(Inputs{Jump: true}, world))
@@ -158,14 +158,14 @@ func TestState_SpeedAndSlownessScaleGroundAcceleration(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, 0)
 
-	speedy := NewState(shapes)
+	speedy := NewState(shapes, nil)
 	speedy.SetActiveEffects(models.ActiveEffects{HasSpeed: true, SpeedAmplifier: 1}) // Speed II
 	settle(speedy, 10)
 
-	slow := NewState(shapes)
+	slow := NewState(shapes, nil)
 	slow.SetActiveEffects(models.ActiveEffects{HasSlowness: true, SlownessAmplifier: 1}) // Slowness II
 	settle(slow, 20)
 
@@ -189,7 +189,7 @@ func TestState_SpeedAndSlownessScaleGroundAcceleration(t *testing.T) {
 func TestState_HighSlownessClampsMovementToZero(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	frozen := NewState(shapes)
+	frozen := NewState(shapes, nil)
 	frozen.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	frozen.SetVelocity(models.V3{})
 	// Amplifier 10 (Slowness XI): 1 + (-0.15)*11 = -0.65, clamped to 0.
@@ -209,14 +209,14 @@ func TestState_HighSlownessClampsMovementToZero(t *testing.T) {
 func TestState_SlowFallingAndLevitationNegateFallDamageAccumulation(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 
-	slowFalling := NewState(shapes)
+	slowFalling := NewState(shapes, nil)
 	slowFalling.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	slowFalling.SetActiveEffects(models.ActiveEffects{HasSlowFalling: true})
 
-	levitating := NewState(shapes)
+	levitating := NewState(shapes, nil)
 	levitating.SetPositionSimple(models.V3{X: 20, Y: 50, Z: 0})
 	levitating.SetActiveEffects(models.ActiveEffects{HasLevitation: true})
 
@@ -243,11 +243,11 @@ func TestState_SlowFallingAndLevitationNegateFallDamageAccumulation(t *testing.T
 func TestState_DolphinsGraceIncreasesHorizontalSwimSpeed(t *testing.T) {
 	world, shapes := createWaterPool(10)
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
 	normal.SetVelocity(models.V3{})
 
-	graced := NewState(shapes)
+	graced := NewState(shapes, nil)
 	graced.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
 	graced.SetVelocity(models.V3{})
 	graced.SetActiveEffects(models.ActiveEffects{HasDolphinsGrace: true})
@@ -292,13 +292,13 @@ func TestState_CobwebSlowsMovementAndWeavingHalvesSeverity(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, -15) // far outside the cobweb patch
 
-	webbed := NewState(shapes)
+	webbed := NewState(shapes, nil)
 	settle(webbed, 0) // inside the cobweb patch, no Weaving
 
-	woven := NewState(shapes)
+	woven := NewState(shapes, nil)
 	woven.SetActiveEffects(models.ActiveEffects{HasWeaving: true})
 	settle(woven, 0) // inside the same cobweb patch, with Weaving
 
@@ -353,10 +353,10 @@ func TestState_PowderSnowSlowsMovementWithoutLeatherBoots(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, -15) // far outside the powder snow patch
 
-	sunk := NewState(shapes)
+	sunk := NewState(shapes, nil)
 	settle(sunk, 0) // inside the patch, no leather boots
 
 	forward := Inputs{ThrottleX: 1.0}
@@ -404,10 +404,10 @@ func TestState_LeatherBootsWalkOnPowderSnowAtNormalSpeed(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settleFromAbove(normal, -15, 1) // far outside the patch, plain stone floor
 
-	booted := NewState(shapes)
+	booted := NewState(shapes, nil)
 	booted.SetLeatherBootsEquipped(true)
 	settleFromAbove(booted, 0, 5) // falling onto the patch from above, wearing boots
 
@@ -463,10 +463,10 @@ func TestState_HoneyBlockSlowsGroundMovement(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, -15) // plain stone floor
 
-	sticky := NewState(shapes)
+	sticky := NewState(shapes, nil)
 	settle(sticky, 0) // honey block floor
 
 	forward := Inputs{ThrottleX: 1.0}
@@ -513,10 +513,10 @@ func TestState_HoneyBlockReducesJumpHeight(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before jumping")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, -15) // plain stone floor
 
-	sticky := NewState(shapes)
+	sticky := NewState(shapes, nil)
 	settle(sticky, 0) // honey block floor
 
 	peakHeight := func(s models.PhysicsState) float64 {
@@ -582,10 +582,10 @@ func TestState_IceAcceleratesSlowerButCoastsFurther(t *testing.T) {
 		require.True(t, s.OnGround(), "player should settle on ground before moving")
 	}
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	settle(normal, -15) // plain stone floor
 
-	icy := NewState(shapes)
+	icy := NewState(shapes, nil)
 	settle(icy, 0) // ice floor
 
 	// Burst phase: hold forward throttle from rest for a short window.
@@ -631,7 +631,7 @@ func TestState_HoneyBlockSideSlideCapsDescent(t *testing.T) {
 	// on top of — see the X offset below).
 	world.SetBlock(0, 5, 0, BlockHoney)
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	// Positioned beside the honey block (its cell is x=[0,1)), roughly
 	// level with its top, already falling fast with some horizontal drift.
 	s.SetPositionSimple(models.V3{X: 1.05, Y: 5.5, Z: 0.5})
@@ -670,7 +670,7 @@ func TestState_HoneyBlockSideSlideRequiresEstablishedFall(t *testing.T) {
 	shapes.SetHoneyBlock(BlockHoney, true)
 	world.SetBlock(0, 5, 0, BlockHoney)
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	s.SetPositionSimple(models.V3{X: 1.05, Y: 5.5, Z: 0.5})
 	s.SetVelocity(models.V3{X: 0, Y: -0.02, Z: 0}) // barely falling, below the entry threshold
 

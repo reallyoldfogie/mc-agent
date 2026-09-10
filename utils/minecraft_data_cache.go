@@ -3,7 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,6 +31,7 @@ import (
 type MinecraftDataCache struct {
 	basePath string // Base cache directory (default: ~/.cache/mc-agent/minecraft-data)
 	version  string // Minecraft version (e.g., "1.21.5")
+	logger   *slog.Logger
 }
 
 // Global state for concurrency control
@@ -42,7 +43,7 @@ var (
 
 // NewMinecraftDataCache creates a new data cache manager for a specific Minecraft version.
 // Uses FindOrCreateCacheDir to locate the centralized cache, then stores under minecraft-data/{version}.
-func NewMinecraftDataCache(version string) *MinecraftDataCache {
+func NewMinecraftDataCache(version string, logger *slog.Logger) *MinecraftDataCache {
 	cacheDir, err := FindOrCreateCacheDir()
 	if err != nil {
 		// Fallback to current directory if cache dir unavailable
@@ -53,15 +54,17 @@ func NewMinecraftDataCache(version string) *MinecraftDataCache {
 	return &MinecraftDataCache{
 		basePath: basePath,
 		version:  version,
+		logger:   SafeLogger(logger),
 	}
 }
 
 // NewMinecraftDataCacheWithPath creates a data cache manager with a custom base path.
 // Useful for testing or custom deployment scenarios.
-func NewMinecraftDataCacheWithPath(version, customBasePath string) *MinecraftDataCache {
+func NewMinecraftDataCacheWithPath(version, customBasePath string, logger *slog.Logger) *MinecraftDataCache {
 	return &MinecraftDataCache{
 		basePath: customBasePath,
 		version:  version,
+		logger:   SafeLogger(logger),
 	}
 }
 
@@ -102,12 +105,12 @@ func (mdc *MinecraftDataCache) EnsureDataGenerated() error {
 		dataCacheMu.Lock()
 		dataCacheReady[mdc.version] = true
 		dataCacheMu.Unlock()
-		log.Printf("[MinecraftDataCache] Using cached data for %s: %s", mdc.version, mdc.basePath)
+		SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Using cached data for %s: %s", mdc.version, mdc.basePath))
 		return nil
 	}
 
 	// Need to download and generate
-	log.Printf("[MinecraftDataCache] Generating data for %s...", mdc.version)
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Generating data for %s...", mdc.version))
 	if err := mdc.generateData(); err != nil {
 		return fmt.Errorf("failed to generate data: %w", err)
 	}
@@ -117,7 +120,7 @@ func (mdc *MinecraftDataCache) EnsureDataGenerated() error {
 	dataCacheReady[mdc.version] = true
 	dataCacheMu.Unlock()
 
-	log.Printf("[MinecraftDataCache] Successfully generated data for %s: %s", mdc.version, mdc.basePath)
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Successfully generated data for %s: %s", mdc.version, mdc.basePath))
 	return nil
 }
 
@@ -229,7 +232,7 @@ func (mdc *MinecraftDataCache) setupCompatibilityLinks() error {
 	// Try to create symlink
 	if err := os.Symlink(generatedPath, expectedPath); err != nil {
 		// Symlink failed (maybe Windows or no permissions), try copying directory
-		log.Printf("[MinecraftDataCache] Symlink failed, copying directory instead: %v", err)
+		SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Symlink failed, copying directory instead: %v", err))
 		if err := copyDir(generatedPath, expectedPath); err != nil {
 			return fmt.Errorf("failed to copy reports directory: %w", err)
 		}
@@ -242,7 +245,7 @@ func (mdc *MinecraftDataCache) setupCompatibilityLinks() error {
 func (mdc *MinecraftDataCache) downloadServerJar(destPath string) error {
 	// Check if already exists
 	if _, err := os.Stat(destPath); err == nil {
-		log.Printf("[MinecraftDataCache] Server JAR already exists: %s", destPath)
+		SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Server JAR already exists: %s", destPath))
 		return nil
 	}
 
@@ -252,7 +255,7 @@ func (mdc *MinecraftDataCache) downloadServerJar(destPath string) error {
 		return fmt.Errorf("failed to get server JAR URL: %w", err)
 	}
 
-	log.Printf("[MinecraftDataCache] Downloading server JAR for %s from %s...", mdc.version, downloadURL)
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Downloading server JAR for %s from %s...", mdc.version, downloadURL))
 
 	// Download to temp file first
 	tmpFile, err := os.CreateTemp(filepath.Dir(destPath), "server-*.jar")
@@ -274,7 +277,7 @@ func (mdc *MinecraftDataCache) downloadServerJar(destPath string) error {
 		return fmt.Errorf("failed to move downloaded JAR: %w", err)
 	}
 
-	log.Printf("[MinecraftDataCache] Server JAR downloaded successfully")
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Server JAR downloaded successfully"))
 	return nil
 }
 
@@ -283,7 +286,7 @@ func (mdc *MinecraftDataCache) getServerJarURL() (string, error) {
 	// Fetch version manifest from Mojang
 	manifestURL := "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
-	log.Printf("[MinecraftDataCache] Fetching version manifest from Mojang...")
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Fetching version manifest from Mojang..."))
 	resp, err := http.Get(manifestURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version manifest: %w", err)
@@ -318,7 +321,7 @@ func (mdc *MinecraftDataCache) getServerJarURL() (string, error) {
 	}
 
 	// Fetch version-specific JSON
-	log.Printf("[MinecraftDataCache] Fetching version details for %s...", mdc.version)
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Fetching version details for %s...", mdc.version))
 	resp2, err := http.Get(versionURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version details: %w", err)
@@ -350,7 +353,7 @@ func (mdc *MinecraftDataCache) getServerJarURL() (string, error) {
 
 // runDataGenerator runs the Minecraft server JAR with data generation flags.
 func (mdc *MinecraftDataCache) runDataGenerator(jarPath string) error {
-	log.Printf("[MinecraftDataCache] Running data generator...")
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Running data generator..."))
 
 	// Create command: java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
 	cmd := exec.Command("java",
@@ -363,11 +366,11 @@ func (mdc *MinecraftDataCache) runDataGenerator(jarPath string) error {
 	// Capture output
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("[MinecraftDataCache] Data generator output:\n%s", string(output))
+		SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Data generator output:\n%s", string(output)))
 		return fmt.Errorf("data generator failed: %w", err)
 	}
 
-	log.Printf("[MinecraftDataCache] Data generator completed successfully")
+	SafeLogger(mdc.logger).Debug(fmt.Sprintf("[MinecraftDataCache] Data generator completed successfully"))
 	return nil
 }
 

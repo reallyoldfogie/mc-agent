@@ -19,11 +19,11 @@ func TestState_NoClipPassesThroughWalls(t *testing.T) {
 	// position - see TestState_CollisionDetection for this exact setup.
 	world.SetBlock(0, 1, 1, BlockStone)
 
-	blocked := NewState(shapes)
+	blocked := NewState(shapes, nil)
 	blocked.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	blocked.SetVelocity(models.V3{})
 
-	noClipping := NewState(shapes)
+	noClipping := NewState(shapes, nil)
 	noClipping.SetPositionSimple(models.V3{X: 10, Y: 1, Z: 0})
 	noClipping.SetVelocity(models.V3{})
 	noClipping.SetNoClip(true)
@@ -47,7 +47,7 @@ func TestState_NoClipForcesOnGroundFalse(t *testing.T) {
 	// source in this engine) is bypassed entirely.
 	world, shapes := createFlatWorld()
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	s.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	s.SetVelocity(models.V3{})
 	s.SetNoClip(true)

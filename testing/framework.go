@@ -832,7 +832,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		log.Printf("[%s] Using provided version handler for %s", cfg.Name, mcVersion)
 	} else {
 		// Auto-detect version handler (required)
-		vh, err := common.GetVersionHandler(mcVersion)
+		vh, err := common.GetVersionHandler(mcVersion, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get version handler for %s: %w", mcVersion, err)
 		}

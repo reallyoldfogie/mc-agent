@@ -132,7 +132,7 @@ func TestChestInteraction(t *testing.T) {
 			}
 
 			// Create helper objects for container operations
-			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr)
+			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr, nil)
 			// Set version-specific container handler
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
@@ -300,7 +300,7 @@ func TestChestWithItems(t *testing.T) {
 			}
 
 			// Create helper objects for container operations
-			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr)
+			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr, nil)
 			// Set version-specific container handler
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())

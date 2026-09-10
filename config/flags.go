@@ -195,6 +195,24 @@ func ApplyFollowCamFlags(s *FollowCamSettings, fs *flag.FlagSet, o *FollowCamFla
 	})
 }
 
+// --- Logging ---
+
+type LoggingFlagOverrides struct{ Level string }
+
+func RegisterLoggingFlags(fs *flag.FlagSet) *LoggingFlagOverrides {
+	o := &LoggingFlagOverrides{}
+	fs.StringVar(&o.Level, "log-level", "", "minimum log severity: debugverbose, debug, info, warn, error (overrides config file/env)")
+	return o
+}
+
+func ApplyLoggingFlags(s *LoggingSettings, fs *flag.FlagSet, o *LoggingFlagOverrides) {
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "log-level" {
+			s.Level = o.Level
+		}
+	})
+}
+
 // --- Env (RL task/step config) ---
 
 type EnvFlagOverrides struct {

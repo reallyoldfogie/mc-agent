@@ -2,7 +2,9 @@
 package v1_21_3
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -14,6 +16,7 @@ import (
 
 type actionHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, sequence int32, yaw, pitch float64) error {
@@ -22,7 +25,7 @@ func (a *actionHandler) SendUseItem(conn models.PacketWriter, hand models.Hand, 
 	pkt.Sequence = pk.VarInt(sequence)
 	pkt.Rotation = basetypes.Vec2f{X: pk.Float(yaw), Y: pk.Float(pitch)}
 
-	log.Printf("[v1.21.3 Action] SendUseItem: hand=%d sequence=%d yaw=%.2f pitch=%.2f", hand, sequence, yaw, pitch)
+	utils.SafeLogger(a.logger).Debug(fmt.Sprintf("[v1.21.3 Action] SendUseItem: hand=%d sequence=%d yaw=%.2f pitch=%.2f", hand, sequence, yaw, pitch))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseItem", Cause: err}
@@ -37,7 +40,7 @@ func (a *actionHandler) SendPlayerAction(conn models.PacketWriter, status int32,
 	pkt.Face = pk.Byte(face)
 	pkt.Sequence = pk.VarInt(sequence)
 
-	log.Printf("[v1.21.3 Action] SendPlayerAction: status=%d pos=(%d,%d,%d) face=%d sequence=%d", status, x, y, z, face, sequence)
+	utils.SafeLogger(a.logger).Debug(fmt.Sprintf("[v1.21.3 Action] SendPlayerAction: status=%d pos=(%d,%d,%d) face=%d sequence=%d", status, x, y, z, face, sequence))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "BlockDig", Cause: err}
@@ -49,7 +52,7 @@ func (a *actionHandler) SendSwing(conn models.PacketWriter, hand models.Hand) er
 	pkt := sb.NewArmAnimation()
 	pkt.Hand = pk.VarInt(hand)
 
-	log.Printf("[v1.21.3 Action] SendSwing: hand=%d", hand)
+	utils.SafeLogger(a.logger).Debug(fmt.Sprintf("[v1.21.3 Action] SendSwing: hand=%d", hand))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "ArmAnimation", Cause: err}

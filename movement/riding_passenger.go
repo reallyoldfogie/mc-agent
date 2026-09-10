@@ -2,7 +2,7 @@ package movement
 
 import (
 	"fmt"
-	"log"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -68,8 +68,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModePassiveRider(
 	// forward rather than inventing one from a physics step we did not run.
 	onGround := prevOnGround
 
-	log.Printf("[handleRidingModePassiveRider] %s: entity=%d yaw=%.1f pitch=%.1f sneak=%v pos=(%.2f,%.2f,%.2f)",
-		reason, mountedEntityID, yaw, pitch, sneak, newPos.X, newPos.Y, newPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModePassiveRider] %s: entity=%d yaw=%.1f pitch=%.1f sneak=%v pos=(%.2f,%.2f,%.2f)",
+		reason, mountedEntityID, yaw, pitch, sneak, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock so a concurrent TurnTowards cannot
 	// race with this write-back. The rider keeps their own look direction.

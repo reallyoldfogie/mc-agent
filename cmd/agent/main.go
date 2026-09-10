@@ -36,6 +36,7 @@ var (
 	skinOv      *config.SkinFlagOverrides
 	movementOv  *config.MovementFlagOverrides
 	followCamOv *config.FollowCamFlagOverrides
+	loggingOv   *config.LoggingFlagOverrides
 
 	help = flag.Bool("help", false, "Display help")
 )
@@ -48,6 +49,7 @@ func init() {
 	skinOv = config.RegisterSkinFlags(flag.CommandLine)
 	movementOv = config.RegisterMovementFlags(flag.CommandLine)
 	followCamOv = config.RegisterFollowCamFlags(flag.CommandLine)
+	loggingOv = config.RegisterLoggingFlags(flag.CommandLine)
 }
 
 func main() {
@@ -71,6 +73,12 @@ func main() {
 	config.ApplySkinFlags(&settings.Skin, flag.CommandLine, skinOv)
 	config.ApplyMovementFlags(&settings.Movement, flag.CommandLine, movementOv)
 	config.ApplyFollowCamFlags(&settings.FollowCam, flag.CommandLine, followCamOv)
+	config.ApplyLoggingFlags(&settings.Logging, flag.CommandLine, loggingOv)
+
+	logLevel, err := utils.ParseLevel(settings.Logging.Level)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	// Build Auth from flags (offline mode) or Microsoft authentication
 	// (cached under settings.Auth.CacheDir) — see agent.ResolveAuth's doc
@@ -149,6 +157,7 @@ func main() {
 		ReplayGenerator:    settings.Replay.Generator,
 		SkinProvider:       skinProvider,
 		LogWriter:          packetLogWriter,
+		LogLevel:           logLevel,
 		RCON:               camRCON,
 	}
 

@@ -1,7 +1,9 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -39,7 +41,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNautilus(
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
 	// (1) Send PlayerInput
-	log.Printf("[handleRidingModeNautilus] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeNautilus] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	// Hold lock for the entire read-compute-write cycle.
@@ -105,7 +107,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNautilus(
 	// impulse is added to the velocity BEFORE the travel accumulation, mirroring
 	// Java (dash happens in tickControlled, before travel).
 	prevVel := models.V3{X: pe.ridingVelX, Y: pe.ridingVelY, Z: pe.ridingVelZ}
-	prevVel = applyNautilusDashCharge(nautilusState, jump, pe.lastRidingJumpState, agentYaw, agentPitch, movementSpeed, inWater, prevVel)
+	prevVel = applyNautilusDashCharge(pe.logger, nautilusState, jump, pe.lastRidingJumpState, agentYaw, agentPitch, movementSpeed, inWater, prevVel)
 	pe.lastRidingJumpState = jump
 
 	// travel(): water vs land path.
@@ -154,9 +156,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeNautilus(
 		onGround = collisionOnGround
 	}
 
-	log.Printf("[handleRidingModeNautilus] inWater=%v ms=%.3f vehYaw=%.1f agentYaw=%.1f agentPitch=%.1f input=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) dashing=%v newPos=(%.2f,%.2f,%.2f)",
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeNautilus] inWater=%v ms=%.3f vehYaw=%.1f agentYaw=%.1f agentPitch=%.1f input=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) dashing=%v newPos=(%.2f,%.2f,%.2f)",
 		inWater, movementSpeed, vehicleYaw, agentYaw, agentPitch, sideways, vertical, forwardComponent,
-		newVel.X, newVel.Y, newVel.Z, nautilusState.IsDashing(), newPos.X, newPos.Y, newPos.Z)
+		newVel.X, newVel.Y, newVel.Z, nautilusState.IsDashing(), newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.
@@ -277,7 +279,7 @@ func nautilusLandStep(pos, prevVel models.V3, sideways, vertical, forward, vehic
 // JumpingMount charge-on-hold / fire-on-release behavior: holding jump
 // accumulates charge (gated on the dash cooldown), and releasing (or hitting the
 // charge cap) fires a dash whose impulse follows the rider's full 3D look vector.
-func applyNautilusDashCharge(state *models.NautilusState, jump, lastJump bool, agentYaw, agentPitch, movementSpeed float64, inWater bool, vel models.V3) models.V3 {
+func applyNautilusDashCharge(logger *slog.Logger, state *models.NautilusState, jump, lastJump bool, agentYaw, agentPitch, movementSpeed float64, inWater bool, vel models.V3) models.V3 {
 	// Rising edge: begin charging if the dash is off cooldown.
 	if jump && !lastJump && state.CanStartDash() {
 		state.SetCharging(true)
@@ -300,7 +302,7 @@ func applyNautilusDashCharge(state *models.NautilusState, jump, lastJump bool, a
 		vel.Y += deltaVelY
 		vel.Z += deltaVelZ
 		state.ApplyDash()
-		log.Printf("[handleRidingModeNautilus] Dash fired: strength=%.3f impulse=(%.4f,%.4f,%.4f) inWater=%v", strength, deltaVelX, deltaVelY, deltaVelZ, inWater)
+		utils.SafeLogger(logger).Debug(fmt.Sprintf("[handleRidingModeNautilus] Dash fired: strength=%.3f impulse=(%.4f,%.4f,%.4f) inWater=%v", strength, deltaVelX, deltaVelY, deltaVelZ, inWater))
 	}
 	return vel
 }

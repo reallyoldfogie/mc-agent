@@ -158,7 +158,7 @@ func TestCamelState_CannotDashInAir(t *testing.T) {
 	state := NewCamelState(1000, false)
 
 	assert.True(t, state.CanStartDash(true))   // on ground
-	assert.False(t, state.CanStartDash(false))  // in air
+	assert.False(t, state.CanStartDash(false)) // in air
 }
 
 func TestClampJumpStrength(t *testing.T) {
@@ -193,8 +193,8 @@ func TestDashImpulse(t *testing.T) {
 
 	// Facing east (yaw=-90): sin(-(-90))=sin(90)=1 * -1 = -(-1) = should give +X
 	deltaX, _, deltaZ = DashImpulse(-90.0, 1.0, CamelDefaultMovementSpeed, 1.0)
-	assert.Greater(t, deltaX, 0.0)              // Positive X = east
-	assert.InDelta(t, 0.0, deltaZ, 0.001)       // No Z component
+	assert.Greater(t, deltaX, 0.0)        // Positive X = east
+	assert.InDelta(t, 0.0, deltaZ, 0.001) // No Z component
 
 	// Half strength should give half the impulse
 	deltaXHalf, deltaYHalf, deltaZHalf := DashImpulse(0.0, 0.5, CamelDefaultMovementSpeed, 1.0)

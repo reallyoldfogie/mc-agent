@@ -280,6 +280,7 @@ func createTestPhysicsExecutor() *PhysicsMovementExecutor {
 		getBotEntityID,
 		world,
 		shapeProvider,
+		nil,
 	)
 }
 

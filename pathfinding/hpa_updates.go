@@ -1,16 +1,18 @@
 package pathfinding
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // WorldUpdateHandler handles dynamic world changes for HPA*
 type WorldUpdateHandler struct {
 	builder *HPABuilder
+	logger  *slog.Logger
 
 	// Batching for initial load
 	batchMode      bool
@@ -23,10 +25,17 @@ type WorldUpdateHandler struct {
 	maxBatchSize  int           // Flush batch after this many clusters
 }
 
-// NewWorldUpdateHandler creates a new world update handler
+// NewWorldUpdateHandler creates a new world update handler. Reuses
+// builder's own logger so log lines from both stay attributed to the same
+// agent without threading a separate logger through this constructor too.
 func NewWorldUpdateHandler(builder *HPABuilder) *WorldUpdateHandler {
+	logger := utils.SafeLogger(nil)
+	if builder != nil {
+		logger = utils.SafeLogger(builder.logger)
+	}
 	return &WorldUpdateHandler{
 		builder:        builder,
+		logger:         logger,
 		batchMode:      false,
 		dirtyBatch:     make(map[ClusterID]bool),
 		lastBatchFlush: time.Now(),
@@ -44,7 +53,7 @@ func (h *WorldUpdateHandler) EnableBatchMode() {
 	h.batchMode = true
 	h.dirtyBatch = make(map[ClusterID]bool)
 	h.lastBatchFlush = time.Now()
-	log.Printf("[HPA* Updates] Batch mode enabled")
+	utils.SafeLogger(h.logger).Debug("[HPA* Updates] batch mode enabled")
 }
 
 // DisableBatchMode disables batch mode and flushes any pending updates
@@ -54,7 +63,7 @@ func (h *WorldUpdateHandler) DisableBatchMode() {
 
 	h.batchMode = false
 	h.flushBatch()
-	log.Printf("[HPA* Updates] Batch mode disabled")
+	utils.SafeLogger(h.logger).Debug("[HPA* Updates] batch mode disabled")
 }
 
 // OnBlockChange handles a single block change
@@ -119,8 +128,7 @@ func (h *WorldUpdateHandler) OnMultipleBlockChanges(positions []models.V3) {
 		}
 	}
 
-	log.Printf("[HPA* Updates] Processed %d block changes affecting %d clusters",
-		len(positions), len(affectedSet))
+	utils.SafeLogger(h.logger).Debug("[HPA* Updates] processed block changes", "changes", len(positions), "clusters", len(affectedSet))
 }
 
 // getAffectedClusters returns all clusters that might be affected by a block change
@@ -186,7 +194,7 @@ func (h *WorldUpdateHandler) flushBatch() {
 	h.dirtyBatch = make(map[ClusterID]bool)
 	h.lastBatchFlush = time.Now()
 
-	log.Printf("[HPA* Updates] Flushed batch: marked %d clusters dirty", count)
+	utils.SafeLogger(h.logger).Debug("[HPA* Updates] flushed batch", "clustersMarkedDirty", count)
 }
 
 // FlushBatch manually flushes the batch (thread-safe)
@@ -237,7 +245,7 @@ func (h *WorldUpdateHandler) RebuildDirtyCluster(clusterID ClusterID) {
 	cluster := cm.GetCluster(clusterID)
 
 	if cluster.Dirty {
-		log.Printf("[HPA* Updates] Lazy rebuilding dirty cluster %s", clusterID.String())
+		utils.SafeLogger(h.logger).Debug("[HPA* Updates] lazy rebuilding dirty cluster", "cluster", clusterID.String())
 		h.builder.BuildCluster(clusterID)
 	}
 }

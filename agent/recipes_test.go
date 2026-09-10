@@ -29,7 +29,7 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 
 	t.Run("VersionHandler", func(t *testing.T) {
 		// Parse using version handler
-		versionHandler, err := common.GetVersionHandler("1.21.5")
+		versionHandler, err := common.GetVersionHandler("1.21.5", nil)
 		require.NoError(t, err, "Should get version handler")
 
 		// Create packet with ID 126 (ClientboundDeclareRecipes for 1.21.5)
@@ -94,7 +94,7 @@ func TestDeclaredRecipesPacketParsing(t *testing.T) {
 
 	t.Run("CompareResults", func(t *testing.T) {
 		// Parse with version handler
-		versionHandler, err := common.GetVersionHandler("1.21.5")
+		versionHandler, err := common.GetVersionHandler("1.21.5", nil)
 		require.NoError(t, err)
 		packet := pk.Packet{ID: 126, Data: packetData}
 		agentPayload, err := versionHandler.Play().ParseUpdateRecipes(packet)

@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -31,7 +32,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 ) ridingTickResult {
 	// (1) Send PlayerInput (carries the jump flag → START_RIDING_JUMP on release
 	// in vanilla; the server uses it only for animation/anger).
-	log.Printf("[handleRidingModeHorse] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	// Hold lock for entire read-compute-write cycle
@@ -90,7 +91,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 	if jump && !pe.lastRidingJumpState {
 		pe.horseCharging = true
 		pe.horseJumpChargeTicks = 0
-		log.Printf("[handleRidingModeHorse] Jump charging started")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] Jump charging started"))
 	}
 	if pe.horseCharging {
 		if jump {
@@ -107,8 +108,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 			// Tell the server about the released jump so the server-side horse
 			// jumps too (vanilla LocalPlayer.sendRidingJump on key release).
 			sendRidingJumpCommand(pe, versionHandler, strengthPercent)
-			log.Printf("[handleRidingModeHorse] Jump armed: chargeTicks=%d strengthPercent=%d strength=%.3f",
-				pe.horseJumpChargeTicks, strengthPercent, pe.horsePendingJumpStrength)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] Jump armed: chargeTicks=%d strengthPercent=%d strength=%.3f",
+				pe.horseJumpChargeTicks, strengthPercent, pe.horsePendingJumpStrength))
 		}
 	}
 
@@ -132,8 +133,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 			pe.ridingVelZ += boost
 		}
 
-		log.Printf("[handleRidingModeHorse] Jump fired: strength=%.3f jumpVel=%.4f forwardBoost=%.4f",
-			pe.horsePendingJumpStrength, jumpVel, physics.HorseJumpForwardBoost*pe.horsePendingJumpStrength)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] Jump fired: strength=%.3f jumpVel=%.4f forwardBoost=%.4f",
+			pe.horsePendingJumpStrength, jumpVel, physics.HorseJumpForwardBoost*pe.horsePendingJumpStrength))
 		pe.horsePendingJumpStrength = 0
 	}
 
@@ -169,7 +170,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 		correctedVel.Y = 0
 		onGround = true
 		pe.ridingGroundY = newPos.Y
-		log.Printf("[handleRidingModeHorse] Landed at Y=%.2f", newPos.Y)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] Landed at Y=%.2f", newPos.Y))
 	}
 
 	// Use corrected velocity for next tick (horizontal clamped by collision)
@@ -195,8 +196,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHorse(
 		}
 	}
 
-	log.Printf("[handleRidingModeHorse] physics: water=%v behavior=%s airborne=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f newPos=(%.2f,%.2f,%.2f)",
-		waterParams.IsInWater, waterBehavior, ridingAirborne, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, newPos.X, newPos.Y, newPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHorse] physics: water=%v behavior=%s airborne=%v yaw=%.1f throttle=(%.2f,%.2f) accel=%.4f drag=%.3f velZ=%.4f velY=%.4f newPos=(%.2f,%.2f,%.2f)",
+		waterParams.IsInWater, waterBehavior, ridingAirborne, yaw, inputs.ThrottleX, inputs.ThrottleZ, movementAcceleration, velocityDrag, ridingVelZ, ridingVelY, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

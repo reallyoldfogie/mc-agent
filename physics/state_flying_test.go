@@ -18,7 +18,7 @@ const testFlySpeed = 0.05 // vanilla default (PlayerAbilities.DEFAULT_FLY_SPEED)
 func TestState_FlyingHoldJumpClimbsToSteadyStateVelocity(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	s.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	s.SetVelocity(models.V3{})
 	s.SetFlying(true, testFlySpeed)
@@ -41,7 +41,7 @@ func TestState_FlyingHoldJumpClimbsToSteadyStateVelocity(t *testing.T) {
 func TestState_FlyingHoldSneakDescendsToSteadyStateVelocity(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	s.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	s.SetVelocity(models.V3{})
 	s.SetFlying(true, testFlySpeed)
@@ -64,12 +64,12 @@ func TestState_FlyingHoldSneakDescendsToSteadyStateVelocity(t *testing.T) {
 func TestState_FlyingNoInputDecaysRatherThanFalling(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	flying := NewState(shapes)
+	flying := NewState(shapes, nil)
 	flying.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	flying.SetVelocity(models.V3{})
 	flying.SetFlying(true, testFlySpeed)
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	normal.SetVelocity(models.V3{})
 
@@ -95,12 +95,12 @@ func TestState_FlyingHorizontalMovementMatchesNormalAirStrafing(t *testing.T) {
 	// movement. See applyMovementInputs's doc comment.
 	world, shapes := createFlatWorld()
 
-	flying := NewState(shapes)
+	flying := NewState(shapes, nil)
 	flying.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	flying.SetVelocity(models.V3{})
 	flying.SetFlying(true, testFlySpeed)
 
-	airborne := NewState(shapes)
+	airborne := NewState(shapes, nil)
 	airborne.SetPositionSimple(models.V3{X: 10, Y: 50, Z: 0})
 	airborne.SetVelocity(models.V3{})
 
@@ -118,7 +118,7 @@ func TestState_FlyingExcludesGliding(t *testing.T) {
 	// start trigger), flying must prevent gliding from ever starting.
 	world, shapes := createFlatWorld()
 
-	s := NewState(shapes)
+	s := NewState(shapes, nil)
 	s.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	s.SetVelocity(models.V3{})
 	s.SetFlying(true, testFlySpeed)
@@ -130,4 +130,3 @@ func TestState_FlyingExcludesGliding(t *testing.T) {
 
 	assert.False(t, s.IsGliding(), "flying should prevent gliding from starting even with an elytra equipped")
 }
-

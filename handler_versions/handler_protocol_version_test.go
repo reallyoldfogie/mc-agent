@@ -30,18 +30,18 @@ func TestHandlerProtocolVersions(t *testing.T) {
 			ProtocolVersion() uint
 		}
 	}{
-		{"1.21.1", "1.21.1", v1_21_1.NewHandler(nil)},
-		{"1.21.2", "1.21.2", v1_21_2.NewHandler(nil)},
-		{"1.21.3", "1.21.3", v1_21_3.NewHandler(nil)},
-		{"1.21.4", "1.21.4", v1_21_4.NewHandler(nil)},
-		{"1.21.5", "1.21.5", v1_21_5.NewHandler(nil)},
-		{"1.21.6", "1.21.6", v1_21_6.NewHandler(nil)},
-		{"1.21.7", "1.21.7", v1_21_7.NewHandler(nil)},
-		{"1.21.8", "1.21.8", v1_21_8.NewHandler(nil)},
-		{"1.21.9", "1.21.9", v1_21_9.NewHandler(nil)},
-		{"1.21.10", "1.21.10", v1_21_10.NewHandler(nil)},
-		{"1.21.11", "1.21.11", v1_21_11.NewHandler(nil)},
-		{"26.1", "26.1", v26_1.NewHandler(nil)},
+		{"1.21.1", "1.21.1", v1_21_1.NewHandler(nil, nil)},
+		{"1.21.2", "1.21.2", v1_21_2.NewHandler(nil, nil)},
+		{"1.21.3", "1.21.3", v1_21_3.NewHandler(nil, nil)},
+		{"1.21.4", "1.21.4", v1_21_4.NewHandler(nil, nil)},
+		{"1.21.5", "1.21.5", v1_21_5.NewHandler(nil, nil)},
+		{"1.21.6", "1.21.6", v1_21_6.NewHandler(nil, nil)},
+		{"1.21.7", "1.21.7", v1_21_7.NewHandler(nil, nil)},
+		{"1.21.8", "1.21.8", v1_21_8.NewHandler(nil, nil)},
+		{"1.21.9", "1.21.9", v1_21_9.NewHandler(nil, nil)},
+		{"1.21.10", "1.21.10", v1_21_10.NewHandler(nil, nil)},
+		{"1.21.11", "1.21.11", v1_21_11.NewHandler(nil, nil)},
+		{"26.1", "26.1", v26_1.NewHandler(nil, nil)},
 	}
 
 	for _, tt := range tests {

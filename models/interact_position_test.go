@@ -18,7 +18,7 @@ type fakeInteractAgent struct {
 	blockedOrigins map[models.V3]bool
 }
 
-func (f *fakeInteractAgent) GetWorld() models.World                     { return f.world }
+func (f *fakeInteractAgent) GetWorld() models.World                      { return f.world }
 func (f *fakeInteractAgent) BlockShapeManager() models.BlockShapeManager { return f.shapeMgr }
 func (f *fakeInteractAgent) CanInteractFromPosition(_ context.Context, fromX, fromY, fromZ, _, _, _ float64) (bool, error) {
 	if f.blockedOrigins[models.V3{X: fromX, Y: fromY, Z: fromZ}] {

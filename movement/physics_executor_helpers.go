@@ -3,7 +3,7 @@ package movement
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -25,22 +25,22 @@ func (pe *PhysicsMovementExecutor) applyMovementState(inputs physics.Inputs) {
 
 	if inputs.Sprint && canSprint && !pe.IsSprinting() {
 		if err := pe.StartSprinting(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to start sprinting: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to start sprinting: %v", err))
 		}
 	} else if (!inputs.Sprint || !canSprint) && pe.IsSprinting() {
 		if err := pe.StopSprinting(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to stop sprinting: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to stop sprinting: %v", err))
 		}
 	}
 
 	// Apply sneak state
 	if inputs.Sneak && !pe.IsSneaking() {
 		if err := pe.StartSneaking(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to start sneaking: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to start sneaking: %v", err))
 		}
 	} else if !inputs.Sneak && pe.IsSneaking() {
 		if err := pe.StopSneaking(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to stop sneaking: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to stop sneaking: %v", err))
 		}
 	}
 }
@@ -245,28 +245,28 @@ func (pe *PhysicsMovementExecutor) SetPath(path *pathfinding.Path) error {
 		agentName = pe.movementPacketSender.client.Name()
 	}
 
-	log.Printf("[PhysicsExecutor %s] Mode changed: %s → Navigating", agentName, oldMode)
-	log.Printf("[PhysicsExecutor %s] Path set: %d steps, cost=%.2f", agentName, len(path.Steps), path.TotalCost)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Mode changed: %s → Navigating", agentName, oldMode))
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Path set: %d steps, cost=%.2f", agentName, len(path.Steps), path.TotalCost))
 
 	if len(path.Steps) <= 5 {
-		log.Printf("[PhysicsExecutor %s] Path steps:", agentName)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Path steps:", agentName))
 		for i, step := range path.Steps {
-			log.Printf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
-				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
+				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 		}
 	} else {
-		log.Printf("[PhysicsExecutor %s] First 3 steps:", agentName)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] First 3 steps:", agentName))
 		for i := 0; i < 3 && i < len(path.Steps); i++ {
 			step := path.Steps[i]
-			log.Printf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
-				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
+				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 		}
-		log.Printf("[PhysicsExecutor %s] ... (%d steps omitted)", agentName, len(path.Steps)-6)
-		log.Printf("[PhysicsExecutor %s] Last 3 steps:", agentName)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] ... (%d steps omitted)", agentName, len(path.Steps)-6))
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Last 3 steps:", agentName))
 		for i := len(path.Steps) - 3; i < len(path.Steps); i++ {
 			step := path.Steps[i]
-			log.Printf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
-				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s]   Step %d: %s to (%.0f, %.0f, %.0f)",
+				agentName, i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 		}
 	}
 
@@ -291,14 +291,14 @@ func (pe *PhysicsMovementExecutor) WaitForPathCompletion(ctx context.Context, ti
 
 	select {
 	case <-pathDone:
-		log.Printf("[PhysicsExecutor] Path completion signaled")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Path completion signaled"))
 		return true, nil
 	case <-ctx.Done():
 		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("[PhysicsExecutor] Path completion timeout")
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Path completion timeout"))
 			return false, nil
 		}
-		log.Printf("[PhysicsExecutor] Path completion cancelled by context")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Path completion cancelled by context"))
 		return false, ctx.Err()
 	}
 }
@@ -333,5 +333,5 @@ func (pe *PhysicsMovementExecutor) ClearPath() {
 	pe.mode = PhysicsModeIdle
 	pe.modeMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] Path cleared, switched to idle mode")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Path cleared, switched to idle mode"))
 }

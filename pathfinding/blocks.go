@@ -2,7 +2,7 @@ package pathfinding
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,12 +20,7 @@ type blockShapeManager struct {
 	shapeData  map[mdl.StateKey]mdl.ShapeInfo
 	blockMgr   mc_versions.BlockMgr
 	stateProps *StatePropertyLoader
-	// verbose gates getInfo/blockInfoFromStateID's own per-lookup logging
-	// (see their doc comments) — computed once here rather than calling
-	// envBool per lookup, since both are hot paths called from every
-	// collision/passability query (IsPassable, IsSolid, IsWater, ...),
-	// themselves called constantly during pathfinding/movement/physics.
-	verbose bool
+	logger     *slog.Logger
 }
 
 // NewBlockShapeManager creates a manager for a specific Minecraft version
@@ -35,27 +30,30 @@ func NewBlockShapeManager(
 	dataBasePath string,
 	blockMgr mc_versions.BlockMgr,
 	stateProps *StatePropertyLoader,
+	logger *slog.Logger,
 ) (models.BlockShapeManager, error) {
+	logger = utils.SafeLogger(logger)
+
 	// Construct path to blocks directory for this version
 	// e.g., "/path/to/mc-data-gen/data/1.21.5/blocks"
 	blocksPath := filepath.Join(dataBasePath, version, "blocks")
 	fullPath, _ := filepath.Abs(blocksPath)
 
-	log.Printf("[BlockShapeManager] Loading block shapes for version %s from %s", version, fullPath)
+	logger.Info("[BlockShapeManager] loading block shapes", "version", version, "path", fullPath)
 
 	// Load all block shape data for this version
-	data, err := loadBlocksDirInPlace(blocksPath)
+	data, err := loadBlocksDirInPlace(logger, blocksPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load blocks for version %s: %w", version, err)
 	}
 	if envBool("MC_AGENT_MEM_STATS") {
 		var ms runtime.MemStats
 		runtime.ReadMemStats(&ms)
-		log.Printf("[MemStats] BlockShape load: HeapAlloc=%.1fMB TotalAlloc=%.1fMB Sys=%.1fMB NumGC=%d",
-			float64(ms.HeapAlloc)/1024/1024,
-			float64(ms.TotalAlloc)/1024/1024,
-			float64(ms.Sys)/1024/1024,
-			ms.NumGC,
+		logger.Debug("[MemStats] BlockShape load",
+			"heapAllocMB", float64(ms.HeapAlloc)/1024/1024,
+			"totalAllocMB", float64(ms.TotalAlloc)/1024/1024,
+			"sysMB", float64(ms.Sys)/1024/1024,
+			"numGC", ms.NumGC,
 		)
 	}
 
@@ -64,11 +62,11 @@ func NewBlockShapeManager(
 		shapeData:  data,
 		blockMgr:   blockMgr,
 		stateProps: stateProps,
-		verbose:    utils.VerboseLoggingEnabled(),
+		logger:     logger,
 	}, nil
 }
 
-func loadBlocksDirInPlace(root string) (map[mdl.StateKey]mdl.ShapeInfo, error) {
+func loadBlocksDirInPlace(logger *slog.Logger, root string) (map[mdl.StateKey]mdl.ShapeInfo, error) {
 	// Check if directory exists before walking
 	info, err := os.Stat(root)
 	if err != nil {
@@ -103,9 +101,9 @@ func loadBlocksDirInPlace(root string) (map[mdl.StateKey]mdl.ShapeInfo, error) {
 	}
 
 	if len(out) == 0 {
-		log.Printf("[BlockShapeManager] Warning: no block shape data loaded from %s", root)
+		logger.Warn("[BlockShapeManager] no block shape data loaded", "path", root)
 	} else {
-		log.Printf("[BlockShapeManager] Loaded %d block shapes from %s", len(out), root)
+		logger.Info("[BlockShapeManager] loaded block shapes", "count", len(out), "path", root)
 	}
 
 	return out, nil
@@ -139,10 +137,7 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 
 	info, ok := bsm.shapeData[key]
 	if !ok {
-		if bsm.verbose {
-			log.Printf("[BlockShapeManager.getInfo] StateKey not found: blockID=%s, propsKey=%s (from props=%v)",
-				blockID, key.PropsKey, props)
-		}
+		utils.DebugVerbose(bsm.logger, "[BlockShapeManager.getInfo] StateKey not found", "blockID", blockID, "propsKey", key.PropsKey, "props", props)
 
 		// If exact match not found and props is nil/empty, try to find ANY state for this block
 		// This handles the case where we don't have state properties but need basic block info
@@ -151,25 +146,19 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 				if k.BlockID == blockID {
 					// Found a state for this block - use it
 					// (all states of a block should have same solid/passable/dangerous properties)
-					if bsm.verbose {
-						log.Printf("[BlockShapeManager.getInfo] Using fallback state for blockID=%s: propsKey=%s, IsStair=%v, IsSlab=%v",
-							blockID, k.PropsKey, v.IsStair(), v.IsSlab())
-					}
+					utils.DebugVerbose(bsm.logger, "[BlockShapeManager.getInfo] using fallback state",
+						"blockID", blockID, "propsKey", k.PropsKey, "isStair", v.IsStair(), "isSlab", v.IsSlab())
 					return v
 				}
 			}
 		}
 		// Return empty/air-like info for unknown blocks
-		if bsm.verbose {
-			log.Printf("[BlockShapeManager.getInfo] No match found, returning Air=true for blockID=%s", blockID)
-		}
+		utils.DebugVerbose(bsm.logger, "[BlockShapeManager.getInfo] no match found, returning Air=true", "blockID", blockID)
 		return mdl.ShapeInfo{Air: true}
 	}
 
-	if bsm.verbose {
-		log.Printf("[BlockShapeManager.getInfo] Found StateKey: blockID=%s, propsKey=%s, IsStair=%v, IsSlab=%v",
-			blockID, key.PropsKey, info.IsStair(), info.IsSlab())
-	}
+	utils.DebugVerbose(bsm.logger, "[BlockShapeManager.getInfo] found StateKey",
+		"blockID", blockID, "propsKey", key.PropsKey, "isStair", info.IsStair(), "isSlab", info.IsSlab())
 	return info
 }
 
@@ -184,36 +173,26 @@ func (bsm *blockShapeManager) blockInfoFromStateID(blockStateID uint32) (string,
 		return "minecraft:air", map[string]string{}
 	}
 	if bsm.blockMgr == nil {
-		if bsm.verbose {
-			log.Printf("[BlockShapeManager.blockInfoFromStateID] blockMgr is nil for stateID=%d", blockStateID)
-		}
+		utils.DebugVerbose(bsm.logger, "[BlockShapeManager.blockInfoFromStateID] blockMgr is nil", "stateID", blockStateID)
 		return "", map[string]string{}
 	}
 	if blockID, ok := bsm.blockMgr.BlockIDByStateID(uint32(blockStateID)); ok {
 		if block, ok := bsm.blockMgr.GetByID(blockID); ok {
 			if block.Name == "" {
-				if bsm.verbose {
-					log.Printf("[BlockShapeManager.blockInfoFromStateID] block.Name is empty for stateID=%d, blockID=%d", blockStateID, blockID)
-				}
+				utils.DebugVerbose(bsm.logger, "[BlockShapeManager.blockInfoFromStateID] block.Name is empty", "stateID", blockStateID, "blockID", blockID)
 				return "", map[string]string{}
 			}
 			if bsm.stateProps == nil {
-				if bsm.verbose {
-					log.Printf("[BlockShapeManager.blockInfoFromStateID] stateProps is nil for stateID=%d, returning name=%s with empty props", blockStateID, block.Name)
-				}
+				utils.DebugVerbose(bsm.logger, "[BlockShapeManager.blockInfoFromStateID] stateProps is nil, returning empty props", "stateID", blockStateID, "name", block.Name)
 				return block.Name, map[string]string{}
 			}
 			props := bsm.stateProps.GetProperties(uint32(blockStateID))
-			if bsm.verbose {
-				log.Printf("[BlockShapeManager.blockInfoFromStateID] stateID=%d -> name=%s, props=%v", blockStateID, block.Name, props)
-			}
+			utils.DebugVerbose(bsm.logger, "[BlockShapeManager.blockInfoFromStateID] resolved", "stateID", blockStateID, "name", block.Name, "props", props)
 			return block.Name, props
 		}
 	}
 
-	if bsm.verbose {
-		log.Printf("[BlockShapeManager.blockInfoFromStateID] failed to find block for stateID=%d", blockStateID)
-	}
+	utils.DebugVerbose(bsm.logger, "[BlockShapeManager.blockInfoFromStateID] failed to find block", "stateID", blockStateID)
 	return "", map[string]string{}
 }
 
@@ -295,8 +274,8 @@ func (bsm *blockShapeManager) GetStandingSurfaceHeight(blockStateID uint32) floa
 	// Debug logging for stairs and slabs
 	if info.IsStair() || info.IsSlab() {
 		blockName, props := bsm.blockInfoFromStateID(blockStateID)
-		log.Printf("[BlockShapeManager.GetStandingSurfaceHeight] blockStateID=%d, name=%s, props=%v, height=%.2f",
-			blockStateID, blockName, props, height)
+		utils.DebugVerbose(bsm.logger, "[BlockShapeManager.GetStandingSurfaceHeight]",
+			"stateID", blockStateID, "name", blockName, "props", props, "height", height)
 	}
 
 	return height
@@ -548,7 +527,7 @@ func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.Wo
 			neighborLevel = 0 // Source block (level 0)
 		}
 
-		if os.Getenv("DEBUG_WATER_FLOW") != "" {
+		if utils.DebugVerboseEnabled(bsm.logger) {
 			neighborName := "?"
 			switch i {
 			case 0:
@@ -562,8 +541,9 @@ func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.Wo
 			case 4:
 				neighborName = "Down"
 			}
-			log.Printf("[WaterFlow] flowDirection: %s (%d,%d,%d): level=%d (cur=%d, diff=%d)\n",
-				neighborName, neighbor[0], neighbor[1], neighbor[2], neighborLevel, currentLevel, neighborLevel-currentLevel)
+			utils.DebugVerbose(bsm.logger, "[WaterFlow] flowDirection",
+				"neighbor", neighborName, "x", neighbor[0], "y", neighbor[1], "z", neighbor[2],
+				"level", neighborLevel, "cur", currentLevel, "diff", neighborLevel-currentLevel)
 		}
 
 		// Flow toward higher level numbers (lower surface height)
@@ -620,22 +600,13 @@ func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.Wo
 	if magnitude < 0.001 {
 		// Special case: level 8 water is downflow. If no gradient found, flow downward.
 		if currentLevel == 8 {
-			if os.Getenv("DEBUG_WATER_FLOW") != "" {
-				log.Printf("[WaterFlow] Level 8 at (%d,%d,%d) - no gradient, defaulting to downflow\n",
-					x, y, z)
-			}
+			utils.DebugVerbose(bsm.logger, "[WaterFlow] level 8, no gradient, defaulting to downflow", "x", x, "y", y, "z", z)
 			return models.V3{X: 0, Y: -1, Z: 0}
 		}
-		if os.Getenv("DEBUG_WATER_FLOW") != "" {
-			log.Printf("[WaterFlow] No flow direction at (%d,%d,%d) level=%d - no gradient\n",
-				x, y, z, currentLevel)
-		}
+		utils.DebugVerbose(bsm.logger, "[WaterFlow] no flow direction, no gradient", "x", x, "y", y, "z", z, "level", currentLevel)
 		return models.V3{} // No flow direction
 	} else {
-		if os.Getenv("DEBUG_WATER_FLOW") != "" {
-			log.Printf("[WaterFlow] magnitude=%.4f at (%d,%d,%d) level=%d \n",
-				magnitude, x, y, z, currentLevel)
-		}
+		utils.DebugVerbose(bsm.logger, "[WaterFlow] magnitude", "magnitude", magnitude, "x", x, "y", y, "z", z, "level", currentLevel)
 	}
 
 	result := models.V3{
@@ -644,10 +615,8 @@ func (bsm *blockShapeManager) GetWaterFlowDirection(x, y, z int, world models.Wo
 		Z: flowDir.Z / magnitude,
 	}
 
-	if os.Getenv("DEBUG_WATER_FLOW") != "" {
-		log.Printf("[WaterFlow] At (%d,%d,%d) level=%d: flow=(%.3f,%.3f,%.3f) (magnitude=%.3f)\n",
-			x, y, z, currentLevel, result.X, result.Y, result.Z, magnitude)
-	}
+	utils.DebugVerbose(bsm.logger, "[WaterFlow] resolved",
+		"x", x, "y", y, "z", z, "level", currentLevel, "flowX", result.X, "flowY", result.Y, "flowZ", result.Z, "magnitude", magnitude)
 
 	return result
 }

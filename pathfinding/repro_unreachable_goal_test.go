@@ -26,7 +26,7 @@ func TestFindPath_FailsFastOnSolidGoal(t *testing.T) {
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	start := models.V3{X: 0, Y: 0, Z: 0}
 	goal := models.V3{X: 4, Y: 0, Z: 0} // the solid block itself

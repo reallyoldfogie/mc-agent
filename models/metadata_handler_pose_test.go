@@ -11,7 +11,7 @@ import (
 func TestBasicMetadataProcessor_PoseFlowsToResult(t *testing.T) {
 	reg := NewEntityRegistry()
 	reg.RegisterEntity(42, EntityTypeCamel)
-	proc := NewBasicMetadataProcessor(reg)
+	proc := NewBasicMetadataProcessor(reg, nil)
 
 	// Ordinal 10 maps to "sitting" in the fallback table that the processor
 	// is seeded with by NewBasicMetadataProcessor.
@@ -32,7 +32,7 @@ func TestBasicMetadataProcessor_PoseFlowsToResult(t *testing.T) {
 func TestBasicMetadataProcessor_UnknownPoseOrdinal(t *testing.T) {
 	reg := NewEntityRegistry()
 	reg.RegisterEntity(7, EntityTypePlayer)
-	proc := NewBasicMetadataProcessor(reg)
+	proc := NewBasicMetadataProcessor(reg, nil)
 
 	poseVal := pk.VarInt(999)
 	entry := MetadataEntry{
@@ -51,7 +51,7 @@ func TestBasicMetadataProcessor_UnknownPoseOrdinal(t *testing.T) {
 func TestBasicMetadataProcessor_InjectedRegistryOverridesFallback(t *testing.T) {
 	reg := NewEntityRegistry()
 	reg.RegisterEntity(1, EntityTypeCamel)
-	proc := NewBasicMetadataProcessor(reg)
+	proc := NewBasicMetadataProcessor(reg, nil)
 
 	// Pretend a future version reorders the enum: sitting at ordinal 2.
 	custom := newRegistryFromOrdinalMap(map[int32]string{
@@ -82,7 +82,7 @@ func TestBasicMetadataProcessor_InjectedRegistryOverridesFallback(t *testing.T) 
 func TestBasicMetadataProcessor_NonPoseEntryDoesNotSetHasPose(t *testing.T) {
 	reg := NewEntityRegistry()
 	reg.RegisterEntity(1, EntityTypePlayer)
-	proc := NewBasicMetadataProcessor(reg)
+	proc := NewBasicMetadataProcessor(reg, nil)
 
 	val := pk.Float(20.0)
 	entry := MetadataEntry{
