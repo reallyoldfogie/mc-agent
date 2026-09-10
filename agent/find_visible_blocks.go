@@ -53,94 +53,21 @@ func (a *agent) isObscuring(coord models.V3, world models.World) bool {
 // traceRay finds the first obscuring block along a ray within radius R
 // Returns (blockCoord, found)
 func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, bool) {
-	// a.logf("[traceRay] Tracing ray from (%.2f, %.2f, %.2f) in direction (%.4f, %.4f, %.4f)", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X, ray.Direction.Y, ray.Direction.Z)
-
-	// Current voxel coordinates
-	x, y, z := int(math.Floor(ray.Origin.X)), int(math.Floor(ray.Origin.Y)), int(math.Floor(ray.Origin.Z))
-
-	stepX, stepY, stepZ := signInt(ray.Direction.X), signInt(ray.Direction.Y), signInt(ray.Direction.Z)
-
-	// Distance to next boundary
-	var tDeltaX, tMaxX float64
-	if ray.Direction.X == 0 {
-		tDeltaX = math.Inf(1)
-		tMaxX = math.Inf(1)
-	} else {
-		tDeltaX = 1.0 / math.Abs(ray.Direction.X)
-		if ray.Direction.X > 0 {
-			tMaxX = (float64(x) + 1.0 - ray.Origin.X) / ray.Direction.X
-		} else {
-			tMaxX = (ray.Origin.X - float64(x)) / (-ray.Direction.X)
-		}
-	}
-
-	var tDeltaY, tMaxY float64
-	if ray.Direction.Y == 0 {
-		tDeltaY = math.Inf(1)
-		tMaxY = math.Inf(1)
-	} else {
-		tDeltaY = 1.0 / math.Abs(ray.Direction.Y)
-		if ray.Direction.Y > 0 {
-			tMaxY = (float64(y) + 1.0 - ray.Origin.Y) / ray.Direction.Y
-		} else {
-			tMaxY = (ray.Origin.Y - float64(y)) / (-ray.Direction.Y)
-		}
-	}
-
-	var tDeltaZ, tMaxZ float64
-	if ray.Direction.Z == 0 {
-		tDeltaZ = math.Inf(1)
-		tMaxZ = math.Inf(1)
-	} else {
-		tDeltaZ = 1.0 / math.Abs(ray.Direction.Z)
-		if ray.Direction.Z > 0 {
-			tMaxZ = (float64(z) + 1.0 - ray.Origin.Z) / ray.Direction.Z
-		} else {
-			tMaxZ = (ray.Origin.Z - float64(z)) / (-ray.Direction.Z)
-		}
-	}
+	walker := newVoxelRayWalker(ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X, ray.Direction.Y, ray.Direction.Z)
 
 	for {
-		// Check distance
+		x, y, z := walker.cell()
 		coord := models.V3{X: float64(x), Y: float64(y), Z: float64(z)}
-		distToOrigin := coord.DistanceTo(ray.Origin)
-		if distToOrigin > R {
+		if coord.DistanceTo(ray.Origin) > R {
 			return models.V3{}, false
 		}
 
-		// Hit detection
 		if a.isObscuring(coord, world) {
 			return coord, true
 		}
 
-		// a.logf("[traceRay] Stepping from voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
-		// Step to next voxel - handle ties by stepping all axes at the minimum tMax
-		minT := math.Min(math.Min(tMaxX, tMaxY), tMaxZ)
-		const epsilon = 1e-6
-		if math.Abs(tMaxX-minT) < epsilon {
-			x += stepX
-			tMaxX += tDeltaX
-		}
-		if math.Abs(tMaxY-minT) < epsilon {
-			y += stepY
-			tMaxY += tDeltaY
-		}
-		if math.Abs(tMaxZ-minT) < epsilon {
-			z += stepZ
-			tMaxZ += tDeltaZ
-		}
-		// a.logf("[traceRay] Stepping to voxel (%d, %d, %d), tMaxX %.02f, tMaxY %.02f, tMaxZ %.02f, distance %.2f", x, y, z, tMaxX, tMaxY, tMaxZ, distToOrigin)
+		walker.advance()
 	}
-}
-
-func signInt(f float64) int {
-	if f > 0 {
-		return 1
-	}
-	if f < 0 {
-		return -1
-	}
-	return 0
 }
 
 // getSurfaceTargets generates uniformly distributed points on a SPHERE of radius R,

@@ -662,13 +662,7 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 	dirY := dy / dist
 	dirZ := dz / dist
 
-	ix := math.Floor(ox)
-	iy := math.Floor(oy)
-	iz := math.Floor(oz)
-
-	tMaxX, tDeltaX := initialRayStep(ox, dirX, int(ix))
-	tMaxY, tDeltaY := initialRayStep(oy, dirY, int(iy))
-	tMaxZ, tDeltaZ := initialRayStep(oz, dirZ, int(iz))
+	walker := newVoxelRayWalker(ox, oy, oz, dirX, dirY, dirZ)
 
 	maxSteps := int(dist*3) + 8
 	for stepCount := 0; stepCount < maxSteps; stepCount++ {
@@ -676,7 +670,8 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 			return false, ctx.Err()
 		}
 		if stepCount > 0 {
-			blocked, err := a.blockOccludesRay(ctx, int(ix), int(iy), int(iz), ox, oy, oz, dirX, dirY, dirZ, dist)
+			ix, iy, iz := walker.cell()
+			blocked, err := a.blockOccludesRay(ctx, ix, iy, iz, ox, oy, oz, dirX, dirY, dirZ, dist)
 			if err != nil {
 				return false, err
 			}
@@ -685,7 +680,6 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 			}
 		}
 
-		nextT := minFloat64(tMaxX, tMaxY, tMaxZ)
 		// Compare with a small epsilon, not a strict >: when the target sits
 		// exactly on an integer voxel boundary (e.g. a dropped item summoned
 		// at Y=0.0, resting exactly on the floor block's top face), nextT can
@@ -696,19 +690,10 @@ func (a *agent) HasLineOfSight(ctx context.Context, tx, ty, tz float64) (bool, e
 		// overshoot voxel falsely reports the target as not visible — found
 		// live via testing/lookaround_test.go summoning an item at integer
 		// coordinates right next to the bot.
-		if nextT > dist-1e-6 {
+		if walker.nextT() > dist-1e-6 {
 			break
 		}
-		if tMaxX <= tMaxY && tMaxX <= tMaxZ {
-			ix += stepSign(dirX)
-			tMaxX += tDeltaX
-		} else if tMaxY <= tMaxX && tMaxY <= tMaxZ {
-			iy += stepSign(dirY)
-			tMaxY += tDeltaY
-		} else {
-			iz += stepSign(dirZ)
-			tMaxZ += tDeltaZ
-		}
+		walker.advance()
 	}
 
 	return true, nil
@@ -860,7 +845,23 @@ func shellOffsets(r int) [][3]int {
 			}
 		}
 	}
+
+	// A shell's own cells aren't equidistant - face centers sit at Euclidean
+	// distance r, corners at r*sqrt(3). Sorting nearest-first lets
+	// FindVisibleBlock's within-shell distance pruning (skip the LOS
+	// raycast once a cell can no longer beat the best match found so far)
+	// start paying off as early as possible within the shell, instead of
+	// only once the whole shell has been scanned.
+	sort.Slice(offsets, func(i, j int) bool {
+		return offsetDistSq(offsets[i]) < offsetDistSq(offsets[j])
+	})
 	return offsets
+}
+
+// offsetDistSq is the squared Euclidean length of a shellOffsets cell,
+// used only to order cells within a shell nearest-first - see shellOffsets.
+func offsetDistSq(off [3]int) int {
+	return off[0]*off[0] + off[1]*off[1] + off[2]*off[2]
 }
 
 // findVisibleBlockTimeout bounds one FindVisibleBlock call's own search,
@@ -960,6 +961,16 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 				}
 			}
 
+			d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
+			if d >= bestDist {
+				// Already can't beat the best match found so far, in this
+				// shell or an earlier one - skip the LOS raycast (the
+				// expensive part: up to several surface-point rays) rather
+				// than pay for a visibility check whose answer can't
+				// change the result either way.
+				continue
+			}
+
 			visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, cx, cy, cz)
 			if err != nil {
 				if findVisibleBlockTimedOut(ctx, callerCtx) {
@@ -970,12 +981,9 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 			if !visible {
 				continue
 			}
-			d := pos.DistanceTo(models.V3{X: cx + 0.5, Y: cy + 0.5, Z: cz + 0.5})
 
-			if d < bestDist {
-				bestDist = d
-				bestX, bestY, bestZ = cx, cy, cz
-			}
+			bestDist = d
+			bestX, bestY, bestZ = cx, cy, cz
 		}
 	}
 	if bestDist == math.MaxFloat64 {
@@ -1486,13 +1494,7 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 	dirY := dy / dist
 	dirZ := dz / dist
 
-	ix := int(math.Floor(ox))
-	iy := int(math.Floor(oy))
-	iz := int(math.Floor(oz))
-
-	tMaxX, tDeltaX := initialRayStep(ox, dirX, ix)
-	tMaxY, tDeltaY := initialRayStep(oy, dirY, iy)
-	tMaxZ, tDeltaZ := initialRayStep(oz, dirZ, iz)
+	walker := newVoxelRayWalker(ox, oy, oz, dirX, dirY, dirZ)
 
 	blocks := make([]losBlock, 0, int(dist)+extraBlocks+4)
 	reachedTarget := false
@@ -1503,6 +1505,7 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 		if ctx.Err() != nil {
 			break
 		}
+		ix, iy, iz := walker.cell()
 		blocks = append(blocks, losBlock{x: ix, y: iy, z: iz, name: a.BlockNameAt(ix, iy, iz)})
 		if ix == targetX && iy == targetY && iz == targetZ && !reachedTarget {
 			reachedTarget = true
@@ -1517,20 +1520,10 @@ func (a *agent) collectLineOfSightBlocks(ctx context.Context, ox, oy, oz float64
 			}
 		}
 
-		nextT := minFloat64(tMaxX, tMaxY, tMaxZ)
-		if nextT > dist && !reachedTarget {
+		if walker.nextT() > dist && !reachedTarget {
 			break
 		}
-		if tMaxX <= tMaxY && tMaxX <= tMaxZ {
-			ix += int(stepSign(dirX))
-			tMaxX += tDeltaX
-		} else if tMaxY <= tMaxX && tMaxY <= tMaxZ {
-			iy += int(stepSign(dirY))
-			tMaxY += tDeltaY
-		} else {
-			iz += int(stepSign(dirZ))
-			tMaxZ += tDeltaZ
-		}
+		walker.advance()
 	}
 
 	return blocks
@@ -1584,24 +1577,19 @@ func (a *agent) hasLineOfSightForAccessToPoint(ctx context.Context, targetX, tar
 		return true, nil // Same block, always visible
 	}
 
-	ix := math.Floor(ox)
-	iy := math.Floor(oy)
-	iz := math.Floor(oz)
-
-	tMaxX, tDeltaX := initialRayStep(ox, dirX, int(ix))
-	tMaxY, tDeltaY := initialRayStep(oy, dirY, int(iy))
-	tMaxZ, tDeltaZ := initialRayStep(oz, dirZ, int(iz))
+	walker := newVoxelRayWalker(ox, oy, oz, dirX, dirY, dirZ)
 
 	maxSteps := int(dist*3) + 8
 	for stepCount := range maxSteps {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
-		if ix == targetX && iy == targetY && iz == targetZ {
+		cx, cy, cz := walker.cell()
+		if float64(cx) == targetX && float64(cy) == targetY && float64(cz) == targetZ {
 			return true, nil
 		}
 		if stepCount > 0 {
-			blocked, err := a.blockOccludesRayAccess(ctx, ix, iy, iz, ox, oy, oz, dirX, dirY, dirZ, dist)
+			blocked, err := a.blockOccludesRayAccess(ctx, float64(cx), float64(cy), float64(cz), ox, oy, oz, dirX, dirY, dirZ, dist)
 			if err != nil {
 				return false, err
 			}
@@ -1610,20 +1598,10 @@ func (a *agent) hasLineOfSightForAccessToPoint(ctx context.Context, targetX, tar
 			}
 		}
 
-		nextT := minFloat64(tMaxX, tMaxY, tMaxZ)
-		if nextT > dist {
+		if walker.nextT() > dist {
 			break
 		}
-		if tMaxX <= tMaxY && tMaxX <= tMaxZ {
-			ix += stepSign(dirX)
-			tMaxX += tDeltaX
-		} else if tMaxY <= tMaxX && tMaxY <= tMaxZ {
-			iy += stepSign(dirY)
-			tMaxY += tDeltaY
-		} else {
-			iz += stepSign(dirZ)
-			tMaxZ += tDeltaZ
-		}
+		walker.advance()
 	}
 
 	return true, nil
@@ -1823,42 +1801,6 @@ func raySlab(origin, dir, min, max float64, tmin, tmax *float64) bool {
 		*tmax = t2
 	}
 	return *tmax >= *tmin
-}
-
-func initialRayStep(origin, dir float64, cell int) (tMax, tDelta float64) {
-	if dir > 0 {
-		next := float64(cell+1) - origin
-		tMax = next / dir
-		tDelta = 1.0 / dir
-		return tMax, tDelta
-	}
-	if dir < 0 {
-		next := float64(cell) - origin
-		tMax = next / dir
-		tDelta = -1.0 / dir
-		return tMax, tDelta
-	}
-	return math.Inf(1), math.Inf(1)
-}
-
-func stepSign(v float64) float64 {
-	if v > 0 {
-		return float64(1)
-	}
-	if v < 0 {
-		return float64(-1)
-	}
-	return float64(0)
-}
-
-func minFloat64(a, b, c float64) float64 {
-	if a <= b && a <= c {
-		return a
-	}
-	if b <= a && b <= c {
-		return b
-	}
-	return c
 }
 
 func clampFloat64(v, min, max float64) float64 {
