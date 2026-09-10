@@ -1,7 +1,9 @@
 package v1_21_2
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -14,6 +16,7 @@ import (
 // configurationHandler implements common.ConfigurationHandler for 1.21.2.
 type configurationHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendFinishConfiguration sends a finish configuration packet to transition to play state.
@@ -21,7 +24,7 @@ type configurationHandler struct {
 func (c *configurationHandler) SendFinishConfiguration(conn models.PacketWriter) error {
 	pkt := sb.NewFinishConfiguration()
 
-	log.Printf("[v1.21.2 Configuration] SendFinishConfiguration")
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] SendFinishConfiguration"))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "FinishConfiguration", Cause: err}
@@ -35,7 +38,7 @@ func (c *configurationHandler) SendKeepAlive(conn models.PacketWriter, id int64)
 	pkt := sb.NewKeepAlive()
 	pkt.KeepAliveId = pk.Long(id)
 
-	log.Printf("[v1.21.2 Configuration] SendKeepAlive: id=%d", id)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] SendKeepAlive: id=%d", id))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "KeepAlive", Cause: err}
@@ -49,7 +52,7 @@ func (c *configurationHandler) SendPong(conn models.PacketWriter, pingID int32) 
 	pkt := sb.NewPong()
 	pkt.Id = pk.Int(pingID)
 
-	log.Printf("[v1.21.2 Configuration] SendPong: pingID=%d", pingID)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] SendPong: pingID=%d", pingID))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "Pong", Cause: err}
@@ -64,7 +67,7 @@ func (c *configurationHandler) SendClientInformation(conn models.PacketWriter, i
 	// Client information is version-specific and may need special handling
 	// For now, this is a placeholder that would need to be implemented based on
 	// the specific protocol requirements for 1.21.2
-	log.Printf("[v1.21.2 Configuration] SendClientInformation: locale=%s viewDistance=%d", info.Locale, info.ViewDistance)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] SendClientInformation: locale=%s viewDistance=%d", info.Locale, info.ViewDistance))
 
 	// TODO: Implement client information packet construction
 	// This may require custom payload or a specific packet type
@@ -78,7 +81,7 @@ func (c *configurationHandler) SendResourcePackResponse(conn models.PacketWriter
 	pkt.Uuid = pk.UUID(uuid)
 	pkt.Result = pk.VarInt(result)
 
-	log.Printf("[v1.21.2 Configuration] SendResourcePackResponse: uuid=%x result=%d", uuid, result)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] SendResourcePackResponse: uuid=%x result=%d", uuid, result))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "ResourcePackReceive", Cause: err}
@@ -109,7 +112,7 @@ func (c *configurationHandler) ParseRegistryData(p pk.Packet) (registryID string
 		}
 	}
 
-	log.Printf("[v1.21.2 Configuration] ParseRegistryData: registryID=%s entriesCount=%d", registryID, len(entries))
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] ParseRegistryData: registryID=%s entriesCount=%d", registryID, len(entries)))
 
 	return
 }
@@ -125,7 +128,7 @@ func (c *configurationHandler) ParseKeepAlive(p pk.Packet) (id int64, err error)
 
 	id = int64(pkt.KeepAliveId)
 
-	log.Printf("[v1.21.2 Configuration] ParseKeepAlive: id=%d", id)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] ParseKeepAlive: id=%d", id))
 
 	return
 }
@@ -141,7 +144,7 @@ func (c *configurationHandler) ParsePing(p pk.Packet) (pingID int32, err error) 
 
 	pingID = int32(pkt.Id)
 
-	log.Printf("[v1.21.2 Configuration] ParsePing: pingID=%d", pingID)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] ParsePing: pingID=%d", pingID))
 
 	return
 }
@@ -158,7 +161,7 @@ func (c *configurationHandler) ParseDisconnect(p pk.Packet) (reason string, err 
 	// The reason is an AnonymousNBT field, extract text from it
 	reason = extractNBTString(pkt.Reason)
 
-	log.Printf("[v1.21.2 Configuration] ParseDisconnect: reason=%s", reason)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.2 Configuration] ParseDisconnect: reason=%s", reason))
 
 	return
 }

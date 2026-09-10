@@ -22,7 +22,7 @@ func TestOnUpdateRecipes_ParsesAndStores(t *testing.T) {
 			require.NoError(t, err)
 
 			// Parse using version handler
-			versionHandler, err := common.GetVersionHandler(version)
+			versionHandler, err := common.GetVersionHandler(version, nil)
 			require.NoError(t, err)
 
 			payload, err := versionHandler.Play().ParseUpdateRecipes(pkt)
@@ -96,7 +96,7 @@ func TestExportLastUpdateRecipesAsJSON(t *testing.T) {
 			require.NoError(t, err)
 
 			// Parse using version handler
-			versionHandler, err := common.GetVersionHandler(version)
+			versionHandler, err := common.GetVersionHandler(version, nil)
 			require.NoError(t, err)
 
 			payload, err := versionHandler.Play().ParseUpdateRecipes(pkt)

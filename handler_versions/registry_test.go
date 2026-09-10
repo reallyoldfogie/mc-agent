@@ -9,7 +9,7 @@ import (
 func TestV1215HandlerRegistered(t *testing.T) {
 	// The import of versions/v1_21_5 in registry.go should have triggered init()
 	// which registers the handler
-	handler, err := common.GetVersionHandler("1.21.5")
+	handler, err := common.GetVersionHandler("1.21.5", nil)
 	if err != nil {
 		t.Fatalf("Failed to get 1.21.5 handler: %v", err)
 	}

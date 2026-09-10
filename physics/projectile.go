@@ -1,7 +1,8 @@
 package physics
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -290,7 +291,7 @@ func FindOptimalAiming_OLD(pType models.ProjectileType, origin, target models.V3
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 	verticalDist := dy
 
-	log.Printf("[FindOptimalAiming] origin=(%.2f, %.2f, %.2f), target=(%.2f, %.2f, %.2f), horizontalDist=%.2f, verticalDist=%.2f", origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist)
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] origin=(%.2f, %.2f, %.2f), target=(%.2f, %.2f, %.2f), horizontalDist=%.2f, verticalDist=%.2f", origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist))
 	const (
 		maxPower = 1.0 // Always use full power
 		epsilon  = 0.5 // Tolerance for considering hits equivalent
@@ -411,14 +412,14 @@ func FindOptimalAiming_OLD(pType models.ProjectileType, origin, target models.V3
 	if minError == math.MaxFloat64 {
 		// No valid hit found - target is unreachable at this distance/elevation
 		// Log detailed info about the search space
-		log.Printf("[FindOptimalAiming] UNREACHABLE: No valid trajectory found for horizontalDist=%.2f, verticalDist=%.2f",
-			horizontalDist, verticalDist)
-		log.Printf("[FindOptimalAiming] Target bounds: X=[%.2f,%.2f], Y=[%.2f,%.2f], Z=[%.2f,%.2f]",
-			-0.5, 0.5, verticalDist-0.5, verticalDist+0.5, horizontalDist-0.5, horizontalDist+0.5)
-		log.Printf("[FindOptimalAiming] Pitch range tested: [%.1f, %.1f] with step %.1f",
-			minPitch, maxPitch, pitchStep)
-		log.Printf("[FindOptimalAiming] Projectile physics: speed=%.3f, gravity=%.3f, drag=%.3f",
-			projectilePhys.InitialSpeed, projectilePhys.Gravity, projectilePhys.Drag)
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] UNREACHABLE: No valid trajectory found for horizontalDist=%.2f, verticalDist=%.2f",
+			horizontalDist, verticalDist))
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Target bounds: X=[%.2f,%.2f], Y=[%.2f,%.2f], Z=[%.2f,%.2f]",
+			-0.5, 0.5, verticalDist-0.5, verticalDist+0.5, horizontalDist-0.5, horizontalDist+0.5))
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Pitch range tested: [%.1f, %.1f] with step %.1f",
+			minPitch, maxPitch, pitchStep))
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Projectile physics: speed=%.3f, gravity=%.3f, drag=%.3f",
+			projectilePhys.InitialSpeed, projectilePhys.Gravity, projectilePhys.Drag))
 		return bestPitch, bestPower, minError, []models.TrajectoryPoint{} // Return empty trajectory
 	}
 
@@ -427,8 +428,8 @@ func FindOptimalAiming_OLD(pType models.ProjectileType, origin, target models.V3
 	localTarget := models.V3{X: 0, Y: verticalDist, Z: horizontalDist}
 	trimmedTrajectory := TrimTrajectoryToTarget(bestTrajectory, localTarget)
 
-	log.Printf("[FindOptimalAiming] Final: pitch=%.1f, power=%.2f, minError=%.2f, models.TrajectoryPoints=%d (trimmed from %d)",
-		bestPitch, bestPower, minError, len(trimmedTrajectory), len(bestTrajectory))
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Final: pitch=%.1f, power=%.2f, minError=%.2f, models.TrajectoryPoints=%d (trimmed from %d)",
+		bestPitch, bestPower, minError, len(trimmedTrajectory), len(bestTrajectory)))
 
 	return bestPitch, bestPower, minError, trimmedTrajectory
 }
@@ -471,20 +472,20 @@ func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (p
 	dz := target.Z - origin.Z
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 	verticalDist := target.Y - origin.Y
-	log.Printf("[FindOptimalAiming] SolveAim input: origin=(%.2f,%.2f,%.2f), target=(%.2f,%.2f,%.2f), horizontalDist=%.2f, verticalDist=%.2f",
-		origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist)
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] SolveAim input: origin=(%.2f,%.2f,%.2f), target=(%.2f,%.2f,%.2f), horizontalDist=%.2f, verticalDist=%.2f",
+		origin.X, origin.Y, origin.Z, target.X, target.Y, target.Z, horizontalDist, verticalDist))
 
 	lowSolution, err := SolveAim(origin, target, props, false) // preferHighArc = false for low-angle preference
 	if err != nil {
 		// Target unreachable
-		log.Printf("[FindOptimalAiming] (low) New implementation: target unreachable")
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] (low) New implementation: target unreachable"))
 		return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
 	}
 
 	highSolution, err := SolveAim(origin, target, props, true)
 	if err != nil {
 		// Target unreachable
-		log.Printf("[FindOptimalAiming] (high) New implementation: target unreachable")
+		slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] (high) New implementation: target unreachable"))
 		return 0, 1.0, math.MaxFloat64, []models.TrajectoryPoint{}
 	}
 
@@ -504,7 +505,7 @@ func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (p
 		copy(trimmed, highTraj[:endIndex])
 		highTraj = trimmed
 	}
-	log.Printf("[FindOptimalAiming] High arc: pitch=%.2f°, errorY=%.4f, points=%d", highPitch, highErr, len(highTraj))
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] High arc: pitch=%.2f°, errorY=%.4f, points=%d", highPitch, highErr, len(highTraj)))
 
 	// Evaluate low arc
 	lowPitch = rad2deg(lowSolution.PitchRad)
@@ -517,14 +518,14 @@ func FindOptimalAiming(pType models.ProjectileType, origin, target models.V3) (p
 		copy(trimmed, lowTraj[:endIndex])
 		lowTraj = trimmed
 	}
-	log.Printf("[FindOptimalAiming] Low arc: pitch=%.2f°, errorY=%.4f, points=%d", lowPitch, lowErr, len(lowTraj))
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Low arc: pitch=%.2f°, errorY=%.4f, points=%d", lowPitch, lowErr, len(lowTraj)))
 
 	// Prefer low arc solution (more reliable)
 	pitch = lowPitch
 	power = 1.0
 	minError = lowErr
 	trajectory = lowTraj
-	log.Printf("[FindOptimalAiming] Selected LOW arc: pitch=%.2f°, errorY=%.4f", pitch, minError)
+	slog.Default().Debug(fmt.Sprintf("[FindOptimalAiming] Selected LOW arc: pitch=%.2f°, errorY=%.4f", pitch, minError))
 	return pitch, power, minError, trajectory
 }
 
@@ -678,8 +679,8 @@ func ValidateTrajectory(trajectory []models.TrajectoryPoint, validator Trajector
 					// If this block is at the target location, trajectory is valid!
 					if target != nil && checkX == targetBlockX && checkY == targetBlockY && checkZ == targetBlockZ {
 						// Hit the target block successfully
-						log.Printf("[ValidateTrajectory] Trajectory hits target at (%.2f, %.2f, %.2f), tick %d",
-							point.Pos.X, point.Pos.Y, point.Pos.Z, point.Tick)
+						slog.Default().Debug(fmt.Sprintf("[ValidateTrajectory] Trajectory hits target at (%.2f, %.2f, %.2f), tick %d",
+							point.Pos.X, point.Pos.Y, point.Pos.Z, point.Tick))
 						return true, nil, "" // Success - trajectory hits target
 					}
 
@@ -688,8 +689,8 @@ func ValidateTrajectory(trajectory []models.TrajectoryPoint, validator Trajector
 						if projBox.Intersects(collisionBox) {
 							// Collision detected with non-target block
 							pos := point.Pos
-							log.Printf("[ValidateTrajectory] Trajectory blocked at (%.2f, %.2f, %.2f), tick %d, block at (%d, %d, %d), stateID %d",
-								pos.X, pos.Y, pos.Z, point.Tick, checkX, checkY, checkZ, stateID)
+							slog.Default().Debug(fmt.Sprintf("[ValidateTrajectory] Trajectory blocked at (%.2f, %.2f, %.2f), tick %d, block at (%d, %d, %d), stateID %d",
+								pos.X, pos.Y, pos.Z, point.Tick, checkX, checkY, checkZ, stateID))
 							return false, &pos, blockName
 						}
 					}

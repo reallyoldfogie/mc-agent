@@ -2,7 +2,7 @@ package models
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 )
@@ -45,15 +45,35 @@ type BasicMetadataProcessor struct {
 	// poseRegistry maps EntityPose varint ordinals to lowercased names.
 	// May be nil; callers without a registry get DefaultEntityPoseRegistry on demand.
 	poseRegistry *EntityPoseRegistry
+	// logger receives this processor's diagnostic output, attributed to the
+	// owning agent - see docs/bugs/global-log-output-not-per-agent.md. This
+	// package can't import utils (utils itself imports models), so unlike
+	// other packages' constructors this one can't call utils.SafeLogger/use
+	// utils.LevelDebugVerbose - a nil logger falls back to slog.Default()
+	// inline below, and call sites use plain Debug rather than DebugVerbose.
+	logger *slog.Logger
+}
+
+// safeLoggerLocal returns logger, or slog.Default() if nil. A package-local
+// copy of utils.SafeLogger — this package can't import utils (utils itself
+// imports models), so every constructor/call site here that needs a
+// nil-safe logger uses this instead.
+func safeLoggerLocal(logger *slog.Logger) *slog.Logger {
+	if logger == nil {
+		return slog.Default()
+	}
+	return logger
 }
 
 // NewBasicMetadataProcessor creates a new metadata processor with an entity registry.
 // The pose registry is seeded from the built-in fallback; use SetPoseRegistry to
 // inject a version-specific one loaded from poses.json.
-func NewBasicMetadataProcessor(registry *EntityRegistry) *BasicMetadataProcessor {
+func NewBasicMetadataProcessor(registry *EntityRegistry, logger *slog.Logger) *BasicMetadataProcessor {
+	logger = safeLoggerLocal(logger)
 	return &BasicMetadataProcessor{
 		entityRegistry: registry,
 		poseRegistry:   DefaultEntityPoseRegistry(),
+		logger:         logger,
 	}
 }
 
@@ -79,8 +99,8 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 	}
 
 	// Log the metadata entry
-	log.Printf("[Metadata] EntityID=%d Type=%s Key=%d HandlerID=%s Value=%v",
-		entityID, entityType, entry.Key, entry.HandlerID.String(), entry.Value)
+	safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Type=%s Key=%d HandlerID=%s Value=%v",
+		entityID, entityType, entry.Key, entry.HandlerID.String(), entry.Value))
 
 	// Extract common values and populate result
 	switch entry.HandlerID {
@@ -123,8 +143,8 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 				float64(val[2]),
 			}
 			result.HasVelocity = true
-			log.Printf("[Metadata] EntityID=%d Vector3F velocity: (%.4f, %.4f, %.4f)",
-				entityID, val[0], val[1], val[2])
+			safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Vector3F velocity: (%.4f, %.4f, %.4f)",
+				entityID, val[0], val[1], val[2]))
 		}
 
 	case HandlerEntityPose:
@@ -139,18 +159,18 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 	case HandlerLazyEntityReference:
 		// Optional entity reference - may be nil or contain entity ID
 		if val, ok := entry.Value.(*pk.VarInt); ok && val != nil {
-			log.Printf("[Metadata] EntityID=%d references entity %d", entityID, *val)
+			safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d references entity %d", entityID, *val))
 		}
 
 	case HandlerString:
 		if val, ok := entry.Value.(*pk.String); ok {
-			log.Printf("[Metadata] EntityID=%d string value: %s", entityID, *val)
+			safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d string value: %s", entityID, *val))
 		}
 
 	default:
 		// Log other types generically
-		log.Printf("[Metadata] EntityID=%d Key=%d Handler=%s (type not specially handled)",
-			entityID, entry.Key, entry.HandlerID.String())
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Key=%d Handler=%s (type not specially handled)",
+			entityID, entry.Key, entry.HandlerID.String()))
 	}
 
 	return result, nil
@@ -161,7 +181,7 @@ func (p *BasicMetadataProcessor) handleByteMetadata(entityID int32, key int32, v
 	switch key {
 	case 0:
 		// Entity flags
-		log.Printf("[Metadata] EntityID=%d Flags: onFire=%v sneaking=%v sprinting=%v swimming=%v invisible=%v glowing=%v elytra=%v",
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Flags: onFire=%v sneaking=%v sprinting=%v swimming=%v invisible=%v glowing=%v elytra=%v",
 			entityID,
 			(value&0x01) != 0,
 			(value&0x02) != 0,
@@ -170,11 +190,11 @@ func (p *BasicMetadataProcessor) handleByteMetadata(entityID int32, key int32, v
 			(value&0x10) != 0,
 			(value&0x20) != 0,
 			(value&0x40) != 0,
-		)
+		))
 
 	case 18:
 		// Player skin parts visibility
-		log.Printf("[Metadata] EntityID=%d Skin parts: cape=%v jacket=%v leftSleeve=%v rightSleeve=%v leftPant=%v rightPant=%v hat=%v",
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Skin parts: cape=%v jacket=%v leftSleeve=%v rightSleeve=%v leftPant=%v rightPant=%v hat=%v",
 			entityID,
 			(value&0x01) != 0,
 			(value&0x02) != 0,
@@ -183,10 +203,10 @@ func (p *BasicMetadataProcessor) handleByteMetadata(entityID int32, key int32, v
 			(value&0x10) != 0,
 			(value&0x20) != 0,
 			(value&0x40) != 0,
-		)
+		))
 
 	default:
-		log.Printf("[Metadata] EntityID=%d Key=%d Byte value: %d (0x%02x)", entityID, key, value, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Key=%d Byte value: %d (0x%02x)", entityID, key, value, value))
 	}
 }
 
@@ -194,17 +214,17 @@ func (p *BasicMetadataProcessor) handleByteMetadata(entityID int32, key int32, v
 func (p *BasicMetadataProcessor) handleIntegerMetadata(entityID int32, key int32, value int32) {
 	switch key {
 	case 6:
-		log.Printf("[Metadata] EntityID=%d Freezing ticks: %d", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Freezing ticks: %d", entityID, value))
 	case 8:
-		log.Printf("[Metadata] EntityID=%d Air supply: %d ticks", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Air supply: %d ticks", entityID, value))
 	case 11:
-		log.Printf("[Metadata] EntityID=%d Arrow/Potion count: %d", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Arrow/Potion count: %d", entityID, value))
 	case 12:
-		log.Printf("[Metadata] EntityID=%d Bee stinger count: %d", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Bee stinger count: %d", entityID, value))
 	case 17:
-		log.Printf("[Metadata] EntityID=%d Player score: %d", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Player score: %d", entityID, value))
 	default:
-		log.Printf("[Metadata] EntityID=%d Key=%d Integer value: %d", entityID, key, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Key=%d Integer value: %d", entityID, key, value))
 	}
 }
 
@@ -212,11 +232,11 @@ func (p *BasicMetadataProcessor) handleIntegerMetadata(entityID int32, key int32
 func (p *BasicMetadataProcessor) handleFloatMetadata(entityID int32, key int32, value float32) {
 	switch key {
 	case 9:
-		log.Printf("[Metadata] EntityID=%d Health: %.1f / 20.0 half-hearts", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Health: %.1f / 20.0 half-hearts", entityID, value))
 	case 16:
-		log.Printf("[Metadata] EntityID=%d Absorption hearts: %.1f", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Absorption hearts: %.1f", entityID, value))
 	default:
-		log.Printf("[Metadata] EntityID=%d Key=%d Float value: %.6f", entityID, key, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Key=%d Float value: %.6f", entityID, key, value))
 	}
 }
 
@@ -224,15 +244,15 @@ func (p *BasicMetadataProcessor) handleFloatMetadata(entityID int32, key int32, 
 func (p *BasicMetadataProcessor) handleBooleanMetadata(entityID int32, key int32, value bool) {
 	switch key {
 	case 2:
-		log.Printf("[Metadata] EntityID=%d Custom name visible: %v", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Custom name visible: %v", entityID, value))
 	case 3:
-		log.Printf("[Metadata] EntityID=%d Silent: %v", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Silent: %v", entityID, value))
 	case 4:
-		log.Printf("[Metadata] EntityID=%d No gravity: %v", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d No gravity: %v", entityID, value))
 	case 10:
-		log.Printf("[Metadata] EntityID=%d Potion effect ambient: %v", entityID, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Potion effect ambient: %v", entityID, value))
 	default:
-		log.Printf("[Metadata] EntityID=%d Key=%d Boolean value: %v", entityID, key, value)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Key=%d Boolean value: %v", entityID, key, value))
 	}
 }
 
@@ -246,10 +266,10 @@ func (p *BasicMetadataProcessor) handlePoseMetadata(entityID int32, pose int32) 
 	}
 	name, known := reg.Name(pose)
 	if !known {
-		log.Printf("[Metadata] EntityID=%d Pose: %s (%d) — ordinal not in registry (count=%d)",
-			entityID, name, pose, reg.Count())
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Pose: %s (%d) — ordinal not in registry (count=%d)",
+			entityID, name, pose, reg.Count()))
 	} else {
-		log.Printf("[Metadata] EntityID=%d Pose: %s (%d)", entityID, name, pose)
+		safeLoggerLocal(p.logger).Debug(fmt.Sprintf("[Metadata] EntityID=%d Pose: %s (%d)", entityID, name, pose))
 	}
 	return name
 }

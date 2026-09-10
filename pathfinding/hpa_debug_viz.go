@@ -3,11 +3,12 @@ package pathfinding
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // RCONSummoner is a minimal interface for summoning entities
@@ -28,25 +29,28 @@ type HPADebugVisualizer struct {
 	rcon      RCONSummoner
 	enabled   bool
 	pathBlock string
+	logger    *slog.Logger
 }
 
 // NewHPADebugVisualizer creates a new debug visualizer
-func NewHPADebugVisualizer(rcon RCONSummoner, cfg HPADebugVisualizerConfig) *HPADebugVisualizer {
+func NewHPADebugVisualizer(rcon RCONSummoner, cfg HPADebugVisualizerConfig, logger *slog.Logger) *HPADebugVisualizer {
+	logger = utils.SafeLogger(logger)
 	enabled := os.Getenv("MC_AGENT_DEBUG_HPA") != ""
 	if enabled && rcon == nil {
-		log.Printf("[HPA Debug] MC_AGENT_DEBUG_HPA set but no RCON available, visualization disabled")
+		logger.Warn("[HPA Debug] MC_AGENT_DEBUG_HPA set but no RCON available, visualization disabled")
 		enabled = false
 	}
 
-	pathBlock := resolveHPADebugPathBlock(cfg.PathBlock, cfg.PathColor)
+	pathBlock := resolveHPADebugPathBlock(logger, cfg.PathBlock, cfg.PathColor)
 	if enabled {
-		log.Printf("[HPA Debug] Visualization enabled (MC_AGENT_DEBUG_HPA set, path block=%s)", pathBlock)
+		logger.Info("[HPA Debug] visualization enabled", "pathBlock", pathBlock)
 	}
 
 	return &HPADebugVisualizer{
 		rcon:      rcon,
 		enabled:   enabled,
 		pathBlock: pathBlock,
+		logger:    logger,
 	}
 }
 
@@ -61,7 +65,7 @@ func (v *HPADebugVisualizer) VisualizeEntrances(ctx context.Context, entrances [
 		return
 	}
 
-	log.Printf("[HPA Debug] Visualizing %d entrances with red glass", len(entrances))
+	utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug] Visualizing %d entrances with red glass", len(entrances)))
 
 	for i, entrance := range entrances {
 		// Show Pos1 as red stained glass
@@ -78,14 +82,14 @@ func (v *HPADebugVisualizer) VisualizeEntrances(ctx context.Context, entrances [
 		v.rcon.SummonEntity(ctx, entrance.Pos1.X+0.5, entrance.Pos1.Y+1.25, entrance.Pos1.Z+0.5, "text_display", nbt)
 
 		if i < 5 || (i+1)%10 == 0 {
-			log.Printf("[HPA Debug]   Entrance %d: (%.0f,%.0f,%.0f) <-> (%.0f,%.0f,%.0f)",
+			utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug]   Entrance %d: (%.0f,%.0f,%.0f) <-> (%.0f,%.0f,%.0f)",
 				i, entrance.Pos1.X, entrance.Pos1.Y, entrance.Pos1.Z,
-				entrance.Pos2.X, entrance.Pos2.Y, entrance.Pos2.Z)
+				entrance.Pos2.X, entrance.Pos2.Y, entrance.Pos2.Z))
 		}
 	}
 
 	if len(entrances) > 5 {
-		log.Printf("[HPA Debug]   ... and %d more entrances", len(entrances)-5)
+		utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug]   ... and %d more entrances", len(entrances)-5))
 	}
 }
 
@@ -93,18 +97,18 @@ func buildMultilineTextDisplay(in []string) string {
 	return strings.Join(in, "\\n")
 }
 
-func resolveHPADebugPathBlock(block, color string) string {
+func resolveHPADebugPathBlock(logger *slog.Logger, block, color string) string {
 	if normalized, ok := normalizeHPADebugBlock(block); ok {
 		return normalized
 	}
 	if block != "" {
-		log.Printf("[HPA Debug] Invalid path debug block %q; falling back to color/default", block)
+		logger.Warn("[HPA Debug] invalid path debug block, falling back to color/default", "block", block)
 	}
 	if normalized, ok := blockFromHPADebugColor(color); ok {
 		return normalized
 	}
 	if color != "" {
-		log.Printf("[HPA Debug] Invalid path debug color %q; falling back to default", color)
+		logger.Warn("[HPA Debug] invalid path debug color, falling back to default", "color", color)
 	}
 	return "minecraft:lime_stained_glass"
 }
@@ -158,7 +162,7 @@ func (v *HPADebugVisualizer) VisualizePath(ctx context.Context, path *Path) {
 		return
 	}
 
-	log.Printf("[HPA Debug] Visualizing path with %d steps using %s", len(path.Steps), v.pathBlock)
+	utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug] Visualizing path with %d steps using %s", len(path.Steps), v.pathBlock))
 
 	for i, step := range path.Steps {
 		// Jump movements already have centered coordinates (X+0.5, Z+0.5)
@@ -182,13 +186,13 @@ func (v *HPADebugVisualizer) VisualizePath(ctx context.Context, path *Path) {
 		v.rcon.SummonEntity(ctx, visX, step.Position.Y+1.5, visZ, "text_display", nbt)
 
 		if i < 10 || (i+1)%5 == 0 {
-			log.Printf("[HPA Debug]   Step %d: (%.0f,%.0f,%.0f) %s",
-				i, step.Position.X, step.Position.Y, step.Position.Z, step.Movement.String())
+			utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug]   Step %d: (%.0f,%.0f,%.0f) %s",
+				i, step.Position.X, step.Position.Y, step.Position.Z, step.Movement.String()))
 		}
 	}
 
 	if len(path.Steps) > 10 {
-		log.Printf("[HPA Debug]   ... and %d more steps", len(path.Steps)-10)
+		utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug]   ... and %d more steps", len(path.Steps)-10))
 	}
 }
 
@@ -198,7 +202,7 @@ func (v *HPADebugVisualizer) VisualizeAbstractPath(ctx context.Context, edges []
 		return
 	}
 
-	log.Printf("[HPA Debug] Visualizing abstract path with %d edges", len(edges))
+	utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug] Visualizing abstract path with %d edges", len(edges)))
 
 	// Show start as yellow glass
 	nbt := `{Tags:["hpa_debug"],block_state:{Name:"minecraft:yellow_stained_glass"},transformation:{translation:[0f,0f,0f], left_rotation:[0f,0f,0f,1f], scale:[0.6f,0.6f,0.6f], right_rotation:[0f,0f,0f,1f]}}`
@@ -218,8 +222,8 @@ func (v *HPADebugVisualizer) VisualizeAbstractPath(ctx context.Context, edges []
 			buildMultilineTextDisplay([]string{"EDGE", fmt.Sprintf("%.2f %.2f %.2f", pos.X, pos.Y, pos.Z)}))
 		v.rcon.SummonEntity(ctx, pos.X+0.5, pos.Y+2.5, pos.Z+0.5, "text_display", nbt)
 
-		log.Printf("[HPA Debug]   Edge %d -> (%.0f,%.0f,%.0f) cost=%.2f",
-			i, pos.X, pos.Y, pos.Z, edge.Cost)
+		utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug]   Edge %d -> (%.0f,%.0f,%.0f) cost=%.2f",
+			i, pos.X, pos.Y, pos.Z, edge.Cost))
 	}
 
 	// Show goal as cyan glass
@@ -237,5 +241,5 @@ func (v *HPADebugVisualizer) ClearVisualizations(ctx context.Context) {
 		return
 	}
 
-	log.Printf("[HPA Debug] To clear visualizations, run: /kill @e[type=block_display,tag=hpa_debug]")
+	utils.SafeLogger(v.logger).Debug(fmt.Sprintf("[HPA Debug] To clear visualizations, run: /kill @e[type=block_display,tag=hpa_debug]"))
 }

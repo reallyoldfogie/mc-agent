@@ -16,7 +16,7 @@ import (
 func TestState_ElytraStartsGlidingOnJumpWhileAirborne(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	state.SetVelocity(models.V3{Y: -0.5})
 	state.SetElytraEquipped(true)
@@ -39,7 +39,7 @@ func TestState_ElytraStartsGlidingOnJumpWhileAirborne(t *testing.T) {
 func TestState_ElytraRequiresFreshJumpPressAfterGroundJump(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	// Ground platform top surface is Y=1 (blocks placed at Y=0).
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetVelocity(models.V3{})
@@ -79,7 +79,7 @@ func TestState_ElytraRequiresFreshJumpPressAfterGroundJump(t *testing.T) {
 func TestState_ElytraDoesNotStartWithoutElytraEquipped(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 50, Z: 0})
 	state.SetVelocity(models.V3{Y: -0.5})
 	// SetElytraEquipped intentionally not called - defaults to false.
@@ -92,7 +92,7 @@ func TestState_ElytraDoesNotStartWithoutElytraEquipped(t *testing.T) {
 func TestState_ElytraDoesNotStartOnGround(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	// Ground platform top surface is Y=1 (blocks placed at Y=0).
 	state.SetPositionSimple(models.V3{X: 0, Y: 1, Z: 0})
 	state.SetVelocity(models.V3{})
@@ -114,7 +114,7 @@ func TestState_ElytraDoesNotStartOnGround(t *testing.T) {
 func TestState_ElytraStopsGlidingOnLanding(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	st := NewState(shapes).(*state)
+	st := NewState(shapes, nil).(*state)
 	st.Pos = models.V3{X: 0, Y: 1.1, Z: 0}
 	st.Vel = models.V3{Y: -0.05}
 	st.elytraEquipped = true
@@ -134,11 +134,11 @@ func TestState_ElytraStopsGlidingOnLanding(t *testing.T) {
 func TestState_ElytraGlideFallsSlowerThanNormalFalling(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	normal := NewState(shapes)
+	normal := NewState(shapes, nil)
 	normal.SetPositionSimple(models.V3{X: 0, Y: 100, Z: 0})
 	normal.SetVelocity(models.V3{Y: -0.5})
 
-	gliding := NewState(shapes)
+	gliding := NewState(shapes, nil)
 	gliding.SetPositionSimple(models.V3{X: 10, Y: 100, Z: 0})
 	gliding.SetVelocity(models.V3{Y: -0.5})
 	gliding.SetElytraEquipped(true)
@@ -161,7 +161,7 @@ func TestState_ElytraGlideFallsSlowerThanNormalFalling(t *testing.T) {
 func TestState_ElytraGlideCoversMoreHorizontalDistanceThanFalling(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	gliding := NewState(shapes)
+	gliding := NewState(shapes, nil)
 	gliding.SetPositionSimple(models.V3{X: 0, Y: 100, Z: 0})
 	gliding.SetVelocity(models.V3{Y: -0.5})
 	gliding.SetYaw(0) // looking south (+Z)
@@ -169,7 +169,7 @@ func TestState_ElytraGlideCoversMoreHorizontalDistanceThanFalling(t *testing.T) 
 	require.NoError(t, gliding.Tick(Inputs{Jump: true, Yaw: 0}, world))
 	require.True(t, gliding.IsGliding())
 
-	falling := NewState(shapes)
+	falling := NewState(shapes, nil)
 	falling.SetPositionSimple(models.V3{X: 10, Y: 100, Z: 0})
 	falling.SetVelocity(models.V3{Y: -0.5})
 
@@ -194,13 +194,13 @@ func TestState_ElytraGlideCoversMoreHorizontalDistanceThanFalling(t *testing.T) 
 func TestState_FireworkBoostRequiresGliding(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	boosted := NewState(shapes)
+	boosted := NewState(shapes, nil)
 	boosted.SetPositionSimple(models.V3{X: 0, Y: 100, Z: 0})
 	boosted.SetVelocity(models.V3{Y: -0.5})
 	boosted.SetFireworkBoosting(true)
 	// SetElytraEquipped/glide never triggered.
 
-	plain := NewState(shapes)
+	plain := NewState(shapes, nil)
 	plain.SetPositionSimple(models.V3{X: 10, Y: 100, Z: 0})
 	plain.SetVelocity(models.V3{Y: -0.5})
 
@@ -222,7 +222,7 @@ func TestState_FireworkBoostRequiresGliding(t *testing.T) {
 func TestState_FireworkBoostAcceleratesBeyondPlainGliding(t *testing.T) {
 	world, shapes := createFlatWorld()
 
-	boosted := NewState(shapes)
+	boosted := NewState(shapes, nil)
 	boosted.SetPositionSimple(models.V3{X: 0, Y: 200, Z: 0})
 	boosted.SetVelocity(models.V3{Y: -0.5})
 	boosted.SetYaw(0) // looking south (+Z)
@@ -231,7 +231,7 @@ func TestState_FireworkBoostAcceleratesBeyondPlainGliding(t *testing.T) {
 	require.True(t, boosted.IsGliding())
 	boosted.SetFireworkBoosting(true)
 
-	plainGlide := NewState(shapes)
+	plainGlide := NewState(shapes, nil)
 	plainGlide.SetPositionSimple(models.V3{X: 10, Y: 200, Z: 0})
 	plainGlide.SetVelocity(models.V3{Y: -0.5})
 	plainGlide.SetYaw(0)

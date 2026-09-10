@@ -3,6 +3,7 @@ package v26_1
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -16,6 +17,7 @@ import (
 // chatHandler implements models.ChatHandler for 26.1.
 type chatHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendChat sends a chat message.

@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
@@ -18,6 +19,6 @@ func (pe *PhysicsMovementExecutor) handleRidingModeMule(
 	forward, backward, left, right, jump, sneak bool,
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
-	log.Printf("[handleRidingModeMule] Mule riding not fully implemented — using horse physics as fallback")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeMule] Mule riding not fully implemented — using horse physics as fallback"))
 	return pe.handleRidingModeHorse(versionHandler, mountedEntityID, inputs, forward, backward, left, right, jump, sneak, entityGetter)
 }

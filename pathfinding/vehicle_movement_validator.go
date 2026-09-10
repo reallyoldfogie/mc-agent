@@ -1,15 +1,17 @@
 package pathfinding
 
 import (
+	"log/slog"
+
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // VehicleMovementValidator generates movement steps for a vehicle based on its capabilities.
 type VehicleMovementValidator struct {
-	caps       models.VehicleCapabilities
-	world      models.World
-	shapeMgr   models.BlockShapeManager
-	validator  *MovementValidator // Reuse foot movement checks for land vehicles
+	caps      models.VehicleCapabilities
+	world     models.World
+	shapeMgr  models.BlockShapeManager
+	validator *MovementValidator // Reuse foot movement checks for land vehicles
 }
 
 // NewVehicleMovementValidator creates a new vehicle movement validator.
@@ -17,12 +19,13 @@ func NewVehicleMovementValidator(
 	world models.World,
 	shapeMgr models.BlockShapeManager,
 	caps models.VehicleCapabilities,
+	logger *slog.Logger,
 ) *VehicleMovementValidator {
 	return &VehicleMovementValidator{
 		caps:      caps,
 		world:     world,
 		shapeMgr:  shapeMgr,
-		validator: NewMovementValidator(world, shapeMgr),
+		validator: NewMovementValidator(world, shapeMgr, logger),
 	}
 }
 
@@ -68,10 +71,10 @@ func (v *VehicleMovementValidator) generateLandVehicleMoves(
 ) []PathStep {
 	// Cardinal directions
 	cardinalDirs := [][2]float64{
-		{1, 0},   // East
-		{-1, 0},  // West
-		{0, 1},   // South
-		{0, -1},  // North
+		{1, 0},  // East
+		{-1, 0}, // West
+		{0, 1},  // South
+		{0, -1}, // North
 	}
 
 	for _, dir := range cardinalDirs {
@@ -200,7 +203,7 @@ func (v *VehicleMovementValidator) generateWaterVehicleMoves(
 ) []PathStep {
 	// All 8 directions for boat travel
 	allDirs := [][2]float64{
-		{1, 0}, {-1, 0}, {0, 1}, {0, -1},     // Cardinal
+		{1, 0}, {-1, 0}, {0, 1}, {0, -1}, // Cardinal
 		{1, 1}, {1, -1}, {-1, 1}, {-1, -1}, // Diagonal
 	}
 
@@ -239,10 +242,10 @@ func (v *VehicleMovementValidator) generateRailVehicleMoves(
 ) []PathStep {
 	// Cardinal directions only (minecarts don't turn in place on rails)
 	cardinalDirs := [][2]float64{
-		{1, 0},   // East
-		{-1, 0},  // West
-		{0, 1},   // South
-		{0, -1},  // North
+		{1, 0},  // East
+		{-1, 0}, // West
+		{0, 1},  // South
+		{0, -1}, // North
 	}
 
 	for _, dir := range cardinalDirs {

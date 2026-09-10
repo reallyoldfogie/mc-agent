@@ -1,6 +1,8 @@
 package v1_21_9
 
 import (
+	"log/slog"
+
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 	v1_21_9 "github.com/reallyoldfogie/mc-protocol-go/data/1.21.9"
@@ -9,13 +11,11 @@ import (
 func init() {
 	// Register the 1.21.9 version handler with the factory.
 	// The constructor creates a new Handler with the appropriate PacketMgr.
-	// DEBUG: Print to verify init() is called
-	println("[versions/v1_21_9] Registering version handler for", Version)
-	common.RegisterVersionHandler(Version, func() models.VersionHandler {
+	common.RegisterVersionHandler(Version, func(logger *slog.Logger) models.VersionHandler {
 		packetMgr := v1_21_9.NewPackets()
-		println("[versions/v1_21_9] Creating new handler")
-		handler := NewHandler(packetMgr)
-		println("[versions/v1_21_9] Created handler")
+		logger.Debug("[versions/v1_21_9] creating new handler")
+		handler := NewHandler(packetMgr, logger)
+		logger.Debug("[versions/v1_21_9] created handler")
 		return handler
 	})
 }

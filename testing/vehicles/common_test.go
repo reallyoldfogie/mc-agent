@@ -1612,7 +1612,7 @@ func (vh *VehicleTestHelper) TrackEntityPosition(entityID int32) *utils.EntityPo
 	initialPos, _ := vh.ManagedAgent.Agent.GetPositionSimple()
 
 	// Create tracker
-	tracker := utils.NewEntityPositionTracker(entityID, initialPos)
+	tracker := utils.NewEntityPositionTracker(entityID, initialPos, nil)
 
 	// Register with agent to receive position updates
 	tracker.RegisterCallback(vh.ManagedAgent.Agent)

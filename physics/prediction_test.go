@@ -20,7 +20,7 @@ func TestPredictMovement(t *testing.T) {
 	}
 
 	t.Run("Predict simple traverse", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetOnGround(true)
@@ -49,7 +49,7 @@ func TestPredictMovement(t *testing.T) {
 	})
 
 	t.Run("Predict freefall", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 		state.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetOnGround(false)
@@ -74,7 +74,7 @@ func TestPredictMovement(t *testing.T) {
 	})
 
 	t.Run("Predict with rotation", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetYaw(0)
 		state.SetPitch(0)
@@ -105,7 +105,7 @@ func TestPredictMovement(t *testing.T) {
 	})
 
 	t.Run("Limit to maxTicks", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Create 100 inputs
@@ -119,7 +119,7 @@ func TestPredictMovement(t *testing.T) {
 	})
 
 	t.Run("Limit to input length", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Create only 5 inputs
@@ -145,7 +145,7 @@ func TestPredictPosition(t *testing.T) {
 	}
 
 	t.Run("Predict horizontal movement", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		vel := models.V3{X: 1, Y: 0, Z: 0}
@@ -162,7 +162,7 @@ func TestPredictPosition(t *testing.T) {
 	})
 
 	t.Run("Predict freefall distance", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
 		vel := models.V3{X: 0, Y: 0, Z: 0} // Starting from rest
@@ -176,7 +176,7 @@ func TestPredictPosition(t *testing.T) {
 	})
 
 	t.Run("Predict with initial velocity", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 5, Z: 0})
 
 		vel := models.V3{X: 0.5, Y: 0.42, Z: 0.5} // Jump + horizontal movement
@@ -193,7 +193,7 @@ func TestPredictPosition(t *testing.T) {
 	})
 
 	t.Run("Fast prediction doesn't fall forever", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 2, Z: 0})
 
 		vel := models.V3{X: 0, Y: -0.5, Z: 0} // Falling
@@ -227,7 +227,7 @@ func TestWillCollide(t *testing.T) {
 	}
 
 	t.Run("No collision in open space", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Move to nearby open position
@@ -238,7 +238,7 @@ func TestWillCollide(t *testing.T) {
 	})
 
 	t.Run("Collision with wall", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Move into wall at X=2
@@ -249,7 +249,7 @@ func TestWillCollide(t *testing.T) {
 	})
 
 	t.Run("Collision above (ceiling)", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 		// Place ceiling block
@@ -264,7 +264,7 @@ func TestWillCollide(t *testing.T) {
 	})
 
 	t.Run("No collision when sneaking under low ceiling", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetSneaking(true) // Sneaking reduces height to 1.5 blocks
 
@@ -280,7 +280,7 @@ func TestWillCollide(t *testing.T) {
 	})
 
 	t.Run("Collision when not sneaking under low ceiling", func(t *testing.T) {
-		state := NewState(mockShapes)
+		state := NewState(mockShapes, nil)
 		state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state.SetSneaking(false) // Normal height 1.8 blocks
 
@@ -309,7 +309,7 @@ func BenchmarkPredictMovement_10Ticks(b *testing.B) {
 		}
 	}
 
-	state := NewState(mockShapes)
+	state := NewState(mockShapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 	inputs := make([]Inputs, 10)
@@ -333,7 +333,7 @@ func BenchmarkPredictPosition_50Ticks(b *testing.B) {
 		}
 	}
 
-	state := NewState(mockShapes)
+	state := NewState(mockShapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 10, Z: 0})
 
 	vel := models.V3{X: 0, Y: 0, Z: 0}
@@ -354,7 +354,7 @@ func BenchmarkWillCollide(b *testing.B) {
 		}
 	}
 
-	state := NewState(mockShapes)
+	state := NewState(mockShapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 
 	targetPos := models.V3{X: 1, Y: 0, Z: 0}
@@ -379,12 +379,12 @@ func TestPredictionAccuracy(t *testing.T) {
 
 	t.Run("Prediction matches actual physics", func(t *testing.T) {
 		// Create two identical states
-		state1 := NewState(mockShapes)
+		state1 := NewState(mockShapes, nil)
 		state1.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state1.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state1.SetOnGround(true)
 
-		state2 := NewState(mockShapes)
+		state2 := NewState(mockShapes, nil)
 		state2.SetPositionSimple(models.V3{X: 0, Y: 0, Z: 0})
 		state2.SetVelocity(models.V3{X: 0, Y: 0, Z: 0})
 		state2.SetOnGround(true)

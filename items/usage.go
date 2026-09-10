@@ -2,12 +2,13 @@ package items
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"math/rand"
 
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -34,14 +35,16 @@ type ItemUsage struct {
 	actionHandler    models.ActionHandler    // Version-specific action handler
 	entityHandler    models.EntityHandler    // Version-specific entity handler
 	sequence         int32                   // Anti-cheat sequence number
+	logger           *slog.Logger
 }
 
 // NewItemUsage creates a new ItemUsage instance
-func NewItemUsage(client models.PacketSender, packetMgr protocol_models.PacketMgr) *ItemUsage {
+func NewItemUsage(client models.PacketSender, packetMgr protocol_models.PacketMgr, logger *slog.Logger) *ItemUsage {
 	return &ItemUsage{
 		client:    client,
 		packetMgr: packetMgr,
 		sequence:  0,
+		logger:    utils.SafeLogger(logger),
 	}
 }
 
@@ -140,29 +143,29 @@ func (iu *ItemUsage) UseItemOnBlock(pos models.V3, face models.BlockFace, hand m
 // UseItemOnEntity uses an item on an entity (e.g., bucket on fish to catch it, open horse inventory).
 // This sends a ServerboundInteract (type 0) packet.
 func (iu *ItemUsage) UseItemOnEntity(entityID int32, hand models.Hand, sneaking bool) error {
-	log.Printf("[UseItemOnEntity] → Interacting with entity %d\n", entityID)
+	utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] interacting with entity", "entityID", entityID)
 
 	// Send type 0 (INTERACT) packet
 	if iu.entityHandler == nil {
-		log.Printf("[UseItemOnEntity] ✗ entity handler not set")
+		utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] entity handler not set")
 		return common.ErrHandlerNotSet{HandlerName: "EntityHandler"}
 	}
 	if err := iu.entityHandler.SendInteract(iu.client, entityID, hand, sneaking); err != nil {
-		log.Printf("[UseItemOnEntity] ✗ Error: %v\n", err)
+		utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] error", "error", err)
 		return err
 	}
 
 	// Optional: swing packet
 	if iu.actionHandler == nil {
-		log.Printf("[UseItemOnEntity] ✗ action handler not set")
+		utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] action handler not set")
 		return common.ErrHandlerNotSet{HandlerName: "ActionHandler"}
 	}
 	if err := iu.actionHandler.SendSwing(iu.client, hand); err != nil {
-		log.Printf("[UseItemOnEntity] ✗ Error: %v\n", err)
+		utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] error", "error", err)
 		return err
 	}
 
-	log.Printf("[UseItemOnEntity] ✓ Complete\n")
+	utils.SafeLogger(iu.logger).Debug("[UseItemOnEntity] complete")
 	return nil
 }
 

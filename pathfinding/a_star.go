@@ -4,11 +4,12 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // aStarPathFinder implements PathFinder
@@ -18,23 +19,26 @@ type aStarPathFinder struct {
 	movementValidator *MovementValidator
 	goalRadius        float64
 	contextCheckFreq  int
+	logger            *slog.Logger
 }
 
 // NewAStarPathFinder creates a new A* pathfinder
-func NewAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
-	return NewAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{})
+func NewAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager, logger *slog.Logger) models.PathFinder {
+	return NewAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{}, logger)
 }
 
 // NewAStarPathFinderWithConfig creates a new A* pathfinder with custom settings.
-func NewAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
+func NewAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig, logger *slog.Logger) models.PathFinder {
 	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
+	logger = utils.SafeLogger(logger)
 	return &aStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr),
+		movementValidator: NewMovementValidator(w, shapeMgr, logger),
 		goalRadius:        goalRadius,
 		contextCheckFreq:  contextCheckFreq,
+		logger:            logger,
 	}
 }
 
@@ -191,15 +195,14 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		DriftCap:  4.0,
 	}
 	startMoves := pf.movementValidator.GetPossibleMoves(start, goal, prune)
-	log.Printf("[A*] Start position (%f,%f,%f) has %d possible moves (filtered toward goal)",
-		start.X, start.Y, start.Z, len(startMoves))
+	utils.SafeLogger(pf.logger).Debug("[A*] start position possible moves", "x", start.X, "y", start.Y, "z", start.Z, "count", len(startMoves))
 
-	if len(startMoves) > 0 {
-		log.Printf("[A*] First possible moves from (%f,%f,%f):\n", start.X, start.Y, start.Z)
+	if len(startMoves) > 0 && utils.DebugVerboseEnabled(pf.logger) {
 		for i := range startMoves {
-			log.Printf("  - Move %d: %s to (%f,%f,%f) cost=%.2f",
-				i+1, startMoves[i].Movement, startMoves[i].Position.X,
-				startMoves[i].Position.Y, startMoves[i].Position.Z, startMoves[i].Cost)
+			utils.DebugVerbose(pf.logger, "[A*] possible move from start",
+				"index", i+1, "movement", startMoves[i].Movement,
+				"x", startMoves[i].Position.X, "y", startMoves[i].Position.Y, "z", startMoves[i].Position.Z,
+				"cost", startMoves[i].Cost)
 		}
 	}
 
@@ -232,8 +235,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		if stepsProcessed%pf.contextCheckFreq == 0 {
 			select {
 			case <-ctx.Done():
-				log.Printf("[A*] context deadline exceeded: steps=%d elapsed=%s open=%d closed=%d",
-					stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet))
+				utils.SafeLogger(pf.logger).Warn("[A*] context deadline exceeded", "steps", stepsProcessed, "elapsed", time.Since(startTime), "open", openSet.Len(), "closed", len(closedSet))
 				return &Path{
 					Found:      false,
 					StartPos:   start,
@@ -246,8 +248,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 
 		// Check step limit
 		if maxSteps > 0 && stepsProcessed > maxSteps {
-			log.Printf("[A*] exceeded max steps: steps=%d elapsed=%s open=%d closed=%d",
-				stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet))
+			utils.SafeLogger(pf.logger).Warn("[A*] exceeded max steps", "steps", stepsProcessed, "elapsed", time.Since(startTime), "open", openSet.Len(), "closed", len(closedSet))
 			return &Path{
 				Found:      false,
 				StartPos:   start,
@@ -277,9 +278,10 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		// success/failure, making a genuinely slow/failing search
 		// indistinguishable from a hung one. See docs/bugs/hpa-star-slowness.
 		if stepsProcessed%500 == 0 {
-			log.Printf("[A*] progress: steps=%d elapsed=%s open=%d closed=%d current=(%.1f,%.1f,%.1f) distToGoal=%.2f fCost=%.2f",
-				stepsProcessed, time.Since(startTime), openSet.Len(), len(closedSet),
-				current.pos.X, current.pos.Y, current.pos.Z, current.pos.DistanceTo(goal), current.fCost)
+			utils.SafeLogger(pf.logger).Debug("[A*] progress", "steps", stepsProcessed, "elapsed", time.Since(startTime),
+				"open", openSet.Len(), "closed", len(closedSet),
+				"x", current.pos.X, "y", current.pos.Y, "z", current.pos.Z,
+				"distToGoal", current.pos.DistanceTo(goal), "fCost", current.fCost)
 		}
 
 		// Check if we reached the goal
@@ -289,8 +291,10 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 			path.SearchTime = float64(time.Since(startTime).Milliseconds())
 
 			// Log path summary and details
-			log.Printf("[A*] %s", path.LogSummary())
-			log.Printf("[A*] Path details:\n%s", path.LogDetails(true))
+			utils.SafeLogger(pf.logger).Info("[A*] " + path.LogSummary())
+			if utils.DebugVerboseEnabled(pf.logger) {
+				utils.DebugVerbose(pf.logger, "[A*] path details\n"+path.LogDetails(true))
+			}
 
 			return path, nil
 		}
@@ -333,8 +337,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 	}
 
 	// No path found - openSet is empty
-	log.Printf("[A*] Pathfinding failed: openSet exhausted after %d steps, closedSet size=%d",
-		stepsProcessed, len(closedSet))
+	utils.SafeLogger(pf.logger).Warn("[A*] pathfinding failed: openSet exhausted", "steps", stepsProcessed, "closedSetSize", len(closedSet))
 	return &Path{
 		Found:      false,
 		StartPos:   start,

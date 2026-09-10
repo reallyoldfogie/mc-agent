@@ -45,6 +45,7 @@ type Settings struct {
 	Skin       SkinSettings       `json:"skin"`
 	Movement   MovementSettings   `json:"movement"`
 	FollowCam  FollowCamSettings  `json:"follow_cam"`
+	Logging    LoggingSettings    `json:"logging"`
 	// Train is cRL-go's own training hyperparameters, used as-is — see
 	// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 2 on why this can't be
 	// forked into an mc-agent-local type. Only relevant to cmd/rl-train.
@@ -114,6 +115,23 @@ type MovementSettings struct {
 type FollowCamSettings struct {
 	Target   string  `json:"target"`
 	Distance float64 `json:"distance"`
+}
+
+// LoggingSettings configures the per-agent slog.Logger every *agent builds
+// in New (agent/logging.go) and threads down into pathfinding/movement/
+// physics/handler_versions — see
+// docs/bugs/global-log-output-not-per-agent.md Phase 3. Replaces the old
+// MC_AGENT_VERBOSE_LOG environment variable as the primary way to opt into
+// high-frequency diagnostic logging: Level is read from the config file
+// like every other setting here, with the usual ENV (e.g.
+// MCAGENT_LOGGING_LEVEL) and CLI (-log-level) override layers on top,
+// rather than a bespoke env-only reader.
+type LoggingSettings struct {
+	// Level is the minimum severity written to an agent's log file/stdout:
+	// "debugverbose" (utils.LevelDebugVerbose — below debug, the old
+	// MC_AGENT_VERBOSE_LOG behavior), "debug", "info" (default), "warn", or
+	// "error". Case-insensitive; parsed by utils.ParseLevel.
+	Level string `json:"level"`
 }
 
 // EnvSettings is a JSON-friendly mirror of rlenv.Config — StepTimeout

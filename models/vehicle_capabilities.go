@@ -2,13 +2,13 @@ package models
 
 // VehicleCapabilities describes what terrain a vehicle can traverse and how fast.
 type VehicleCapabilities struct {
-	CanTraverseLand  bool    // Can move on solid ground
-	CanTraverseWater bool    // Can move on water surface
-	CanTraverseLava  bool    // Can move on lava (strider only)
-	RequiresRails    bool    // Requires rails to move (minecart only)
-	CanFly3D         bool    // Can move in 3D underwater (nautilus only)
-	CanAscend        bool    // Can jump up 1-block ledges
-	SpeedMultiplier  float64 // Speed relative to walking (1.0 = same speed as walking)
+	CanTraverseLand  bool         // Can move on solid ground
+	CanTraverseWater bool         // Can move on water surface
+	CanTraverseLava  bool         // Can move on lava (strider only)
+	RequiresRails    bool         // Requires rails to move (minecart only)
+	CanFly3D         bool         // Can move in 3D underwater (nautilus only)
+	CanAscend        bool         // Can jump up 1-block ledges
+	SpeedMultiplier  float64      // Speed relative to walking (1.0 = same speed as walking)
 	VehicleMovement  MovementType // Primary terrain movement type for this vehicle
 }
 

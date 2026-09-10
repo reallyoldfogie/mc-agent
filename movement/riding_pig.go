@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
@@ -59,7 +60,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 	_ = inputs
 
 	// (1) Send PlayerInput
-	log.Printf("[handleRidingModePig] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModePig] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	// Hold lock for entire read-compute-write cycle
@@ -218,8 +219,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModePig(
 		}
 	}
 
-	log.Printf("[handleRidingModePig] holds_carrot=%v boost_active=%v boostMul=%.3f accel=%.4f friction=%.3f velX=%.4f velZ=%.4f velY=%.4f yaw=%.1f pitch=%.1f forward=%v water=%v behavior=%s newPos=(%.2f,%.2f,%.2f)",
-		holdsCarrotOnAStick, carrotBoost, boostMultiplier, accelFactor, friction, velX, velZ, velY, yaw, pitch, forward, waterParams.IsInWater, waterBehavior, newPos.X, newPos.Y, newPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModePig] holds_carrot=%v boost_active=%v boostMul=%.3f accel=%.4f friction=%.3f velX=%.4f velZ=%.4f velY=%.4f yaw=%.1f pitch=%.1f forward=%v water=%v behavior=%s newPos=(%.2f,%.2f,%.2f)",
+		holdsCarrotOnAStick, carrotBoost, boostMultiplier, accelFactor, friction, velX, velZ, velY, yaw, pitch, forward, waterParams.IsInWater, waterBehavior, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

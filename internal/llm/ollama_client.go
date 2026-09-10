@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 	"strings"
 
 	ollama_api "github.com/ollama/ollama/api"
@@ -14,12 +15,17 @@ type ollamaClient struct {
 	client      *ollama_api.Client
 	model       string
 	lastContext []int // Context from last response to reuse for conversation continuity
+	logger      *slog.Logger
 }
 
-func NewOllamaClient(model string) Client {
+func NewOllamaClient(model string, logger *slog.Logger) Client {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	var err error
 	llmClient := &ollamaClient{
-		model: model,
+		model:  model,
+		logger: logger,
 	}
 	llmClient.client, err = ollama_api.ClientFromEnvironment()
 	if err != nil {
@@ -32,7 +38,7 @@ func NewOllamaClient(model string) Client {
 // Call implements the Client interface.
 // Takes a prompt as []byte, sends it to Ollama, and returns the raw response JSON as []byte.
 func (c *ollamaClient) Call(ctx context.Context, prompt []byte) ([]byte, error) {
-	log.Printf("Sending prompt to LLM (context tokens: %d)", len(c.lastContext))
+	utils.SafeLogger(c.logger).Debug("sending prompt to LLM", "contextTokens", len(c.lastContext))
 
 	req := &ollama_api.GenerateRequest{
 		Model:   c.model,

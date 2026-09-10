@@ -101,18 +101,18 @@ func TestApplyNautilusDashCharge_ChargesThenFires(t *testing.T) {
 	vel := models.V3{}
 
 	// Rising edge starts charging; nothing fires while the key is still held.
-	vel = applyNautilusDashCharge(state, true, false, 0, 0, 1.0, true, vel)
+	vel = applyNautilusDashCharge(nil, state, true, false, 0, 0, 1.0, true, vel)
 	require.True(t, state.GetIsCharging())
 	assert.InDelta(t, 0.0, vel.Z, 1e-9)
 
 	// Hold for several ticks to build charge.
 	for range 10 {
-		vel = applyNautilusDashCharge(state, true, true, 0, 0, 1.0, true, vel)
+		vel = applyNautilusDashCharge(nil, state, true, true, 0, 0, 1.0, true, vel)
 	}
 	require.Greater(t, state.GetJumpChargeTicks(), 0)
 
 	// Releasing fires the dash: +Z impulse (yaw 0, in water) and the cooldown starts.
-	vel = applyNautilusDashCharge(state, false, true, 0, 0, 1.0, true, vel)
+	vel = applyNautilusDashCharge(nil, state, false, true, 0, 0, 1.0, true, vel)
 	assert.Greater(t, vel.Z, 0.5, "release should impart a forward dash impulse")
 	assert.Equal(t, models.NautilusDashCooldownTicks, state.DashCooldownTicks)
 	assert.True(t, state.IsDashing())
@@ -125,7 +125,7 @@ func TestApplyNautilusDashCharge_CooldownBlocksRestart(t *testing.T) {
 
 	vel := models.V3{}
 	// A fresh rising edge must not start a new charge while on cooldown.
-	vel = applyNautilusDashCharge(state, true, false, 0, 0, 1.0, true, vel)
+	vel = applyNautilusDashCharge(nil, state, true, false, 0, 0, 1.0, true, vel)
 	assert.False(t, state.GetIsCharging(), "cooldown should block a new dash charge")
 	assert.InDelta(t, 0.0, vel.Z, 1e-9)
 }

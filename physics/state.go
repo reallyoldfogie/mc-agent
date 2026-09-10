@@ -1,9 +1,9 @@
 package physics
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"math"
-	"os"
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -117,15 +117,18 @@ type state struct {
 	// elytraEquipped is synced in rather than looked up here. Bypasses all
 	// collision resolution in Tick() when true.
 	noClip bool
+
+	logger *slog.Logger
 }
 
 // NewState creates a new physics state with default player dimensions.
-func NewState(shapeProvider BlockShapeProvider) models.PhysicsState {
+func NewState(shapeProvider BlockShapeProvider, logger *slog.Logger) models.PhysicsState {
 	return &state{
 		width:         PlayerWidth,
 		height:        PlayerHeight,
 		eyeHeight:     PlayerEyeHeight,
 		shapeProvider: shapeProvider,
+		logger:        utils.SafeLogger(logger),
 	}
 }
 
@@ -140,13 +143,13 @@ func (s *state) SetPosition(pos models.V3, yaw, pitch float64, onGround bool) {
 	// client updates and floods the log. Genuine corrections are logged with
 	// accurate context by the executor (HandleServerCorrection / SyncRidingPosition
 	// / SyncMountedPosition). Keep only an opt-in, neutral trace here.
-	if os.Getenv("DEBUG_PHYSICS_POSITION") != "" {
+	if utils.DebugVerboseEnabled(s.logger) {
 		deltaX := pos.X - s.Pos.X
 		deltaY := pos.Y - s.Pos.Y
 		deltaZ := pos.Z - s.Pos.Z
 		if deltaX != 0 || deltaY != 0 || deltaZ != 0 {
-			log.Printf("[PhysicsState] SetPosition Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
-				deltaX, deltaY, deltaZ, s.Vel.Y)
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[PhysicsState] SetPosition Δ(%.3f, %.3f, %.3f) velY=%.3f\n",
+				deltaX, deltaY, deltaZ, s.Vel.Y))
 		}
 	}
 
@@ -417,10 +420,10 @@ func (s *state) Tick(input Inputs, w World) error {
 	defer s.mu.Unlock()
 
 	// Gated: fires every physics tick (20/sec) — see
-	// utils.VerboseLoggingEnabled's own doc comment.
-	if utils.VerboseLoggingEnabled() {
-		log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t swimming=%t fallDistance=%.2f\n",
-			s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.isSwimming, s.fallDistance)
+	// utils.DebugVerboseEnabled's own doc comment.
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t swimming=%t fallDistance=%.2f\n",
+			s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.isSwimming, s.fallDistance))
 	}
 
 	s.tick++
@@ -636,9 +639,9 @@ func (s *state) Tick(input Inputs, w World) error {
 
 	// Gated: fires every physics tick — see the sibling Tick-start log
 	// above.
-	if utils.VerboseLoggingEnabled() {
-		log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t swimming=%t collision=(h=%t v=%t)\n",
-			s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.isInWater, s.isSwimming, s.collision.horizontal, s.collision.vertical)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t swimming=%t collision=(h=%t v=%t)\n",
+			s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.isInWater, s.isSwimming, s.collision.horizontal, s.collision.vertical))
 	}
 
 	return nil
@@ -663,10 +666,10 @@ func (s *state) detectWaterState(w World) {
 	s.isInWater = areFeetInWater || isHeadInWater
 	s.isSwimming = isHeadInWater
 
-	if os.Getenv("DEBUG_WATER_FLOW") != "" {
-		log.Printf("[Water] Feet: (%d,%d,%d) stateID=%d isWater=%v (head=%v feet=%v), Head: (%d,%d,%d)\n",
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[Water] Feet: (%d,%d,%d) stateID=%d isWater=%v (head=%v feet=%v), Head: (%d,%d,%d)\n",
 			feetBlockX, feetBlockY, feetBlockZ, feetBlockState, s.isInWater, isHeadInWater, areFeetInWater,
-			headBlockX, headBlockY, headBlockZ)
+			headBlockX, headBlockY, headBlockZ))
 	}
 }
 
@@ -811,21 +814,21 @@ func (s *state) applyWaterFlow(w World) {
 		}
 	}
 
-	if os.Getenv("DEBUG_WATER_FLOW") != "" {
-		log.Printf("[Water] Flow: speed=%.3f dir=(%.2f,%.2f,%.2f) accum=(%.2f,%.2f)\n",
-			flowSpeed, flowDir.X, flowDir.Y, flowDir.Z, accumulatedFlowDir.X, accumulatedFlowDir.Z)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[Water] Flow: speed=%.3f dir=(%.2f,%.2f,%.2f) accum=(%.2f,%.2f)\n",
+			flowSpeed, flowDir.X, flowDir.Y, flowDir.Z, accumulatedFlowDir.X, accumulatedFlowDir.Z))
 	}
 
 	if flowSpeed > 0 && flowDir.DistanceTo(models.V3{}) > 0.01 {
 		flowVel := WaterFlowSpeedBase * flowSpeed
 		s.Vel.X += flowDir.X * flowVel
 		s.Vel.Z += flowDir.Z * flowVel
-		if os.Getenv("DEBUG_WATER_FLOW") != "" {
-			log.Printf("[Water] Applied flow: flowVel=%.3f velAfter=(%.3f,%.3f,%.3f)\n",
-				flowVel, s.Vel.X, s.Vel.Y, s.Vel.Z)
+		if utils.DebugVerboseEnabled(s.logger) {
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[Water] Applied flow: flowVel=%.3f velAfter=(%.3f,%.3f,%.3f)\n",
+				flowVel, s.Vel.X, s.Vel.Y, s.Vel.Z))
 		}
-	} else if os.Getenv("DEBUG_WATER_FLOW") != "" {
-		log.Printf("[Water] Flow NOT applied: flowSpeed=%.3f flowDist=%.3f\n", flowSpeed, flowDir.DistanceTo(models.V3{}))
+	} else if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[Water] Flow NOT applied: flowSpeed=%.3f flowDist=%.3f\n", flowSpeed, flowDir.DistanceTo(models.V3{})))
 	}
 }
 
@@ -992,10 +995,10 @@ func (s *state) applyMovementInputs(input Inputs, acceleration, jumpVelocityMult
 	s.Vel.X += throttleX
 	s.Vel.Z += throttleZ
 
-	if os.Getenv("DEBUG_MANUAL_MOVEMENT") != "" {
-		log.Printf("[DEBUG_MANUAL] throttle=(%.4f,%.4f) after accel scaling, sneak=%v speed=%.4f -> adjusted throttle=(%.4f,%.4f) velBefore=(%.4f,%.4f) velAfter=(%.4f,%.4f)",
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[DEBUG_MANUAL] throttle=(%.4f,%.4f) after accel scaling, sneak=%v speed=%.4f -> adjusted throttle=(%.4f,%.4f) velBefore=(%.4f,%.4f) velAfter=(%.4f,%.4f)",
 			input.ThrottleX, input.ThrottleZ, input.Sneak, speed, throttleX, throttleZ,
-			oldVelX, oldVelZ, s.Vel.X, s.Vel.Z)
+			oldVelX, oldVelZ, s.Vel.X, s.Vel.Z))
 	}
 }
 
@@ -1039,27 +1042,27 @@ func (s *state) tickPosition(w World) {
 		oldDist := newVel.X*newVel.X + newVel.Z*newVel.Z
 		newDist := stepUpVel.X*stepUpVel.X + stepUpVel.Z*stepUpVel.Z
 
-		if os.Getenv("DEBUG_STEP_UP") != "" {
-			log.Printf("[StepUp] Pos=(%.2f,%.2f,%.2f) Vel=(%.3f,%.3f,%.3f) OldVel=(%.3f,%.3f,%.3f) NewVel=(%.3f,%.3f,%.3f)\n",
+		if utils.DebugVerboseEnabled(s.logger) {
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[StepUp] Pos=(%.2f,%.2f,%.2f) Vel=(%.3f,%.3f,%.3f) OldVel=(%.3f,%.3f,%.3f) NewVel=(%.3f,%.3f,%.3f)\n",
 				s.Pos.X, s.Pos.Y, s.Pos.Z,
 				s.Vel.X, s.Vel.Y, s.Vel.Z,
 				newVel.X, newVel.Y, newVel.Z,
-				stepUpVel.X, stepUpVel.Y, stepUpVel.Z)
-			log.Printf("[StepUp] oldDist=%.4f newDist=%.4f stepUpVel.Y=%.4f threshold=%.4f\n",
-				oldDist, newDist, stepUpVel.Y, -StepHeight+0.000002)
+				stepUpVel.X, stepUpVel.Y, stepUpVel.Z))
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[StepUp] oldDist=%.4f newDist=%.4f stepUpVel.Y=%.4f threshold=%.4f\n",
+				oldDist, newDist, stepUpVel.Y, -StepHeight+0.000002))
 		}
 
 		// Use step-up if:
 		// 1. It moved further horizontally, AND
 		// 2. Final Y offset is near zero (actually on ground after step)
 		if newDist > oldDist && stepUpVel.Y > -StepHeight+0.000002 {
-			if os.Getenv("DEBUG_STEP_UP") != "" {
-				log.Printf("[StepUp] USING STEP-UP\n")
+			if utils.DebugVerboseEnabled(s.logger) {
+				utils.DebugVerbose(s.logger, fmt.Sprintf("[StepUp] USING STEP-UP\n"))
 			}
 			newPlayerBB = stepUpBB
 			newVel = stepUpVel
-		} else if os.Getenv("DEBUG_STEP_UP") != "" {
-			log.Printf("[StepUp] NOT using step-up (failed conditions)\n")
+		} else if utils.DebugVerboseEnabled(s.logger) {
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[StepUp] NOT using step-up (failed conditions)\n"))
 		}
 	}
 
@@ -1092,9 +1095,9 @@ func (s *state) tickPosition(w World) {
 	s.Pos.Y = newPlayerBB.Y.Min
 	s.Pos.Z = newPlayerBB.Z.Min + s.width/2
 
-	if os.Getenv("DEBUG_MANUAL_MOVEMENT") != "" {
-		log.Printf("[DEBUG_MANUAL_POS] Vel before collision=(%.4f,%.4f) after=(%.4f,%.4f) Pos before=(%.4f,%.4f) after=(%.4f,%.4f)",
-			s.Vel.X, s.Vel.Z, newVel.X, newVel.Z, oldX, oldZ, s.Pos.X, s.Pos.Z)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[DEBUG_MANUAL_POS] Vel before collision=(%.4f,%.4f) after=(%.4f,%.4f) Pos before=(%.4f,%.4f) after=(%.4f,%.4f)",
+			s.Vel.X, s.Vel.Z, newVel.X, newVel.Z, oldX, oldZ, s.Pos.X, s.Pos.Z))
 	}
 
 	// Update velocity
@@ -1122,8 +1125,8 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 		return dX, dZ
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SneakEdge] Starting adjustment: dX=%.3f, dZ=%.3f\n", dX, dZ)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SneakEdge] Starting adjustment: dX=%.3f, dZ=%.3f\n", dX, dZ))
 	}
 
 	// Phase 1: Reduce X-axis movement until space is clear
@@ -1137,8 +1140,8 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 		}
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SneakEdge] After X phase: dX=%.3f\n", dX)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SneakEdge] After X phase: dX=%.3f\n", dX))
 	}
 
 	// Phase 2: Reduce Z-axis movement until space is clear
@@ -1151,8 +1154,8 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 		dZ -= hZ
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SneakEdge] After Z phase: dZ=%.3f\n", dZ)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SneakEdge] After Z phase: dZ=%.3f\n", dZ))
 	}
 
 	// Phase 3: Reduce diagonal movement (both axes) until space is clear
@@ -1170,8 +1173,8 @@ func (s *state) adjustMovementForSneaking(playerBB AABB, x, z float64, w World) 
 		}
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SneakEdge] Final result: dX=%.3f, dZ=%.3f\n", dX, dZ)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SneakEdge] Final result: dX=%.3f, dZ=%.3f\n", dX, dZ))
 	}
 
 	return dX, dZ
@@ -1267,13 +1270,13 @@ func (s *state) isSpaceAroundPlayerEmpty(playerBB AABB, offsetX, offsetZ, stepHe
 		},
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SpaceCheck] Testing offset (%.3f, %.3f) from pos (%.2f, %.2f)\n",
-			offsetX, offsetZ, playerCenterX, playerCenterZ)
-		log.Printf("[SpaceCheck]   testBB: X[%.3f-%.3f] Y[%.3f-%.3f] Z[%.3f-%.3f]\n",
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SpaceCheck] Testing offset (%.3f, %.3f) from pos (%.2f, %.2f)\n",
+			offsetX, offsetZ, playerCenterX, playerCenterZ))
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SpaceCheck]   testBB: X[%.3f-%.3f] Y[%.3f-%.3f] Z[%.3f-%.3f]\n",
 			testBB.X.Min, testBB.X.Max,
 			testBB.Y.Min, testBB.Y.Max,
-			testBB.Z.Min, testBB.Z.Max)
+			testBB.Z.Min, testBB.Z.Max))
 	}
 
 	// Get all collision boxes in the test area
@@ -1284,16 +1287,16 @@ func (s *state) isSpaceAroundPlayerEmpty(playerBB AABB, offsetX, offsetZ, stepHe
 	// Vanilla adjustMovementForSneaking() treats that block as valid support while moving within it.
 	for _, box := range collisionBoxes {
 		if testBB.Intersects(box) {
-			if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-				log.Printf("[SpaceCheck]   SUPPORT/COLLISION with block X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f]\n",
-					box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max)
+			if utils.DebugVerboseEnabled(s.logger) {
+				utils.DebugVerbose(s.logger, fmt.Sprintf("[SpaceCheck]   SUPPORT/COLLISION with block X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f]\n",
+					box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max))
 			}
 			return false // Space is NOT empty - there is support/collision
 		}
 	}
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[SpaceCheck]   OK - space is empty\n")
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[SpaceCheck]   OK - space is empty\n"))
 	}
 	return true // Space is empty
 }
@@ -1305,11 +1308,11 @@ func (s *state) tryStepUp(playerBB AABB, vel models.V3, w World) (AABB, models.V
 	queryBB := playerBB.Offset(vel.X, StepHeight, vel.Z)
 	surroundings := s.getSurroundingBoxes(queryBB, w)
 
-	if os.Getenv("DEBUG_STEP_UP") != "" && len(surroundings) > 0 {
-		log.Printf("[tryStepUp] Found %d collision boxes in query range\n", len(surroundings))
+	if utils.DebugVerboseEnabled(s.logger) && len(surroundings) > 0 {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[tryStepUp] Found %d collision boxes in query range\n", len(surroundings)))
 		for i, box := range surroundings {
-			log.Printf("  Box %d: X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f] BlockID=%d\n",
-				i, box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max, box.BlockID)
+			utils.DebugVerbose(s.logger, fmt.Sprintf("  Box %d: X[%.2f-%.2f] Y[%.2f-%.2f] Z[%.2f-%.2f] BlockID=%d\n",
+				i, box.X.Min, box.X.Max, box.Y.Min, box.Y.Max, box.Z.Min, box.Z.Max, box.BlockID))
 		}
 	}
 
@@ -1841,9 +1844,9 @@ func (s *state) hasGroundSupportAt(pos models.V3, w World) bool {
 	blockID, _ := w.GetBlockStatus(checkX, checkY, checkZ)
 	isPassable := s.shapeProvider.IsPassable(blockID)
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[EdgePrev]     Checking block at (%d,%d,%d) = %d, passable=%v\n",
-			checkX, checkY, checkZ, blockID, isPassable)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[EdgePrev]     Checking block at (%d,%d,%d) = %d, passable=%v\n",
+			checkX, checkY, checkZ, blockID, isPassable))
 	}
 
 	// If no solid block, no support
@@ -1862,19 +1865,19 @@ func (s *state) hasGroundSupportAt(pos models.V3, w World) bool {
 	nearXEdge := xOffset > (1.0 - edgeMargin) // > 0.6, close to X edge at 1.0
 	nearZEdge := zOffset > (1.0 - edgeMargin) // > 0.6, close to Z edge at 1.0
 
-	if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-		log.Printf("[EdgePrev]     Position offsets: X=%.3f, Z=%.3f (edge margin=%.1f)\n",
-			xOffset, zOffset, edgeMargin)
-		log.Printf("[EdgePrev]     Near edges: X=%v, Z=%v\n", nearXEdge, nearZEdge)
+	if utils.DebugVerboseEnabled(s.logger) {
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[EdgePrev]     Position offsets: X=%.3f, Z=%.3f (edge margin=%.1f)\n",
+			xOffset, zOffset, edgeMargin))
+		utils.DebugVerbose(s.logger, fmt.Sprintf("[EdgePrev]     Near edges: X=%v, Z=%v\n", nearXEdge, nearZEdge))
 	}
 
 	// If close to X edge, check for adjacent block in +X direction
 	if nearXEdge {
 		adjacentXBlock, _ := w.GetBlockStatus(checkX+1, checkY, checkZ)
 		hasXSupport := !s.shapeProvider.IsPassable(adjacentXBlock)
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[EdgePrev]     Near X edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
-				checkX+1, checkY, checkZ, adjacentXBlock, hasXSupport)
+		if utils.DebugVerboseEnabled(s.logger) {
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[EdgePrev]     Near X edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
+				checkX+1, checkY, checkZ, adjacentXBlock, hasXSupport))
 		}
 		if !hasXSupport {
 			return false // No support in X direction
@@ -1885,9 +1888,9 @@ func (s *state) hasGroundSupportAt(pos models.V3, w World) bool {
 	if nearZEdge {
 		adjacentZBlock, _ := w.GetBlockStatus(checkX, checkY, checkZ+1)
 		hasZSupport := !s.shapeProvider.IsPassable(adjacentZBlock)
-		if os.Getenv("DEBUG_SNEAK_EDGE") != "" {
-			log.Printf("[EdgePrev]     Near Z edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
-				checkX, checkY, checkZ+1, adjacentZBlock, hasZSupport)
+		if utils.DebugVerboseEnabled(s.logger) {
+			utils.DebugVerbose(s.logger, fmt.Sprintf("[EdgePrev]     Near Z edge, checking block at (%d,%d,%d) = %d, supported=%v\n",
+				checkX, checkY, checkZ+1, adjacentZBlock, hasZSupport))
 		}
 		if !hasZSupport {
 			return false // No support in Z direction

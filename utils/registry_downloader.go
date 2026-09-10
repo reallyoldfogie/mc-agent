@@ -3,7 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -34,7 +34,7 @@ func EnsureRegistriesPath(path, version string) (string, error) {
 	}
 
 	// Use new unified cache system
-	cache := NewMinecraftDataCache(version)
+	cache := NewMinecraftDataCache(version, nil)
 	if err := cache.EnsureDataGenerated(); err != nil {
 		return "", err
 	}
@@ -86,12 +86,12 @@ func ensureRegistriesPathLegacy(path, version string) (string, error) {
 		registryDownloadMu.Lock()
 		registryDownloadCache[version] = true
 		registryDownloadMu.Unlock()
-		log.Printf("[RegistryDownloader] Using cached registries for %s: %s", version, path)
+		slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Using cached registries for %s: %s", version, path))
 		return path, nil
 	}
 
 	// Need to download and generate
-	log.Printf("[RegistryDownloader] Generating registries for %s...", version)
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Generating registries for %s...", version))
 	if err := generateRegistries(path, version); err != nil {
 		return "", fmt.Errorf("failed to generate registries: %w", err)
 	}
@@ -101,7 +101,7 @@ func ensureRegistriesPathLegacy(path, version string) (string, error) {
 	registryDownloadCache[version] = true
 	registryDownloadMu.Unlock()
 
-	log.Printf("[RegistryDownloader] Successfully generated registries for %s: %s", version, path)
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Successfully generated registries for %s: %s", version, path))
 	return path, nil
 }
 
@@ -156,7 +156,7 @@ func generateRegistries(targetPath, version string) error {
 func downloadServerJar(destPath, version string) error {
 	// Check if already exists
 	if _, err := os.Stat(destPath); err == nil {
-		log.Printf("[RegistryDownloader] Server JAR already exists: %s", destPath)
+		slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Server JAR already exists: %s", destPath))
 		return nil
 	}
 
@@ -166,7 +166,7 @@ func downloadServerJar(destPath, version string) error {
 		return fmt.Errorf("failed to get server JAR URL: %w", err)
 	}
 
-	log.Printf("[RegistryDownloader] Downloading server JAR for %s from %s...", version, downloadURL)
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Downloading server JAR for %s from %s...", version, downloadURL))
 
 	// Download to temp file first
 	tmpFile, err := os.CreateTemp(filepath.Dir(destPath), "server-*.jar")
@@ -188,7 +188,7 @@ func downloadServerJar(destPath, version string) error {
 		return fmt.Errorf("failed to move downloaded JAR: %w", err)
 	}
 
-	log.Printf("[RegistryDownloader] Server JAR downloaded successfully")
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Server JAR downloaded successfully"))
 	return nil
 }
 
@@ -197,7 +197,7 @@ func getServerJarURL(version string) (string, error) {
 	// Fetch version manifest from Mojang
 	manifestURL := "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 
-	log.Printf("[RegistryDownloader] Fetching version manifest from Mojang...")
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Fetching version manifest from Mojang..."))
 	resp, err := http.Get(manifestURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version manifest: %w", err)
@@ -232,7 +232,7 @@ func getServerJarURL(version string) (string, error) {
 	}
 
 	// Fetch version-specific JSON
-	log.Printf("[RegistryDownloader] Fetching version details for %s...", version)
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Fetching version details for %s...", version))
 	resp2, err := http.Get(versionURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version details: %w", err)
@@ -264,7 +264,7 @@ func getServerJarURL(version string) (string, error) {
 
 // runDataGenerator runs the Minecraft server JAR with data generation flags
 func runDataGenerator(workDir, jarPath string) error {
-	log.Printf("[RegistryDownloader] Running data generator...")
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Running data generator..."))
 
 	// Create command: java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
 	cmd := exec.Command("java",
@@ -277,11 +277,11 @@ func runDataGenerator(workDir, jarPath string) error {
 	// Capture output
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		log.Printf("[RegistryDownloader] Data generator output:\n%s", string(output))
+		slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Data generator output:\n%s", string(output)))
 		return fmt.Errorf("data generator failed: %w", err)
 	}
 
-	log.Printf("[RegistryDownloader] Data generator completed successfully")
+	slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Data generator completed successfully"))
 	return nil
 }
 

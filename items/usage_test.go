@@ -148,10 +148,10 @@ func newMockPacketManager() *MockPacketManager {
 }
 
 func newTestItemUsage(t *testing.T, client *MockPacketSender, version models.VersionTest) *ItemUsage {
-	versionHandler, err := common.GetVersionHandler(version.MCVersion)
+	versionHandler, err := common.GetVersionHandler(version.MCVersion, nil)
 	pktManager := protocol_versions.GetPacketMgrForVersion(version.MCVersion)
 
-	usage := NewItemUsage(client, pktManager)
+	usage := NewItemUsage(client, pktManager, nil)
 	require.NoError(t, err, "Failed to get version handler for version %s: %v", version, err)
 	containerHandler := versionHandler.Play().Containers()
 	actionHandler := versionHandler.Play().Actions()
@@ -661,7 +661,7 @@ func (m *MockInventory) GetSlotCount() int {
 }
 
 func TestFindItemInInventory(t *testing.T) {
-	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager())
+	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager(), nil)
 	inventory := newMockInventory()
 
 	// Set up inventory with some items
@@ -717,7 +717,7 @@ func TestFindItemInInventory(t *testing.T) {
 }
 
 func TestFindItemInInventory_EmptyInventory(t *testing.T) {
-	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager())
+	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager(), nil)
 	inventory := newMockInventory()
 
 	slot := usage.FindItemInInventory(276, inventory)
@@ -725,7 +725,7 @@ func TestFindItemInInventory_EmptyInventory(t *testing.T) {
 }
 
 func TestFindItemInInventory_FirstMatch(t *testing.T) {
-	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager())
+	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager(), nil)
 	inventory := newMockInventory()
 
 	// Put same item in multiple slots
@@ -738,7 +738,7 @@ func TestFindItemInInventory_FirstMatch(t *testing.T) {
 }
 
 func TestFindItemInInventory_DifferentInventoryTypes(t *testing.T) {
-	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager())
+	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager(), nil)
 
 	tests := []struct {
 		name         string
@@ -847,7 +847,7 @@ func TestFindItemInInventory_DifferentInventoryTypes(t *testing.T) {
 }
 
 func TestFindItemInInventory_BoundaryRespect(t *testing.T) {
-	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager())
+	usage := NewItemUsage(&MockPacketSender{}, newMockPacketManager(), nil)
 
 	// Test that search respects inventory boundaries
 	// Create a small inventory (hopper with 5 slots)

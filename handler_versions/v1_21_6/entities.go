@@ -2,7 +2,9 @@
 package v1_21_6
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 
@@ -16,6 +18,7 @@ import (
 // entityHandler implements common.EntityHandler for 1.21.6.
 type entityHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // ParseAddEntity parses a SpawnEntity packet (clientbound ID 1).
@@ -166,7 +169,7 @@ func (e *entityHandler) SendInteract(conn models.PacketWriter, entityID int32, h
 	handVal := pk.VarInt(hand)
 	pkt.Hand = &handVal
 	pkt.Sneaking = pk.Boolean(sneaking)
-	log.Printf("[v1.21.6 Entity] SendInteract: entityID=%d hand=%d sneaking=%v", entityID, hand, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.6 Entity] SendInteract: entityID=%d hand=%d sneaking=%v", entityID, hand, sneaking))
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
 	}
@@ -186,7 +189,7 @@ func (e *entityHandler) SendInteractAt(conn models.PacketWriter, entityID int32,
 	handVal := pk.VarInt(hand)
 	pkt.Hand = &handVal
 	pkt.Sneaking = pk.Boolean(sneaking)
-	log.Printf("[v1.21.6 Entity] SendInteractAt: entityID=%d pos=(%.2f,%.2f,%.2f) hand=%d sneaking=%v", entityID, targetX, targetY, targetZ, hand, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.6 Entity] SendInteractAt: entityID=%d pos=(%.2f,%.2f,%.2f) hand=%d sneaking=%v", entityID, targetX, targetY, targetZ, hand, sneaking))
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
 	}
@@ -202,7 +205,7 @@ func (e *entityHandler) SendAttack(conn models.PacketWriter, entityID int32, sne
 	pkt.Z = &protocol_models.Void{}
 	pkt.Hand = &protocol_models.Void{}
 	pkt.Sneaking = pk.Boolean(sneaking)
-	log.Printf("[v1.21.6 Entity] SendAttack: entityID=%d sneaking=%v", entityID, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.6 Entity] SendAttack: entityID=%d sneaking=%v", entityID, sneaking))
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
 	}
@@ -281,8 +284,8 @@ func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equip
 			Item:          item,
 		})
 
-		log.Printf("[v1.21.6 Entity] ParseEntityEquipment: entityID=%d, slot=%d, itemCount=%d",
-			entityID, entry.Slot, entry.Item.ItemCount)
+		utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.6 Entity] ParseEntityEquipment: entityID=%d, slot=%d, itemCount=%d",
+			entityID, entry.Slot, entry.Item.ItemCount))
 	}
 
 	return entityID, equipment, nil
@@ -305,8 +308,8 @@ func (e *entityHandler) ParseEntityEffect(p pk.Packet) (entityID, effectID, ampl
 	showParticles = flags&0x02 != 0
 	showIcon = flags&0x04 != 0
 
-	log.Printf("[ParseEntityEffect] entityID=%d effectID=%d amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
-		entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[ParseEntityEffect] entityID=%d effectID=%d amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
+		entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon))
 
 	return entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon, nil
 }
@@ -322,7 +325,7 @@ func (e *entityHandler) ParseRemoveEntityEffect(p pk.Packet) (entityID, effectID
 	entityID = int32(pkt.EntityId)
 	effectID = int32(pkt.EffectId)
 
-	log.Printf("[ParseRemoveEntityEffect] entityID=%d effectID=%d", entityID, effectID)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[ParseRemoveEntityEffect] entityID=%d effectID=%d", entityID, effectID))
 
 	return entityID, effectID, nil
 }
@@ -379,8 +382,8 @@ func (e *entityHandler) ParseDamageEvent(p pk.Packet) (entityID int32, sourceTyp
 		sourceZ = float64(pos.Z)
 	}
 
-	log.Printf("[%s][ParseDamageEvent] entityID=%d sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
-		"1.21.6", entityID, sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[%s][ParseDamageEvent] entityID=%d sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
+		"1.21.6", entityID, sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ))
 
 	return entityID, sourceTypeID, sourceCauseID, sourceDirectID, sourceX, sourceY, sourceZ, hasSourcePosition, nil
 }
@@ -402,7 +405,7 @@ func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, 
 		passengerEntityIDs[i] = int32(passengerID)
 	}
 
-	log.Printf("[v1.21.6 Entity] ParseSetPassengers: vehicleID=%d, passengers=%v", vehicleEntityID, passengerEntityIDs)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.6 Entity] ParseSetPassengers: vehicleID=%d, passengers=%v", vehicleEntityID, passengerEntityIDs))
 
 	return vehicleEntityID, passengerEntityIDs, nil
 }

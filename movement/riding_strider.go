@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
@@ -48,7 +49,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
 	// (1) Send PlayerInput
-	log.Printf("[handleRidingModeStrider] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeStrider] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	// Hold lock for entire read-compute-write cycle
@@ -236,9 +237,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeStrider(
 	pe.ridingVelY = velY
 	pe.lastVelMultiplier = friction
 
-	log.Printf("[handleRidingModeStrider] holds_fungus=%v cold=%v boost=%.2f saddledSpeed=%.4f speedFactor=%.4f friction=%.3f vel=(%.4f,%.4f,%.4f) yaw=%.1f onLava=%v submerged=%v newPos=(%.2f,%.2f,%.2f)",
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeStrider] holds_fungus=%v cold=%v boost=%.2f saddledSpeed=%.4f speedFactor=%.4f friction=%.3f vel=(%.4f,%.4f,%.4f) yaw=%.1f onLava=%v submerged=%v newPos=(%.2f,%.2f,%.2f)",
 		holdsFungusOnAStick, cold, boostMultiplier, saddledSpeed, speedFactor, friction, velX, velY, velZ, yaw,
-		lavaParams.IsOnLava, lavaParams.IsSubmergedInLava, newPos.X, newPos.Y, newPos.Z)
+		lavaParams.IsOnLava, lavaParams.IsSubmergedInLava, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

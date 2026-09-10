@@ -2,6 +2,7 @@ package models
 
 import (
 	"io"
+	"log/slog"
 
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
@@ -38,8 +39,8 @@ type AgentConfig struct {
 	Chat Chat
 
 	// Optional: movement mode
-	EnableClutchAssist     bool    // Enable clutch planning/actions during physics movement
-	PathfinderGoalRadius   float64 // Treat goals within this radius as reached (defaults to 0.5 when 0)
+	EnableClutchAssist   bool    // Enable clutch planning/actions during physics movement
+	PathfinderGoalRadius float64 // Treat goals within this radius as reached (defaults to 0.5 when 0)
 
 	// Data paths (optional)
 	MCDataGenPath    string // Path to mc-data-gen data (for block collision shapes)
@@ -49,14 +50,21 @@ type AgentConfig struct {
 	// Logging output (optional)
 	LogWriter io.Writer
 
+	// LogLevel is the minimum severity this agent's own *slog.Logger emits
+	// (see agent/logging.go's newAgentLogger) — the resolved form of
+	// config.LoggingSettings.Level (utils.ParseLevel), threaded down into
+	// pathfinding/movement/physics/handler_versions along with the logger
+	// itself. Zero value is slog.LevelInfo, slog's own default.
+	LogLevel slog.Level
+
 	// Graceful shutdown
 	StopFilePath string // optional path to stop file; when this file exists, agent shuts down gracefully
 
 	// Replay recording
-	EnableReplay    bool   // when true, record clientbound packets to an .mcpr
-	ReplayOutput    string // output path, defaults to "session.mcpr" if empty
-	ReplayGenerator string // optional generator string; defaults to "mc-agent"
-	ReplayAutoCamera *bool // when non-nil, overrides default (true) for auto-camera timelines in replays
+	EnableReplay     bool   // when true, record clientbound packets to an .mcpr
+	ReplayOutput     string // output path, defaults to "session.mcpr" if empty
+	ReplayGenerator  string // optional generator string; defaults to "mc-agent"
+	ReplayAutoCamera *bool  // when non-nil, overrides default (true) for auto-camera timelines in replays
 
 	// Optional: skins provider for replay embedding (pass NewSkinFetcher result)
 	SkinProvider SkinProvider

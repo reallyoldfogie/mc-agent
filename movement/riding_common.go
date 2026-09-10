@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 
 	semver "github.com/aquasecurity/go-version/pkg/version"
@@ -277,7 +278,7 @@ func sendRidingMove(pe *PhysicsMovementExecutor, versionHandler models.VersionHa
 		result.PacketYaw, result.PacketPitch,
 		result.OnGround,
 	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send vehicle move packet: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Failed to send vehicle move packet: %v", err))
 	}
 }
 
@@ -288,7 +289,7 @@ func sendRidingInput(pe *PhysicsMovementExecutor, versionHandler models.VersionH
 		pe.movementPacketSender.client.Conn(),
 		forward, backward, left, right, jump, sneak,
 	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send vehicle input packet: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Failed to send vehicle input packet: %v", err))
 	}
 }
 
@@ -334,7 +335,7 @@ func sendRidingJumpCommand(pe *PhysicsMovementExecutor, versionHandler models.Ve
 		pe.movementPacketSender.client.Conn(),
 		entityID, versions_common.ActionStartJumpHorse, int32(strengthPercent),
 	); err != nil {
-		log.Printf("[sendRidingJumpCommand] Failed to send START_RIDING_JUMP (strength=%d): %v", strengthPercent, err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[sendRidingJumpCommand] Failed to send START_RIDING_JUMP (strength=%d): %v", strengthPercent, err))
 	}
 }
 
@@ -353,8 +354,8 @@ func checkRiderHeadSubmerged(pe *PhysicsMovementExecutor, mountedEntityID int32,
 	isRiderHeadInWater := loaded && pe.shapeProvider != nil && pe.shapeProvider.IsWater(blockAboveRiderState)
 
 	if isRiderHeadInWater {
-		log.Printf("[handleRidingMode] Rider's head submerged in water - auto-dismounting from entity %d at (%.2f, %.2f, %.2f)",
-			mountedEntityID, newX, newY, newZ)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Rider's head submerged in water - auto-dismounting from entity %d at (%.2f, %.2f, %.2f)",
+			mountedEntityID, newX, newY, newZ))
 		pe.dismountRequested = true
 	}
 }

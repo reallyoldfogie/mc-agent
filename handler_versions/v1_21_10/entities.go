@@ -2,7 +2,9 @@
 package v1_21_10
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/davecgh/go-spew/spew"
@@ -16,6 +18,7 @@ import (
 // entityHandler implements common.EntityHandler for 1.21.10.
 type entityHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // ParseAddEntity parses a SpawnEntity packet (clientbound ID 1).
@@ -42,7 +45,7 @@ func (e *entityHandler) ParseAddEntity(p pk.Packet) (entityID, entityType, objec
 	velY = float64(pkt.Velocity.Y) // / 8000.0 // previous version divided by 8000. We need to see if we still need to.
 	velZ = float64(pkt.Velocity.Z) // / 8000.0 // previous version divided by 8000. We need to see if we still need to.
 
-	log.Printf("[1.21.10][ParseAddEntity] returning %d %d %d %v %.2f %.2f %.2f %d %d vel=(%.4f,%.4f,%.4f) <nil>", entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseAddEntity] returning %d %d %d %v %.2f %.2f %.2f %d %d vel=(%.4f,%.4f,%.4f) <nil>", entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ))
 
 	return entityID, entityType, objectData, uuid, x, y, z, yaw, pitch, velX, velY, velZ, nil
 }
@@ -61,8 +64,8 @@ func (e *entityHandler) ParseMoveEntityPos(p pk.Packet) (entityID int32, dx, dy,
 	dz = int16(pkt.DZ)
 	onGround = bool(pkt.OnGround)
 
-	log.Printf("[1.21.10][ParseMoveEntityPos] %d received %s", entityID, spew.Sdump(pkt))
-	log.Printf("[1.21.10][ParseMoveEntityPos] returning %d %d %d %d %v <nil>", entityID, dx, dy, dz, onGround)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseMoveEntityPos] %d received %s", entityID, spew.Sdump(pkt)))
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseMoveEntityPos] returning %d %d %d %d %v <nil>", entityID, dx, dy, dz, onGround))
 
 	return entityID, dx, dy, dz, onGround, nil
 }
@@ -83,7 +86,7 @@ func (e *entityHandler) ParseMoveEntityPosRot(p pk.Packet) (entityID int32, dx, 
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
-	log.Printf("[1.21.10][ParseMoveEntityPosRot] returning %d %d %d %d %d %d %v <nil>", entityID, dx, dy, dz, yaw, pitch, onGround)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseMoveEntityPosRot] returning %d %d %d %d %d %d %v <nil>", entityID, dx, dy, dz, yaw, pitch, onGround))
 
 	return entityID, dx, dy, dz, yaw, pitch, onGround, nil
 }
@@ -104,7 +107,7 @@ func (e *entityHandler) ParseTeleportEntity(p pk.Packet) (entityID int32, x, y, 
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
-	log.Printf("[1.21.10][ParseTeleportEntity] returning %d %.2f %.2f %.2f %d %d %v <nil>", entityID, x, y, z, yaw, pitch, onGround)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseTeleportEntity] returning %d %.2f %.2f %.2f %d %d %v <nil>", entityID, x, y, z, yaw, pitch, onGround))
 
 	return entityID, x, y, z, yaw, pitch, onGround, nil
 }
@@ -129,8 +132,8 @@ func (e *entityHandler) ParseSyncEntityPosition(p pk.Packet) (entityID int32, x,
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
-	log.Printf("[1.21.10][ParseSyncEntityPosition] returning %d pos=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) rot=(%d,%d) ground=%v <nil>",
-		entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseSyncEntityPosition] returning %d pos=(%.2f,%.2f,%.2f) vel=(%.4f,%.4f,%.4f) rot=(%d,%d) ground=%v <nil>",
+		entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround))
 
 	return entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround, nil
 }
@@ -150,7 +153,7 @@ func (e *entityHandler) ParseRemoveEntities(p pk.Packet) (entityIDs []int32, err
 		entityIDs[i] = int32(id)
 	}
 
-	log.Printf("[1.21.10][ParseRemoveEntities] returning %v <nil>", entityIDs)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseRemoveEntities] returning %v <nil>", entityIDs))
 
 	return entityIDs, nil
 }
@@ -166,7 +169,7 @@ func (e *entityHandler) ParseEntityEvent(p pk.Packet) (entityID int32, eventID i
 	entityID = int32(pkt.EntityId)
 	eventID = int8(pkt.EntityStatus)
 
-	log.Printf("[1.21.10][ParseEntityEvent] returning %d %d <nil>", entityID, eventID)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseEntityEvent] returning %d %d <nil>", entityID, eventID))
 
 	return entityID, eventID, nil
 }
@@ -195,11 +198,11 @@ func (e *entityHandler) ParseSetEntityMetadata(p pk.Packet) (entityID int32, ent
 			Value:     entry.Value,
 		}
 
-		log.Printf("[1.21.10][ParseSetEntityMetadata] Entry %d: key=%d handler=%s value=%T",
-			i, entry.Key, handlerID.String(), entry.Value)
+		utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseSetEntityMetadata] Entry %d: key=%d handler=%s value=%T",
+			i, entry.Key, handlerID.String(), entry.Value))
 	}
 
-	log.Printf("[1.21.10][ParseSetEntityMetadata] returning entityID=%d with %d metadata entries <nil>", entityID, len(entries))
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseSetEntityMetadata] returning entityID=%d with %d metadata entries <nil>", entityID, len(entries)))
 	return entityID, entries, nil
 }
 
@@ -212,7 +215,7 @@ func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, 
 		return 0, 0, 0, 0, common.ErrPacketParse{PacketName: "EntityVelocity", Cause: err}
 	}
 
-	log.Printf("[1.21.10][ParseEntityVelocityUpdate] Raw parsed packet: %#v", *pkt)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseEntityVelocityUpdate] Raw parsed packet: %#v", *pkt))
 
 	entityID = int32(pkt.EntityId)
 	// Velocity is encoded as fixed-point divided by 8000
@@ -220,7 +223,7 @@ func (e *entityHandler) ParseEntityVelocityUpdate(p pk.Packet) (entityID int32, 
 	velY = float64(pkt.Velocity.Y) // / 8000.0 // previous version divided by 8000. We need to see if we still need to.
 	velZ = float64(pkt.Velocity.Z) // / 8000.0 // previous version divided by 8000. We need to see if we still need to.
 
-	log.Printf("[1.21.10][ParseEntityVelocityUpdate] returning %d %.6f %.6f %.6f <nil>", entityID, velX, velY, velZ)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseEntityVelocityUpdate] returning %d %.6f %.6f %.6f <nil>", entityID, velX, velY, velZ))
 
 	return entityID, velX, velY, velZ, nil
 }
@@ -256,8 +259,8 @@ func (e *entityHandler) ParseEntityEquipment(p pk.Packet) (entityID int32, equip
 			Item:          item,
 		})
 
-		log.Printf("[v1.21.10 Entity][ParseEntityEquipment]: entityID=%d, slot=%d, itemCount=%d",
-			entityID, entry.Slot, entry.Item.ItemCount)
+		utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.10 Entity][ParseEntityEquipment]: entityID=%d, slot=%d, itemCount=%d",
+			entityID, entry.Slot, entry.Item.ItemCount))
 	}
 
 	return entityID, equipment, nil
@@ -280,8 +283,8 @@ func (e *entityHandler) ParseEntityEffect(p pk.Packet) (entityID, effectID, ampl
 	showParticles = flags&0x02 != 0
 	showIcon = flags&0x04 != 0
 
-	log.Printf("[ParseEntityEffect] entityID=%d effectID=%d amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
-		entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[ParseEntityEffect] entityID=%d effectID=%d amplifier=%d duration=%d ambient=%v particles=%v icon=%v",
+		entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon))
 
 	return entityID, effectID, amplifier, durationTicks, ambient, showParticles, showIcon, nil
 }
@@ -297,7 +300,7 @@ func (e *entityHandler) ParseRemoveEntityEffect(p pk.Packet) (entityID, effectID
 	entityID = int32(pkt.EntityId)
 	effectID = int32(pkt.EffectId)
 
-	log.Printf("[ParseRemoveEntityEffect] entityID=%d effectID=%d", entityID, effectID)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[ParseRemoveEntityEffect] entityID=%d effectID=%d", entityID, effectID))
 
 	return entityID, effectID, nil
 }
@@ -313,7 +316,7 @@ func (e *entityHandler) ParseEntityHeadRotation(p pk.Packet) (entityID int32, he
 	entityID = int32(pkt.EntityId)
 	headYaw = int8(pkt.HeadYaw)
 
-	log.Printf("[1.21.10][ParseEntityHeadRotation] returning %d %d <nil>", entityID, headYaw)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseEntityHeadRotation] returning %d %d <nil>", entityID, headYaw))
 
 	return entityID, headYaw, nil
 }
@@ -331,7 +334,7 @@ func (e *entityHandler) ParseEntityLook(p pk.Packet) (entityID int32, yaw, pitch
 	pitch = int8(pkt.Pitch)
 	onGround = bool(pkt.OnGround)
 
-	log.Printf("[1.21.10][ParseEntityLook] returning %d %d %d %v <nil>", entityID, yaw, pitch, onGround)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[1.21.10][ParseEntityLook] returning %d %d %d %v <nil>", entityID, yaw, pitch, onGround))
 
 	return entityID, yaw, pitch, onGround, nil
 }
@@ -348,7 +351,7 @@ func (e *entityHandler) SendInteract(conn models.PacketWriter, entityID int32, h
 	pkt.Hand = &handVal
 	pkt.Sneaking = pk.Boolean(sneaking)
 
-	log.Printf("[v1.21.10 Entity] SendInteract: entityID=%d hand=%d sneaking=%v", entityID, hand, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.10 Entity] SendInteract: entityID=%d hand=%d sneaking=%v", entityID, hand, sneaking))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
@@ -371,8 +374,8 @@ func (e *entityHandler) SendInteractAt(conn models.PacketWriter, entityID int32,
 	pkt.Hand = &handVal
 	pkt.Sneaking = pk.Boolean(sneaking)
 
-	log.Printf("[v1.21.10 Entity] SendInteractAt: entityID=%d pos=(%.2f,%.2f,%.2f) hand=%d sneaking=%v",
-		entityID, targetX, targetY, targetZ, hand, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.10 Entity] SendInteractAt: entityID=%d pos=(%.2f,%.2f,%.2f) hand=%d sneaking=%v",
+		entityID, targetX, targetY, targetZ, hand, sneaking))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
@@ -391,7 +394,7 @@ func (e *entityHandler) SendAttack(conn models.PacketWriter, entityID int32, sne
 	pkt.Hand = &protocol_models.Void{}
 	pkt.Sneaking = pk.Boolean(sneaking)
 
-	log.Printf("[v1.21.10 Entity] SendAttack: entityID=%d sneaking=%v", entityID, sneaking)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.10 Entity] SendAttack: entityID=%d sneaking=%v", entityID, sneaking))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "UseEntity", Cause: err}
@@ -421,8 +424,8 @@ func (e *entityHandler) ParseDamageEvent(p pk.Packet) (entityID int32, sourceTyp
 		sourceZ = float64(pos.Z)
 	}
 
-	log.Printf("[%s][ParseDamageEvent] entityID=%d sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
-		"1.21.10", entityID, sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[%s][ParseDamageEvent] entityID=%d sourceType=%d causedBy=%d directBy=%d hasPos=%v pos=(%.2f,%.2f,%.2f)",
+		"1.21.10", entityID, sourceTypeID, sourceCauseID, sourceDirectID, hasSourcePosition, sourceX, sourceY, sourceZ))
 
 	return entityID, sourceTypeID, sourceCauseID, sourceDirectID, sourceX, sourceY, sourceZ, hasSourcePosition, nil
 }
@@ -444,7 +447,7 @@ func (e *entityHandler) ParseSetPassengers(p pk.Packet) (vehicleEntityID int32, 
 		passengerEntityIDs[i] = int32(passengerID)
 	}
 
-	log.Printf("[v1.21.10 Entity] ParseSetPassengers: vehicleID=%d, passengers=%v", vehicleEntityID, passengerEntityIDs)
+	utils.SafeLogger(e.logger).Debug(fmt.Sprintf("[v1.21.10 Entity] ParseSetPassengers: vehicleID=%d, passengers=%v", vehicleEntityID, passengerEntityIDs))
 
 	return vehicleEntityID, passengerEntityIDs, nil
 }

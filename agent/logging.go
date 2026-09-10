@@ -85,18 +85,18 @@ func (s *syncWriter) setTarget(w io.Writer) {
 // logger (or anything derived from it) ever writes is attributable, even
 // before setupLogging runs.
 //
-// The handler's level is Debug when utils.VerboseLoggingEnabled(), Info
-// (the slog default) otherwise — this is what makes Debug-gated call sites
-// like GetPosition/setPosition (tracking.go) and logLineOfSightFailure
-// (actions.go) actually controllable by MC_AGENT_VERBOSE_LOG rather than
-// permanently silent, since a bare nil *slog.HandlerOptions defaults to
-// Info and filters Debug out unconditionally.
-func newAgentLogger(name string) (*slog.Logger, *syncWriter) {
+// The handler's level is cfg.LogLevel (config.LoggingSettings.Level,
+// resolved via utils.ParseLevel — see docs/bugs/global-log-output-not-per-agent.md
+// Phase 3), zero value slog.LevelInfo. This is what makes Debug/DebugVerbose-gated
+// call sites — both agent/'s own (GetPosition/setPosition in tracking.go,
+// logLineOfSightFailure in actions.go) and everything pathfinding/movement/
+// physics/handler_versions log at utils.LevelDebugVerbose once this
+// *slog.Logger is threaded into them — actually controllable by config
+// rather than permanently silent, since a bare nil *slog.HandlerOptions
+// defaults to Info and filters Debug/DebugVerbose out unconditionally.
+func newAgentLogger(name string, level slog.Level) (*slog.Logger, *syncWriter) {
 	w := newSyncWriter(os.Stdout)
-	opts := &slog.HandlerOptions{}
-	if utils.VerboseLoggingEnabled() {
-		opts.Level = slog.LevelDebug
-	}
+	opts := &slog.HandlerOptions{Level: level, ReplaceAttr: utils.ReplaceDebugVerboseLevelAttr}
 	handler := slog.NewTextHandler(w, opts)
 	return slog.New(handler).With("agent", name), w
 }

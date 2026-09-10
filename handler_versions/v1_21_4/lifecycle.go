@@ -1,7 +1,9 @@
 package v1_21_4
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
+	"log/slog"
 
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -12,6 +14,7 @@ import (
 // lifecycleHandler implements models.LifecycleHandler for 1.21.4.
 type lifecycleHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendPlayerLoaded sends ServerboundPlayerLoaded so the server flips
@@ -20,7 +23,7 @@ type lifecycleHandler struct {
 func (l *lifecycleHandler) SendPlayerLoaded(conn models.PacketWriter) error {
 	pkt := sb.NewPlayerLoaded()
 
-	log.Printf("[v1.21.4 Lifecycle] SendPlayerLoaded")
+	utils.SafeLogger(l.logger).Debug(fmt.Sprintf("[v1.21.4 Lifecycle] SendPlayerLoaded"))
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "PlayerLoaded", Cause: err}

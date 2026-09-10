@@ -2,9 +2,10 @@ package pathfinding
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // MovePruneConfig controls distance-based pruning for move generation.
@@ -21,15 +22,17 @@ type MovementValidator struct {
 	playerWidth     float64 // Player collision box width (usually 0.6)
 	debugCheckCount int     // Counter for debug logging
 	climbDebugCount int     // Counter for climb debug logging
+	logger          *slog.Logger
 }
 
 // NewMovementValidator creates a new movement validator
-func NewMovementValidator(w models.World, shapeMgr models.BlockShapeManager) *MovementValidator {
+func NewMovementValidator(w models.World, shapeMgr models.BlockShapeManager, logger *slog.Logger) *MovementValidator {
 	return &MovementValidator{
 		world:           w,
 		shapeMgr:        shapeMgr,
 		playerEyeHeight: models.PlayerEyeHeight,
 		playerWidth:     0.6,
+		logger:          utils.SafeLogger(logger),
 	}
 }
 
@@ -95,23 +98,23 @@ func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 	}
 
 	// Debug ascend checks for start position (use integer equality since models.V3 uses float64 for block coords)
-	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
-		log.Printf("[DEBUG CanAscend] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
-			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+	debugPos := int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256
+	if debugPos {
+		utils.DebugVerbose(mv.logger, "[CanAscend]", "fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 	}
 
 	// Check if destination is passable
 	if !mv.isPositionPassable(to) {
-		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
-			log.Printf("[DEBUG CanAscend] FAILED: destination not passable")
+		if debugPos {
+			utils.DebugVerbose(mv.logger, "[CanAscend] FAILED: destination not passable")
 		}
 		return false
 	}
 
 	// Check if there's ground to stand on
 	if !mv.hasGroundSupport(to) {
-		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
-			log.Printf("[DEBUG CanAscend] FAILED: no ground support")
+		if debugPos {
+			utils.DebugVerbose(mv.logger, "[CanAscend] FAILED: no ground support")
 		}
 		return false
 	}
@@ -119,14 +122,13 @@ func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 	// Check if there's headroom to jump
 	jumpSpace := from.Add(models.V3{X: 0, Y: 2, Z: 0})
 	if !mv.isBlockPassable(jumpSpace) {
-		if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
-			log.Printf("[DEBUG CanAscend] FAILED: no headroom at (%.0f,%.0f,%.0f)",
-				jumpSpace.X, jumpSpace.Y, jumpSpace.Z)
+		if debugPos {
+			utils.DebugVerbose(mv.logger, "[CanAscend] FAILED: no headroom", "x", jumpSpace.X, "y", jumpSpace.Y, "z", jumpSpace.Z)
 		}
 		return false
 	}
-	if int(from.X) == 255 && int(from.Y) == 72 && int(from.Z) == 82 && int(to.X) == 256 {
-		log.Printf("[DEBUG CanAscend] SUCCESS")
+	if debugPos {
+		utils.DebugVerbose(mv.logger, "[CanAscend] SUCCESS")
 	}
 	return true
 }
@@ -600,8 +602,8 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 
 	// Check if destination is passable (feet and head)
 	if !mv.isPositionPassable(to) {
-		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: destination not passable",
-			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+		utils.DebugVerbose(mv.logger, "[CanExitWater] FAILED: destination not passable",
+			"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 		return false
 	}
 
@@ -618,12 +620,12 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 	// Destination must have ground support (solid block below at to.Y-1)
 	if dy == 0 {
 		if mv.hasGroundSupport(to) {
-			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: same-level exit",
-				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			utils.DebugVerbose(mv.logger, "[CanExitWater] SUCCESS: same-level exit",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 			return true
 		}
-		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: no ground support (same-level)",
-			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+		utils.DebugVerbose(mv.logger, "[CanExitWater] FAILED: no ground support (same-level)",
+			"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 	}
 
 	// Scenario 2: Step-up exit (dy == 1)
@@ -632,20 +634,20 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 	if dy == 1 {
 		// Check if destination is passable (feet and head)
 		if !mv.isPositionPassable(to) {
-			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: destination not passable (step-up)",
-				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			utils.DebugVerbose(mv.logger, "[CanExitWater] FAILED: destination not passable (step-up)",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 			return false
 		}
 
 		// Check if there's ground support below the destination
 		if !mv.hasGroundSupport(to) {
-			log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) FAILED: no ground support (step-up)",
-				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			utils.DebugVerbose(mv.logger, "[CanExitWater] FAILED: no ground support (step-up)",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 			return false
 		}
 
-		log.Printf("[CanExitWater] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: step-up exit to air with ground support",
-			from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+		utils.DebugVerbose(mv.logger, "[CanExitWater] SUCCESS: step-up exit to air with ground support",
+			"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 		return true
 	}
 
@@ -740,8 +742,8 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 	if toPassable {
 		// Check if there's ground to stand on and head clearance
 		if mv.hasGroundSupport(to) && mv.isPositionPassable(to) {
-			log.Printf("[CanExitClimb] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: same-level exit",
-				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			utils.DebugVerbose(mv.logger, "[CanExitClimb] SUCCESS: same-level exit",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 			return true
 		}
 	}
@@ -763,8 +765,9 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 			// Check head clearance at to+2
 			toUp2 := to.Add(models.V3{X: 0, Y: 2, Z: 0})
 			if mv.isBlockPassable(toUp2) {
-				log.Printf("[CanExitClimb] from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f) SUCCESS: step-up exit to (%.0f,%.0f,%.0f)",
-					from.X, from.Y, from.Z, to.X, to.Y, to.Z, toUp.X, toUp.Y, toUp.Z)
+				utils.DebugVerbose(mv.logger, "[CanExitClimb] SUCCESS: step-up exit",
+					"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z,
+					"stepX", toUp.X, "stepY", toUp.Y, "stepZ", toUp.Z)
 				return true
 			}
 		}
@@ -798,7 +801,7 @@ func (mv *MovementValidator) getExitClimbTargetY(from, to models.V3) float64 {
 // Returns the Y coordinate where the entity's feet should be (standing on solid ground)
 // Returns -1 if no valid ground found
 func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
-	log.Printf("[FindGroundBelow] Searching for ground at (%f, %f) from Y=%f", x, z, startY)
+	utils.DebugVerbose(mv.logger, "[FindGroundBelow] searching", "x", x, "z", z, "startY", startY)
 
 	// Check current position first
 	currentStateID, _ := mv.world.GetBlockAt(x, startY, z)
@@ -808,8 +811,8 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 		isSolid := mv.shapeMgr.IsSolid(currentStateID)
 
 		if isSolid {
-			log.Printf("[FindGroundBelow] Bot is inside solid block at Y=%f (stateID=%d), searching upward for surface",
-				startY, currentStateID)
+			utils.DebugVerbose(mv.logger, "[FindGroundBelow] bot inside solid block, searching upward for surface",
+				"startY", startY, "stateID", currentStateID)
 
 			// Search upward to find the top of the solid terrain
 			for y := startY; y <= startY+maxSearchDepth && y <= 320; y++ {
@@ -817,17 +820,17 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 
 				// Check if this is a valid standing position (air with solid below)
 				if mv.isPositionPassable(pos) && mv.hasGroundSupport(pos) {
-					log.Printf("[FindGroundBelow] Found surface at Y=%f for position (%f, %f) (searched upward from Y=%f)",
-						y, x, z, startY)
+					utils.DebugVerbose(mv.logger, "[FindGroundBelow] found surface searching upward",
+						"y", y, "x", x, "z", z, "startY", startY)
 					return y
 				}
 			}
-			log.Printf("[FindGroundBelow] No surface found searching upward from Y=%f", startY)
+			utils.DebugVerbose(mv.logger, "[FindGroundBelow] no surface found searching upward", "startY", startY)
 		}
 	}
 
 	// If not in solid block, search downward for valid ground
-	log.Printf("[FindGroundBelow] Searching downward from Y=%f for valid standing position", startY)
+	utils.DebugVerbose(mv.logger, "[FindGroundBelow] searching downward for valid standing position", "startY", startY)
 
 	for y := startY; y >= startY-maxSearchDepth && y >= -64; y-- {
 		pos := models.V3{X: x, Y: y, Z: z}
@@ -836,19 +839,22 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 		// 1. Feet and head blocks must be passable (air or passable blocks)
 		// 2. Block below feet must be solid (ground support)
 		if mv.isPositionPassable(pos) && mv.hasGroundSupport(pos) {
-			log.Printf("[FindGroundBelow] Found valid ground at Y=%f for position (%f, %f) (searched downward from Y=%f)",
-				y, x, z, startY)
+			utils.DebugVerbose(mv.logger, "[FindGroundBelow] found valid ground searching downward",
+				"y", y, "x", x, "z", z, "startY", startY)
 			return y
 		}
 	}
 
-	log.Printf("[FindGroundBelow] No valid ground found for position (%f, %f) after searching up/down from Y=%f", x, z, startY)
+	utils.DebugVerbose(mv.logger, "[FindGroundBelow] no valid ground found", "x", x, "z", z, "startY", startY)
 	return -1 // No valid ground found
 }
 
 // logTerrainAround logs all blocks around a position for debugging
 func (mv *MovementValidator) logTerrainAround(from models.V3) {
-	log.Printf("[TERRAIN] === Terrain around (%.0f, %.0f, %.0f) ===", from.X, from.Y, from.Z)
+	if !utils.DebugVerboseEnabled(mv.logger) {
+		return
+	}
+	utils.DebugVerbose(mv.logger, "[TERRAIN] terrain around", "x", from.X, "y", from.Y, "z", from.Z)
 
 	// All 8 directions plus center
 	directions := []struct {
@@ -870,7 +876,7 @@ func (mv *MovementValidator) logTerrainAround(from models.V3) {
 		x := from.X + dir.dx
 		z := from.Z + dir.dz
 
-		log.Printf("[TERRAIN] %s (%.0f, %.0f):", dir.name, x, z)
+		utils.DebugVerbose(mv.logger, "[TERRAIN] column", "dir", dir.name, "x", x, "z", z)
 		for dy := float64(-1); dy <= 3; dy++ {
 			y := from.Y + dy
 			stateID, _ := mv.world.GetBlockAt(x, y, z)
@@ -902,7 +908,7 @@ func (mv *MovementValidator) logTerrainAround(from models.V3) {
 			case 3:
 				yLabel = "Y+3        "
 			}
-			log.Printf("  %s: %s (passable=%t, solid=%t)", yLabel, blockName, passable, solid)
+			utils.DebugVerbose(mv.logger, "[TERRAIN] block", "level", yLabel, "block", blockName, "passable", passable, "solid", solid)
 		}
 	}
 }
@@ -1153,8 +1159,8 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		// Same level exit
 		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if mv.CanExitWater(from, to) {
-			log.Printf("[GetPossibleMoves] Adding ExitWater same-level: from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
-				from.X, from.Y, from.Z, to.X, to.Y, to.Z)
+			utils.DebugVerbose(mv.logger, "[GetPossibleMoves] adding ExitWater same-level",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", to.X, "toY", to.Y, "toZ", to.Z)
 			moves = append(moves, PathStep{
 				Position: to,
 				Movement: ExitWater,
@@ -1165,8 +1171,8 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		// Step-up exit (1 block higher)
 		toUp := from.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
 		if mv.CanExitWater(from, toUp) {
-			log.Printf("[GetPossibleMoves] Adding ExitWater step-up: from=(%.0f,%.0f,%.0f) to=(%.0f,%.0f,%.0f)",
-				from.X, from.Y, from.Z, toUp.X, toUp.Y, toUp.Z)
+			utils.DebugVerbose(mv.logger, "[GetPossibleMoves] adding ExitWater step-up",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z, "toX", toUp.X, "toY", toUp.Y, "toZ", toUp.Z)
 			moves = append(moves, PathStep{
 				Position: toUp,
 				Movement: ExitWater,
@@ -1182,9 +1188,10 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 
 		// Debug: log first call to understand terrain
 		if mv.debugCheckCount < 2 {
-			log.Printf("[GetPossibleMoves] from=(%.0f,%.0f,%.0f) goal=(%.0f,%.0f,%.0f) dist=%.1f",
-				from.X, from.Y, from.Z, goal.X, goal.Y, goal.Z, fromDist)
-			log.Printf("[GetPossibleMoves] Generated %d moves (AscendStairs=%d)", len(moves), 0)
+			utils.SafeLogger(mv.logger).Debug("[GetPossibleMoves] generated",
+				"fromX", from.X, "fromY", from.Y, "fromZ", from.Z,
+				"goalX", goal.X, "goalY", goal.Y, "goalZ", goal.Z,
+				"dist", fromDist, "moves", len(moves))
 		}
 
 		pruned := 0
@@ -1200,8 +1207,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		if mv.debugCheckCount < 2 {
-			log.Printf("[GetPossibleMoves] After distance pruning: %d moves (pruned %d)",
-				len(filtered), pruned)
+			utils.SafeLogger(mv.logger).Debug("[GetPossibleMoves] after distance pruning", "moves", len(filtered), "pruned", pruned)
 			mv.debugCheckCount++
 		}
 
@@ -1219,8 +1225,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 		}
 
 		if mv.debugCheckCount < 2 {
-			log.Printf("[GetPossibleMoves] After deduplication: %d moves (removed %d duplicates)",
-				len(unique), dups)
+			utils.SafeLogger(mv.logger).Debug("[GetPossibleMoves] after deduplication", "moves", len(unique), "removed", dups)
 		}
 
 		return unique

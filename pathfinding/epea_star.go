@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // Enhanced Partial Expansion A* (EPEA*): https://www.aaai.org/Papers/ICAPS/2007/ICAPS07-013.pdf
@@ -22,23 +23,26 @@ type epeaStarPathFinder struct {
 	movementValidator *MovementValidator
 	goalRadius        float64
 	contextCheckFreq  int
+	logger            *slog.Logger
 }
 
 // NewEPEAStarPathFinder creates a new EPEA* pathfinder
-func NewEPEAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
-	return NewEPEAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{})
+func NewEPEAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager, logger *slog.Logger) models.PathFinder {
+	return NewEPEAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{}, logger)
 }
 
 // NewEPEAStarPathFinderWithConfig creates a new EPEA* pathfinder with custom settings.
-func NewEPEAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
+func NewEPEAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig, logger *slog.Logger) models.PathFinder {
 	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
+	logger = utils.SafeLogger(logger)
 	return &epeaStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr),
+		movementValidator: NewMovementValidator(w, shapeMgr, logger),
 		goalRadius:        goalRadius,
 		contextCheckFreq:  contextCheckFreq,
+		logger:            logger,
 	}
 }
 
@@ -116,15 +120,14 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 		DriftCap:  4.0,
 	}
 	startMoves := pf.movementValidator.GetPossibleMoves(start, goal, prune)
-	log.Printf("[EPEA*] Start position (%f,%f,%f) has %d possible moves (filtered toward goal)",
-		start.X, start.Y, start.Z, len(startMoves))
+	utils.SafeLogger(pf.logger).Debug("[EPEA*] start position possible moves", "x", start.X, "y", start.Y, "z", start.Z, "count", len(startMoves))
 
-	if len(startMoves) > 0 {
-		log.Printf("[EPEA*] First possible moves from (%f,%f,%f):\n", start.X, start.Y, start.Z)
+	if len(startMoves) > 0 && utils.DebugVerboseEnabled(pf.logger) {
 		for i := range startMoves {
-			log.Printf("  - Move %d: %s to (%f,%f,%f) cost=%.2f",
-				i+1, startMoves[i].Movement, startMoves[i].Position.X,
-				startMoves[i].Position.Y, startMoves[i].Position.Z, startMoves[i].Cost)
+			utils.DebugVerbose(pf.logger, "[EPEA*] possible move from start",
+				"index", i+1, "movement", startMoves[i].Movement,
+				"x", startMoves[i].Position.X, "y", startMoves[i].Position.Y, "z", startMoves[i].Position.Z,
+				"cost", startMoves[i].Cost)
 		}
 	}
 
@@ -163,9 +166,9 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 		if stepsProcessed%pf.contextCheckFreq == 0 {
 			select {
 			case <-ctx.Done():
-				log.Printf("[EPEA*] Stats: steps=%d, successors generated=%d, skipped=%d (%.1f%% reduction)",
-					stepsProcessed, successorsGenerated, successorsSkipped,
-					100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
+				utils.SafeLogger(pf.logger).Warn("[EPEA*] context deadline exceeded", "steps", stepsProcessed,
+					"successorsGenerated", successorsGenerated, "successorsSkipped", successorsSkipped,
+					"reductionPct", 100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
 				return &Path{
 					Found:      false,
 					StartPos:   start,
@@ -178,9 +181,9 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 
 		// Check step limit
 		if maxSteps > 0 && stepsProcessed > maxSteps {
-			log.Printf("[EPEA*] Stats: steps=%d, successors generated=%d, skipped=%d (%.1f%% reduction)",
-				stepsProcessed, successorsGenerated, successorsSkipped,
-				100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
+			utils.SafeLogger(pf.logger).Warn("[EPEA*] exceeded max steps", "steps", stepsProcessed,
+				"successorsGenerated", successorsGenerated, "successorsSkipped", successorsSkipped,
+				"reductionPct", 100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
 			return &Path{
 				Found:      false,
 				StartPos:   start,
@@ -200,11 +203,13 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 			path.SearchTime = float64(time.Since(startTime).Milliseconds())
 
 			// Log path summary and stats
-			log.Printf("[EPEA*] %s", path.LogSummary())
-			log.Printf("[EPEA*] Path details:\n%s", path.LogDetails(true))
-			log.Printf("[EPEA*] Stats: steps=%d, successors generated=%d, skipped=%d (%.1f%% reduction)",
-				stepsProcessed, successorsGenerated, successorsSkipped,
-				100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
+			utils.SafeLogger(pf.logger).Info("[EPEA*] " + path.LogSummary())
+			if utils.DebugVerboseEnabled(pf.logger) {
+				utils.DebugVerbose(pf.logger, "[EPEA*] path details\n"+path.LogDetails(true))
+			}
+			utils.SafeLogger(pf.logger).Debug("[EPEA*] stats", "steps", stepsProcessed,
+				"successorsGenerated", successorsGenerated, "successorsSkipped", successorsSkipped,
+				"reductionPct", 100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
 
 			return path, nil
 		}
@@ -285,11 +290,9 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 	}
 
 	// No path found - openSet is empty
-	log.Printf("[EPEA*] Pathfinding failed: openSet exhausted after %d steps, closedSet size=%d",
-		stepsProcessed, len(closedSet))
-	log.Printf("[EPEA*] Stats: successors generated=%d, skipped=%d (%.1f%% reduction)",
-		successorsGenerated, successorsSkipped,
-		100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
+	utils.SafeLogger(pf.logger).Warn("[EPEA*] pathfinding failed: openSet exhausted", "steps", stepsProcessed, "closedSetSize", len(closedSet),
+		"successorsGenerated", successorsGenerated, "successorsSkipped", successorsSkipped,
+		"reductionPct", 100.0*float64(successorsSkipped)/float64(successorsGenerated+successorsSkipped))
 	return &Path{
 		Found:      false,
 		StartPos:   start,

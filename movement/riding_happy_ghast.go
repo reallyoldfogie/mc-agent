@@ -1,7 +1,8 @@
 package movement
 
 import (
-	"log"
+	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -36,7 +37,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHappyGhast(
 	forward, backward, left, right, jump, sneak bool,
 	entityGetter models.MountedEntityPositionGetter,
 ) ridingTickResult {
-	log.Printf("[handleRidingModeHappyGhast] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHappyGhast] SendVehicleInput(<conn>, forward: %t, backward: %t, left: %t, right: %t, jump: %t, sneak: %t)", forward, backward, left, right, jump, sneak))
 	sendRidingInput(pe, versionHandler, forward, backward, left, right, jump, sneak)
 
 	pe.mountedEntityMu.Lock()
@@ -125,9 +126,9 @@ func (pe *PhysicsMovementExecutor) handleRidingModeHappyGhast(
 	pe.ridingVelZ = newVel.Z
 	pe.lastVelMultiplier = physics.HappyGhastFlightDrag
 
-	log.Printf("[handleRidingModeHappyGhast] flyingSpeed=%.4f vehYaw=%.1f agentYaw=%.1f agentPitch=%.1f input=(%.3f,%.3f,%.3f) vel=(%.4f,%.4f,%.4f) newPos=(%.2f,%.2f,%.2f)",
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingModeHappyGhast] flyingSpeed=%.4f vehYaw=%.1f agentYaw=%.1f agentPitch=%.1f input=(%.3f,%.3f,%.3f) vel=(%.4f,%.4f,%.4f) newPos=(%.2f,%.2f,%.2f)",
 		flyingSpeed, vehicleYaw, agentYaw, agentPitch, movementInput.X, movementInput.Y, movementInput.Z,
-		newVel.X, newVel.Y, newVel.Z, newPos.X, newPos.Y, newPos.Z)
+		newVel.X, newVel.Y, newVel.Z, newPos.X, newPos.Y, newPos.Z))
 
 	applyRidingTickState(pe, newPos, agentYaw, agentPitch, collisionOnGround)
 	return ridingTickResult{

@@ -2,7 +2,7 @@ package utils
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -20,6 +20,7 @@ type EntityPositionTracker struct {
 	maxPos           models.V3 // Maximum coordinates reached
 	trackedPositions *RingBuffer[models.V3]
 	mu               sync.RWMutex
+	logger           *slog.Logger
 }
 
 func (t *EntityPositionTracker) String() string {
@@ -37,8 +38,9 @@ func (t *EntityPositionTracker) String() string {
 // NewEntityPositionTracker creates a tracker that uses callbacks to track entity positions.
 // The entity parameter should provide a RegisterEntityPositionCallback method that accepts
 // a callback function with signature: func(entityID int32, x, y, z float64)
-func NewEntityPositionTracker(entityID int32, initialPos models.V3) *EntityPositionTracker {
-	log.Printf("Creating EntityPositionTracker for EntityID %d with initial position (%.2f, %.2f, %.2f)", entityID, initialPos.X, initialPos.Y, initialPos.Z)
+func NewEntityPositionTracker(entityID int32, initialPos models.V3, logger *slog.Logger) *EntityPositionTracker {
+	logger = SafeLogger(logger)
+	logger.Debug("creating EntityPositionTracker", "entityID", entityID, "x", initialPos.X, "y", initialPos.Y, "z", initialPos.Z)
 
 	return &EntityPositionTracker{
 		entityID:         entityID,
@@ -46,13 +48,14 @@ func NewEntityPositionTracker(entityID int32, initialPos models.V3) *EntityPosit
 		minPos:           initialPos,
 		maxPos:           initialPos,
 		trackedPositions: NewRingBuffer[models.V3](positionWindowSize),
+		logger:           logger,
 	}
 }
 
 // RegisterCallback registers this tracker with an entity position callback system.
 // Pass in the agent or any object that has RegisterEntityPositionCallback method.
 func (t *EntityPositionTracker) RegisterCallback(callbackRegistry models.EntityCallbackRegistry) {
-	log.Printf("Registering EntityPositionTracker callback for EntityID %d", t.entityID)
+	SafeLogger(t.logger).Debug("registering EntityPositionTracker callback", "entityID", t.entityID)
 
 	callbackRegistry.RegisterEntityPositionCallback(t.positionCallback)
 }
@@ -62,7 +65,7 @@ func (t *EntityPositionTracker) positionCallback(id int32, x, y, z float64) {
 		return
 	}
 
-	log.Printf("EntityPositionTracker callback received position update for EntityID %d: (%.2f, %.2f, %.2f)", id, x, y, z)
+	SafeLogger(t.logger).Debug("EntityPositionTracker callback received position update", "entityID", id, "x", x, "y", y, "z", z)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()

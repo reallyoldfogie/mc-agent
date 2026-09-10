@@ -2,6 +2,8 @@
 package v1_21_8
 
 import (
+	"log/slog"
+
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -12,6 +14,7 @@ import (
 // worldHandler implements common.WorldHandler for 1.21.8.
 type worldHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // ParseBlockUpdate parses a single block update packet.

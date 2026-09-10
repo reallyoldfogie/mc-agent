@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"io"
 	"log/slog"
 
@@ -27,7 +28,7 @@ func (a *versionHandlerAdapter) Version() string {
 }
 
 func (a *versionHandlerAdapter) Login() bot.LoginHandler {
-	a.logger.Info("[Adapter] Login() called - creating loginHandlerAdapter")
+	utils.SafeLogger(a.logger).Info("[Adapter] Login() called - creating loginHandlerAdapter")
 	return &loginHandlerAdapter{handler: a.handler.Login(), logger: a.logger}
 }
 
@@ -64,12 +65,12 @@ func (a *loginHandlerAdapter) SendEncryptionResponse(conn bot.PacketWriter, shar
 }
 
 func (a *loginHandlerAdapter) SendLoginAcknowledged(conn bot.PacketWriter) error {
-	a.logger.Info("[Adapter] SendLoginAcknowledged called")
+	utils.SafeLogger(a.logger).Info("[Adapter] SendLoginAcknowledged called")
 	return a.handler.SendLoginAcknowledged(conn)
 }
 
 func (a *loginHandlerAdapter) ParseLoginSuccess(p pk.Packet) (username string, uuid [16]byte, err error) {
-	a.logger.Info("[Adapter] ParseLoginSuccess called")
+	utils.SafeLogger(a.logger).Info("[Adapter] ParseLoginSuccess called")
 	return a.handler.ParseLoginSuccess(p)
 }
 

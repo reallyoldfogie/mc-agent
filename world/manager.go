@@ -3,11 +3,13 @@
 package world
 
 import (
+	"log/slog"
 	"math"
 	"sync"
 
 	semver "github.com/aquasecurity/go-version/pkg/version"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // var _ models.World = (*Manager)(nil) confirms Manager satisfies the full
@@ -47,6 +49,8 @@ type Manager struct {
 	// states container. See versionHasFluidCount.
 	hasFluidCount bool
 
+	logger *slog.Logger
+
 	mu      sync.RWMutex
 	Columns map[ChunkPos]*ChunkData
 
@@ -84,7 +88,7 @@ type Manager struct {
 }
 
 // NewManager creates a new world manager.
-func NewManager(versionHandler models.VersionHandler, events EventsListener) *Manager {
+func NewManager(versionHandler models.VersionHandler, events EventsListener, logger *slog.Logger) *Manager {
 	// Determine if we should use calculated data length based on version
 	// In 1.21.5+, the data array length is not sent as a VarInt but must be calculated
 	useCalculatedLen := false
@@ -99,6 +103,7 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener) *Ma
 		events:               events,
 		useCalculatedDataLen: useCalculatedLen,
 		hasFluidCount:        hasFluidCount,
+		logger:               utils.SafeLogger(logger),
 		Columns:              make(map[ChunkPos]*ChunkData),
 		blockOverrides:       make(map[blockPos]uint32),
 		worldAge:             -1, // Sentinel: not yet initialized
@@ -235,7 +240,7 @@ func (m *Manager) HandleChunkLight(chunkX, chunkZ int32, light models.ChunkLight
 	m.mu.Lock()
 	chunk, exists := m.Columns[pos]
 	if !exists || chunk == nil {
-		chunk = &ChunkData{X: chunkX, Z: chunkZ}
+		chunk = &ChunkData{X: chunkX, Z: chunkZ, logger: m.logger}
 		m.Columns[pos] = chunk
 	}
 	m.mu.Unlock()
@@ -462,6 +467,7 @@ func (m *Manager) HandleChunkLoad(chunkX, chunkZ int32, data []byte) error {
 		RawData:              data,
 		UseCalculatedDataLen: m.useCalculatedDataLen,
 		HasFluidCount:        m.hasFluidCount,
+		logger:               m.logger,
 	}
 
 	// Store the chunk

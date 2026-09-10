@@ -217,7 +217,7 @@ func main() {
 	time.Sleep(5 * time.Second)
 
 	// Build LLM subsystem
-	ollamaLLM := llm.NewOllamaClient(model)
+	ollamaLLM := llm.NewOllamaClient(model, a.Logger())
 	agentExecutor := agent.NewLLMExecutor(a)
 
 	goal := "Find a tree and mine any kind of log (blocks whose name contains 'log')"

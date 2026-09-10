@@ -16,7 +16,7 @@ func TestDebug_GroundCollision(t *testing.T) {
 	world.SetBlock(0, 0, 0, BlockStone)
 	shapes.SetPassable(BlockStone, false)
 
-	state := NewState(shapes)
+	state := NewState(shapes, nil)
 	state.SetPositionSimple(models.V3{X: 0, Y: 2, Z: 0})
 	state.SetVelocity(models.V3{})
 

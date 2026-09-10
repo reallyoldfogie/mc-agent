@@ -3,7 +3,7 @@ package movement
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"math/rand"
 	"sync"
@@ -229,6 +229,8 @@ type PhysicsMovementExecutor struct {
 	onDismountRequired func(ctx context.Context) error
 	waitingForMount    bool
 	waitingForDismount bool
+
+	logger *slog.Logger
 }
 
 // NewPhysicsMovementExecutor creates a new physics-based movement executor.
@@ -241,7 +243,10 @@ func NewPhysicsMovementExecutor(
 	getBotEntityID func() int32,
 	world physics.World,
 	shapeProvider physics.BlockShapeProvider,
+	logger *slog.Logger,
 ) *PhysicsMovementExecutor {
+	logger = utils.SafeLogger(logger)
+
 	// Create movement packet sender
 	movementPacketSender := &movementPacketSender{
 		client:         client,
@@ -252,10 +257,11 @@ func NewPhysicsMovementExecutor(
 		isSprinting:    false,
 		isSneaking:     false,
 		onPacketSent:   nil,
+		logger:         logger,
 	}
 
 	// Create physics state
-	physicsState := physics.NewState(shapeProvider)
+	physicsState := physics.NewState(shapeProvider, logger)
 
 	// Initialize physics state from current bot position
 	botPos, yaw, pitch, initialized := getBotPos()
@@ -292,6 +298,7 @@ func NewPhysicsMovementExecutor(
 		sidewaysTimeout:      2 * time.Second, // Try sideways recovery for 2 seconds before re-pathing
 		sidewaysDirection:    1,               // Start with right
 		mountedEntityID:      -1,              // Not mounted initially
+		logger:               logger,
 	}
 }
 
@@ -342,7 +349,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 				yaw = entYaw
 			}
 			pe.physicsState.SetPosition(models.V3{X: entX, Y: entY, Z: entZ}, yaw, pitch, false)
-			log.Printf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f) yaw=%.2f", vehicleEntityID, entX, entY, entZ, yaw)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Physics state seeded from entity %d at (%.2f, %.2f, %.2f) yaw=%.2f", vehicleEntityID, entX, entY, entZ, yaw))
 
 			// For minecarts, initialize velocity from the server's entity velocity.
 			if et, typeFound := pe.entityPositionGetter.GetMountedEntityType(vehicleEntityID); typeFound {
@@ -352,7 +359,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 					if velFound {
 						pe.ridingVelX = velX / 8000.0
 						pe.ridingVelZ = velZ / 8000.0
-						log.Printf("[SetMounted] Minecart velocity initialized from server: (%.4f, %.4f) blocks/tick", pe.ridingVelX, pe.ridingVelZ)
+						utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Minecart velocity initialized from server: (%.4f, %.4f) blocks/tick", pe.ridingVelX, pe.ridingVelZ))
 					}
 				}
 			}
@@ -387,7 +394,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 					isCamelHusk = huskChecker.IsMountedEntityCamelHusk(entityTypeID)
 				}
 				pe.camelState = models.NewCamelState(worldTime, isCamelHusk)
-				log.Printf("[SetMounted] Camel state initialized (husk=%v, worldTime=%d) for entity %d", isCamelHusk, worldTime, vehicleEntityID)
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Camel state initialized (husk=%v, worldTime=%d) for entity %d", isCamelHusk, worldTime, vehicleEntityID))
 			}
 		}
 	}
@@ -409,7 +416,7 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 				}
 				isZombie := pe.entityPositionGetter.IsMountedEntityZombieNautilus(entityTypeID)
 				pe.nautilusState = models.NewNautilusState(initialYaw, isZombie)
-				log.Printf("[SetMounted] Nautilus state initialized (zombie=%v, yaw=%.1f) for entity %d", isZombie, initialYaw, vehicleEntityID)
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Nautilus state initialized (zombie=%v, yaw=%.1f) for entity %d", isZombie, initialYaw, vehicleEntityID))
 			}
 		}
 	}
@@ -429,12 +436,12 @@ func (pe *PhysicsMovementExecutor) SetMounted(vehicleEntityID int32) error {
 					initialYaw = stateYaw
 				}
 				pe.happyGhastState = models.NewHappyGhastState(initialYaw)
-				log.Printf("[SetMounted] Happy ghast state initialized (yaw=%.1f) for entity %d", initialYaw, vehicleEntityID)
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Happy ghast state initialized (yaw=%.1f) for entity %d", initialYaw, vehicleEntityID))
 			}
 		}
 	}
 
-	log.Printf("[SetMounted] Agent mounted on entity %d (mode stays %s)", vehicleEntityID, pe.GetMode())
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMounted] Agent mounted on entity %d (mode stays %s)", vehicleEntityID, pe.GetMode()))
 	return nil
 }
 
@@ -471,18 +478,18 @@ func (pe *PhysicsMovementExecutor) NotifyVehiclePose(entityID int32, poseName st
 	case "sitting":
 		if !pe.camelState.IsSitting() {
 			pe.camelState.StartSitting(worldTime)
-			log.Printf("[NotifyVehiclePose] Camel %d: server reports SITTING (ord=%d), applied StartSitting", entityID, ordinal)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[NotifyVehiclePose] Camel %d: server reports SITTING (ord=%d), applied StartSitting", entityID, ordinal))
 		}
 	case "standing":
 		if pe.camelState.IsSitting() {
 			pe.camelState.StartStanding(worldTime)
-			log.Printf("[NotifyVehiclePose] Camel %d: server reports STANDING (ord=%d), applied StartStanding", entityID, ordinal)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[NotifyVehiclePose] Camel %d: server reports STANDING (ord=%d), applied StartStanding", entityID, ordinal))
 		}
 	default:
 		// Camels only ever report sitting/standing for our purposes. Other
 		// poses (e.g. dying, swimming) we leave alone — Java treats those
 		// as orthogonal to the sit/stand state machine.
-		log.Printf("[NotifyVehiclePose] Camel %d: ignoring non-sit/stand pose %q (ord=%d)", entityID, poseName, ordinal)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[NotifyVehiclePose] Camel %d: ignoring non-sit/stand pose %q (ord=%d)", entityID, poseName, ordinal))
 	}
 }
 
@@ -512,7 +519,7 @@ func (pe *PhysicsMovementExecutor) SetDismounted() error {
 	pe.horseCharging = false
 	pe.horseJumpChargeTicks = 0
 	pe.horsePendingJumpStrength = 0
-	log.Printf("[SetDismounted] Agent dismounted from vehicle (mode stays %s)", pe.GetMode())
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetDismounted] Agent dismounted from vehicle (mode stays %s)", pe.GetMode()))
 	return nil
 }
 
@@ -524,7 +531,7 @@ func (pe *PhysicsMovementExecutor) NotifyDismountRequested() {
 	pe.mountedEntityMu.Lock()
 	defer pe.mountedEntityMu.Unlock()
 	pe.dismountRequested = true
-	log.Printf("[NotifyDismountRequested] Dismount flag set — sneak will be forced until server acknowledges")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[NotifyDismountRequested] Dismount flag set — sneak will be forced until server acknowledges"))
 }
 
 // SetPacketCallback sets an optional callback for packet interception.
@@ -575,8 +582,8 @@ func (pe *PhysicsMovementExecutor) SetMountedVelocity(velX, velY, velZ float64) 
 	pe.ridingVelX = velX / 8000.0
 	pe.ridingVelZ = velZ / 8000.0
 
-	log.Printf("[SetMountedVelocity] Server velocity for entity %d: (%.4f, %.4f) blocks/tick",
-		pe.mountedEntityID, pe.ridingVelX, pe.ridingVelZ)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SetMountedVelocity] Server velocity for entity %d: (%.4f, %.4f) blocks/tick",
+		pe.mountedEntityID, pe.ridingVelX, pe.ridingVelZ))
 }
 
 // TriggerSaddleBoost activates the SaddledComponent speed boost for striders/pigs.
@@ -598,7 +605,7 @@ func (pe *PhysicsMovementExecutor) TriggerSaddleBoost() bool {
 	// We use a fixed midpoint value for deterministic behavior on the client side.
 	// The actual server-side duration may differ, but the client does not receive it.
 	pe.saddleBoostTotal = physics.StriderBoostMinDuration + physics.StriderBoostRandomRange/2
-	log.Printf("[TriggerSaddleBoost] Boost activated: duration=%d ticks", pe.saddleBoostTotal)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[TriggerSaddleBoost] Boost activated: duration=%d ticks", pe.saddleBoostTotal))
 	return true
 }
 
@@ -792,8 +799,8 @@ func (pe *PhysicsMovementExecutor) HandleServerCorrection(x, y, z float64, yaw, 
 
 	// Log significant corrections
 	if predictionError > 0.01 || math.Abs(deltaYaw) > 1.0 || math.Abs(deltaPitch) > 1.0 {
-		log.Printf("[PhysicsExecutor] Server correction: pos Δ(%.3f, %.3f, %.3f) yaw Δ%.2f pitch Δ%.2f error²=%.6f",
-			deltaX, deltaY, deltaZ, deltaYaw, deltaPitch, predictionError)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Server correction: pos Δ(%.3f, %.3f, %.3f) yaw Δ%.2f pitch Δ%.2f error²=%.6f",
+			deltaX, deltaY, deltaZ, deltaYaw, deltaPitch, predictionError))
 	}
 }
 
@@ -864,8 +871,8 @@ func (pe *PhysicsMovementExecutor) isVehicleMoveEcho(x, y, z float64) bool {
 		if math.Abs(x-sent.X) <= vehicleMoveEchoEpsilon &&
 			math.Abs(y-sent.Y) <= vehicleMoveEchoEpsilon &&
 			math.Abs(z-sent.Z) <= vehicleMoveEchoEpsilon {
-			log.Printf("[isVehicleMoveEcho] Matched ring-buffer entry age=%s pos=(%.2f,%.2f,%.2f)",
-				time.Since(pe.sentVehicleMovesTime[i]), sent.X, sent.Y, sent.Z)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[isVehicleMoveEcho] Matched ring-buffer entry age=%s pos=(%.2f,%.2f,%.2f)",
+				time.Since(pe.sentVehicleMovesTime[i]), sent.X, sent.Y, sent.Z))
 			return true
 		}
 	}
@@ -878,13 +885,13 @@ func (pe *PhysicsMovementExecutor) isVehicleMoveEcho(x, y, z float64) bool {
 		math.Abs(x-pe.firstVehicleMovePos.X) <= vehicleMoveEchoEpsilon &&
 		math.Abs(y-pe.firstVehicleMovePos.Y) <= vehicleMoveEchoEpsilon &&
 		math.Abs(z-pe.firstVehicleMovePos.Z) <= vehicleMoveEchoEpsilon {
-		log.Printf("[isVehicleMoveEcho] NOT recognized as echo, but matches mount-time snapshot from %s ago (pos=(%.2f,%.2f,%.2f)); ring buffer holds %d entries spanning %s",
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[isVehicleMoveEcho] NOT recognized as echo, but matches mount-time snapshot from %s ago (pos=(%.2f,%.2f,%.2f)); ring buffer holds %d entries spanning %s",
 			time.Since(pe.firstVehicleMoveAt), pe.firstVehicleMovePos.X, pe.firstVehicleMovePos.Y, pe.firstVehicleMovePos.Z,
-			pe.sentVehicleMovesLen, pe.sentVehicleMovesHistorySpanLocked())
+			pe.sentVehicleMovesLen, pe.sentVehicleMovesHistorySpanLocked()))
 	} else if pe.sentVehicleMovesLen > 0 {
-		log.Printf("[isVehicleMoveEcho] NOT recognized as echo: pos=(%.2f,%.2f,%.2f), ring buffer holds %d entries spanning %s (oldest=%s ago, newest=%s ago)",
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[isVehicleMoveEcho] NOT recognized as echo: pos=(%.2f,%.2f,%.2f), ring buffer holds %d entries spanning %s (oldest=%s ago, newest=%s ago)",
 			x, y, z, pe.sentVehicleMovesLen, pe.sentVehicleMovesHistorySpanLocked(),
-			time.Since(pe.oldestSentVehicleMoveTimeLocked()), time.Since(pe.newestSentVehicleMoveTimeLocked()))
+			time.Since(pe.oldestSentVehicleMoveTimeLocked()), time.Since(pe.newestSentVehicleMoveTimeLocked())))
 	}
 	return false
 }
@@ -984,7 +991,7 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 		false,
 	)
 	pe.movementPacketSender.setBotPosition(pos, newYaw, newPitch)
-	log.Printf("[SyncRidingPosition] Vehicle position corrected by server to %s yaw=%.2f (divergence²=%.4f)", pos, newYaw, horizontalDivergenceSq)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SyncRidingPosition] Vehicle position corrected by server to %s yaw=%.2f (divergence²=%.4f)", pos, newYaw, horizontalDivergenceSq))
 }
 
 // SyncMountedPosition applies a server-authoritative mounted entity position correction.
@@ -994,7 +1001,7 @@ func (pe *PhysicsMovementExecutor) SyncRidingPosition(x, y, z float64, yaw, pitc
 func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
 	// Ignore stale echoes of our own VehicleMove packets (see sentVehicleMoves).
 	if pe.isVehicleMoveEcho(x, y, z) {
-		log.Printf("[SyncMountedPosition] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SyncMountedPosition] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z))
 		return
 	}
 
@@ -1029,7 +1036,7 @@ func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
 	)
 
 	pe.movementPacketSender.setBotPosition(pos, currentYaw, currentPitch)
-	log.Printf("[SyncMountedPosition] Mounted entity %d position synced to %s", pe.mountedEntityID, pos)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SyncMountedPosition] Mounted entity %d position synced to %s", pe.mountedEntityID, pos))
 }
 
 // SyncMountedPositionWithRotation applies a server-authoritative mounted entity position and rotation correction.
@@ -1037,7 +1044,7 @@ func (pe *PhysicsMovementExecutor) SyncMountedPosition(x, y, z float64) {
 func (pe *PhysicsMovementExecutor) SyncMountedPositionWithRotation(x, y, z, yaw, pitch float64) {
 	// Ignore stale echoes of our own VehicleMove packets (see sentVehicleMoves).
 	if pe.isVehicleMoveEcho(x, y, z) {
-		log.Printf("[SyncMountedPositionWithRotation] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SyncMountedPositionWithRotation] Ignoring echo of our own vehicle move: (%.2f, %.2f, %.2f)", x, y, z))
 		return
 	}
 
@@ -1057,7 +1064,7 @@ func (pe *PhysicsMovementExecutor) SyncMountedPositionWithRotation(x, y, z, yaw,
 		false,
 	)
 	pe.movementPacketSender.setBotPosition(pos, yaw, pitch)
-	log.Printf("[SyncMountedPositionWithRotation] Mounted entity %d position synced to %s yaw=%.1f° pitch=%.1f°", pe.mountedEntityID, pos, yaw, pitch)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[SyncMountedPositionWithRotation] Mounted entity %d position synced to %s yaw=%.1f° pitch=%.1f°", pe.mountedEntityID, pos, yaw, pitch))
 }
 
 // NotifyDead pauses position updates to the server.
@@ -1141,13 +1148,13 @@ func (pe *PhysicsMovementExecutor) Start() {
 	pe.runningMu.Lock()
 	if pe.running {
 		pe.runningMu.Unlock()
-		log.Printf("[PhysicsExecutor] Already running, ignoring Start()")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Already running, ignoring Start()"))
 		return
 	}
 	pe.running = true
 	pe.runningMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] Starting continuous physics loop at 20 TPS")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Starting continuous physics loop at 20 TPS"))
 
 	go pe.continuousTickLoop()
 }
@@ -1158,13 +1165,13 @@ func (pe *PhysicsMovementExecutor) Stop() {
 	pe.runningMu.Lock()
 	if !pe.running {
 		pe.runningMu.Unlock()
-		log.Printf("[PhysicsExecutor] Not running, ignoring Stop()")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Not running, ignoring Stop()"))
 		return
 	}
 	pe.running = false
 	pe.runningMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] Stopping continuous physics loop")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Stopping continuous physics loop"))
 
 	// Signal stop and cancel context
 	close(pe.stopChan)
@@ -1184,7 +1191,7 @@ func (pe *PhysicsMovementExecutor) SetMode(mode PhysicsMode) {
 	defer pe.modeMu.Unlock()
 
 	if pe.mode != mode {
-		log.Printf("[PhysicsExecutor] Mode changed: %s → %s", pe.mode, mode)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mode changed: %s → %s", pe.mode, mode))
 		pe.mode = mode
 	}
 }
@@ -1204,7 +1211,7 @@ func (pe *PhysicsMovementExecutor) EnterManualMode() error {
 
 	oldMode := pe.mode
 	pe.mode = PhysicsModeManual
-	log.Printf("[PhysicsExecutor] Mode changed: %s → Manual", oldMode)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mode changed: %s → Manual", oldMode))
 
 	// Initialize manual inputs with current state
 	// Preserve sprint/sneak state from movementPacketSender, get rotation from physics state
@@ -1239,7 +1246,7 @@ func (pe *PhysicsMovementExecutor) ExitManualMode() error {
 	}
 
 	pe.mode = PhysicsModeIdle
-	log.Printf("[PhysicsExecutor] Mode changed: Manual → Idle")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mode changed: Manual → Idle"))
 
 	// Apply final manual inputs state to movementPacketSender to preserve sprint/sneak state
 	pe.manualInputsMu.RLock()
@@ -1250,22 +1257,22 @@ func (pe *PhysicsMovementExecutor) ExitManualMode() error {
 	// Apply sprint state
 	if shouldSprint && !pe.movementPacketSender.IsSprinting() {
 		if err := pe.StartSprinting(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to start sprinting on exit: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to start sprinting on exit: %v", err))
 		}
 	} else if !shouldSprint && pe.movementPacketSender.IsSprinting() {
 		if err := pe.StopSprinting(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to stop sprinting on exit: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to stop sprinting on exit: %v", err))
 		}
 	}
 
 	// Apply sneak state
 	if shouldSneak && !pe.movementPacketSender.IsSneaking() {
 		if err := pe.StartSneaking(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to start sneaking on exit: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to start sneaking on exit: %v", err))
 		}
 	} else if !shouldSneak && pe.movementPacketSender.IsSneaking() {
 		if err := pe.StopSneaking(); err != nil {
-			log.Printf("[PhysicsExecutor] Failed to stop sneaking on exit: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to stop sneaking on exit: %v", err))
 		}
 	}
 
@@ -1315,7 +1322,7 @@ func (pe *PhysicsMovementExecutor) SetManualThrottle(westEastThrottle, northSout
 	pe.manualInputs.ThrottleZ = northSouthThrottle
 	pe.manualInputsMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] Manual throttle set: X=%.2f Z=%.2f", westEastThrottle, northSouthThrottle)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Manual throttle set: X=%.2f Z=%.2f", westEastThrottle, northSouthThrottle))
 
 	return nil
 }
@@ -1340,7 +1347,7 @@ func (pe *PhysicsMovementExecutor) SetManualRotation(yaw, pitch float64) error {
 	}
 	pe.manualInputsMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] Manual rotation set: yaw=%.2f pitch=%.2f", yaw, pitch)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Manual rotation set: yaw=%.2f pitch=%.2f", yaw, pitch))
 
 	return nil
 }
@@ -1418,16 +1425,16 @@ func (pe *PhysicsMovementExecutor) continuousTickLoop() {
 	ticker := time.NewTicker(pe.tickRate)
 	defer ticker.Stop()
 
-	log.Printf("[PhysicsExecutor] Continuous tick loop started")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Continuous tick loop started"))
 
 	for {
 		select {
 		case <-pe.stopChan:
-			log.Printf("[PhysicsExecutor] Continuous tick loop stopped")
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Continuous tick loop stopped"))
 			return
 
 		case <-pe.ctx.Done():
-			log.Printf("[PhysicsExecutor] Continuous tick loop stopped (context cancelled)")
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Continuous tick loop stopped (context cancelled)"))
 			return
 
 		case <-ticker.C:
@@ -1467,18 +1474,19 @@ func (pe *PhysicsMovementExecutor) tick() {
 	if isMounted {
 		// (B) Riding: translate mode-generated inputs into vehicle packets.
 		// Gated: fires every physics tick (20/sec) during any riding
-		// movement — see utils.VerboseLoggingEnabled's own doc comment.
-		if utils.VerboseLoggingEnabled() {
-			log.Printf("[PhysicsExecutor][tick] Tick inputs (mounted): mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sneak=%t",
-				mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sneak)
+		// movement — see utils.DebugVerboseEnabled's own doc comment.
+		if utils.DebugVerboseEnabled(pe.logger) {
+			utils.DebugVerbose(pe.logger, "[PhysicsExecutor][tick] tick inputs (mounted)",
+				"mode", mode, "throttleX", inputs.ThrottleX, "throttleZ", inputs.ThrottleZ,
+				"yaw", inputs.Yaw, "pitch", inputs.Pitch, "jump", inputs.Jump, "sneak", inputs.Sneak)
 		}
 		pe.handleRidingTick(inputs)
 	} else {
 		// (C) Walking: run physics sim + send player position. Gated: fires
 		// every physics tick during any (non-riding) movement.
-		if utils.VerboseLoggingEnabled() {
-			log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
-				mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+		if utils.DebugVerboseEnabled(pe.logger) {
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
+				mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection))
 		}
 
 		pe.applyMovementState(inputs)
@@ -1491,7 +1499,7 @@ func (pe *PhysicsMovementExecutor) tick() {
 		wasGliding := pe.physicsState.IsGliding()
 
 		if err := pe.physicsState.Tick(inputs, pe.world); err != nil {
-			log.Printf("[PhysicsExecutor] Physics tick error: %v", err)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Physics tick error: %v", err))
 			return
 		}
 
@@ -1501,7 +1509,7 @@ func (pe *PhysicsMovementExecutor) tick() {
 		// ClientPlayerEntity.tick()'s own send-right-after-predicting order.
 		if !wasGliding && pe.physicsState.IsGliding() {
 			if err := pe.StartGliding(); err != nil {
-				log.Printf("[PhysicsExecutor] Failed to send start-gliding packet: %v", err)
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Failed to send start-gliding packet: %v", err))
 			}
 		}
 
@@ -1559,7 +1567,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		pe.modeMu.Unlock()
 
 		if oldMode != PhysicsModeIdle {
-			log.Printf("[PhysicsExecutor] Mode changed: %s → Idle (path complete)", oldMode)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mode changed: %s → Idle (path complete)", oldMode))
 		}
 
 		// Signal path completion
@@ -1593,7 +1601,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		// Agent must be stable or moving upward to have grabbed the climbable
 		if vel.Y < -0.1 {
 			isComplete = false
-			log.Printf("[PhysicsExecutor] JumpToClimb completion deferred: Y velocity %.3f < -0.1 (falling)", vel.Y)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] JumpToClimb completion deferred: Y velocity %.3f < -0.1 (falling)", vel.Y))
 		}
 	}
 
@@ -1603,8 +1611,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		if pe.movementPacketSender != nil && pe.movementPacketSender.client != nil {
 			agentName = pe.movementPacketSender.client.Name()
 		}
-		log.Printf("[PhysicsExecutor %s] Step %d/%d complete: %s to (%.0f, %.0f, %.0f)",
-			agentName, stepNum+1, totalSteps, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Step %d/%d complete: %s to (%.0f, %.0f, %.0f)",
+			agentName, stepNum+1, totalSteps, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 
 		// Record step completion in telemetry
 		if pe.telemetryRecorder != nil {
@@ -1630,7 +1638,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 			if pe.movementPacketSender != nil && pe.movementPacketSender.client != nil {
 				agentName = pe.movementPacketSender.client.Name()
 			}
-			log.Printf("[PhysicsExecutor %s] Path complete!", agentName)
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor %s] Path complete!", agentName))
 
 			// Signal path completion
 			if pe.pathDone != nil {
@@ -1656,7 +1664,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 			pe.lastProgressTime = time.Now()
 			// Progress made - reset recovery state
 			if pe.recoveryAttempt > 0 {
-				log.Printf("[PhysicsExecutor] Progress made during recovery - resuming normal navigation")
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Progress made during recovery - resuming normal navigation"))
 				pe.recoveryAttempt = 0
 			}
 		}
@@ -1674,17 +1682,17 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 			case 1:
 				// Check if sideways recovery has timed out
 				if time.Since(pe.sidewaysStartTime) > pe.sidewaysTimeout {
-					log.Printf("[PhysicsExecutor] Sideways recovery timed out after %v - attempting re-pathfind",
-						pe.sidewaysTimeout)
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Sideways recovery timed out after %v - attempting re-pathfind",
+						pe.sidewaysTimeout))
 					pe.recoveryAttempt = 2
 					pe.attemptRepathRecovery(currentPos, goalPos)
 				}
 				// Still in sideways recovery - generate sideways inputs below
 			case 0:
 				// First stuck detection
-				log.Printf("[PhysicsExecutor] STUCK DETECTED at step %d/%d: no progress for %v (pos: %.2f, %.2f, %.2f -> target: %.0f, %.0f, %.0f)",
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] STUCK DETECTED at step %d/%d: no progress for %v (pos: %.2f, %.2f, %.2f -> target: %.0f, %.0f, %.0f)",
 					stepNum+1, totalSteps, pe.stuckThreshold,
-					pos.X, pos.Y, pos.Z, step.Position.X, step.Position.Y, step.Position.Z)
+					pos.X, pos.Y, pos.Z, step.Position.X, step.Position.Y, step.Position.Z))
 
 				// For vertical movements (climbing, swimming up, stairs), skip sideways recovery
 				// Sideways movement on these surfaces causes the agent to fall off
@@ -1697,12 +1705,12 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.AscendJump ||
 					step.Movement == pathfinding.DiagonalAscend
 				if skipSideways {
-					log.Printf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement)
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2
 					pe.attemptRepathRecovery(currentPos, goalPos)
 				} else {
 					// Start sideways recovery for non-climbing movements
-					log.Printf("[PhysicsExecutor] Starting sideways recovery (attempt 1)")
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Starting sideways recovery (attempt 1)"))
 					pe.recoveryAttempt = 1
 					pe.sidewaysStartTime = time.Now()
 					// Alternate sideways direction each time we get stuck
@@ -1735,9 +1743,9 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	if inputs.Jump {
 		_, _, _, onGround := pe.physicsState.GetPosition()
 		if !onGround {
-			log.Printf("[PhysicsExecutor] Jump input while not onGround at step %d/%d (%s) pos=(%.2f, %.2f, %.2f) target=(%.2f, %.2f, %.2f)",
+			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Jump input while not onGround at step %d/%d (%s) pos=(%.2f, %.2f, %.2f) target=(%.2f, %.2f, %.2f)",
 				stepNum+1, totalSteps, step.Movement,
-				pos.X, pos.Y, pos.Z, step.Position.X, step.Position.Y, step.Position.Z)
+				pos.X, pos.Y, pos.Z, step.Position.X, step.Position.Y, step.Position.Z))
 		}
 	}
 	return inputs
@@ -1832,13 +1840,13 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 	if chooseRight {
 		sidewaysX = rightX
 		sidewaysZ = rightZ
-		log.Printf("[PhysicsExecutor] Sideways recovery: moving RIGHT toward target (right dist=%.2f, left dist=%.2f, rightGround=%v, leftGround=%v)",
-			rightDistToTarget, leftDistToTarget, rightHasGround, leftHasGround)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Sideways recovery: moving RIGHT toward target (right dist=%.2f, left dist=%.2f, rightGround=%v, leftGround=%v)",
+			rightDistToTarget, leftDistToTarget, rightHasGround, leftHasGround))
 	} else {
 		sidewaysX = leftX
 		sidewaysZ = leftZ
-		log.Printf("[PhysicsExecutor] Sideways recovery: moving LEFT toward target (right dist=%.2f, left dist=%.2f, rightGround=%v, leftGround=%v)",
-			rightDistToTarget, leftDistToTarget, rightHasGround, leftHasGround)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Sideways recovery: moving LEFT toward target (right dist=%.2f, left dist=%.2f, rightGround=%v, leftGround=%v)",
+			rightDistToTarget, leftDistToTarget, rightHasGround, leftHasGround))
 	}
 
 	// Combine: move mostly sideways with minimal forward momentum
@@ -1897,7 +1905,7 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	}()
 
 	if pe.stuckRecovery == nil {
-		log.Printf("[PhysicsExecutor] Re-path recovery skipped: no recovery callback set")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Re-path recovery skipped: no recovery callback set"))
 		pe.lastProgressTime = time.Now()
 		pe.recoveryAttempt = 0 // Reset so we can try again later
 		return
@@ -1912,24 +1920,24 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	}
 	pe.pathMu.RUnlock()
 
-	log.Printf("[PhysicsExecutor] Repath recovery (attempt %d) at step %d (%s): pos=(%.2f, %.2f, %.2f) goal=(%.2f, %.2f, %.2f)",
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Repath recovery (attempt %d) at step %d (%s): pos=(%.2f, %.2f, %.2f) goal=(%.2f, %.2f, %.2f)",
 		pe.recoveryAttempt, stepIdx, stepDesc,
-		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z)
+		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z))
 
-	log.Printf("[PhysicsExecutor] Attempting re-path recovery from (%.2f, %.2f, %.2f) to goal (%.0f, %.0f, %.0f)",
-		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Attempting re-path recovery from (%.2f, %.2f, %.2f) to goal (%.0f, %.0f, %.0f)",
+		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z))
 
 	// Call the recovery callback to re-pathfind
 	newPath := pe.stuckRecovery(currentPos, goalPos)
 	if newPath == nil || !newPath.Found || len(newPath.Steps) == 0 {
-		log.Printf("[PhysicsExecutor] Re-path recovery failed: no valid path found from current position")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Re-path recovery failed: no valid path found from current position"))
 		// Reset progress tracking to avoid immediate re-trigger
 		pe.lastProgressTime = time.Now()
 		pe.recoveryAttempt = 0 // Reset so we can try sideways again later
 		return
 	}
 
-	log.Printf("[PhysicsExecutor] Re-path recovery succeeded: new path with %d steps", len(newPath.Steps))
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Re-path recovery succeeded: new path with %d steps", len(newPath.Steps)))
 
 	// Set the new path and reset recovery state
 	pe.pathMu.Lock()
@@ -1943,10 +1951,10 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	pe.recoveryAttempt = 0 // Reset recovery state after successful re-path
 	pe.pathMu.Unlock()
 
-	log.Printf("[PhysicsExecutor] New path set:")
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] New path set:"))
 	for i, step := range newPath.Steps {
-		log.Printf("[PhysicsExecutor]   Step %d: %s to (%.0f, %.0f, %.0f)",
-			i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor]   Step %d: %s to (%.0f, %.0f, %.0f)",
+			i+1, step.Movement, step.Position.X, step.Position.Y, step.Position.Z))
 	}
 }
 
@@ -1971,17 +1979,17 @@ func (pe *PhysicsMovementExecutor) generateManualInputs() physics.Inputs {
 	// Sanitize NaN yaw/pitch that may have come from physics state
 	// This can happen in rare cases where physics state is corrupted or uninitialized
 	if math.IsNaN(inputs.Yaw) {
-		log.Printf("[PhysicsExecutor][generateManualInputs] WARNING: yaw is NaN, defaulting to 0. This may indicate a physics state initialization issue.")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor][generateManualInputs] WARNING: yaw is NaN, defaulting to 0. This may indicate a physics state initialization issue."))
 		inputs.Yaw = 0
 	}
 	if math.IsNaN(inputs.Pitch) {
-		log.Printf("[PhysicsExecutor][generateManualInputs] WARNING: pitch is NaN, defaulting to 0. This may indicate a physics state initialization issue.")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor][generateManualInputs] WARNING: pitch is NaN, defaulting to 0. This may indicate a physics state initialization issue."))
 		inputs.Pitch = 0
 	}
 
-	log.Printf("[PhysicsExecutor][generateManualInputs] Manual inputs: throttleX=%.2f throttleZ=%.2f yaw=%.2f pitch=%.2f jump=%v sprint=%v sneak=%v climbDir=%.2f",
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor][generateManualInputs] Manual inputs: throttleX=%.2f throttleZ=%.2f yaw=%.2f pitch=%.2f jump=%v sprint=%v sneak=%v climbDir=%.2f",
 		inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch,
-		inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+		inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection))
 
 	return inputs
 }
@@ -1995,11 +2003,11 @@ func (pe *PhysicsMovementExecutor) handleMountStep(step pathfinding.PathStep) ph
 			go func() {
 				err := pe.onMountRequired(pe.ctx, step.VehicleEntityID)
 				if err != nil {
-					log.Printf("[PhysicsExecutor] Mount failed: %v", err)
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mount failed: %v", err))
 				}
 			}()
 		}
-		log.Printf("[PhysicsExecutor] Mounting vehicle (entityID=%d)...", step.VehicleEntityID)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mounting vehicle (entityID=%d)...", step.VehicleEntityID))
 		return pe.generateIdleInputs() // No movement while mounting
 	}
 
@@ -2020,7 +2028,7 @@ func (pe *PhysicsMovementExecutor) handleMountStep(step pathfinding.PathStep) ph
 		pe.lastProgressTime = time.Now()
 		pe.pathMu.Unlock()
 
-		log.Printf("[PhysicsExecutor] Mount complete, advancing to next step")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mount complete, advancing to next step"))
 		return pe.generateIdleInputs()
 	}
 
@@ -2037,11 +2045,11 @@ func (pe *PhysicsMovementExecutor) handleDismountStep(step pathfinding.PathStep)
 			go func() {
 				err := pe.onDismountRequired(pe.ctx)
 				if err != nil {
-					log.Printf("[PhysicsExecutor] Dismount failed: %v", err)
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Dismount failed: %v", err))
 				}
 			}()
 		}
-		log.Printf("[PhysicsExecutor] Dismounting vehicle...")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Dismounting vehicle..."))
 		return pe.generateIdleInputs() // No movement while dismounting
 	}
 
@@ -2062,7 +2070,7 @@ func (pe *PhysicsMovementExecutor) handleDismountStep(step pathfinding.PathStep)
 		pe.lastProgressTime = time.Now()
 		pe.pathMu.Unlock()
 
-		log.Printf("[PhysicsExecutor] Dismount complete, advancing to next step")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Dismount complete, advancing to next step"))
 		return pe.generateIdleInputs()
 	}
 
@@ -2108,19 +2116,19 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	pe.mountedEntityMu.RUnlock()
 
 	if versionHandler == nil {
-		log.Printf("[handleRidingTick] Version handler not set")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingTick] Version handler not set"))
 		return
 	}
 
 	if pe.entityPositionGetter == nil {
-		log.Printf("[handleRidingTick] Entity position getter not set, cannot send vehicle updates")
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingTick] Entity position getter not set, cannot send vehicle updates"))
 		return
 	}
 
 	// Verify the mounted entity is still tracked.
 	_, _, _, found := pe.entityPositionGetter.GetMountedEntityPosition(mountedEntityID)
 	if !found {
-		log.Printf("[handleRidingTick] Mounted entity %d not found", mountedEntityID)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingTick] Mounted entity %d not found", mountedEntityID))
 		return
 	}
 
@@ -2215,8 +2223,8 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 	}
 	pe.mountedEntityMu.RUnlock()
 
-	log.Printf("[handleRidingTick] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
-		forward, backward, left, right, jump, sneak, inputs.ThrottleX, inputs.ThrottleZ)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingTick] Vehicle input: forward=%v backward=%v left=%v right=%v jump=%v sneak=%v (throttle: X=%.2f Z=%.2f)",
+		forward, backward, left, right, jump, sneak, inputs.ThrottleX, inputs.ThrottleZ))
 
 	// Vanilla ClientPlayerEntity.tick() always sends a LookAndOnGround packet
 	// before VehicleMove while riding.
@@ -2226,7 +2234,7 @@ func (pe *PhysicsMovementExecutor) handleRidingTick(inputs models.Inputs) {
 		currentYaw, currentPitch,
 		false,
 	); err != nil {
-		log.Printf("[handleRidingTick] Failed to send player look packet: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingTick] Failed to send player look packet: %v", err))
 	}
 
 	// Dispatch to vehicle-type-specific handler.

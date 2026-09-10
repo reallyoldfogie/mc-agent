@@ -1,6 +1,7 @@
 package common
 
 import (
+	"log/slog"
 	"testing"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -41,7 +42,7 @@ func (m *mockLoginHandler) ParseEncryptionRequest(p pk.Packet) (serverID string,
 
 func TestRegisterAndGetVersionHandler(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-1.0", func() models.VersionHandler {
+	RegisterVersionHandler("test-1.0", func(logger *slog.Logger) models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-1.0",
 			protocolVersion: 100,
@@ -49,7 +50,7 @@ func TestRegisterAndGetVersionHandler(t *testing.T) {
 	})
 
 	// Get the handler
-	handler, err := GetVersionHandler("test-1.0")
+	handler, err := GetVersionHandler("test-1.0", nil)
 	if err != nil {
 		t.Fatalf("GetVersionHandler failed: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestRegisterAndGetVersionHandler(t *testing.T) {
 }
 
 func TestGetVersionHandlerNotFound(t *testing.T) {
-	_, err := GetVersionHandler("nonexistent-version")
+	_, err := GetVersionHandler("nonexistent-version", nil)
 	if err == nil {
 		t.Error("Expected error for nonexistent version, got nil")
 	}
@@ -72,7 +73,7 @@ func TestGetVersionHandlerNotFound(t *testing.T) {
 
 func TestHasVersionHandler(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-2.0", func() models.VersionHandler {
+	RegisterVersionHandler("test-2.0", func(logger *slog.Logger) models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-2.0",
 			protocolVersion: 200,
@@ -90,7 +91,7 @@ func TestHasVersionHandler(t *testing.T) {
 
 func TestSupportedVersions(t *testing.T) {
 	// Register a mock handler
-	RegisterVersionHandler("test-3.0", func() models.VersionHandler {
+	RegisterVersionHandler("test-3.0", func(logger *slog.Logger) models.VersionHandler {
 		return &mockVersionHandler{
 			version:         "test-3.0",
 			protocolVersion: 300,

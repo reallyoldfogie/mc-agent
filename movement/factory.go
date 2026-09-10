@@ -2,6 +2,7 @@ package movement
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
@@ -43,6 +44,11 @@ type ExecutorConfig struct {
 	// Required only for PhysicsExecutor
 	World         physics.World
 	ShapeProvider physics.BlockShapeProvider
+
+	// Logger receives this executor's diagnostic output, attributed to the
+	// owning agent — see docs/bugs/global-log-output-not-per-agent.md.
+	// Optional; a nil Logger falls back to slog.Default().
+	Logger *slog.Logger
 }
 
 // NewExecutor creates a movement executor of the specified type.
@@ -57,5 +63,6 @@ func NewExecutor(executorType ExecutorType, config ExecutorConfig) MovementExecu
 		config.GetBotEntityID,
 		config.World,
 		config.ShapeProvider,
+		config.Logger,
 	)
 }

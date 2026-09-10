@@ -3,8 +3,9 @@ package v1_21_11
 
 import (
 	"fmt"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"io"
-	"log"
+	"log/slog"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
@@ -27,6 +28,7 @@ var componentTypeNameToID, componentTypeIDToName = common.BuildSlotComponentType
 // containerHandler implements common.ContainerHandler for 1.21.11.
 type containerHandler struct {
 	packetMgr protocol_models.PacketMgr
+	logger    *slog.Logger
 }
 
 // SendContainerClick sends a container click packet.
@@ -368,7 +370,7 @@ func (c *containerHandler) SendContainerButtonClick(conn models.PacketWriter, wi
 	pkt := sb.NewEnchantItem()
 	pkt.WindowId = basetypes.ContainerID(windowID)
 
-	log.Printf("[v1.21.11 Container] SendContainerButtonClick: windowID=%d buttonID=%d", windowID, buttonID)
+	utils.SafeLogger(c.logger).Debug(fmt.Sprintf("[v1.21.11 Container] SendContainerButtonClick: windowID=%d buttonID=%d", windowID, buttonID))
 
 	data := pk.Marshal(pkt.PacketID(), &pkt.WindowId, pk.VarInt(buttonID))
 	if err := conn.WritePacket(data); err != nil {

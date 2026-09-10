@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
-	"log"
+	"log/slog"
 	"sync"
+
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 const (
@@ -55,6 +57,8 @@ type ChunkData struct {
 	lightMu    sync.RWMutex
 	skyLight   map[int][]byte // slot -> 2048-byte nibble-packed array (4 bits/value)
 	blockLight map[int][]byte
+
+	logger *slog.Logger
 }
 
 // LIGHT_SECTION_COUNT is the number of light sections per chunk column: one
@@ -319,7 +323,9 @@ func (c *ChunkData) loadSection(targetIdx int) *Section {
 			// parse indistinguishable from a legitimately empty section. Log
 			// it so a stream desync is visible instead of manifesting only as
 			// "ground never detected".
-			log.Printf("[ChunkData.loadSection][WARN] chunk(%d,%d) targetIdx=%d: skipSection(%d) failed: %v (rawLen=%d useCalcLen=%v hasFluidCount=%v)", c.X, c.Z, targetIdx, i, err, len(c.RawData), c.UseCalculatedDataLen, c.HasFluidCount)
+			utils.SafeLogger(c.logger).Warn("[ChunkData.loadSection] skipSection failed",
+				"chunkX", c.X, "chunkZ", c.Z, "targetIdx", targetIdx, "sectionIdx", i, "error", err,
+				"rawLen", len(c.RawData), "useCalcLen", c.UseCalculatedDataLen, "hasFluidCount", c.HasFluidCount)
 			return &Section{BitsPerEntry: 0, SingleValue: 0}
 		}
 	}
@@ -327,7 +333,9 @@ func (c *ChunkData) loadSection(targetIdx int) *Section {
 	// Parse target section
 	section, err := parseSection(reader, c.UseCalculatedDataLen, c.HasFluidCount)
 	if err != nil {
-		log.Printf("[ChunkData.loadSection][WARN] chunk(%d,%d) targetIdx=%d: parseSection failed: %v (rawLen=%d useCalcLen=%v hasFluidCount=%v)", c.X, c.Z, targetIdx, err, len(c.RawData), c.UseCalculatedDataLen, c.HasFluidCount)
+		utils.SafeLogger(c.logger).Warn("[ChunkData.loadSection] parseSection failed",
+			"chunkX", c.X, "chunkZ", c.Z, "targetIdx", targetIdx, "error", err,
+			"rawLen", len(c.RawData), "useCalcLen", c.UseCalculatedDataLen, "hasFluidCount", c.HasFluidCount)
 		return &Section{BitsPerEntry: 0, SingleValue: 0}
 	}
 

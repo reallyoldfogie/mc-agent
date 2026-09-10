@@ -3,10 +3,11 @@ package pathfinding
 import (
 	"container/heap"
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // RideableEntity represents a rideable vehicle entity in the world.
@@ -33,6 +34,7 @@ type VehicleAwarePathFinder struct {
 	world           models.World
 	shapeMgr        models.BlockShapeManager
 	searchRadius    float64
+	logger          *slog.Logger
 }
 
 // NewVehicleAwarePathFinder creates a new vehicle-aware pathfinder.
@@ -42,6 +44,7 @@ func NewVehicleAwarePathFinder(
 	world models.World,
 	shapeMgr models.BlockShapeManager,
 	searchRadius float64,
+	logger *slog.Logger,
 ) models.PathFinder {
 	if searchRadius <= 0 {
 		searchRadius = 32.0 // Default search radius
@@ -53,6 +56,7 @@ func NewVehicleAwarePathFinder(
 		world:           world,
 		shapeMgr:        shapeMgr,
 		searchRadius:    searchRadius,
+		logger:          utils.SafeLogger(logger),
 	}
 }
 
@@ -80,8 +84,7 @@ func (vap *VehicleAwarePathFinder) FindPath(
 		return footPath, nil // No vehicles nearby; use foot path
 	}
 
-	log.Printf("[VehicleAware] Found %d rideable entities near (%.0f, %.0f, %.0f)",
-		len(vehicles), start.X, start.Y, start.Z)
+	utils.SafeLogger(vap.logger).Debug("[VehicleAware] found rideable entities", "count", len(vehicles), "x", start.X, "y", start.Y, "z", start.Z)
 
 	// Try each vehicle and keep the best path
 	bestPath := footPath
@@ -90,8 +93,7 @@ func (vap *VehicleAwarePathFinder) FindPath(
 	for _, vehicle := range vehicles {
 		vehiclePath := vap.buildPathWithVehicle(ctx, start, goal, vehicle, maxSteps)
 		if vehiclePath != nil && vehiclePath.Found && vehiclePath.TotalCost < bestCost {
-			log.Printf("[VehicleAware] Vehicle path via %s (entityID=%d) cost=%.2f (foot=%.2f)",
-				vehicle.EntityType, vehicle.EntityID, vehiclePath.TotalCost, footPath.TotalCost)
+			utils.SafeLogger(vap.logger).Debug("[VehicleAware] vehicle path found", "entityType", vehicle.EntityType, "entityID", vehicle.EntityID, "cost", vehiclePath.TotalCost, "footCost", footPath.TotalCost)
 			bestPath = vehiclePath
 			bestCost = vehiclePath.TotalCost
 		}
@@ -147,7 +149,7 @@ func (vap *VehicleAwarePathFinder) buildVehiclePath(
 	caps *models.VehicleCapabilities,
 	maxSteps int,
 ) *Path {
-	validator := NewVehicleMovementValidator(vap.world, vap.shapeMgr, *caps)
+	validator := NewVehicleMovementValidator(vap.world, vap.shapeMgr, *caps, vap.logger)
 
 	// Custom A* for vehicle movement using VehicleMovementValidator
 	startTime := time.Now()

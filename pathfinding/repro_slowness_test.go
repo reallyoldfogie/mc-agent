@@ -19,7 +19,7 @@ func TestReproHPASlowness(t *testing.T) {
 		Build()
 
 	shapeMgr := mctesting.NewMockShapeManager()
-	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr)
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
 
 	start := models.V3{X: -6, Y: 0, Z: 0}
 	goal := models.V3{X: -1, Y: 0, Z: 0}

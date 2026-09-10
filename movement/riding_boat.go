@@ -2,7 +2,7 @@ package movement
 
 import (
 	"fmt"
-	"log"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"math"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -38,7 +38,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		pe.movementPacketSender.client.Conn(),
 		forward, backward, left, right, false, sneak,
 	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send boat vehicle input packet: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Failed to send boat vehicle input packet: %v", err))
 	}
 
 	// --- Send paddle-state packet for animation/sound parity ---
@@ -56,7 +56,7 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 		pe.movementPacketSender.client.Conn(),
 		leftPaddle, rightPaddle,
 	); err != nil {
-		log.Printf("[handleRidingMode] Failed to send boat paddle state packet: %v", err)
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Failed to send boat paddle state packet: %v", err))
 	}
 
 	// Hold lock for entire read-compute-write cycle
@@ -118,8 +118,8 @@ func (pe *PhysicsMovementExecutor) handleRidingModeBoat(
 	pe.boatYawVelocity = boatYawVelocity
 	pe.lastVelMultiplier = velMultiplier
 
-	log.Printf("[handleRidingMode] Boat physics: surface=%s block=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
-		surface, pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z)
+	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[handleRidingMode] Boat physics: surface=%s block=%s drag=%.3f yaw=%.1f yawVel=%.2f thrust=%.4f vel=(%.4f,%.4f) pos=(%.2f,%.2f,%.2f)",
+		surface, pe.getBlockNameForBoat(blockBelowBoat), velMultiplier, yaw, boatYawVelocity, thrustSpeed, correctedVel.X, correctedVel.Z, newPos.X, newPos.Y, newPos.Z))
 
 	// Update physicsState inside the lock before returning so sendRidingMove
 	// (called outside the lock) cannot race with a concurrent TurnTowards.

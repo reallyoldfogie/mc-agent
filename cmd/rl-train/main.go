@@ -77,6 +77,7 @@ func run(args []string) error {
 	connOverrides := config.RegisterConnectionFlags(fs)
 	rconOverrides := config.RegisterRCONFlags(fs)
 	envOverrides := config.RegisterEnvFlags(fs)
+	loggingOverrides := config.RegisterLoggingFlags(fs)
 	checkpointIn := fs.String("checkpoint-in", "", "path to a checkpoint (see -checkpoint-out) to resume training from, instead of a fresh policy (optional)")
 	checkpointOut := fs.String("checkpoint-out", "", "path to save the trained policy weights to after training completes (optional)")
 	checkpointDir := fs.String("checkpoint-dir", "", "directory to auto-resume the latest checkpoint from, and periodically save numbered checkpoints into (optional; independent of -checkpoint-in/-checkpoint-out)")
@@ -97,6 +98,7 @@ func run(args []string) error {
 	config.ApplyConnectionFlags(&settings.Connection, fs, connOverrides)
 	config.ApplyRCONFlags(&settings.RCON, fs, rconOverrides)
 	config.ApplyEnvFlags(&settings.Env, fs, envOverrides)
+	config.ApplyLoggingFlags(&settings.Logging, fs, loggingOverrides)
 	if err := validate(settings); err != nil {
 		return err
 	}
@@ -349,6 +351,11 @@ func connectAgent(ctx context.Context, settings config.Settings) (models.Agent, 
 		log.Printf("Connected to RCON at %s", settings.RCON.Address)
 	}
 
+	logLevel, err := utils.ParseLevel(settings.Logging.Level)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := models.AgentConfig{
 		Name:             auth.Name,
 		Address:          conn.Address,
@@ -358,6 +365,7 @@ func connectAgent(ctx context.Context, settings config.Settings) (models.Agent, 
 		MCProtocolGoPath: conn.MCProtocolGoPath,
 		StopFilePath:     ".agentStop",
 		LogWriter:        packetLogWriter,
+		LogLevel:         logLevel,
 		RCON:             rcon,
 		SkinProvider: agent.NewSkinFetcher(agent.SkinFetcherConfig{
 			AllowNetwork: settings.Skin.AllowNetwork,

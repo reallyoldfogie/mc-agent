@@ -54,6 +54,7 @@ func TestMoveTowards_FlatGround(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Move 0.2 blocks towards (10, 65, 0)
@@ -92,6 +93,7 @@ func TestMoveTowards_UpwardMovement(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Move towards higher position (stairs at Y=65.5)
@@ -125,6 +127,7 @@ func TestMoveTowards_DownwardMovement(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Move towards lower position (falling)
@@ -162,6 +165,7 @@ func TestMoveTowards_LevelMovement(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Move towards position with tiny Y difference (< 0.1)
@@ -195,6 +199,7 @@ func TestMoveTowards_MultipleSteps(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Move multiple times toward goal
@@ -237,6 +242,7 @@ func TestMoveTowards_AlreadyAtTarget(t *testing.T) {
 		tracker.GetPosition,
 		tracker.SetPosition,
 		tracker.GetEntityID,
+		nil,
 	)
 
 	// Test: Try to move when already at horizontal target

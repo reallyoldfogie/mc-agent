@@ -4,10 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // bidirAStarPathFinder implements PathFinder using bidirectional A*
@@ -19,23 +20,26 @@ type bidirAStarPathFinder struct {
 	movementValidator *MovementValidator
 	goalRadius        float64
 	contextCheckFreq  int
+	logger            *slog.Logger
 }
 
 // NewBidirAStarPathFinder creates a new bidirectional A* pathfinder
-func NewBidirAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager) models.PathFinder {
-	return NewBidirAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{})
+func NewBidirAStarPathFinder(w models.World, shapeMgr models.BlockShapeManager, logger *slog.Logger) models.PathFinder {
+	return NewBidirAStarPathFinderWithConfig(w, shapeMgr, PathfinderConfig{}, logger)
 }
 
 // NewBidirAStarPathFinderWithConfig creates a new bidirectional A* pathfinder with custom settings.
-func NewBidirAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig) models.PathFinder {
+func NewBidirAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeManager, cfg PathfinderConfig, logger *slog.Logger) models.PathFinder {
 	goalRadius := normalizeGoalRadius(cfg.GoalRadius)
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
+	logger = utils.SafeLogger(logger)
 	return &bidirAStarPathFinder{
 		world:             w,
 		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr),
+		movementValidator: NewMovementValidator(w, shapeMgr, logger),
 		goalRadius:        goalRadius,
 		contextCheckFreq:  contextCheckFreq,
+		logger:            logger,
 	}
 }
 
@@ -104,8 +108,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 		}, nil
 	}
 
-	log.Printf("[Bidir-A*] Start position (%.0f,%.0f,%.0f) to goal (%.0f,%.0f,%.0f)",
-		start.X, start.Y, start.Z, goal.X, goal.Y, goal.Z)
+	utils.SafeLogger(pf.logger).Debug("[Bidir-A*] start", "startX", start.X, "startY", start.Y, "startZ", start.Z, "goalX", goal.X, "goalY", goal.Y, "goalZ", goal.Z)
 
 	// Initialize forward search (from start)
 	forwardOpen := &bidirNodeHeap{}
@@ -310,16 +313,14 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 		path := pf.reconstructBidirPath(bestMeetingNode, bestMeetingNodeBackward, start, goal)
 		path.SearchTime = float64(time.Since(startTime).Milliseconds())
 
-		log.Printf("[Bidir-A*] %s", path.LogSummary())
-		log.Printf("[Bidir-A*] Explored %d steps (forward closed: %d, backward closed: %d)",
-			stepsProcessed, len(forwardClosed), len(backwardClosed))
+		utils.SafeLogger(pf.logger).Info("[Bidir-A*] " + path.LogSummary())
+		utils.SafeLogger(pf.logger).Debug("[Bidir-A*] explored", "steps", stepsProcessed, "forwardClosed", len(forwardClosed), "backwardClosed", len(backwardClosed))
 
 		return path, nil
 	}
 
 	// No path found
-	log.Printf("[Bidir-A*] Pathfinding failed: explored %d steps, forward closed=%d, backward closed=%d",
-		stepsProcessed, len(forwardClosed), len(backwardClosed))
+	utils.SafeLogger(pf.logger).Warn("[Bidir-A*] pathfinding failed", "steps", stepsProcessed, "forwardClosed", len(forwardClosed), "backwardClosed", len(backwardClosed))
 	return &Path{
 		Found:      false,
 		StartPos:   start,

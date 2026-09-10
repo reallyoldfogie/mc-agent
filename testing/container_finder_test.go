@@ -241,7 +241,7 @@ func TestFindAndOpenContainer(t *testing.T) {
 			require.Equal(t, math.Floor(chestPos.Z), nearest.Position.Z)
 
 			// Open and interact with the chest
-			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr)
+			itemUsage := items.NewItemUsage(botClient.Conn(), managedAgent.Config.PacketMgr, nil)
 			// Set version-specific container handler
 			if managedAgent.Config.VersionHandler != nil {
 				itemUsage.SetContainerHandler(managedAgent.Config.VersionHandler.Play().Containers())
