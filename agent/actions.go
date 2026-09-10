@@ -863,11 +863,52 @@ func shellOffsets(r int) [][3]int {
 	return offsets
 }
 
+// findVisibleBlockTimeout bounds one FindVisibleBlock call's own search,
+// regardless of maxDistance or whatever deadline ctx itself already
+// carries (context.WithTimeout only ever tightens a deadline, never loosens
+// one, so a caller with a shorter bound of its own — e.g. Environment.
+// Step's StepTimeout-derived context — is unaffected).
+//
+// Found necessary, not merely tidy: this used to have no bound of its own
+// at all, relying entirely on whatever maxDistance a caller happened to
+// pass. shellOffsets(r)'s per-shell cost grows roughly with r², so a large
+// maxDistance searching for a block that's genuinely absent (or only
+// present much farther away) could — and did, live, 2026-09-10 — take
+// minutes: an untrained rlenv policy dispatching "mine" by block name
+// (rather than Environment's own already-resolved coordinates — see
+// rlenv/action.go's ActionMine) triggered a search out to actions/
+// commands.go's own default radius, unrelated to and much larger than
+// Environment's own MineSearchRadius, that ran for 9m43s and 1m12s+ before
+// being killed only by the whole process's own shutdown. This constant is
+// the backstop that makes "genuinely absent" fail fast (a real "not found"
+// result) instead of grinding for however long the search space takes to
+// exhaust, no matter what a future caller's own maxDistance turns out to
+// be.
+// var, not const, so a test can temporarily shrink it rather than waiting
+// out the real 5 seconds to exercise the timeout path.
+var findVisibleBlockTimeout = 5 * time.Second
+
+// findVisibleBlockTimedOut reports whether ctx's own error is due to
+// findVisibleBlockTimeout having elapsed, rather than the original
+// caller-supplied context (callerCtx) itself being cancelled or expired —
+// see findVisibleBlockTimeout's own doc comment for why this distinction
+// matters: our own internal timeout firing should read as an ordinary
+// "nothing found within the time we're willing to spend" (found=false,
+// err=nil), not an error the caller has to handle, while the caller's own
+// context actually dying is still a real error to propagate.
+func findVisibleBlockTimedOut(ctx, callerCtx context.Context) bool {
+	return ctx.Err() != nil && callerCtx.Err() == nil
+}
+
 // FindVisibleBlock searches for the nearest visible block by name, scanning
 // outward shell-by-shell (see shellOffsets) so a nearby match - the common
 // case - short-circuits the search instead of always paying for the full
-// maxDistance cube.
+// maxDistance cube. Bounded by findVisibleBlockTimeout regardless of
+// maxDistance — see its own doc comment.
 func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDistance int) (float64, float64, float64, bool, error) {
+	callerCtx := ctx
+	ctx, cancel := context.WithTimeout(ctx, findVisibleBlockTimeout)
+	defer cancel()
 	world := a.GetWorld()
 	if world == nil {
 		return 0, 0, 0, false, errors.New("world not available")
@@ -896,6 +937,9 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 		}
 		for _, off := range shellOffsets(r) {
 			if ctx.Err() != nil {
+				if findVisibleBlockTimedOut(ctx, callerCtx) {
+					return 0, 0, 0, false, nil
+				}
 				return 0, 0, 0, false, ctx.Err()
 			}
 			cx := baseX + float64(off[0])
@@ -918,6 +962,9 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 
 			visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, cx, cy, cz)
 			if err != nil {
+				if findVisibleBlockTimedOut(ctx, callerCtx) {
+					return 0, 0, 0, false, nil
+				}
 				return 0, 0, 0, false, err
 			}
 			if !visible {

@@ -9,10 +9,21 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName>, lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
+}
+
+// parsePositiveIntArg parses s as a positive integer, for chat commands
+// that take an optional trailing count/radius argument (e.g. Mine's
+// "[radius]"). ok=false means s wasn't a positive integer.
+func parsePositiveIntArg(s string) (int, bool) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 type Help struct{}
@@ -657,30 +668,47 @@ func (VehicleJump) Execute(ctx context.Context, agent models.CommandAgent, args 
 }
 
 // mineSearchRadius is the default search radius (in blocks) for
-// "mine <blockName>"'s FindVisibleBlock lookup.
+// "mine <blockName>"'s FindVisibleBlock lookup, when no explicit radius
+// argument is given — see Mine.Usage. Not the only radius available: a
+// hardcoded-with-no-override radius here previously let this dispatch a
+// FindVisibleBlock search entirely disconnected from a caller's own idea
+// of a reasonable search volume (rlenv's Config.MineSearchRadius, in
+// particular — see rlenv/action.go's ActionMine, which no longer even
+// dispatches through this by-name form for exactly that reason), so an
+// explicit override is worth having even though this default itself
+// rarely needs to change.
 const mineSearchRadius = 32
 
 type Mine struct{}
 
 func (Mine) Name() string  { return "mine" }
-func (Mine) Usage() string { return "mine <x> <y> <z> | mine <blockName>" }
+func (Mine) Usage() string { return "mine <x> <y> <z> | mine <blockName> [radius]" }
 func (Mine) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		blockName := args[0]
-		x, y, z, found, err := agent.FindVisibleBlock(ctx, blockName, mineSearchRadius)
+		radius := mineSearchRadius
+		if len(args) == 2 {
+			r, ok := parsePositiveIntArg(args[1])
+			if !ok {
+				_ = agent.SendChat("Usage: mine <blockName> [radius] - radius must be a positive integer")
+				return models.Done(nil), nil
+			}
+			radius = r
+		}
+		x, y, z, found, err := agent.FindVisibleBlock(ctx, blockName, radius)
 		if err != nil {
 			_ = agent.SendChat("Find block error: " + err.Error())
 			return models.Done(nil), nil
 		}
 		if !found {
-			_ = agent.SendChat(fmt.Sprintf("No visible %s found within %d blocks", blockName, mineSearchRadius))
+			_ = agent.SendChat(fmt.Sprintf("No visible %s found within %d blocks", blockName, radius))
 			return models.Done(nil), nil
 		}
 		return mineAt(ctx, agent, x, y, z), nil
 	}
 
 	if len(args) != 3 {
-		_ = agent.SendChat("Usage: mine <x> <y> <z> | mine <blockName>")
+		_ = agent.SendChat("Usage: mine <x> <y> <z> | mine <blockName> [radius]")
 		return models.Done(nil), nil
 	}
 	x, err := parseFloat(args[0])
