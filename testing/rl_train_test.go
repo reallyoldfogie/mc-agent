@@ -218,6 +218,77 @@ func TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) 
 	t.Log("✓ RCON ingredient seeding + ActionCraft dispatch + reward all confirmed against a live server")
 }
 
+// TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive is the live
+// end-to-end check for cRL-go's action masking (rl.ActionMasker,
+// docs/plans/19-training-time-action-masking.md in ../cRL-go, resolved at
+// commit d3a3153; rlenv.Environment implements it, see
+// rlenv/action.go's ActionMask). Unit coverage already confirms
+// Environment.ActionMask's own legality logic (rlenv/environment_test.go);
+// what only a live run can confirm is that the real, published cRL-go
+// pipeline this environment feeds — policy.Actor.Act, in turn
+// reinforce.SampleMaskedAction — actually excludes an illegal action when
+// driven by a real bot session's real ActionMask() output end to end, the
+// same call shape pkg/reinforce's own rollout loop uses
+// (collectTrajectoryFromEnv: `actor.Act(observation, mask, rng)`).
+//
+// This Environment instance never configures Mine/Craft, so their mask
+// entries are always false (see TestActionMaskAllLegalWhenNoTaskConfigured
+// for the equivalent fake-agent-backed assertion) — sampling repeatedly
+// against a freshly, randomly initialized policy (so nothing biases
+// sampling toward or away from any particular action) must never return
+// ActionMine or ActionCraft, deterministically, not just "rarely": a
+// correctly implemented mask makes an illegal action's post-mask
+// probability exactly zero, not merely small.
+func TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive(t *testing.T) {
+	env := setupStandaloneTestForEntity(t, "rl_train_action_mask", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{3, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		// MineTargetBlock/CraftTargetItem deliberately left unset — the
+		// whole point is exercising the "unconfigured task" mask entries
+		// against a real observation from a real bot session.
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	obs, err := rlEnv.Reset(env.Ctx)
+	require.NoError(t, err, "Reset")
+
+	mask := rlEnv.ActionMask()
+	require.Equal(t, []bool{true, true, false, false}, mask,
+		"Wait/GoToTarget legal, Mine/Craft illegal with nothing configured")
+
+	rng := rand.New(rand.NewPCG(1, 2))
+	params := policy.NewParams(rng, rlEnv.ObservationSize(), 16, rlEnv.ActionSpace())
+	actor, err := policy.NewActor(params)
+	require.NoError(t, err, "construct policy.Actor")
+
+	const sampleCount = 200
+	seenGoToTarget := false
+	for i := 0; i < sampleCount; i++ {
+		action, err := actor.Act(obs, mask, rng)
+		require.NoError(t, err, "Act sample %d", i)
+		require.NotEqual(t, rlenv.ActionMine, action, "sample %d: masked-illegal ActionMine was sampled", i)
+		require.NotEqual(t, rlenv.ActionCraft, action, "sample %d: masked-illegal ActionCraft was sampled", i)
+		if action == rlenv.ActionGoToTarget {
+			seenGoToTarget = true
+		}
+	}
+	// Sanity check that this actually exercised a real, non-degenerate
+	// distribution over the two legal actions rather than e.g. a broken
+	// mask that (by accident) always zeroes out every entry except one —
+	// with 200 draws from a freshly random-initialized network, seeing
+	// only ActionWait would itself be worth investigating.
+	require.True(t, seenGoToTarget, "200 samples never once drew the other legal action (ActionGoToTarget) — suspiciously degenerate")
+
+	t.Log("✓ Action masking confirmed end to end against a live server: 200 real policy.Actor.Act samples against a real Environment.ActionMask() output never returned an illegal action")
+}
+
 // rlTrainStepRetryAttempts bounds stepUntilDone's retry loop.
 const rlTrainStepRetryAttempts = 5
 
