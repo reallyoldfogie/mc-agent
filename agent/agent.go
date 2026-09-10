@@ -289,6 +289,10 @@ type agent struct {
 	entityPosCallbacksMu sync.RWMutex
 	entityPosCallbacks   []models.EntityPositionCallback
 
+	// plugin-message (CustomPayload) receive callbacks
+	pluginMsgCallbacksMu sync.RWMutex
+	pluginMsgCallbacks   []models.PluginMessageCallback
+
 	// helpers
 
 	// player name/uuid resolvers
@@ -1956,6 +1960,43 @@ func (a *agent) callEntityPositionCallbacks(entityID int32, x, y, z float64) {
 	for _, cb := range callbacks {
 		cb(entityID, x, y, z)
 	}
+}
+
+// RegisterPluginMessageCallback registers a callback to be called for every
+// inbound CustomPayload (plugin message) packet, on any channel. Implements
+// models.PluginMessaging.
+func (a *agent) RegisterPluginMessageCallback(cb models.PluginMessageCallback) {
+	a.pluginMsgCallbacksMu.Lock()
+	defer a.pluginMsgCallbacksMu.Unlock()
+	a.pluginMsgCallbacks = append(a.pluginMsgCallbacks, cb)
+}
+
+// callPluginMessageCallbacks calls all registered plugin-message callbacks.
+func (a *agent) callPluginMessageCallbacks(channel string, data []byte) {
+	a.pluginMsgCallbacksMu.RLock()
+	callbacks := a.pluginMsgCallbacks
+	a.pluginMsgCallbacksMu.RUnlock()
+
+	for _, cb := range callbacks {
+		cb(channel, data)
+	}
+}
+
+// SendPluginMessage sends a serverbound CustomPayload (plugin message) packet
+// on the given channel with raw, already-encoded payload bytes. Implements
+// models.PluginMessaging.
+func (a *agent) SendPluginMessage(channel string, data []byte) error {
+	// versionHandler and client are no-lock fields (set-once in Init, read-only after)
+	vh := a.versionHandler
+	c := a.client
+	if vh == nil || c == nil {
+		return fmt.Errorf("SendPluginMessage: not connected")
+	}
+	conn := c.Conn()
+	if conn == nil {
+		return fmt.Errorf("SendPluginMessage: not connected")
+	}
+	return vh.Play().SendCustomPayloadRaw(conn, channel, data)
 }
 
 // getBotPositionLegacy returns bot position in legacy format for movement executor compatibility

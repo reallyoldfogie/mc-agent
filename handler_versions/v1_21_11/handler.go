@@ -183,6 +183,30 @@ func (p *playHandler) SendCustomPayload(conn models.PacketWriter, channel string
 	return nil
 }
 
+// SendCustomPayloadRaw sends a custom payload packet whose data is an
+// arbitrary, already-encoded byte payload (see the interface doc comment on
+// models.PlayHandler for why this differs from SendCustomPayload).
+func (p *playHandler) SendCustomPayloadRaw(conn models.PacketWriter, channel string, data []byte) error {
+	pkt := sb.NewCustomPayload()
+	pkt.Channel = pk.String(channel)
+	pkt.Data = protocol_models.RestBuffer{Data: data}
+
+	if err := conn.WritePacket(pkt.Marshal()); err != nil {
+		return common.ErrPacketSend{PacketName: "CustomPayload", Cause: err}
+	}
+	return nil
+}
+
+// ParseCustomPayload parses a ClientboundCustomPayload packet, returning the
+// channel identifier and the raw, unparsed payload bytes.
+func (p *playHandler) ParseCustomPayload(pkt pk.Packet) (channel string, data []byte, err error) {
+	custom := cb.NewCustomPayload()
+	if err = custom.Scan(pkt); err != nil {
+		return "", nil, common.ErrPacketParse{PacketName: "CustomPayload", Cause: err}
+	}
+	return string(custom.Channel), custom.Data.Data, nil
+}
+
 // ParseLogin parses the ClientboundLogin packet to extract entity ID.
 func (p *playHandler) ParseLogin(pkt pk.Packet) (entityID int32, gameMode agent_models.GameMode, err error) {
 	login := cb.NewLogin()

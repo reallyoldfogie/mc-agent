@@ -229,6 +229,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			Priority: 0,
 			F:        a.onUpdateTime,
 		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundCustomPayload"),
+			Name:     "ClientboundCustomPayload",
+			Priority: 0,
+			F:        a.onCustomPayload,
+		},
 	}
 	// NOTE: Config-phase handlers (registryHandlers, FinishConfiguration) must NOT
 	// be registered here. The event system dispatches by numeric packet ID with no
@@ -270,6 +276,26 @@ func (a *agent) onDisconnect2(p pk.Packet) error {
 	}
 
 	a.logf("[Agent %s] Disconnected from server: %s", name, reason)
+	return nil
+}
+
+// onCustomPayload handles an inbound CustomPayload (plugin message) packet by
+// parsing out its channel and raw payload bytes and fanning it out to every
+// callback registered via RegisterPluginMessageCallback. This handler itself
+// knows nothing about any particular mod's channel namespace or payload
+// format - that's the registered callback's job (e.g. courier, for
+// item_transfer:*).
+func (a *agent) onCustomPayload(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	channel, data, err := a.versionHandler.Play().ParseCustomPayload(p)
+	if err != nil {
+		return err
+	}
+
+	a.callPluginMessageCallbacks(channel, data)
 	return nil
 }
 

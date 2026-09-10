@@ -124,6 +124,18 @@ type PlayHandler interface {
 	// payload: the payload data (e.g., brand string)
 	SendCustomPayload(conn PacketWriter, channel string, payload string) error
 
+	// SendCustomPayloadRaw sends a custom payload packet whose data is an
+	// arbitrary, already-encoded byte payload (as opposed to SendCustomPayload,
+	// which wraps a single string in the vanilla "minecraft:brand"-style
+	// encoding). Used for mod-defined channels whose payload has its own
+	// multi-field wire format (e.g. item_transfer:*) - the caller is
+	// responsible for that encoding; this just carries the bytes.
+	SendCustomPayloadRaw(conn PacketWriter, channel string, data []byte) error
+
+	// ParseCustomPayload parses a ClientboundCustomPayload packet, returning
+	// the channel identifier and the raw, unparsed payload bytes.
+	ParseCustomPayload(p pk.Packet) (channel string, data []byte, err error)
+
 	// ParseLogin parses the ClientboundLogin packet to extract the entity ID
 	// and the player's initial game mode (SpawnInfo.Gamemode).
 	ParseLogin(p pk.Packet) (entityID int32, gameMode GameMode, err error)
