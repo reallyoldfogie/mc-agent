@@ -20,8 +20,15 @@ keys before either will accept a transfer from the other. As an op on **each** s
 /itemtransfer pubkey
 ```
 
-prints that server's own `serverId` and base64 public key. Then, on **each** server, trust the
-*other* one:
+prints that server's own `serverId` and base64 public key. Easier: run
+
+```
+/itemtransfer trust command
+```
+
+on Server A instead — it prints the exact, ready-to-paste `/itemtransfer trust add <serverId>
+<pubkey>` line, already filled in with Server A's own values, for you to copy directly onto Server
+B's console (and vice versa). Then, on **each** server, trust the *other* one:
 
 ```
 /itemtransfer trust add <the other server's serverId> <the other server's pubkey>
