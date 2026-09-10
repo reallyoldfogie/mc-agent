@@ -117,7 +117,13 @@ type trackedEntity struct {
 func (a *agent) GetPosition() (pos models.V3, yaw, pitch float64, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-	a.logf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch)
+	// Debug, not Info (a.logf): this is by far the single hottest logging
+	// call site in the whole codebase — GetPosition is called many times
+	// per tick from all over (movement, physics, rlenv's Step/observation
+	// building, ...). Logged unconditionally at Info, it alone accounted
+	// for over a third of a live RL training run's runaway log volume
+	// (2026-09-09) — see utils.VerboseLoggingEnabled.
+	a.log().Debug(fmt.Sprintf("[GetPosition %s] Bot position  (%.2f, %.2f, %.2f) with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, a.posX, a.posY, a.posZ, a.posYaw, a.posPitch))
 
 	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posYaw, a.posPitch, a.posInitialized
 }
@@ -130,7 +136,9 @@ func (a *agent) setPosition(pos models.V3, yaw, pitch float64) {
 	a.posX, a.posY, a.posZ = pos.X, pos.Y, pos.Z
 	a.posYaw, a.posPitch = yaw, pitch
 	a.posInitialized = true
-	a.logf("[setPosition %s] Updated bot position to %s with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, pos, yaw, pitch)
+	// Debug, not Info — see GetPosition's own doc comment; setPosition is
+	// called at least once per physics tick during any movement.
+	a.log().Debug(fmt.Sprintf("[setPosition %s] Updated bot position to %s with rotation (yaw=%.1f, pitch=%.1f)", a.cfg.Name, pos, yaw, pitch))
 }
 
 // GetPositionSimple returns bot position without rotation.
@@ -141,7 +149,8 @@ func (a *agent) setPosition(pos models.V3, yaw, pitch float64) {
 func (a *agent) GetPositionSimple() (pos models.V3, initialized bool) {
 	a.posMu.RLock()
 	defer a.posMu.RUnlock()
-	a.logf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, a.posX, a.posY, a.posZ)
+	// Debug, not Info — see GetPosition's own doc comment.
+	a.log().Debug(fmt.Sprintf("[GetPositionSimple %s] Bot position  (%.2f, %.2f, %.2f)", a.cfg.Name, a.posX, a.posY, a.posZ))
 
 	return models.V3{X: a.posX, Y: a.posY, Z: a.posZ}, a.posInitialized
 }

@@ -10,6 +10,7 @@ import (
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -118,7 +119,12 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
-		log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation received: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
+		// Gated: called on every movement dispatch, at least once per
+		// physics tick during any movement — see
+		// utils.VerboseLoggingEnabled's own doc comment.
+		if utils.VerboseLoggingEnabled() {
+			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation received: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
+		}
 		// Use version-specific handler if available, otherwise fall back to generic packets
 		if me.movementHandler != nil {
 			err = me.movementHandler.SendPositionAndRotation(me.client.Conn(), x, y, z, yaw, pitch, onGround)
@@ -136,11 +142,11 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 
 	if err == nil {
 		// Update tracked position and rotation
-		if me.client != nil {
+		if me.client != nil && utils.VerboseLoggingEnabled() {
 			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation calling setBotPosition: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", me.client.Name(), x, y, z, yaw, pitch)
 		}
 		me.setBotPosition(models.V3{X: x, Y: y, Z: z}, yaw, pitch)
-		if me.client != nil {
+		if me.client != nil && utils.VerboseLoggingEnabled() {
 			log.Printf("[YAW DEBUG %s] executor.SendPositionAndRotation setBotPosition done", me.client.Name())
 		}
 	}

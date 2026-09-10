@@ -50,7 +50,7 @@ func (a *agent) startPositionHeartbeat(tps int) {
 				// Send current position to server
 				pos, yaw, pitch, initialized := a.GetPosition()
 				if initialized && a.moveExec != nil {
-					a.logf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", pos.X, pos.Y, pos.Z, yaw, pitch)
+					a.log().Debug(fmt.Sprintf("[YAW DEBUG] HEARTBEAT sending: pos=(%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f", pos.X, pos.Y, pos.Z, yaw, pitch))
 					if err := a.moveExec.SendPositionAndRotation(pos.X, pos.Y, pos.Z, yaw, pitch, true); err != nil {
 						// Don't spam logs on errors, just continue
 						// a.logf("[Agent] Position heartbeat send error: %v", err)

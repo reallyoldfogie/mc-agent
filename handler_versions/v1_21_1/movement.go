@@ -6,6 +6,7 @@ import (
 	pk "github.com/Tnze/go-mc/net/packet"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	cb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/play/clientbound"
 	sb "github.com/reallyoldfogie/mc-protocol-go/data/1.21.1/play/serverbound"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
@@ -25,7 +26,9 @@ func (m *movementHandler) SendPosition(conn models.PacketWriter, x, y, z float64
 	pkt.Z = pk.Double(z)
 	pkt.OnGround = pk.Boolean(onGround)
 
-	log.Printf("[v1.21.1 Movement] SendPosition: (%.2f, %.2f, %.2f) onGround=%v", x, y, z, onGround)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendPosition: (%.2f, %.2f, %.2f) onGround=%v", x, y, z, onGround)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "Position", Cause: err}
@@ -44,8 +47,10 @@ func (m *movementHandler) SendPositionAndRotation(conn models.PacketWriter, x, y
 	pkt.Pitch = pk.Float(pitch)
 	pkt.OnGround = pk.Boolean(onGround)
 
-	log.Printf("[v1.21.1 Movement] SendPositionAndRotation: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v",
-		x, y, z, yaw, pitch, onGround)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendPositionAndRotation: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v",
+			x, y, z, yaw, pitch, onGround)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "PositionLook", Cause: err}
@@ -86,7 +91,9 @@ func (m *movementHandler) SendPlayerCommand(conn models.PacketWriter, entityID, 
 	pkt.ActionId = pk.VarInt(actionID)
 	pkt.JumpBoost = 0 // Always 0 for sprint/sneak
 
-	log.Printf("[v1.21.1 Movement] SendPlayerCommand: entityID=%d actionID=%d", entityID, actionID)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendPlayerCommand: entityID=%d actionID=%d", entityID, actionID)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "EntityAction", Cause: err}
@@ -100,7 +107,9 @@ func (m *movementHandler) SendTeleportConfirm(conn models.PacketWriter, teleport
 	pkt := sb.NewTeleportConfirm()
 	pkt.TeleportId = pk.VarInt(teleportID)
 
-	log.Printf("[v1.21.1 Movement] SendTeleportConfirm: teleportID=%d", teleportID)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendTeleportConfirm: teleportID=%d", teleportID)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "TeleportConfirm", Cause: err}
@@ -117,7 +126,9 @@ func (m *movementHandler) SendPlayerAbilities(conn models.PacketWriter, flags by
 	pkt := sb.NewAbilities()
 	pkt.Flags = pk.Byte(flags)
 
-	log.Printf("[v1.21.1 Movement] SendPlayerAbilities: flags=%d", flags)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendPlayerAbilities: flags=%d", flags)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "Abilities", Cause: err}
@@ -236,7 +247,9 @@ func (m *movementHandler) SendMoveVehicle(conn models.PacketWriter, x, y, z floa
 	pkt.Yaw = pk.Float(yaw)
 	pkt.Pitch = pk.Float(pitch)
 
-	log.Printf("[v1.21.1 Movement] SendMoveVehicle: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v (field not sent in v1.21.1)", x, y, z, yaw, pitch, onGround)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendMoveVehicle: (%.2f, %.2f, %.2f) yaw=%.2f pitch=%.2f onGround=%v (field not sent in v1.21.1)", x, y, z, yaw, pitch, onGround)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "VehicleMove", Cause: err}
@@ -274,7 +287,9 @@ func (m *movementHandler) SendVehicleInput(conn models.PacketWriter, forward, ba
 	}
 	pkt.Jump = pk.UnsignedByte(flags)
 
-	log.Printf("[v1.21.1 Movement] SendVehicleInput: forward=%.1f sideways=%.1f flags=%d", pkt.Forward, pkt.Sideways, flags)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendVehicleInput: forward=%.1f sideways=%.1f flags=%d", pkt.Forward, pkt.Sideways, flags)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "SteerVehicle", Cause: err}
@@ -290,7 +305,9 @@ func (m *movementHandler) SendPlayerCommandWithParam(conn models.PacketWriter, e
 	pkt.ActionId = pk.VarInt(actionID)
 	pkt.JumpBoost = pk.VarInt(jumpBoost)
 
-	log.Printf("[v1.21.1 Movement] SendPlayerCommandWithParam: entityID=%d actionID=%d jumpBoost=%d", entityID, actionID, jumpBoost)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[v1.21.1 Movement] SendPlayerCommandWithParam: entityID=%d actionID=%d jumpBoost=%d", entityID, actionID, jumpBoost)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "EntityAction", Cause: err}
@@ -320,7 +337,9 @@ func (m *movementHandler) SendBoatPaddleState(conn models.PacketWriter, leftPadd
 	pkt.LeftPaddle = pk.Boolean(leftPaddling)
 	pkt.RightPaddle = pk.Boolean(rightPaddling)
 
-	log.Printf("[%s Movement] SendBoatPaddleState: left=%v right=%v", "%s", leftPaddling, rightPaddling)
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[%s Movement] SendBoatPaddleState: left=%v right=%v", "%s", leftPaddling, rightPaddling)
+	}
 
 	if err := conn.WritePacket(pkt.Marshal()); err != nil {
 		return common.ErrPacketSend{PacketName: "SteerBoat", Cause: err}

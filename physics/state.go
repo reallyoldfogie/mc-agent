@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 )
 
 // Inputs is an alias to models.Inputs for backward compatibility.
@@ -415,8 +416,12 @@ func (s *state) Tick(input Inputs, w World) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t swimming=%t fallDistance=%.2f\n",
-		s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.isSwimming, s.fallDistance)
+	// Gated: fires every physics tick (20/sec) — see
+	// utils.VerboseLoggingEnabled's own doc comment.
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[PhysicsState][Tick] Tick %d: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) Yaw=%.2f Pitch=%.2f onGround=%t sneaking=%t swimming=%t fallDistance=%.2f\n",
+			s.tick, s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.yaw, s.pitch, s.onGround, s.isSneaking, s.isSwimming, s.fallDistance)
+	}
 
 	s.tick++
 
@@ -629,8 +634,12 @@ func (s *state) Tick(input Inputs, w World) error {
 	// Apply gravity, drag, and water flow based on water state
 	s.applyEnvironmentForces(inertiaFactor, w)
 
-	log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t swimming=%t collision=(h=%t v=%t)\n",
-		s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.isInWater, s.isSwimming, s.collision.horizontal, s.collision.vertical)
+	// Gated: fires every physics tick — see the sibling Tick-start log
+	// above.
+	if utils.VerboseLoggingEnabled() {
+		log.Printf("[PhysicsState][Tick] After physics: Pos=(%.2f, %.2f, %.2f) Vel=(%.2f, %.2f, %.2f) onGround=%t inWater=%t swimming=%t collision=(h=%t v=%t)\n",
+			s.Pos.X, s.Pos.Y, s.Pos.Z, s.Vel.X, s.Vel.Y, s.Vel.Z, s.onGround, s.isInWater, s.isSwimming, s.collision.horizontal, s.collision.vertical)
+	}
 
 	return nil
 }

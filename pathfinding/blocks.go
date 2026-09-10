@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	mdl "github.com/reallyoldfogie/mc-data-gen/loader"
 	mc_versions "github.com/reallyoldfogie/mc-protocol-go/data/versions"
 )
@@ -19,6 +20,12 @@ type blockShapeManager struct {
 	shapeData  map[mdl.StateKey]mdl.ShapeInfo
 	blockMgr   mc_versions.BlockMgr
 	stateProps *StatePropertyLoader
+	// verbose gates getInfo/blockInfoFromStateID's own per-lookup logging
+	// (see their doc comments) — computed once here rather than calling
+	// envBool per lookup, since both are hot paths called from every
+	// collision/passability query (IsPassable, IsSolid, IsWater, ...),
+	// themselves called constantly during pathfinding/movement/physics.
+	verbose bool
 }
 
 // NewBlockShapeManager creates a manager for a specific Minecraft version
@@ -57,6 +64,7 @@ func NewBlockShapeManager(
 		shapeData:  data,
 		blockMgr:   blockMgr,
 		stateProps: stateProps,
+		verbose:    utils.VerboseLoggingEnabled(),
 	}, nil
 }
 
@@ -116,7 +124,13 @@ func envBool(key string) bool {
 	}
 }
 
-// getInfo is a helper to retrieve ShapeInfo for a block state
+// getInfo is a helper to retrieve ShapeInfo for a block state. Logging
+// (including the found-a-match, everything-is-fine case) is gated behind
+// MC_AGENT_VERBOSE_LOG (see bsm.verbose's own doc comment) — this is
+// called from every collision/passability query, so unconditional logging
+// here (as this used to do) compounds into gigabytes of output over any
+// real movement-heavy session, dominating wall-clock time; found live
+// during an RL training run, 2026-09-09.
 func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) mdl.ShapeInfo {
 	key := mdl.StateKey{
 		BlockID:  blockID,
@@ -125,8 +139,10 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 
 	info, ok := bsm.shapeData[key]
 	if !ok {
-		log.Printf("[BlockShapeManager.getInfo] StateKey not found: blockID=%s, propsKey=%s (from props=%v)",
-			blockID, key.PropsKey, props)
+		if bsm.verbose {
+			log.Printf("[BlockShapeManager.getInfo] StateKey not found: blockID=%s, propsKey=%s (from props=%v)",
+				blockID, key.PropsKey, props)
+		}
 
 		// If exact match not found and props is nil/empty, try to find ANY state for this block
 		// This handles the case where we don't have state properties but need basic block info
@@ -135,47 +151,69 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 				if k.BlockID == blockID {
 					// Found a state for this block - use it
 					// (all states of a block should have same solid/passable/dangerous properties)
-					log.Printf("[BlockShapeManager.getInfo] Using fallback state for blockID=%s: propsKey=%s, IsStair=%v, IsSlab=%v",
-						blockID, k.PropsKey, v.IsStair(), v.IsSlab())
+					if bsm.verbose {
+						log.Printf("[BlockShapeManager.getInfo] Using fallback state for blockID=%s: propsKey=%s, IsStair=%v, IsSlab=%v",
+							blockID, k.PropsKey, v.IsStair(), v.IsSlab())
+					}
 					return v
 				}
 			}
 		}
 		// Return empty/air-like info for unknown blocks
-		log.Printf("[BlockShapeManager.getInfo] No match found, returning Air=true for blockID=%s", blockID)
+		if bsm.verbose {
+			log.Printf("[BlockShapeManager.getInfo] No match found, returning Air=true for blockID=%s", blockID)
+		}
 		return mdl.ShapeInfo{Air: true}
 	}
 
-	log.Printf("[BlockShapeManager.getInfo] Found StateKey: blockID=%s, propsKey=%s, IsStair=%v, IsSlab=%v",
-		blockID, key.PropsKey, info.IsStair(), info.IsSlab())
+	if bsm.verbose {
+		log.Printf("[BlockShapeManager.getInfo] Found StateKey: blockID=%s, propsKey=%s, IsStair=%v, IsSlab=%v",
+			blockID, key.PropsKey, info.IsStair(), info.IsSlab())
+	}
 	return info
 }
 
+// blockInfoFromStateID resolves a raw block state ID to a name and state
+// properties. Logging is gated behind MC_AGENT_VERBOSE_LOG — see
+// getInfo's doc comment; this is called from every collision/passability
+// query via getInfoFromStateID (and directly elsewhere in this file), so
+// the same unconditional-logging-compounds-into-gigabytes concern applies
+// here too.
 func (bsm *blockShapeManager) blockInfoFromStateID(blockStateID uint32) (string, map[string]string) {
 	if blockStateID == 0 {
 		return "minecraft:air", map[string]string{}
 	}
 	if bsm.blockMgr == nil {
-		log.Printf("[BlockShapeManager.blockInfoFromStateID] blockMgr is nil for stateID=%d", blockStateID)
+		if bsm.verbose {
+			log.Printf("[BlockShapeManager.blockInfoFromStateID] blockMgr is nil for stateID=%d", blockStateID)
+		}
 		return "", map[string]string{}
 	}
 	if blockID, ok := bsm.blockMgr.BlockIDByStateID(uint32(blockStateID)); ok {
 		if block, ok := bsm.blockMgr.GetByID(blockID); ok {
 			if block.Name == "" {
-				log.Printf("[BlockShapeManager.blockInfoFromStateID] block.Name is empty for stateID=%d, blockID=%d", blockStateID, blockID)
+				if bsm.verbose {
+					log.Printf("[BlockShapeManager.blockInfoFromStateID] block.Name is empty for stateID=%d, blockID=%d", blockStateID, blockID)
+				}
 				return "", map[string]string{}
 			}
 			if bsm.stateProps == nil {
-				log.Printf("[BlockShapeManager.blockInfoFromStateID] stateProps is nil for stateID=%d, returning name=%s with empty props", blockStateID, block.Name)
+				if bsm.verbose {
+					log.Printf("[BlockShapeManager.blockInfoFromStateID] stateProps is nil for stateID=%d, returning name=%s with empty props", blockStateID, block.Name)
+				}
 				return block.Name, map[string]string{}
 			}
 			props := bsm.stateProps.GetProperties(uint32(blockStateID))
-			log.Printf("[BlockShapeManager.blockInfoFromStateID] stateID=%d -> name=%s, props=%v", blockStateID, block.Name, props)
+			if bsm.verbose {
+				log.Printf("[BlockShapeManager.blockInfoFromStateID] stateID=%d -> name=%s, props=%v", blockStateID, block.Name, props)
+			}
 			return block.Name, props
 		}
 	}
 
-	log.Printf("[BlockShapeManager.blockInfoFromStateID] failed to find block for stateID=%d", blockStateID)
+	if bsm.verbose {
+		log.Printf("[BlockShapeManager.blockInfoFromStateID] failed to find block for stateID=%d", blockStateID)
+	}
 	return "", map[string]string{}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
@@ -1385,15 +1386,35 @@ func (a *agent) hasLineOfSightForAccessFrom(ctx context.Context, ox, oy, oz, tar
 	return false, 0, 0, 0, nil
 }
 
+// logLineOfSightFailure logs a full diagnostic dump of the blocked ray —
+// every block collectLineOfSightBlocks walks past, plus the raw line
+// points — gated behind slog.LevelDebug (disabled by default; nothing in
+// this codebase currently raises a Logger's level above the default
+// Info, so this is a no-op today, cheaply). Found necessary, not merely
+// tidy: this used to log unconditionally at Info level, and
+// FindVisibleBlock calls this once per candidate block that fails line of
+// sight — for a target block name common in the surrounding terrain
+// (e.g. a mine task whose MineTargetBlock is something as common as
+// "minecraft:stone"), re-resolved every Step (see rlenv.Environment.
+// refreshMineTarget), that compounded into gigabytes of log output and
+// dominated a live RL training run's wall-clock time (2026-09-09). The
+// Enabled check below skips collectLineOfSightBlocks's own real
+// (non-trivial: a full 3D DDA raycast, one BlockNameAt call per step)
+// cost too, not just the log output — slog's own per-call level check
+// only guards formatting/writing, not arguments a caller computes before
+// the call.
 func (a *agent) logLineOfSightFailure(ctx context.Context, ox, oy, oz float64, targetX, targetY, targetZ int) {
+	if !a.log().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
 	const extraBlocks = 2
 	blocks := a.collectLineOfSightBlocks(ctx, ox, oy, oz, targetX, targetY, targetZ, extraBlocks)
-	a.logf("[LOS] failed from (%.2f, %.2f, %.2f) to block (%d, %d, %d); listing %d blocks (+%d past target)", ox, oy, oz, targetX, targetY, targetZ, len(blocks), extraBlocks)
+	a.log().Debug(fmt.Sprintf("[LOS] failed from (%.2f, %.2f, %.2f) to block (%d, %d, %d); listing %d blocks (+%d past target)", ox, oy, oz, targetX, targetY, targetZ, len(blocks), extraBlocks))
 	for _, block := range blocks {
-		a.logf("[LOS]   (%d, %d, %d) %s", block.x, block.y, block.z, block.name)
+		a.log().Debug(fmt.Sprintf("[LOS]   (%d, %d, %d) %s", block.x, block.y, block.z, block.name))
 	}
 	line := utils.Line(models.V3{X: ox, Y: oy, Z: oz}, models.V3{X: float64(targetX) + 0.5, Y: float64(targetY) + 0.5, Z: float64(targetZ) + 0.5})
-	a.logf("[LOS] line points: %v", line)
+	a.log().Debug(fmt.Sprintf("[LOS] line points: %v", line))
 }
 
 type losBlock struct {

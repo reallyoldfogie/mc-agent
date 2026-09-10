@@ -84,9 +84,20 @@ func (s *syncWriter) setTarget(w io.Writer) {
 // own log file. The "agent" field is attached once here so every line this
 // logger (or anything derived from it) ever writes is attributable, even
 // before setupLogging runs.
+//
+// The handler's level is Debug when utils.VerboseLoggingEnabled(), Info
+// (the slog default) otherwise — this is what makes Debug-gated call sites
+// like GetPosition/setPosition (tracking.go) and logLineOfSightFailure
+// (actions.go) actually controllable by MC_AGENT_VERBOSE_LOG rather than
+// permanently silent, since a bare nil *slog.HandlerOptions defaults to
+// Info and filters Debug out unconditionally.
 func newAgentLogger(name string) (*slog.Logger, *syncWriter) {
 	w := newSyncWriter(os.Stdout)
-	handler := slog.NewTextHandler(w, nil)
+	opts := &slog.HandlerOptions{}
+	if utils.VerboseLoggingEnabled() {
+		opts.Level = slog.LevelDebug
+	}
+	handler := slog.NewTextHandler(w, opts)
 	return slog.New(handler).With("agent", name), w
 }
 

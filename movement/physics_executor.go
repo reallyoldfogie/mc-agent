@@ -13,6 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
 	"github.com/reallyoldfogie/mc-agent/physics"
+	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
@@ -1464,14 +1465,21 @@ func (pe *PhysicsMovementExecutor) tick() {
 	}
 
 	if isMounted {
-		// (B) Riding: translate mode-generated inputs into vehicle packets
-		log.Printf("[PhysicsExecutor][tick] Tick inputs (mounted): mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sneak=%t",
-			mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sneak)
+		// (B) Riding: translate mode-generated inputs into vehicle packets.
+		// Gated: fires every physics tick (20/sec) during any riding
+		// movement — see utils.VerboseLoggingEnabled's own doc comment.
+		if utils.VerboseLoggingEnabled() {
+			log.Printf("[PhysicsExecutor][tick] Tick inputs (mounted): mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sneak=%t",
+				mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sneak)
+		}
 		pe.handleRidingTick(inputs)
 	} else {
-		// (C) Walking: run physics sim + send player position
-		log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
-			mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+		// (C) Walking: run physics sim + send player position. Gated: fires
+		// every physics tick during any (non-riding) movement.
+		if utils.VerboseLoggingEnabled() {
+			log.Printf("[PhysicsExecutor][tick] Tick inputs: mode=%s throttle=(%.2f, %.2f) yaw=%.2f pitch=%.2f jump=%t sprint=%t sneak=%t climbDir=%.2f",
+				mode, inputs.ThrottleX, inputs.ThrottleZ, inputs.Yaw, inputs.Pitch, inputs.Jump, inputs.Sprint, inputs.Sneak, inputs.ClimbDirection)
+		}
 
 		pe.applyMovementState(inputs)
 		pe.syncActiveEffects()
