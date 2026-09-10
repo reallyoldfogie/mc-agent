@@ -34,9 +34,13 @@
 //     probability. Note that all four actions are always present on every
 //     Environment instance regardless of which of the three task types
 //     above are actually configured — an unconfigured Mine/Craft becomes a
-//     safe no-op (see resolveDispatch), not an excluded action; real
-//     per-instance action masking would need cRL-go support that doesn't
-//     exist yet (see cRL-go's docs/plans/19-training-time-action-masking.md).
+//     safe no-op (see resolveDispatch) that resolveDispatch itself still
+//     never sends anywhere. Real per-instance action masking now exists on
+//     the cRL-go side (built 2026-09-10, commit d3a3153 — see cRL-go's
+//     docs/plans/19-training-time-action-masking.md) and this package
+//     implements it (Environment.ActionMask, action.go): pkg/reinforce and
+//     pkg/ppo's rollout loops pick it up automatically via rl.ActionMasker,
+//     no extra wiring needed per training run.
 //   - Goal-conditioning for the mine/craft tasks is coarse
 //     (RL_ACTION_SPACE_EXPANSION.md Phase 2a option (a),
 //     RL_TRAINING_LOOP_PLAN.md Phase 1a): one fixed target block/item name

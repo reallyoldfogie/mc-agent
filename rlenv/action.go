@@ -117,18 +117,60 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 	case ActionGoToTarget:
 		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 	case ActionMine:
-		if e.cfg.MineTargetBlock == "" || !e.mineVisible {
+		if !e.actionLegal(ActionMine) {
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: mineActionName, args: coordArgs(e.mineX, e.mineY, e.mineZ)}, true, nil
 	case ActionCraft:
-		if e.cfg.CraftTargetItem == "" {
+		if !e.actionLegal(ActionCraft) {
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: craftActionName, args: []string{e.cfg.CraftTargetItem}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
+}
+
+// actionLegal reports whether action is structurally usable right now —
+// the same condition resolveDispatch's ActionMine/ActionCraft cases use to
+// decide "safe no-op" (Config.MineTargetBlock/CraftTargetItem unset, or
+// nothing currently visible to mine), factored out so ActionMask (below)
+// can't silently drift from what Step actually dispatches. ActionWait and
+// ActionGoToTarget are always legal — ActionWait is a genuine strategy
+// choice (accruing the per-step time penalty on purpose), not
+// structurally invalid, even though resolveDispatch also never dispatches
+// it; "legal" and "dispatches something" are different questions for that
+// one action only.
+func (e *Environment) actionLegal(action rl.Action) bool {
+	switch action {
+	case ActionWait, ActionGoToTarget:
+		return true
+	case ActionMine:
+		return e.cfg.MineTargetBlock != "" && e.mineVisible
+	case ActionCraft:
+		return e.cfg.CraftTargetItem != ""
+	default:
+		return false
+	}
+}
+
+// ActionMask implements cRL-go's rl.ActionMasker (pkg/rl/rl.go, built
+// 2026-09-10 — see docs/plans/19-training-time-action-masking.md in
+// ../cRL-go, resolved and implemented there at commit d3a3153): both
+// pkg/reinforce and pkg/ppo's rollout loops type-assert Environment
+// against this interface automatically and mask pre-softmax logits with
+// whatever it returns, with no other wiring needed on this side. Without
+// it, an untrained policy has a real chance of wasting probability mass
+// on ActionMine/ActionCraft when this Environment instance doesn't pose
+// that task (or, for Mine, nothing is currently visible) — exactly the
+// training failure that doc's "Purpose / motivation" section traces a
+// real run to (2026-09-08/09).
+func (e *Environment) ActionMask() []bool {
+	mask := make([]bool, NumActions)
+	for action := rl.Action(0); int(action) < NumActions; action++ {
+		mask[action] = e.actionLegal(action)
+	}
+	return mask
 }
 
 // coordArgs formats x, y, z as the string args actions.MoveToQuiet.Execute
