@@ -4,13 +4,14 @@
 // pair a given transfer names. See
 // docs/plans/ITEM_TRANSFER_COURIER_PLAN.md.
 //
-// Phase 2 (this command): brings up one agent.Agent per configured server,
-// attaches a courier.Courier, and exchanges item_transfer:handshake with
-// each. It does not yet drive any actual transfer — that's Phase 3, and is
-// blocked on the plan's Open Question 1 (what triggers a transfer: a chat
-// command, a new agent action, or something RL/LLM-driven). courier.Courier
-// already exposes the trigger-surface-agnostic engine
-// (Courier.StartTransfer) that whichever answer to that question will call.
+// This command brings up one agent.Agent per configured server, attaches a
+// courier.Courier, exchanges item_transfer:handshake with each, and
+// registers courier.TransferAction on every one of them, so a transfer can
+// be triggered by chat (">>>botName<<<transfer <slot> <destLabel>", per
+// agent/commands.go's existing convention), by an RL/LLM executor driving
+// the same action registry, or directly via Courier.StartTransfer from any
+// Go caller — see the plan's Open Question 1, and courier.TransferAction's
+// doc comment for why one implementation covers all three.
 package main
 
 import (
@@ -149,8 +150,7 @@ func main() {
 	}
 	// Give in-flight handshake replies a moment to arrive before reporting
 	// readiness — purely informational logging, not correctness-critical
-	// (Courier.HandshakeComplete can always be checked later, e.g. by
-	// whatever Phase 3 trigger surface is chosen).
+	// (Courier.HandshakeComplete can always be checked later).
 	time.Sleep(2 * time.Second)
 	for label := range agents {
 		if !c.HandshakeComplete(label) {
@@ -158,8 +158,19 @@ func main() {
 		}
 	}
 
+	// Register the chat/RL/LLM-dispatchable "transfer" command on every
+	// agent, one instance per server bound to that server as the implicit
+	// source (see courier.TransferAction's doc comment on why this one
+	// registration covers all three trigger surfaces named in
+	// docs/plans/ITEM_TRANSFER_COURIER_PLAN.md's Open Question 1). A
+	// player addresses server X's bot with ">>>botName<<<transfer <slot>
+	// <destLabel>" to move an item from X to destLabel.
+	for label, a := range agents {
+		a.RegisterAction(courier.TransferAction{Courier: c, SourceLabel: label})
+	}
+
 	log.Printf("item-courier ready: %d server(s) connected. Ctrl+C to stop.", len(agents))
-	fmt.Println("Note: no transfer trigger is wired up yet (Phase 3, blocked on ITEM_TRANSFER_COURIER_PLAN.md Open Question 1) — this process only maintains connections and answers handshakes.")
+	fmt.Println("Trigger a transfer by chatting \">>>" + auth.Name + "<<<transfer <slot> <destLabel>\" to any connected server, or by calling Courier.StartTransfer directly (API/RL/LLM use).")
 
 	<-ctx.Done()
 	log.Printf("shutting down...")
