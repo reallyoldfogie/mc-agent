@@ -453,6 +453,147 @@ func TestRLTrainingLoop_LongRunShowsLearningOnGoToTargetLive(t *testing.T) {
 	}
 }
 
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive is
+// TestRLTrainingLoop_LongRunShowsLearningOnGoToTargetLive's Mine-task
+// analogue, answering the harder half of the question that test's own doc
+// comment left open: does learning happen on a task with a real,
+// exclusive-to-one-action bonus, not just "prefer moving over waiting"?
+//
+// Isolating that cleanly needs a different Config shape than simply adding
+// MineTargetBlock to the GoToTarget test's config, for a reward-design
+// reason found while designing this test, not a pre-existing bug:
+// reward.go's distance term is *unscaled* per block
+// (distanceRewardScale=1.0), so a GoToTarget task with any meaningfully
+// large TargetOffset would let the policy bank far more reward from raw
+// walking distance than mineRewardBonus's flat +10 — making Mine the
+// *worse* choice whenever the target is more than ~10 blocks away, the
+// opposite of an isolating test. Making the target far away (the first,
+// wrong idea tried here) makes this worse, not better, since achievable
+// distance-reward scales with how far the target is.
+//
+// The fix: TargetOffset is [0,0,0] — the target *is* the bot's own Reset
+// position. rlenv/task.go's own doc comment confirms this is an
+// intentional, supported configuration, not a guarded-against trap ("a
+// deterministic TargetOffset that happens to be within ArrivalThreshold
+// is the caller's explicit, visible choice"), and Config.validate() only
+// requires ArrivalThreshold/StepTimeout > 0, nothing about TargetOffset's
+// magnitude. The effect: arrival (and its flat +10 arrivalBonus) is
+// already satisfied the instant Reset returns, so environment.go's
+// `newDistance <= ArrivalThreshold` check ends every episode after
+// exactly one Step, regardless of which action was chosen — Wait,
+// GoToTarget (which dispatches toward a target it's already at, moving
+// nowhere), and an unconfigured Craft all net the same flat +10 floor.
+// Mine, seeded fresh every Reset via rlenv.DefaultEpisodeSeeder
+// (guaranteeing mineVisible=1 — see rlenv/seed.go), is the only action
+// that can add another +10 (mineRewardBonus) on top when it actually
+// mines. This collapses the problem to exactly the same shape as the
+// GoToTarget test's: a one-decision-per-episode comparison between a
+// strictly-better action (here, Mine, worth ~20 total) and every other
+// action (worth ~10) — clean enough that the expected numbers are
+// predictable in advance: an untrained, roughly-uniform-over-4-actions
+// policy should average around 0.25*20 + 0.75*10 = 12.5 early on, rising
+// toward ~20 if the policy learns to prefer Mine when it's visible
+// (mineVisible is index 12 of the observation — the signal is literally
+// there for the policy to condition on).
+//
+// See TestRLTrainingLoop_LongRunShowsLearningOnGoToTargetLive's own doc
+// comment for why this is observational (not a hard pass/fail gate) and
+// why it's env-var gated the same way (MCAGENT_LONG_RL_TRAIN_TEST=1).
+//
+// **First live run (2026-09-10): learning NOT clearly confirmed — a
+// materially weaker result than the GoToTarget test's.** 537 epochs in
+// 9m0s. First-quarter mean return 10.662 (n=134), last-quarter mean
+// 11.333 (n=134) — a real but small improvement (+0.672), nowhere near
+// this task's ~20 ceiling, and the every-10th-epoch samples logged during
+// the run show ActionMine's ~20-return outcome scattered roughly evenly
+// across the whole run (epochs 180/190/250/360/490/520), not clustering
+// late the way it would if the policy were reliably converging toward
+// preferring it. Contrast with the GoToTarget test's decisive, complete
+// convergence by ~epoch 30. Plausible explanations, none confirmed:
+// (a) genuinely harder credit assignment — REINFORCE with RolloutSize=1
+// (one high-variance sample per gradient step) may need many more than
+// ~500 episodes to reliably separate a 2x reward difference (10 vs. 20)
+// from noise, unlike GoToTarget's much larger, unambiguous per-step
+// distance signal; (b) a live-timing confound — TestRLTrainingLoop_
+// MineTaskSeedingEarnsRewardAndEndsEpisode's own doc comment already
+// documents MineBlockAt's "finished" signal not always being reflected in
+// this bot's local BlockNameAt tracking within the same call (that test
+// works around it with a multi-attempt retry loop this training run's
+// single-shot Step doesn't have), which would make even a correct
+// "choose Mine" decision sometimes fail to register its reward, adding
+// noise the GoToTarget task's simpler success condition doesn't have.
+// Neither is verified here — flagged as follow-up investigation, not
+// asserted as the cause. Bottom line: unlike the base task, Mine-task
+// learning is not yet demonstrated by this run; treat it as still open.
+func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_mine", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	// See the GoToTarget version of this test for why Epochs is huge and
+	// runBudget (not epoch count) is the real stopping condition, and why
+	// it's lower than 10 minutes to leave headroom under env.Ctx's own
+	// fixed 10-minute deadline (container_standalone_test.go) rather than
+	// racing it — found live in that test's own first run.
+	settings := rlTrainSettings(1_000_000)
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return rlEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	const runBudget = 9 * time.Minute
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 512)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		if epoch%10 == 0 {
+			t.Logf("epoch %d (%s elapsed): average return %.3f", epoch, time.Since(start).Round(time.Second), stats.AverageReturn)
+		}
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs in %s", len(returns), time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d) | last-quarter mean return: %.3f (n=%d)", firstMean, quarter, lastMean, quarter)
+
+	if lastMean > firstMean {
+		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — the policy is learning to prefer ActionMine when it's visible", firstMean, lastMean, lastMean-firstMean)
+	} else {
+		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — the policy may not be learning to use the mine bonus; investigate", firstMean, lastMean)
+	}
+}
+
 // meanFloat64 returns the arithmetic mean of values, or 0 for an empty
 // slice (callers here always pass a non-empty slice — see max(1, ...)
 // above — 0 is just a safe default, not a case expected to matter).
