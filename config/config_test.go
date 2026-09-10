@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -20,7 +21,9 @@ func TestLoadFallsBackToDefaultsWhenFileMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if settings != Default() {
+	// Settings has a slice field (Courier.Servers), so it can no longer use
+	// == — reflect.DeepEqual is the direct replacement.
+	if !reflect.DeepEqual(settings, Default()) {
 		t.Fatalf("Load with missing file = %+v, want Default() = %+v", settings, Default())
 	}
 }
@@ -137,7 +140,7 @@ func TestApplyEnvLeavesSettingsUnchangedWhenNoEnvVarsSet(t *testing.T) {
 	if err := ApplyEnv(&settings, "MCAGENT_UNUSED_PREFIX_TEST"); err != nil {
 		t.Fatalf("ApplyEnv: %v", err)
 	}
-	if settings != before {
+	if !reflect.DeepEqual(settings, before) {
 		t.Fatalf("ApplyEnv with no matching env vars changed settings: got %+v, want %+v", settings, before)
 	}
 }

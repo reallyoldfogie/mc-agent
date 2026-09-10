@@ -52,6 +52,11 @@ type Settings struct {
 	// Env configures the rlenv.Environment task(s) posed each training
 	// episode. Only relevant to cmd/rl-train.
 	Env EnvSettings `json:"env"`
+	// Courier configures the set of servers cmd/item-courier logs into
+	// simultaneously — see docs/plans/ITEM_TRANSFER_COURIER_PLAN.md. Only
+	// relevant to cmd/item-courier; Connection/Auth still supply the single
+	// shared player identity used to log into every one of them.
+	Courier CourierSettings `json:"courier"`
 }
 
 // AuthSettings configures Microsoft authentication — see
@@ -114,6 +119,33 @@ type MovementSettings struct {
 type FollowCamSettings struct {
 	Target   string  `json:"target"`
 	Distance float64 `json:"distance"`
+}
+
+// CourierSettings configures cmd/item-courier: the set of Minecraft servers
+// a single courier process logs into simultaneously, under one shared player
+// identity (Connection.Name/UUID/Offline/Token, Auth — see
+// docs/plans/ITEM_TRANSFER_COURIER_PLAN.md's "same identity on every server"
+// assumption), relaying item_transfer:* plugin messages between whichever
+// pair of them a given transfer names. Deliberately a list, not per-server
+// CLI flags — the whole point of this section is that the count is
+// arbitrary.
+type CourierSettings struct {
+	Servers []CourierServerSettings `json:"servers"`
+}
+
+// CourierServerSettings is one server a courier logs into.
+type CourierServerSettings struct {
+	// Label identifies this server and MUST match the mod-side serverId
+	// concept from mc-item-transfer-mod's docs/protocol.md/trust-store
+	// config — the same string an operator already types into that mod's
+	// `/itemtransfer trust add <serverId> <pubkey>` on whichever other
+	// server trusts this one, not an independently invented local name
+	// (see the plan's Open Question 5).
+	Label   string `json:"label"`
+	Address string `json:"address"`
+	// Version, if empty, is auto-detected — same convention as
+	// ConnectionSettings.Version.
+	Version string `json:"version"`
 }
 
 // EnvSettings is a JSON-friendly mirror of rlenv.Config — StepTimeout
