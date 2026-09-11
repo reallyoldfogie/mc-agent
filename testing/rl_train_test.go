@@ -509,22 +509,23 @@ func TestRLTrainingLoop_LongRunShowsLearningOnGoToTargetLive(t *testing.T) {
 // across the whole run (epochs 180/190/250/360/490/520), not clustering
 // late the way it would if the policy were reliably converging toward
 // preferring it. Contrast with the GoToTarget test's decisive, complete
-// convergence by ~epoch 30. Plausible explanations, none confirmed:
+// convergence by ~epoch 30. Two plausible explanations were considered:
 // (a) genuinely harder credit assignment — REINFORCE with RolloutSize=1
 // (one high-variance sample per gradient step) may need many more than
 // ~500 episodes to reliably separate a 2x reward difference (10 vs. 20)
 // from noise, unlike GoToTarget's much larger, unambiguous per-step
 // distance signal; (b) a live-timing confound — TestRLTrainingLoop_
-// MineTaskSeedingEarnsRewardAndEndsEpisode's own doc comment already
-// documents MineBlockAt's "finished" signal not always being reflected in
-// this bot's local BlockNameAt tracking within the same call (that test
-// works around it with a multi-attempt retry loop this training run's
-// single-shot Step doesn't have), which would make even a correct
-// "choose Mine" decision sometimes fail to register its reward, adding
-// noise the GoToTarget task's simpler success condition doesn't have.
-// Neither is verified here — flagged as follow-up investigation, not
-// asserted as the cause. Bottom line: unlike the base task, Mine-task
-// learning is not yet demonstrated by this run; treat it as still open.
+// MineTaskSeedingEarnsRewardAndEndsEpisode's own doc comment documents
+// MineBlockAt's "finished" signal not always being reflected in this
+// bot's local BlockNameAt tracking within the same call. **(b) checked and
+// RULED OUT** by TestRLTrainingLoop_MineActionRegistersImmediatelyLive
+// (2026-09-10): 30/30 deterministic ActionMine dispatches against a
+// freshly seeded, visible target registered mined=true on the very first
+// Step, no retries needed — the mine reward signal is clean when Mine is
+// actually chosen. That leaves (a), REINFORCE's single-rollout variance,
+// as the more likely bottleneck, by elimination rather than direct proof.
+// Bottom line: unlike the base task, Mine-task learning is not yet
+// demonstrated by this run; treat it as still open.
 func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
 	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
 		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
@@ -592,6 +593,100 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
 	} else {
 		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — the policy may not be learning to use the mine bonus; investigate", firstMean, lastMean)
 	}
+}
+
+// TestRLTrainingLoop_MineActionRegistersImmediatelyLive measures how often
+// a single ActionMine dispatch against a freshly seeded, currently-visible
+// target registers mined=true on that same Step call, versus needing a
+// retry — checking one of the two unconfirmed explanations
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive's own doc comment
+// raised for that run's weak learning signal: a live MineBlockAt-
+// completion-timing race (already documented, and worked around with a
+// retry loop, by TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode's
+// stepUntilDone). If a *training* loop's single-shot Step often dispatches
+// a correct "mine" choice that doesn't register as mined until a later
+// Step, that action's reward signal is noisier than GoToTarget's simpler
+// success condition, which could slow or prevent REINFORCE from ever
+// distinguishing it from noise — independent of whether the policy learns
+// to *choose* Mine at all (a separate, already-answered question this
+// test doesn't touch: dispatch here is always ActionMine, never sampled
+// from a policy).
+//
+// **First live run (2026-09-10): timing-race hypothesis RULED OUT.** 30/30
+// trials (100%) registered mined=true on the very first ActionMine
+// dispatch — no retries needed at all, contrary to what the mine-seeding
+// test's own documented race would predict if it applied here. This
+// doesn't mean that race is fictional (that test's own doc comment
+// describes it as found live, not assumed), but it does mean it's not a
+// significant contributor to TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive's
+// weak result — the mine reward signal is clean and reliable when Mine is
+// actually chosen. That leaves the other candidate explanation (REINFORCE's
+// single-rollout variance needing far more than ~500 episodes to separate
+// a 2x reward gap from noise) as the more likely bottleneck, by
+// elimination rather than direct confirmation.
+func TestRLTrainingLoop_MineActionRegistersImmediatelyLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live diagnostic")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_mine_timing", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	const trials = 30
+	const maxAttempts = 5
+	// attemptsToSucceed[i] is the 1-based attempt number trial i's mined
+	// signal registered on, or 0 if it never did within maxAttempts.
+	attemptsToSucceed := make([]int, 0, trials)
+
+	for trial := 0; trial < trials; trial++ {
+		obs, err := rlEnv.Reset(env.Ctx)
+		require.NoError(t, err, "trial %d: Reset", trial)
+		require.Equal(t, float32(1), obs.Values[12], "trial %d: mineVisible should be 1 right after seeding", trial)
+
+		succeededAt := 0
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			result, err := rlEnv.Step(env.Ctx, rlenv.ActionMine)
+			require.NoError(t, err, "trial %d attempt %d: Step", trial, attempt)
+			if result.Done {
+				succeededAt = attempt
+				break
+			}
+		}
+		attemptsToSucceed = append(attemptsToSucceed, succeededAt)
+		t.Logf("trial %d: mined registered on attempt %d (0 = never within %d attempts)", trial, succeededAt, maxAttempts)
+	}
+
+	firstAttemptSuccesses := 0
+	neverSucceeded := 0
+	for _, a := range attemptsToSucceed {
+		if a == 1 {
+			firstAttemptSuccesses++
+		}
+		if a == 0 {
+			neverSucceeded++
+		}
+	}
+
+	t.Logf("summary: %d/%d trials (%.1f%%) registered mined=true on the FIRST ActionMine dispatch",
+		firstAttemptSuccesses, trials, 100*float64(firstAttemptSuccesses)/float64(trials))
+	t.Logf("summary: %d/%d trials never registered within %d attempts", neverSucceeded, trials, maxAttempts)
+
+	require.Zero(t, neverSucceeded, "at least one trial never registered mined=true within %d attempts — something beyond timing may be wrong", maxAttempts)
 }
 
 // meanFloat64 returns the arithmetic mean of values, or 0 for an empty
