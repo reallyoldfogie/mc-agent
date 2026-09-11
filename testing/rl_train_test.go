@@ -522,8 +522,13 @@ func TestRLTrainingLoop_LongRunShowsLearningOnGoToTargetLive(t *testing.T) {
 // (2026-09-10): 30/30 deterministic ActionMine dispatches against a
 // freshly seeded, visible target registered mined=true on the very first
 // Step, no retries needed — the mine reward signal is clean when Mine is
-// actually chosen. That leaves (a), REINFORCE's single-rollout variance,
-// as the more likely bottleneck, by elimination rather than direct proof.
+// actually chosen. That left (a), REINFORCE's single-rollout variance, as
+// the more likely bottleneck, and it's since been confirmed directly, not
+// just by elimination: TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive
+// (2026-09-10) reran this exact Config with RolloutSize=8 instead of 1 and
+// saw a decisive improvement (first-quarter mean 9.990 -> last-quarter
+// 14.434, vs. this run's marginal 10.662 -> 11.333) — see that test's own
+// doc comment for the full result.
 // Bottom line: unlike the base task, Mine-task learning is not yet
 // demonstrated by this run; treat it as still open.
 func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
@@ -592,6 +597,117 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
 		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — the policy is learning to prefer ActionMine when it's visible", firstMean, lastMean, lastMean-firstMean)
 	} else {
 		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — the policy may not be learning to use the mine bonus; investigate", firstMean, lastMean)
+	}
+}
+
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive
+// tests the surviving explanation from
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive's weak result:
+// REINFORCE's single-rollout variance (RolloutSize=1 — one episode's
+// return backs the entire gradient estimate for that update) may simply
+// need more samples per update to reliably separate a 2x reward
+// difference from noise, given TestRLTrainingLoop_MineActionRegistersImmediatelyLive
+// already ruled out a noisy/delayed reward signal as the cause.
+//
+// Same Config as the RolloutSize=1 version (TargetOffset: [0,0,0], seeded
+// Mine task — see that test's own doc comment for why this specific shape
+// isolates the comparison), same ~9-minute wall-clock budget, only
+// settings.RolloutSize changed (1 -> 8): each gradient update now averages
+// over 8 episodes' returns instead of 1, trading update *count* (fewer
+// gradient steps fit in the same wall-clock budget, since total episode
+// throughput is roughly fixed by real per-episode network/game-tick cost
+// regardless of how episodes are grouped into epochs) for update
+// *quality* (each step's gradient estimate is less noisy). If variance
+// really is the bottleneck, this should show visibly cleaner/faster
+// convergence in far fewer epochs than the 537 the RolloutSize=1 run
+// needed to barely move; if it doesn't help either, that's evidence
+// against the variance explanation too, not just for it.
+//
+// **First live run (2026-09-10): variance hypothesis CONFIRMED, not just
+// surviving by elimination.** 74 epochs (592 episodes) in 9m0s.
+// Epochs 0-55 (440 episodes) sat dead flat at average return 9.990 with
+// return std 0.005 — 0/8 episodes mined, every single epoch, the same
+// "never mines" trap the RolloutSize=1 run showed, just more starkly
+// visible here since std makes "all 8 samples identical" explicit. Then,
+// around epoch 56 (~39s elapsed), it broke out: return climbed to a
+// stable 14.990 by epoch 59 and held there through epoch 73 — almost
+// exactly the midpoint between 9.99 (no mine) and 19.99 (mine), i.e. the
+// policy shifted to mining in roughly 4 of 8 episodes per epoch and
+// plateaued. First-quarter mean 9.990 -> last-quarter mean 14.434, a
+// decisive improvement, qualitatively different from the RolloutSize=1
+// run's marginal 10.662 -> 11.333 over a comparable wall-clock budget.
+// Not fully resolved: it plateaued around ~50% mine rate rather than
+// continuing toward the ~100%/return-20 ceiling within this run's
+// 9-minute budget — unclear whether that's "needs more time" or a stable
+// mixed strategy the entropy coefficient (0.01) is holding it at; not
+// investigated further here.
+func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_mine_rollout8", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return rlEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	// See the RolloutSize=1 version's own doc comment for why 9 minutes,
+	// not env.Ctx's full 10.
+	const runBudget = 9 * time.Minute
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 128)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		// Fewer epochs expected than the RolloutSize=1 run (each one costs
+		// ~8x the episodes), so log every epoch rather than every 10th —
+		// still readable, and doesn't risk missing the whole trend in a
+		// short run.
+		t.Logf("epoch %d (%s elapsed): average return %.3f (return std %.3f, samples %d)",
+			epoch, time.Since(start).Round(time.Second), stats.AverageReturn, stats.ReturnStd, stats.SampleCount)
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs (%d episodes) in %s", len(returns), len(returns)*settings.RolloutSize, time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d epochs) | last-quarter mean return: %.3f (n=%d epochs)", firstMean, quarter, lastMean, quarter)
+
+	if lastMean > firstMean {
+		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — larger RolloutSize helped the policy learn to prefer ActionMine", firstMean, lastMean, lastMean-firstMean)
+	} else {
+		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — larger RolloutSize alone did not fix Mine-task learning; the variance explanation may be wrong, or need an even larger RolloutSize/more total episodes than this run's budget allowed", firstMean, lastMean)
 	}
 }
 
