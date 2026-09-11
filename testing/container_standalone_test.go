@@ -56,7 +56,18 @@ func setupStandaloneTestWithMode(t *testing.T, testName string, gameMode GameMod
 
 // setupStandaloneTestWithModeAndBlockPlacement creates a fresh server and agent with specified game mode and optional block placement
 func setupStandaloneTestWithModeAndBlockPlacement(t *testing.T, testName string, gameMode GameMode, placeBlock bool, mcVersion string, difficulty Difficulty, enableReplay bool) *StandaloneTestEnv {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// 10 minutes by default, unchanged for every existing caller;
+	// MCAGENT_TEST_TIMEOUT lets a single opted-in run (e.g. a long-running
+	// RL training diagnostic — see testing/rl_train_test.go) ask for more
+	// without touching this function's signature, which dozens of
+	// unrelated tests across this package call directly.
+	envCtxTimeout := 10 * time.Minute
+	if raw := os.Getenv("MCAGENT_TEST_TIMEOUT"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_TEST_TIMEOUT %q", raw)
+		envCtxTimeout = parsed
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), envCtxTimeout)
 
 	// Get working directory
 	cwd, err := os.Getwd()

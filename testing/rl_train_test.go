@@ -636,11 +636,24 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskLive(t *testing.T) {
 // plateaued. First-quarter mean 9.990 -> last-quarter mean 14.434, a
 // decisive improvement, qualitatively different from the RolloutSize=1
 // run's marginal 10.662 -> 11.333 over a comparable wall-clock budget.
-// Not fully resolved: it plateaued around ~50% mine rate rather than
-// continuing toward the ~100%/return-20 ceiling within this run's
-// 9-minute budget — unclear whether that's "needs more time" or a stable
-// mixed strategy the entropy coefficient (0.01) is holding it at; not
-// investigated further here.
+// **Extended rerun (2026-09-10, same day): plateau confirmed to be a
+// stable equilibrium, not "needs more time."** Using
+// MCAGENT_TEST_TIMEOUT=27m + MCAGENT_LONG_RL_TRAIN_RUN_BUDGET=25m (see
+// runBudget's own doc comment below and
+// setupStandaloneTestWithModeAndBlockPlacement's timeout override), the
+// same task ran 100 epochs (800 episodes) in 25m0s. Average return
+// reached 14.990 by epoch 53 (1m11s elapsed) and then held there —
+// return std pinned at exactly 5.000 — through every one of the
+// remaining 47 epochs (376 episodes, ~24 more minutes) with zero further
+// movement. First-quarter mean 9.990 -> last-quarter mean 14.990. Nearly
+// 24 minutes of additional training produced literally no improvement
+// beyond the plateau this test's first (9-minute) run already found —
+// this rules out "needs more time" conclusively. The remaining candidate
+// explanation (the entropy coefficient, 0.01 in rlTrainSettings, holding
+// a stable ~50/50 mixed strategy rather than letting the policy converge
+// to deterministic "always mine") was not itself tested here (that would
+// mean varying EntropyCoef, not RolloutSize or run length) — flagged as
+// the next thing to check, not confirmed.
 func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive(t *testing.T) {
 	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
 		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
@@ -670,9 +683,20 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive(t *t
 	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
 	require.NoError(t, err, "construct trainer")
 
-	// See the RolloutSize=1 version's own doc comment for why 9 minutes,
-	// not env.Ctx's full 10.
-	const runBudget = 9 * time.Minute
+	// 9 minutes by default (see the RolloutSize=1 version's own doc
+	// comment for why 9, not env.Ctx's full 10) — overridable via
+	// MCAGENT_LONG_RL_TRAIN_RUN_BUDGET (paired with a matching, larger
+	// MCAGENT_TEST_TIMEOUT — see setupStandaloneTestWithModeAndBlockPlacement's
+	// own doc comment — since this budget is capped by whichever of the
+	// two deadlines env.Ctx and runBudget itself is sooner) to check
+	// whether the ~50% mine-rate plateau this test's first run hit is a
+	// stable equilibrium or would keep improving given more time.
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
 	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
 	defer cancelRun()
 
