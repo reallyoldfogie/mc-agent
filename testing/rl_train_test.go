@@ -735,6 +735,135 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive(t *t
 	}
 }
 
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive tests
+// the one candidate explanation TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive's
+// extended rerun left standing after ruling out "needs more time": that
+// EntropyCoef (0.01 in rlTrainSettings) is holding the policy at a stable
+// ~50/50 mixed-strategy equilibrium (return ~14.99, confirmed unmoving
+// across 24+ minutes and 376+ episodes) rather than letting it converge to
+// deterministic "always mine" (return ~20). REINFORCE's entropy bonus
+// rewards keeping the action distribution non-degenerate; if its pull
+// balances the reward gradient's pull toward Mine at roughly 50/50, that
+// would explain the exact equilibrium already observed — this test checks
+// that by setting EntropyCoef to 0 (removing the counter-pull entirely,
+// the cleanest single-variable test) rather than merely lowering it, on
+// top of the already-confirmed-necessary RolloutSize=8 fix (so this
+// isolates entropy specifically, not re-litigating variance). Same
+// mine-task Config, same runBudget override mechanism as the RolloutSize=8
+// version (env.Ctx via MCAGENT_TEST_TIMEOUT, this run's own budget via
+// MCAGENT_LONG_RL_TRAIN_RUN_BUDGET — see that test's own doc comments).
+//
+// Real risk this test doesn't control for, noted rather than solved: zero
+// entropy removes REINFORCE's only defense against premature convergence
+// to the *wrong* deterministic policy (e.g. locking onto "never mine"
+// before the reward gradient ever gets a real signal) — entropy_coef=0.01
+// already reliably broke out of exactly that trap in both prior runs, so
+// this test's own result needs reading in light of that tradeoff: a
+// failure to reach ~20 here doesn't automatically vindicate the entropy
+// hypothesis if it instead reveals a *different* failure mode (e.g.
+// collapsing to all-Wait/all-GoToTarget instead).
+//
+// **First live run (2026-09-10): entropy hypothesis FALSIFIED, not
+// confirmed — the exact same plateau, reached later.** 324 epochs (2592
+// episodes) in 25m0s. This test's own automated verdict (first-quarter
+// 10.005, last-quarter 12.845, logged as "improved but didn't reach the
+// ceiling") is a misleading read of what actually happened: because
+// non-mining epochs are far cheaper than mining ones (no RCON block
+// placement needed), this run raced through epochs 0-275 dead flat at
+// 9.990 in under a minute, then broke out at epoch 276 and locked to
+// EXACTLY 14.990 by epoch 278 — the identical value
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive's
+// EntropyCoef=0.01 run converged to — and held there for the remaining 46
+// epochs (~24 more minutes), just as rock-solid as the entropy=0.01 case.
+// The "last-quarter mean 12.845" is an artifact of splitting 324 epochs
+// into quarters by epoch *count*: the last quarter (epochs 243-324) still
+// spans part of the long, cheap dead prefix, blending it with the
+// plateau — not a clean read of the converged state. (Lesson for any
+// future long-run test with this lopsided a cost structure: quartile
+// splits by epoch count can be misleading; splitting by elapsed wall time,
+// or reporting the trailing-N-epoch mean directly, would read more
+// truthfully.) Conclusion: EntropyCoef changed how many epochs it took to
+// escape the initial "never mines" trap (276 here vs. ~52-56 at 0.01) but
+// did NOT change where the policy ultimately settles — the ~50% mine-rate
+// equilibrium is not an entropy artifact. Something else, structural to
+// this reward/optimization setup, produces that exact equilibrium; not
+// identified here.
+func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_mine_lowent", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	settings.EntropyCoef = 0
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return rlEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	// See the RolloutSize=8 version's own doc comment for these two
+	// overrides.
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 128)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		t.Logf("epoch %d (%s elapsed): average return %.3f (return std %.3f, samples %d)",
+			epoch, time.Since(start).Round(time.Second), stats.AverageReturn, stats.ReturnStd, stats.SampleCount)
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs (%d episodes) in %s", len(returns), len(returns)*settings.RolloutSize, time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d epochs) | last-quarter mean return: %.3f (n=%d epochs)", firstMean, quarter, lastMean, quarter)
+
+	const nearCeiling = 18.0 // meaningfully closer to the ~20 ceiling than the ~14.99 equilibrium EntropyCoef=0.01 settled at
+	switch {
+	case lastMean >= nearCeiling:
+		t.Logf("✓ average return reached %.3f (near the ~20 ceiling) — the entropy coefficient was holding back full convergence; removing it let the policy converge much closer to always-mine", lastMean)
+	case lastMean > firstMean:
+		t.Logf("~ average return improved (%.3f -> %.3f) but did not reach near the ~20 ceiling — entropy may be part of the story but not the whole explanation", firstMean, lastMean)
+	default:
+		t.Logf("✗ average return did NOT improve (%.3f -> %.3f) — the entropy hypothesis looks wrong, or zero entropy caused a different failure mode (e.g. premature collapse away from Mine); inspect the per-epoch log above", firstMean, lastMean)
+	}
+}
+
 // TestRLTrainingLoop_MineActionRegistersImmediatelyLive measures how often
 // a single ActionMine dispatch against a freshly seeded, currently-visible
 // target registers mined=true on that same Step call, versus needing a
