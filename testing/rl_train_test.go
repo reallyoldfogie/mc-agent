@@ -6,6 +6,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -861,6 +862,334 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive(t *test
 		t.Logf("~ average return improved (%.3f -> %.3f) but did not reach near the ~20 ceiling — entropy may be part of the story but not the whole explanation", firstMean, lastMean)
 	default:
 		t.Logf("✗ average return did NOT improve (%.3f -> %.3f) — the entropy hypothesis looks wrong, or zero entropy caused a different failure mode (e.g. premature collapse away from Mine); inspect the per-epoch log above", firstMean, lastMean)
+	}
+}
+
+// mineEquilibriumEpisode records one episode's worth of what
+// docs/bugs/mine-task-fifty-percent-equilibrium.md needs to distinguish
+// its two live hypotheses: the policy still genuinely mixing ~50/50, vs.
+// the policy already converged to "always Mine when legal" while
+// something in rlenv's episode-to-episode state (most likely
+// DefaultEpisodeSeeder/refreshMineTarget) only makes Mine legal on every
+// other Reset, independent of the dispatched action.
+type mineEquilibriumEpisode struct {
+	mineVisibleAtReset float32
+	mineLegalAtReset   bool
+	action             rl.Action
+	reward             float32
+}
+
+// mineEquilibriumRecorder wraps a *rlenv.Environment, forwarding every
+// rl.Environment/rl.ActionMasker call to it unchanged, while recording one
+// mineEquilibriumEpisode per Reset/Step pair — see
+// TestRLTrainingLoop_MineEquilibriumRootCauseLive. This task's episodes
+// are always exactly one Step long (TargetOffset:[0,0,0] means arrival's
+// distance check is already satisfied at Reset — see that test's Config,
+// copied from the earlier long-run tests), so "the most recent episode"
+// unambiguously means "the last Reset before whichever Step is being
+// recorded," with no risk of a second Step overwriting the wrong entry.
+type mineEquilibriumRecorder struct {
+	inner *rlenv.Environment
+
+	mu       sync.Mutex
+	episodes []mineEquilibriumEpisode
+}
+
+func (r *mineEquilibriumRecorder) Reset(ctx context.Context) (rl.Observation, error) {
+	obs, err := r.inner.Reset(ctx)
+	if err != nil {
+		return obs, err
+	}
+	r.mu.Lock()
+	r.episodes = append(r.episodes, mineEquilibriumEpisode{mineVisibleAtReset: obs.Values[12]})
+	r.mu.Unlock()
+	return obs, nil
+}
+
+func (r *mineEquilibriumRecorder) Step(ctx context.Context, action rl.Action) (rl.StepResult, error) {
+	result, err := r.inner.Step(ctx, action)
+	r.mu.Lock()
+	if n := len(r.episodes); n > 0 {
+		r.episodes[n-1].action = action
+		r.episodes[n-1].reward = result.Reward
+	}
+	r.mu.Unlock()
+	return result, err
+}
+
+func (r *mineEquilibriumRecorder) ObservationSize() int { return r.inner.ObservationSize() }
+func (r *mineEquilibriumRecorder) ActionSpace() int     { return r.inner.ActionSpace() }
+
+// ActionMask forwards to the real Environment's ActionMask (satisfying
+// rl.ActionMasker so pkg/reinforce's rollout loop keeps masking exactly as
+// it would against the unwrapped Environment) and records whether Mine
+// specifically was legal for the episode ActionMask was just asked about
+// — the direct measurement this whole diagnostic exists for.
+func (r *mineEquilibriumRecorder) ActionMask() []bool {
+	mask := r.inner.ActionMask()
+	r.mu.Lock()
+	if n := len(r.episodes); n > 0 && len(mask) > int(rlenv.ActionMine) {
+		r.episodes[n-1].mineLegalAtReset = mask[rlenv.ActionMine]
+	}
+	r.mu.Unlock()
+	return mask
+}
+
+// actionName renders a rlenv action constant for readable log output —
+// this file has no existing String() method for rl.Action, and adding one
+// on rlenv.Action itself isn't warranted for one diagnostic test's logs.
+func actionName(action rl.Action) string {
+	switch action {
+	case rlenv.ActionWait:
+		return "Wait"
+	case rlenv.ActionGoToTarget:
+		return "GoToTarget"
+	case rlenv.ActionMine:
+		return "Mine"
+	case rlenv.ActionCraft:
+		return "Craft"
+	default:
+		return fmt.Sprintf("action(%d)", action)
+	}
+}
+
+// TestRLTrainingLoop_MineEquilibriumRootCauseLive investigates
+// docs/bugs/mine-task-fifty-percent-equilibrium.md's open question: is the
+// exact, zero-scatter 14.990 (4-of-8-every-epoch) plateau a real ~50%
+// mixed policy, or is the policy already converged to "always Mine when
+// legal" while Mine is only actually *legal* (mineVisible/ActionMask) on
+// every other episode for environment reasons unrelated to the dispatched
+// action? Same mine-task Config and RolloutSize=8/EntropyCoef=0.01 as
+// TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive
+// (the run that most cleanly characterized the plateau), but the
+// persistent environment handed to reinforce.NewWithPersistentEnv is
+// wrapped in mineEquilibriumRecorder so every episode's
+// (mineVisible-at-Reset, mineLegal-at-Reset, dispatched action, reward)
+// can be inspected after the run — cRL-go's own Trainer/EpochStats API
+// has no hook for this, hence the wrapper rather than a code change to
+// cRL-go or rlenv.
+func TestRLTrainingLoop_MineEquilibriumRootCauseLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_mine_equilibrium", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+	recorder := &mineEquilibriumRecorder{inner: rlEnv}
+
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return recorder, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	// See the RolloutSize=8 test's own doc comment for these two
+	// overrides. Default 9 minutes is plenty here — the plateau is
+	// reached within roughly a minute in every prior run, leaving ample
+	// post-plateau episodes to inspect regardless.
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	start := time.Now()
+	epoch := 0
+	for ; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		if epoch%10 == 0 {
+			t.Logf("epoch %d (%s elapsed): average return %.3f", epoch, time.Since(start).Round(time.Second), stats.AverageReturn)
+		}
+	}
+
+	recorder.mu.Lock()
+	episodes := append([]mineEquilibriumEpisode(nil), recorder.episodes...)
+	recorder.mu.Unlock()
+	require.NotEmpty(t, episodes, "no episodes recorded within the run budget")
+	t.Logf("recorded %d episodes across %d epochs in %s", len(episodes), epoch, time.Since(start).Round(time.Second))
+
+	// A fixed trailing window, not "back half": this diagnostic's own
+	// first live run found the breakout point lands well past the
+	// halfway mark of total episodes (episode ~400 of 594, since the
+	// pre-breakout "never mines" phase is cheap and racks up many more
+	// episodes per minute than the post-breakout phase — the same lopsided
+	// cost shape TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive's
+	// doc comment already found), so a back-half split still captured a
+	// long pre-breakout prefix and produced a misleading blended read.
+	// 120 episodes (~15 epochs at RolloutSize=8) comfortably fits inside
+	// the settled tail confirmed by that run's own epoch-level log
+	// (epoch 60 and 70 both showed exactly 14.990).
+	tailSize := 120
+	if tailSize > len(episodes) {
+		tailSize = len(episodes)
+	}
+	steadyState := episodes[len(episodes)-tailSize:]
+
+	var visibleAndChoseMine, visibleAndChoseOther, notVisibleAndChoseMine, notVisibleAndChoseOther int
+	var visibleCount int
+	togglePairs, toggleAlternates := 0, 0
+	for i, ep := range steadyState {
+		switch {
+		case ep.mineLegalAtReset && ep.action == rlenv.ActionMine:
+			visibleAndChoseMine++
+		case ep.mineLegalAtReset:
+			visibleAndChoseOther++
+		case ep.action == rlenv.ActionMine:
+			notVisibleAndChoseMine++
+		default:
+			notVisibleAndChoseOther++
+		}
+		if ep.mineLegalAtReset {
+			visibleCount++
+		}
+		if i > 0 {
+			togglePairs++
+			if steadyState[i-1].mineLegalAtReset != ep.mineLegalAtReset {
+				toggleAlternates++
+			}
+		}
+	}
+	total := len(steadyState)
+
+	t.Logf("steady-state sample: last %d episodes (of %d total)", total, len(episodes))
+	t.Logf("mineVisible/legal at Reset: %d/%d (%.1f%%)", visibleCount, total, 100*float64(visibleCount)/float64(total))
+	t.Logf("breakdown: visible+chose Mine=%d, visible+chose other=%d, not-visible+chose Mine=%d (should be 0, masked illegal), not-visible+chose other=%d",
+		visibleAndChoseMine, visibleAndChoseOther, notVisibleAndChoseMine, notVisibleAndChoseOther)
+	t.Logf("mineVisible alternation rate: %d/%d consecutive pairs flipped (%.1f%%) — 100%% would mean strict alternation every episode",
+		toggleAlternates, togglePairs, 100*float64(toggleAlternates)/float64(togglePairs))
+
+	// Log every steady-state episode verbatim (not capped, unlike an
+	// earlier version of this test) — the raw per-episode sequence is
+	// exactly what distinguishes this investigation's hypotheses, and a
+	// truncated sample already once produced a misleading read (see
+	// tailSize's own doc comment above) by cutting off before the real
+	// pattern was visible.
+	for i, ep := range steadyState {
+		t.Logf("steady-state episode %d: mineLegalAtReset=%v action=%s reward=%.3f", i, ep.mineLegalAtReset, actionName(ep.action), ep.reward)
+	}
+
+	require.Zero(t, notVisibleAndChoseMine, "ActionMine was recorded as dispatched while masked illegal — should never happen (ActionMask/resolveDispatch bug, not this investigation's question)")
+
+	switch {
+	case visibleAndChoseOther > 0:
+		t.Logf("✗ HYPOTHESIS A (environment-only toggle) REJECTED: the policy chose a non-Mine action %d times even when Mine was legal — it has not converged to \"always Mine when legal,\" so at least part of the ~50%% rate is genuinely the policy's own choice", visibleAndChoseOther)
+	case visibleCount < total:
+		t.Logf("✓ HYPOTHESIS A (environment-only toggle) SUPPORTED: whenever Mine was legal the policy always chose it (visible+chose other=0), and Mine was legal in only %d/%d episodes — the ~50%% rate looks like an environment/seeding artifact (mineVisible not toggling with the dispatched action), not an unconverged policy", visibleCount, total)
+	default:
+		t.Logf("? inconclusive: Mine was legal in all %d steady-state episodes and always chosen — no 50%% pattern observed in this sample; rerun or investigate the recorded episodes above", total)
+	}
+}
+
+// TestRLTrainingLoop_MineSeedingAlternationRootCauseLive is the follow-up
+// TestRLTrainingLoop_MineEquilibriumRootCauseLive's result demands: that
+// test found a *perfect, unbroken period-2 alternation* in reward
+// (19.990, 9.990, 19.990, 9.990, ...) across 100+ consecutive episodes,
+// with the dispatched action constantly ActionMine — i.e. the policy had
+// already converged to "always Mine," and something in the environment
+// itself only delivers the mine bonus every other attempt. This test
+// removes the policy/training machinery entirely (no reinforce.Trainer, no
+// Actor, no gradient updates) and just repeats "Reset (which seeds a fresh
+// target via DefaultEpisodeSeeder), then dispatch ActionMine once" many
+// times in a tight loop with no artificial delay — the same environment
+// mechanics, isolated from RL, to see whether the alternation is
+// reproducible from the environment/seeding path alone.
+//
+// This looks, at first glance, like a rerun of
+// TestRLTrainingLoop_MineActionRegistersImmediatelyLive (30/30 first-
+// attempt successes, no alternation seen) — the difference is trial count
+// (200 here vs. 30 there) and no per-trial retry allowance (single-shot
+// only, matching a training Step's own single-shot nature exactly): if
+// the alternation only emerges after some churn/warm-up, or is a
+// close-to-50%-but-not-exactly-alternating stochastic effect that a
+// 30-trial sample was too small to reveal clearly, a longer single-shot
+// run should show it; if it doesn't, that would point back toward
+// something specific to how reinforce's rollout loop drives Reset/Step
+// (e.g. batching/pacing within RunEpoch) rather than the seeding/mine
+// mechanics being inherently alternating.
+func TestRLTrainingLoop_MineSeedingAlternationRootCauseLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live diagnostic")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_mine_alternation", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	const trials = 200
+	type trialResult struct {
+		mineVisibleAtReset float32
+		reward             float32
+	}
+	results := make([]trialResult, 0, trials)
+	for i := 0; i < trials; i++ {
+		obs, err := rlEnv.Reset(env.Ctx)
+		require.NoError(t, err, "trial %d: Reset", i)
+		result, err := rlEnv.Step(env.Ctx, rlenv.ActionMine)
+		require.NoError(t, err, "trial %d: Step", i)
+		results = append(results, trialResult{mineVisibleAtReset: obs.Values[12], reward: result.Reward})
+	}
+
+	succeeded, alternations := 0, 0
+	for i, r := range results {
+		if r.reward > 15 {
+			succeeded++
+		}
+		t.Logf("trial %d: mineVisibleAtReset=%.0f reward=%.3f", i, r.mineVisibleAtReset, r.reward)
+		if i > 0 {
+			prevSucceeded := results[i-1].reward > 15
+			curSucceeded := r.reward > 15
+			if prevSucceeded != curSucceeded {
+				alternations++
+			}
+		}
+	}
+	t.Logf("summary: %d/%d trials (%.1f%%) succeeded (reward > 15)", succeeded, trials, 100*float64(succeeded)/float64(trials))
+	t.Logf("summary: %d/%d consecutive pairs alternated (%.1f%%) — 100%% would mean perfect period-2 alternation like the training-loop finding", alternations, trials-1, 100*float64(alternations)/float64(trials-1))
+
+	if alternations > (trials-1)*8/10 {
+		t.Logf("✓ Reproduced outside training: the environment/seeding path alone produces near-perfect alternation with no policy or gradient machinery involved — this is an rlenv/agent seeding bug, not an RL-algorithm question")
+	} else {
+		t.Logf("✗ Did NOT reproduce in isolation (%.1f%% alternation, vs. ~100%% seen inside actual training) — something about how reinforce's rollout loop drives Reset/Step differs from this tight standalone loop; investigate that difference next, not the seeding code in isolation",
+			100*float64(alternations)/float64(trials-1))
 	}
 }
 
