@@ -897,40 +897,42 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive(t *test
 // conclusion about Craft itself from that first number.
 //
 // **Second run (2026-09-12), TargetOffset:[0,0,0] (this Config, properly
-// isolated) — confirms the confirmation-wait fix works, but surfaces a new,
-// separate, RL-training-stability question, not an environment bug.** 58
-// epochs (464 episodes) in 9m0s. Epochs 0-4 flat at 9.990, epoch 5 first
-// exploration (11.240), then epochs 6-27 converged cleanly to **19.990 with
-// return std 0.000** — the same clean, maximum-reward convergence Mine
-// reached post-fix (docs/bugs/mine-task-fifty-percent-equilibrium.md entry
-// 23), direct proof the Craft-task confirmation-wait fix
-// (agent/craft.go's awaitInventoryIncrease) delivers reward correctly when
-// Craft is actually chosen. But then, with no warning, epoch 28 dropped
-// back to 9.990 and the policy **never recovered** for the remaining ~30
-// epochs (~8 more minutes) — occasional 11.240 blips, never again reaching
-// 19.990. Checked the agent log for `CraftItem` confirmation errors
-// (grep for "inventory increase never confirmed") across the entire run:
-// **zero matches.** Every dispatched Craft that happened either succeeded
-// cleanly or (after the collapse) simply wasn't chosen — this rules out a
-// reward-delivery/environment-side bug for the regression; `CraftItem`
-// itself never failed once. The most likely explanation is a genuine
-// REINFORCE optimization instability specific to this run (small network —
-// HiddenSize:16 — small RolloutSize=8, EntropyCoef=0.01 leaving enough
-// residual exploration for an unlucky batch to drift the policy away from
-// its converged optimum, with no mechanism to reliably find its way back
-// within the remaining budget) rather than anything specific to Craft's
-// reward shape or action-legality — worth noting Craft, unlike Mine, has no
-// ActionMask gate tied to ingredient availability
-// (`actionLegal(ActionCraft)` in rlenv/action.go only checks
-// `CraftTargetItem != ""`, never whether crafting would currently succeed,
-// unlike Mine's `mineVisible` check), so a struggling policy has one fewer
-// guardrail nudging it back toward the task than Mine's masking gives it —
-// a plausible contributing factor, not confirmed as the actual cause. Not
-// investigated further this session — flagged as an open question rather
-// than either declared "Craft-task learning is broken" (the clean
-// pre-collapse convergence disproves that) or "Craft-task learning is
-// solved" (a run that regresses to the pre-training baseline and stays
-// there isn't a usable result either).
+// isolated) — confirms the confirmation-wait fix works, but surfaces a
+// real, separate environment-side bug.** 58 epochs (464 episodes) in 9m0s.
+// Epochs 0-4 flat at 9.990, epoch 5 first exploration (11.240), then
+// epochs 6-27 converged cleanly to 19.990 with return std 0.000, then
+// epoch 28 dropped back to 9.990 and never recovered for the remaining
+// ~30 epochs. **First analysis of this run wrongly concluded "zero
+// CraftItem confirmation errors" and blamed REINFORCE optimization
+// instability — that grep (`grep -v "level=INFO"`) accidentally excluded
+// the exact log lines carrying the error (`level=INFO
+// msg="...Craft error: ..."`). Redone correctly: hundreds of "inventory
+// increase never confirmed" errors appear, starting in the log between
+// the epoch-27 and epoch-28 entries — i.e. exactly at the collapse.**
+// Root cause: `SeedCraftIngredients` (agent/rl_seed.go) unconditionally
+// gave 9 more oak_planks every episode regardless of existing stock,
+// while crafted sticks were never consumed by anything — net +7 surplus
+// planks and +4 permanent sticks per successful craft. After ~220
+// episodes (matching the observed collapse point almost exactly against
+// a back-of-envelope stack count), this fills all 36
+// main-inventory+hotbar slots, leaving nowhere for a newly-crafted item
+// to land — `CraftItem`'s own (correct) confirmation-wait then legitimately
+// times out, forever, since nothing ever frees the space. Not a
+// REINFORCE/entropy artifact: directly tested by rerunning with
+// `EntropyCoef=0` (removing entropy's pull entirely, temporary
+// diagnostic edit, reverted after) — the exact same collapse happened
+// again at essentially the same episode count (epoch ~30 instead of
+// ~28), refuting the entropy-drift hypothesis and pointing straight back
+// at the confirmation-error timing already found.
+//
+// **Fix (2026-09-12):** `SeedCraftIngredients` now clears each ingredient
+// candidate and the crafted target item from inventory before giving a
+// fresh `seedGiveCount`, bounding accumulation instead of letting it grow
+// every episode. **Third run, same Config, same fix in place: 282 epochs
+// (2256 episodes) in 9m0s, converged to 19.990 (return std 0.000) by
+// epoch 6 and held there through epoch 281 — the entire rest of the
+// run, zero regression, zero confirmation errors logged anywhere.**
+// Craft-task learning is confirmed working end to end.
 func TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive(t *testing.T) {
 	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
 		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")

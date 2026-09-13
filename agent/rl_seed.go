@@ -104,6 +104,27 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 // loadCraftingRecipes) — errors otherwise, since a seeding request that
 // silently does nothing would be more confusing than a clear failure.
 //
+// Clears (via RCON's "clear" command) each ingredient candidate and
+// itemName itself from the bot's inventory before giving a fresh
+// seedGiveCount of each ingredient — without this, a repeated-episode
+// caller (rlenv.Environment.Reset, called once per episode with no other
+// mechanism to consume the crafted item or the ingredient surplus a
+// craft's own consumption doesn't fully use up) accumulates both without
+// bound: found live via testing/rl_train_test.go's
+// TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive, where an
+// uncleared give-every-episode policy filled every one of the bot's 36
+// main-inventory+hotbar slots with maxed-out (64) stacks of ingredients
+// and never-consumed crafted output after roughly 200-230 successful
+// craft episodes (a real accumulation, not a hypothetical one — the
+// numbers work out: minecraft:stick's recipe nets +7 surplus oak_planks
+// and +4 never-consumed sticks per successful craft, and 220 episodes'
+// worth of that already exceeds 36 slots) — at which point a newly
+// crafted item has nowhere to land, and every subsequent craft attempt
+// fails CraftItem's own awaitInventoryIncrease confirmation, indefinitely
+// (docs/bugs/mine-task-fifty-percent-equilibrium.md-adjacent finding,
+// documented in RL_TRAINING_LOOP_PLAN.md rather than that file since it's
+// Craft-specific, not a Mine-task recurrence).
+//
 // Waits (bounded by seedSyncTimeout) for every given item to actually
 // appear in this bot's own tracked inventory (InventoryCount) before
 // returning — the same client-sync race SeedNearbyBlock's doc comment
@@ -125,6 +146,10 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 		return fmt.Errorf("no known crafting recipe for %s", itemName)
 	}
 
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", a.cfg.Name, itemName)); err != nil {
+		return fmt.Errorf("clear %s via RCON: %w", itemName, err)
+	}
+
 	given := make(map[string]bool)
 	for _, candidates := range recipe.grid {
 		if len(candidates) == 0 {
@@ -135,6 +160,9 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 			continue
 		}
 		given[candidate] = true
+		if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", a.cfg.Name, candidate)); err != nil {
+			return fmt.Errorf("clear %s via RCON: %w", candidate, err)
+		}
 		cmd := fmt.Sprintf("give %s %s %d", a.cfg.Name, candidate, seedGiveCount)
 		if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
 			return fmt.Errorf("give %s via RCON: %w", candidate, err)
