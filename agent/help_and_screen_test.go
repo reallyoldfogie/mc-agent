@@ -25,7 +25,12 @@ func TestHelpListsLegacyCommands(t *testing.T) {
 	if len(msgs) == 0 {
 		t.Fatalf("no help message")
 	}
-	help := msgs[len(msgs)-1]
+	// help's own text is long enough to exceed agent.chatMessageMaxLength,
+	// so SendChat legitimately splits it across multiple captured
+	// messages (agent/game_chat.go) - join them all rather than checking
+	// only the last one, which would miss whichever commands landed in an
+	// earlier chunk.
+	help := strings.Join(msgs, " ")
 	required := []string{"testMove", "moveTo", "moveForward", "moveUp", "findPath", "testPath", "follow", "stopFollow", "followStatus", "startTracking", "stopTracking", "fireBow"}
 	for _, r := range required {
 		if !strings.Contains(strings.ToLower(help), strings.ToLower(r)) {
