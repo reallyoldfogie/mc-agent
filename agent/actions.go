@@ -1213,7 +1213,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	// Instant break: hardness 0 or break time <= 1 tick
 	if breakTime <= 0.05 {
 		a.logf("[MineBlockAt] Instant break for %s", blockName)
-		return nil
+		return a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID)
 	}
 
 	// Wait for the block to break, sending arm swings periodically
@@ -1240,8 +1240,57 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 		return fmt.Errorf("send finish digging: %w", err)
 	}
 
+	if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
+		return err
+	}
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
+}
+
+// mineConfirmTimeout/mineConfirmPollInterval bound how long awaitBlockChanged
+// waits, after MineBlockAt has sent PlayerActionFinishDigging (or, for an
+// instant break, PlayerActionStartDigging), for this bot's own client-tracked
+// block state to actually reflect the break — the same client-sync race
+// SeedNearbyBlock's doc comment describes (agent/rl_seed.go), here for the
+// resulting BlockChange packet instead of a placement one. Without this,
+// MineBlockAt returned "success" the instant it sent the finishing packet,
+// before the server's confirmation had round-tripped back to this bot's own
+// world state — found live via testing/rl_train_test.go's mine-equilibrium
+// investigation (docs/bugs/mine-task-fifty-percent-equilibrium.md entry 21):
+// a caller reading world state immediately after MineBlockAt returned would
+// see the pre-break block roughly half the time, with the resulting
+// confirmation misattributed to whichever *later* action happened to notice
+// it had finally arrived.
+const (
+	mineConfirmTimeout      = 2 * time.Second
+	mineConfirmPollInterval = 50 * time.Millisecond
+)
+
+// awaitBlockChanged waits (bounded by mineConfirmTimeout) for world.GetBlockAt
+// at the given block-center coordinates to report a state ID other than
+// originalStateID — not narrowly "became air," since a break could also
+// leave a different block behind (e.g. a falling block landing there),
+// mirroring rlenv.Environment.Step's own "mined" judgment
+// (rlenv/environment.go). Returns an error if the change never registers
+// within the timeout, rather than silently returning success on the
+// finishing packet alone and leaving the caller to discover the gap itself —
+// same shape as SeedNearbyBlock's own confirmation wait.
+func (a *agent) awaitBlockChanged(ctx context.Context, world models.World, blockCenterX, blockCenterY, blockCenterZ float64, originalStateID uint32) error {
+	deadline := time.Now().Add(mineConfirmTimeout)
+	for {
+		stateID, loaded := world.GetBlockAt(blockCenterX, blockCenterY, blockCenterZ)
+		if loaded && stateID != originalStateID {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("mine block at (%.1f,%.1f,%.1f): break never confirmed within %s", blockCenterX, blockCenterY, blockCenterZ, mineConfirmTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(mineConfirmPollInterval):
+		}
+	}
 }
 
 // bestBlockFace determines which face of a block the agent is looking at,
