@@ -89,9 +89,91 @@ func (a *agent) HandleTeleported(x, y, z float64, yaw, pitch float64, _ byte, te
 	return nil
 }
 
-// SendChat sends a chat message via the version handler or fallback chat manager.
-// Implements ChatOperations interface.
+// chatMessageMaxLength is Minecraft's protocol-enforced maximum length, in
+// characters, for a single serverbound chat message
+// (net.minecraft.network.packet.c2s.play.ChatMessageC2SPacket reads/writes
+// the message field with a hard-coded 256-character bound). A server
+// disconnects the client outright ("Internal Exception:
+// io.netty.handler.codec.DecoderException: Failed to decode packet
+// 'serverbound/minecraft:chat'") if it ever receives a longer one - this
+// isn't a timing-sensitive edge case, it's the server's decoder
+// unconditionally rejecting the packet. Confirmed live via
+// docs/bugs/rare-packet-decode-disconnect/investigation-2026-09-13.md: a
+// Craft error message that enumerated every valid ingredient-tag
+// alternative (e.g. every plank variant for a "stick" recipe) reached 371
+// characters and disconnected the bot mid-training-run. SendChat is the
+// single choke point every chat send (both the version-handler path and
+// the fallback bot/msg/chat.go Manager) goes through, so guarding it here
+// protects every caller without needing every message-construction site
+// (e.g. agent/craft.go's placeCraftIngredient) to independently know about
+// this limit.
+const chatMessageMaxLength = 256
+
+// splitChatMessage returns message unchanged (as a single-element slice) if
+// it's already within chatMessageMaxLength characters, or splits it into
+// multiple chunks - each within the limit - otherwise, so the full content
+// still reaches chat as several messages instead of being cut short.
+// Splits by rune, not byte, so a multi-byte UTF-8 character is never
+// divided across chunks. Prefers to break at the last space within a
+// chunk's budget so words aren't split mid-word, falling back to a hard
+// break only when a single word alone exceeds the limit (or no space
+// exists in the first half of the budget, to avoid producing a run of
+// needlessly tiny chunks from one stray early space).
+func splitChatMessage(message string) []string {
+	runes := []rune(message)
+	if len(runes) <= chatMessageMaxLength {
+		return []string{message}
+	}
+
+	var chunks []string
+	for len(runes) > 0 {
+		if len(runes) <= chatMessageMaxLength {
+			chunks = append(chunks, string(runes))
+			break
+		}
+
+		splitAt := chatMessageMaxLength
+		if idx := lastSpaceIndex(runes[:chatMessageMaxLength]); idx > chatMessageMaxLength/2 {
+			splitAt = idx
+		}
+
+		if chunk := strings.TrimRight(string(runes[:splitAt]), " "); chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		runes = []rune(strings.TrimLeft(string(runes[splitAt:]), " "))
+	}
+	return chunks
+}
+
+// lastSpaceIndex returns the index of the last space character in runes, or
+// -1 if none is present.
+func lastSpaceIndex(runes []rune) int {
+	for i := len(runes) - 1; i >= 0; i-- {
+		if runes[i] == ' ' {
+			return i
+		}
+	}
+	return -1
+}
+
+// SendChat sends a chat message via the version handler or fallback chat
+// manager, splitting it into multiple messages first if it exceeds
+// chatMessageMaxLength (see splitChatMessage). Implements ChatOperations
+// interface. Returns the first error encountered, if any, but still
+// attempts every chunk rather than aborting partway through.
 func (a *agent) SendChat(message string) error {
+	var firstErr error
+	for _, chunk := range splitChatMessage(message) {
+		if err := a.sendChatMessage(chunk); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// sendChatMessage sends a single message - already within
+// chatMessageMaxLength - via the version handler or fallback chat manager.
+func (a *agent) sendChatMessage(message string) error {
 	// versionHandler and client are no-lock fields (set-once in Init, read-only after)
 	vh := a.versionHandler
 	c := a.client
