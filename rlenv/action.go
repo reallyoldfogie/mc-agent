@@ -106,7 +106,17 @@ type actionDispatch struct {
 // configured target (Config.MineTargetBlock == "") or nothing currently
 // visible (!e.mineVisible — see ActionMine's own doc comment for why this
 // dispatches Environment's own already-resolved coordinates rather than
-// redispatching by name), and ActionCraft with no configured target. This
+// redispatching by name), and ActionCraft with no configured target or
+// nothing currently craftable (!e.craftReady — until 2026-09-12 this
+// second condition was missing here, letting a Craft dispatch reach the
+// real registry.Execute call with no ingredients present; CraftItem then
+// returns a hard error, failing the whole Step rather than the graceful
+// no-op ActionMine already got in the equivalent situation — found live
+// via testing/rl_train_test.go's
+// TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive, the
+// first test to ever configure CraftTargetItem while craftReady could
+// actually be false; every earlier test always seeded ingredients
+// unconditionally, so this gap was never exercised). This
 // replaces the old movementTarget/isMovement pair
 // (RL_ACTION_SPACE_EXPANSION.md Phase 2b) with a single dispatch-table
 // shape covering all cases.
@@ -134,8 +144,9 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 // actionLegal reports whether action is structurally usable right now —
 // the same condition resolveDispatch's ActionMine/ActionCraft cases use to
 // decide "safe no-op" (Config.MineTargetBlock/CraftTargetItem unset, or
-// nothing currently visible to mine), factored out so ActionMask (below)
-// can't silently drift from what Step actually dispatches. ActionWait and
+// nothing currently visible to mine / craftable), factored out so
+// ActionMask (below) can't silently drift from what Step actually
+// dispatches. ActionWait and
 // ActionGoToTarget are always legal — ActionWait is a genuine strategy
 // choice (accruing the per-step time penalty on purpose), not
 // structurally invalid, even though resolveDispatch also never dispatches
@@ -148,7 +159,7 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionMine:
 		return e.cfg.MineTargetBlock != "" && e.mineVisible
 	case ActionCraft:
-		return e.cfg.CraftTargetItem != ""
+		return e.cfg.CraftTargetItem != "" && e.craftReady
 	default:
 		return false
 	}

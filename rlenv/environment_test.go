@@ -431,13 +431,24 @@ func TestStepCraftWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	}
 }
 
-func TestStepCraftWithIngredientsNotReadyStillDispatches(t *testing.T) {
-	// Unlike ActionMine (which never dispatches without a visible target),
-	// ActionCraft always dispatches once Config.CraftTargetItem is set —
-	// CraftItem itself is the source of truth for whether ingredients are
-	// actually available (see agent.Craftable's doc comment on why the
-	// craftReady signal is approximate), so Environment doesn't withhold
-	// dispatch based on its own coarser check.
+// TestStepCraftWithIngredientsNotReadyDoesNotDispatch mirrors
+// TestStepMineWithNoVisibleTargetDoesNotDispatch — until 2026-09-12 this
+// test (then named TestStepCraftWithIngredientsNotReadyStillDispatches)
+// asserted the opposite: that ActionCraft dispatched to the real CraftItem
+// call even with no ingredients present, on the theory that
+// agent.Craftable's "approximate" caveat meant Environment shouldn't gate
+// on it at all. Rereading that caveat: Craftable can only be
+// over-optimistic (reports true for a multi-cell recipe needing two units
+// of one scarce item when only one is held), never
+// under-pessimistic — it never reports false for a genuinely craftable
+// state. So gating on it, like ActionMine already gates on mineVisible,
+// can't block a real opportunity; it can only stop the specific case this
+// test now covers (zero ingredients at all), which used to reach the real
+// CraftItem call and fail with a hard error instead of a graceful no-op —
+// found live via testing/rl_train_test.go's
+// TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive. See
+// rlenv/action.go's actionLegal for the actual fix (added "&& e.craftReady").
+func TestStepCraftWithIngredientsNotReadyDoesNotDispatch(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setCraftTarget("minecraft:stick", false, 0)
 	cfg := testConfig()
@@ -451,11 +462,11 @@ func TestStepCraftWithIngredientsNotReadyStillDispatches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if agent.craftItemCalls != 1 {
-		t.Fatalf("CraftItem calls = %d, want 1", agent.craftItemCalls)
+	if agent.craftItemCalls != 0 {
+		t.Fatalf("CraftItem calls = %d, want 0 (nothing to craft with)", agent.craftItemCalls)
 	}
 	if result.Done {
-		t.Fatalf("Done = true, want false (not ready, nothing crafted)")
+		t.Fatalf("Done = true, want false")
 	}
 	if ready := result.Observation.Values[13]; ready != 0 {
 		t.Fatalf("craftReady = %v, want 0 (ingredients not ready)", ready)
@@ -953,34 +964,62 @@ func TestActionMaskMineLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
 	}
 }
 
-func TestActionMaskCraftLegalIffConfigured(t *testing.T) {
+// TestActionMaskCraftLegalOnlyWhenConfiguredAndReady mirrors
+// TestActionMaskMineLegalOnlyWhenConfiguredAndVisible's structure exactly
+// — until 2026-09-12 this test (then named
+// TestActionMaskCraftLegalIffConfigured) asserted the opposite of what it
+// checks now: that ActionCraft's legality tracked only Config.CraftTargetItem,
+// not craftReady, "mirroring resolveDispatch's own lack of a craftReady
+// gate." That asymmetry with ActionMine (which already correctly gates on
+// mineVisible) turned out to be a real bug, not a deliberate design choice
+// anyone had verified: testing/rl_train_test.go's
+// TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive — the
+// first live test to ever configure CraftTargetItem while craftReady could
+// actually be false — caught ActionCraft being dispatched with no
+// ingredients present, which reached the real CraftItem call and failed
+// with a hard error instead of the graceful no-op ActionMine already got
+// in the equivalent situation. Fixed in rlenv/action.go's actionLegal to
+// add "&& e.craftReady", and this test rewritten to actually cover that
+// gate instead of asserting its absence.
+func TestActionMaskCraftLegalOnlyWhenConfiguredAndReady(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
-	// Craft target exists and is ready in the world, but Config never
-	// asks for it — legality tracks configuration, not world readiness
-	// (mirrors resolveDispatch: no craftReady gate on ActionCraft).
-	agent.setCraftTarget("minecraft:stick", true, 0)
-	unconfigured := newTestEnvironment(t, agent, testConfig())
-	if _, err := unconfigured.Reset(context.Background()); err != nil {
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if legal := unconfigured.ActionMask()[rlenv.ActionCraft]; legal {
-		t.Fatalf("ActionCraft legal = true, want false (Config.CraftTargetItem unset)")
+	if legal := env.ActionMask()[rlenv.ActionCraft]; legal {
+		t.Fatalf("ActionCraft legal = true, want false (configured but not currently craftable)")
 	}
-	if _, err := unconfigured.Step(context.Background(), rlenv.ActionCraft); err != nil {
+	// Cross-check the mask against what Step actually does with it, not
+	// just the mask's own internal logic: a masked-illegal action must
+	// also be the safe no-op resolveDispatch already makes it.
+	if _, err := env.Step(context.Background(), rlenv.ActionCraft); err != nil {
 		t.Fatalf("Step: %v", err)
 	}
 	if agent.craftItemCalls != 0 {
 		t.Fatalf("CraftItem calls = %d, want 0 (mask reported ActionCraft illegal)", agent.craftItemCalls)
 	}
 
-	cfg := testConfig()
-	cfg.CraftTargetItem = "minecraft:stick"
-	configured := newTestEnvironment(t, agent, cfg)
-	if _, err := configured.Reset(context.Background()); err != nil {
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if ready := result.Observation.Values[13]; ready != 1 {
+		t.Fatalf("craftReady = %v, want 1 (sanity check target is now craftable)", ready)
+	}
+	if legal := env.ActionMask()[rlenv.ActionCraft]; !legal {
+		t.Fatalf("ActionCraft legal = false, want true (target now craftable)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if legal := configured.ActionMask()[rlenv.ActionCraft]; !legal {
-		t.Fatalf("ActionCraft legal = false, want true (Config.CraftTargetItem set)")
+	if legal := unconfigured.ActionMask()[rlenv.ActionCraft]; legal {
+		t.Fatalf("ActionCraft legal = true, want false (Config.CraftTargetItem unset, even though craftable)")
 	}
 }
 
