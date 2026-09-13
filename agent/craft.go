@@ -579,16 +579,68 @@ func (a *agent) CraftItem(ctx context.Context, itemName string) error {
 		return fmt.Errorf("no known crafting recipe for %s", itemName)
 	}
 
+	beforeCount := a.InventoryCount(itemName)
+
 	if recipe.fitsInventoryGrid() {
-		return a.executeCraft(ctx, itemName, recipe, inventoryGridLayout)
+		if err := a.executeCraft(ctx, itemName, recipe, inventoryGridLayout); err != nil {
+			return err
+		}
+	} else {
+		layout, err := a.openCraftingTable(ctx)
+		if err != nil {
+			return fmt.Errorf("craft %s: %w", itemName, err)
+		}
+		err = a.executeCraft(ctx, itemName, recipe, layout)
+		a.CloseContainer()
+		if err != nil {
+			return err
+		}
 	}
 
-	layout, err := a.openCraftingTable(ctx)
-	if err != nil {
-		return fmt.Errorf("craft %s: %w", itemName, err)
+	return a.awaitInventoryIncrease(ctx, itemName, beforeCount)
+}
+
+// craftConfirmTimeout/craftConfirmPollInterval bound how long
+// awaitInventoryIncrease waits, after executeCraft's final ShiftClickSlot has
+// been sent, for this bot's own client-tracked inventory (InventoryCount) to
+// actually reflect the crafted item landing there — the same client-sync
+// race SeedNearbyBlock's doc comment describes (agent/rl_seed.go) and
+// MineBlockAt's awaitBlockChanged now guards against (agent/actions.go),
+// here for the resulting ContainerSetSlot/SetContainerContent packet instead
+// of a BlockChange one. Without this, CraftItem returned "success" the
+// instant it sent the shift-click, before the server's confirmation had
+// round-tripped back to this bot's own inventory state — found live via
+// testing/rl_train_test.go's TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode,
+// which needed exactly one retry to register `craftedThisStep`, 5/5 runs
+// (100%), before this fix (docs/plans/RL_TRAINING_LOOP_PLAN.md's Status
+// section flagged this as the next place to check once the mine-task
+// equivalent was found and fixed).
+const (
+	craftConfirmTimeout      = 2 * time.Second
+	craftConfirmPollInterval = 50 * time.Millisecond
+)
+
+// awaitInventoryIncrease waits (bounded by craftConfirmTimeout) for
+// a.InventoryCount(itemName) to read higher than beforeCount, mirroring
+// MineBlockAt's awaitBlockChanged and SeedNearbyBlock's own confirmation
+// wait. Returns an error if the increase never registers within the
+// timeout, rather than silently returning success on the shift-click alone
+// and leaving the caller to discover the gap itself.
+func (a *agent) awaitInventoryIncrease(ctx context.Context, itemName string, beforeCount int) error {
+	deadline := time.Now().Add(craftConfirmTimeout)
+	for {
+		if a.InventoryCount(itemName) > beforeCount {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("craft %s: inventory increase never confirmed within %s", itemName, craftConfirmTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(craftConfirmPollInterval):
+		}
 	}
-	defer a.CloseContainer()
-	return a.executeCraft(ctx, itemName, recipe, layout)
 }
 
 // executeCraft runs recipe's placement/collection sequence against layout -

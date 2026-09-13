@@ -865,6 +865,140 @@ func TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLowEntropyLive(t *test
 	}
 }
 
+// TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive is the Craft-task
+// analogue of TestRLTrainingLoop_LongRunShowsLearningOnMineTaskWithLargerRolloutLive
+// — same question ("does REINFORCE learning happen on this task"), same
+// RolloutSize=8 (chosen directly rather than starting from RolloutSize=1,
+// since that was already established as necessary for Mine to escape its
+// initial "never acts" trap in reasonable wall-clock time), same run-budget
+// override mechanism, and — like that test, not like
+// TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode's Config —
+// TargetOffset:[0,0,0], so arrival is satisfied at Reset and GoToTarget
+// dispatch is a zero-length no-competition action: isolates whether the
+// policy learns to prefer Craft specifically, the same way the mine-task
+// runs isolate Mine, rather than confounding it with real movement.
+//
+// **First run (2026-09-12), TargetOffset:[5,0,0] (copied from the sanity
+// test above rather than designed for isolation) — informative failure, not
+// a real result.** 29 epochs (232 episodes) in 9m0s: flat at 9.990 for 25
+// epochs (matching the same "hasn't discovered the task" plateau shape seen
+// on Mine), then instead of breaking out upward, average return **collapsed
+// toward zero and went negative** (6.208 -> 1.098 -> -0.096) in the final 3
+// epochs, with per-epoch sample counts exploding from a steady 8 to 35, 76,
+// then 80 — i.e. episodes stopped ending in one step and started running out
+// most or all of EpisodeLen=10's steps instead. With a real 5-block
+// TargetOffset, GoToTarget/arrival is a second, competing terminal
+// condition and time/movement penalties accumulate every step an episode
+// *doesn't* end early via either arrival or a successful craft — so this
+// result is at least as plausibly "the policy drifted toward whatever
+// stopped triggering either terminal condition, and paid EpisodeLen's full
+// time-penalty cost while doing it" as it is "Craft-task learning doesn't
+// work here." Rerun with TargetOffset:[0,0,0] (below) before drawing any
+// conclusion about Craft itself from that first number.
+//
+// **Second run (2026-09-12), TargetOffset:[0,0,0] (this Config, properly
+// isolated) — confirms the confirmation-wait fix works, but surfaces a new,
+// separate, RL-training-stability question, not an environment bug.** 58
+// epochs (464 episodes) in 9m0s. Epochs 0-4 flat at 9.990, epoch 5 first
+// exploration (11.240), then epochs 6-27 converged cleanly to **19.990 with
+// return std 0.000** — the same clean, maximum-reward convergence Mine
+// reached post-fix (docs/bugs/mine-task-fifty-percent-equilibrium.md entry
+// 23), direct proof the Craft-task confirmation-wait fix
+// (agent/craft.go's awaitInventoryIncrease) delivers reward correctly when
+// Craft is actually chosen. But then, with no warning, epoch 28 dropped
+// back to 9.990 and the policy **never recovered** for the remaining ~30
+// epochs (~8 more minutes) — occasional 11.240 blips, never again reaching
+// 19.990. Checked the agent log for `CraftItem` confirmation errors
+// (grep for "inventory increase never confirmed") across the entire run:
+// **zero matches.** Every dispatched Craft that happened either succeeded
+// cleanly or (after the collapse) simply wasn't chosen — this rules out a
+// reward-delivery/environment-side bug for the regression; `CraftItem`
+// itself never failed once. The most likely explanation is a genuine
+// REINFORCE optimization instability specific to this run (small network —
+// HiddenSize:16 — small RolloutSize=8, EntropyCoef=0.01 leaving enough
+// residual exploration for an unlucky batch to drift the policy away from
+// its converged optimum, with no mechanism to reliably find its way back
+// within the remaining budget) rather than anything specific to Craft's
+// reward shape or action-legality — worth noting Craft, unlike Mine, has no
+// ActionMask gate tied to ingredient availability
+// (`actionLegal(ActionCraft)` in rlenv/action.go only checks
+// `CraftTargetItem != ""`, never whether crafting would currently succeed,
+// unlike Mine's `mineVisible` check), so a struggling policy has one fewer
+// guardrail nudging it back toward the task than Mine's masking gives it —
+// a plausible contributing factor, not confirmed as the actual cause. Not
+// investigated further this session — flagged as an open question rather
+// than either declared "Craft-task learning is broken" (the clean
+// pre-collapse convergence disproves that) or "Craft-task learning is
+// solved" (a run that regresses to the pre-training baseline and stays
+// there isn't a usable result either).
+func TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_craft_rollout8", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		CraftTargetItem:  "minecraft:stick",
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return rlEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 128)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		t.Logf("epoch %d (%s elapsed): average return %.3f (return std %.3f, samples %d)",
+			epoch, time.Since(start).Round(time.Second), stats.AverageReturn, stats.ReturnStd, stats.SampleCount)
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs (%d episodes) in %s", len(returns), len(returns)*settings.RolloutSize, time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d epochs) | last-quarter mean return: %.3f (n=%d epochs)", firstMean, quarter, lastMean, quarter)
+
+	if lastMean > firstMean {
+		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — the policy learned to prefer ActionCraft", firstMean, lastMean, lastMean-firstMean)
+	} else {
+		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — Craft-task learning did not show up in this run's budget", firstMean, lastMean)
+	}
+}
+
 // mineEquilibriumEpisode records one episode's worth of what
 // docs/bugs/mine-task-fifty-percent-equilibrium.md needs to distinguish
 // its two live hypotheses: the policy still genuinely mixing ~50/50, vs.
