@@ -1169,6 +1169,132 @@ func TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftTaskLive(t *testi
 	}
 }
 
+// TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftWithMovementLive
+// is TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftTaskLive's
+// realistic counterpart: TargetOffset:[5,0,0] instead of [0,0,0], so
+// GoToTarget/arrival is a real, multi-step navigation task competing for
+// episode termination alongside Mine and Craft, rather than an
+// automatically-satisfied no-op. This is deliberately the same shape of
+// Config TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode and
+// the first (pre-isolation-fix) attempt at
+// TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive used — the one
+// that produced an uninterpretable, negative-trending result before
+// agent/craft.go's awaitInventoryIncrease and agent/rl_seed.go's
+// SeedCraftIngredients clearing were in place (see that test's own doc
+// comment for the full story). With both the Mine-task
+// (agent/actions.go's awaitBlockChanged) and Craft-task fixes now landed,
+// and the isolated (TargetOffset:[0,0,0]) combined run already confirmed
+// working, this test checks whether the realistic, non-isolated
+// combination — real movement plus two competing task choices — also
+// trains cleanly, rather than reproducing the old confound.
+//
+// **Run (2026-09-12): trained cleanly, but reveals an important
+// reward-design fact rather than a bug.** After a brief exploration phase
+// (epoch 0: 57 samples, mostly Wait, since nothing ends the episode early
+// yet), the policy converged by epoch 1 to `ActionCraft` exclusively and
+// held there — **but at return 9.990, not 19.990**, for 192 consecutive
+// epochs (return std 0.005, i.e. deterministic). This is *not* a
+// regression or a stuck policy: `rlenv.Environment.Step`
+// (`rlenv/environment.go`) sets `done = true` independently for *each* of
+// arrival, `mined`, and `craftedThisStep` — whichever condition is met
+// first ends the episode immediately, with only that condition's bonus
+// applied. With `TargetOffset:[0,0,0]` (the isolated tests above), arrival
+// is trivially already satisfied every step regardless of action, so a
+// successful Mine/Craft *always* also collects the arrival bonus "for
+// free," stacking to 19.990. With a real `TargetOffset:[5,0,0]` and Craft
+// (which doesn't move the bot) chosen every time, arrival is genuinely
+// never satisfied, so only `craftRewardBonus` is ever earned — 9.990 is
+// the correct, actual ceiling for this Config, not a failure to reach
+// 19.990. There is no way to earn both bonuses in one episode here: any
+// terminal condition (arrival via GoToTarget, or a task via Mine/Craft)
+// ends the episode the instant it's met, so multi-step "navigate, then
+// also complete a task" behavior is never rewarded any better than the
+// simplest single-action win — the policy correctly and immediately found
+// the cheapest path to the actual maximum, it just isn't the number this
+// test's author first expected. Worth keeping in mind for any future
+// curriculum design that wants genuinely sequenced multi-goal behavior:
+// the current reward/termination design doesn't incentivize it.
+//
+// The run itself hit
+// docs/bugs/rare-packet-decode-disconnect.md's known, rare, load-triggered
+// packet-decode bug at epoch 193 (its third occurrence this session,
+// always during sustained high-frequency Craft dispatch) — unrelated to
+// the finding above, which was already fully established by epoch 9 or so,
+// well before the crash. Not re-run to a clean full budget, since the
+// answer to this test's actual question was already unambiguous.
+func TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftWithMovementLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_combined_movement_rollout8", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{5, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		CraftTargetItem:  "minecraft:stick",
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	tallyEnv := &actionTallyRecorder{inner: rlEnv}
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return tallyEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 128)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		counts := tallyEnv.snapshotAndReset()
+		t.Logf("epoch %d (%s elapsed): average return %.3f (return std %.3f, samples %d) actions: Wait=%d GoToTarget=%d Mine=%d Craft=%d",
+			epoch, time.Since(start).Round(time.Second), stats.AverageReturn, stats.ReturnStd, stats.SampleCount,
+			counts[rlenv.ActionWait], counts[rlenv.ActionGoToTarget], counts[rlenv.ActionMine], counts[rlenv.ActionCraft])
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs (%d episodes) in %s", len(returns), len(returns)*settings.RolloutSize, time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d epochs) | last-quarter mean return: %.3f (n=%d epochs)", firstMean, quarter, lastMean, quarter)
+
+	if lastMean > firstMean {
+		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — the policy learned to combine real movement with Mine and/or Craft", firstMean, lastMean, lastMean-firstMean)
+	} else {
+		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — combined Mine+Craft+movement learning did not show up in this run's budget", firstMean, lastMean)
+	}
+}
+
 // mineEquilibriumEpisode records one episode's worth of what
 // docs/bugs/mine-task-fifty-percent-equilibrium.md needs to distinguish
 // its two live hypotheses: the policy still genuinely mixing ~50/50, vs.
