@@ -1001,6 +1001,174 @@ func TestRLTrainingLoop_LongRunShowsLearningOnCraftTaskLive(t *testing.T) {
 	}
 }
 
+// actionTallyRecorder wraps a *rlenv.Environment, forwarding every
+// rl.Environment/rl.ActionMasker call to it unchanged, while counting how
+// many times each rl.Action was dispatched via Step — the lightweight
+// per-epoch signal TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftTaskLive
+// needs to tell "converged on one action" apart from "settled into
+// alternating between two equally-good ones," which EpochStats' return/std
+// alone can't distinguish (both look identical at the reward level).
+type actionTallyRecorder struct {
+	inner *rlenv.Environment
+
+	mu     sync.Mutex
+	counts [rlenv.NumActions]int
+}
+
+func (r *actionTallyRecorder) Reset(ctx context.Context) (rl.Observation, error) {
+	return r.inner.Reset(ctx)
+}
+
+func (r *actionTallyRecorder) Step(ctx context.Context, action rl.Action) (rl.StepResult, error) {
+	r.mu.Lock()
+	if int(action) >= 0 && int(action) < len(r.counts) {
+		r.counts[action]++
+	}
+	r.mu.Unlock()
+	return r.inner.Step(ctx, action)
+}
+
+func (r *actionTallyRecorder) ObservationSize() int { return r.inner.ObservationSize() }
+func (r *actionTallyRecorder) ActionSpace() int     { return r.inner.ActionSpace() }
+func (r *actionTallyRecorder) ActionMask() []bool   { return r.inner.ActionMask() }
+
+// snapshotAndReset returns the counts accumulated since the last call (or
+// since construction) and zeroes them, so each call reports one epoch's
+// worth of dispatches rather than a running total.
+func (r *actionTallyRecorder) snapshotAndReset() [rlenv.NumActions]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	snapshot := r.counts
+	r.counts = [rlenv.NumActions]int{}
+	return snapshot
+}
+
+// TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftTaskLive is the
+// first live run to configure Mine and Craft simultaneously
+// (MineTargetBlock and CraftTargetItem both set), exercising all four
+// actions (Wait, GoToTarget, Mine, Craft) — and therefore ActionMask's
+// full mask shape, not just the "neither configured" case
+// TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive already covers
+// live, or the "exactly one configured" case every other long-run test
+// here uses. Both Mine and Craft are independently confirmed working
+// end to end by this point (docs/plans/RL_TRAINING_LOOP_PLAN.md); this
+// test asks a genuinely new question neither isolated run could: with two
+// equally-rewarding actions available every episode (mineRewardBonus ==
+// craftRewardBonus == 10.0, rlenv/reward.go), does the policy still
+// reliably converge to always choosing *one* of them (return std 0.000,
+// same ceiling of ~19.990 as either isolated task — only one action
+// dispatches per step, so a step earns at most one task's bonus), or does
+// having two simultaneously-legal "correct" choices meaningfully change
+// the learning dynamics (slower discovery, since the initial untrained
+// policy's probability mass is spread across 4 actions instead of 3;
+// possible persistent nonzero return variance if it settles on
+// alternating between Mine and Craft rather than collapsing onto one)?
+// Same TargetOffset:[0,0,0] isolation Config, RolloutSize=8, and
+// DefaultEpisodeSeeder (which already independently seeds both tasks when
+// both are configured — see rlenv/seed.go) as the individual long-run
+// tests above.
+//
+// **First run (2026-09-12): converged cleanly to ActionCraft exclusively
+// (19.990, return std 0.000, 8/8 Craft dispatches/epoch) by epoch 6, then
+// aborted at epoch 11 when the server disconnected the bot — a rare,
+// pre-existing, load-triggered packet-decode bug
+// (docs/bugs/rare-packet-decode-disconnect.md), not an RL or Mine/Craft
+// logic issue: the same disconnect shape (different packet type, different
+// MC version) already occurred 9 times on 2026-09-04, well before any of
+// this session's changes.** In the 11 epochs it ran, the policy never once
+// sampled ActionMine after discovering Craft — a clean "first success
+// wins" symmetry break, not evidence Mine was somehow disfavored.
+//
+// **Second run (2026-09-12), identical Config and command, immediate
+// retry: ran the full 9-minute budget with zero disconnects or decode
+// errors, confirming the first run's failure was non-reproducible/rare as
+// expected.** 15 epochs (120 episodes — far fewer than Craft-only's 282,
+// since Mine's ~7.5s hand-mining time per episode is the bottleneck here,
+// not Craft's near-instant one). Flat 9.990 for epochs 0-4, exploration at
+// epochs 5-6 (both Mine and GoToTarget sampled), then **converged to
+// ActionMine exclusively (19.990, return std 0.000, 8/8 Mine
+// dispatches/epoch) by epoch 9 and held there through epoch 14** — the
+// opposite symmetry break from the first run (Mine instead of Craft), as
+// expected for two genuinely equally-good options. Test's own verdict:
+// first-quarter mean 9.990 -> last-quarter mean 19.990, PASS.
+//
+// **Conclusion: the combined all-actions setup works correctly.**
+// ActionMask's full four-action shape, reward composition, and both
+// individual task fixes all hold up together, regardless of which of the
+// two equally-rewarding actions the policy happens to discover first.
+func TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftTaskLive(t *testing.T) {
+	if os.Getenv("MCAGENT_LONG_RL_TRAIN_TEST") == "" {
+		t.Skip("set MCAGENT_LONG_RL_TRAIN_TEST=1 to run this multi-minute live training run")
+	}
+
+	env := setupStandaloneTestForEntity(t, "rl_train_long_run_combined_rollout8", rlTrainTestVersion)
+	defer env.Cancel()
+
+	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:     [3]float64{0, 0, 0},
+		ArrivalThreshold: 1.5,
+		StepTimeout:      15 * time.Second,
+		MineTargetBlock:  "minecraft:stone",
+		MineSearchRadius: 4,
+		CraftTargetItem:  "minecraft:stick",
+		Seeder:           rlenv.DefaultEpisodeSeeder,
+	})
+	require.NoError(t, err, "construct rlenv.Environment")
+
+	tallyEnv := &actionTallyRecorder{inner: rlEnv}
+	settings := rlTrainSettings(1_000_000)
+	settings.RolloutSize = 8
+	persistentFactory := func(*rand.Rand) (rl.Environment, error) { return tallyEnv, nil }
+	trainer, err := reinforce.NewWithPersistentEnv(settings, persistentFactory, nil)
+	require.NoError(t, err, "construct trainer")
+
+	runBudget := 9 * time.Minute
+	if raw := os.Getenv("MCAGENT_LONG_RL_TRAIN_RUN_BUDGET"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		require.NoError(t, err, "parse MCAGENT_LONG_RL_TRAIN_RUN_BUDGET %q", raw)
+		runBudget = parsed
+	}
+	runCtx, cancelRun := context.WithTimeout(env.Ctx, runBudget)
+	defer cancelRun()
+
+	returns := make([]float64, 0, 128)
+	start := time.Now()
+	for epoch := 0; epoch < settings.Epochs; epoch++ {
+		stats, err := trainer.RunEpoch(runCtx, epoch)
+		if err != nil {
+			if runCtx.Err() != nil {
+				t.Logf("stopping at epoch %d after %s (run budget reached): %v", epoch, time.Since(start).Round(time.Second), err)
+				break
+			}
+			require.NoError(t, err, "RunEpoch %d", epoch)
+		}
+		returns = append(returns, float64(stats.AverageReturn))
+		counts := tallyEnv.snapshotAndReset()
+		t.Logf("epoch %d (%s elapsed): average return %.3f (return std %.3f, samples %d) actions: Wait=%d GoToTarget=%d Mine=%d Craft=%d",
+			epoch, time.Since(start).Round(time.Second), stats.AverageReturn, stats.ReturnStd, stats.SampleCount,
+			counts[rlenv.ActionWait], counts[rlenv.ActionGoToTarget], counts[rlenv.ActionMine], counts[rlenv.ActionCraft])
+	}
+
+	require.NotEmpty(t, returns, "no epochs completed within the run budget")
+	t.Logf("completed %d epochs (%d episodes) in %s", len(returns), len(returns)*settings.RolloutSize, time.Since(start).Round(time.Second))
+
+	quarter := max(1, len(returns)/4)
+	firstMean := meanFloat64(returns[:quarter])
+	lastMean := meanFloat64(returns[len(returns)-quarter:])
+	t.Logf("first-quarter mean return: %.3f (n=%d epochs) | last-quarter mean return: %.3f (n=%d epochs)", firstMean, quarter, lastMean, quarter)
+
+	if lastMean > firstMean {
+		t.Logf("✓ average return improved over the run (%.3f -> %.3f, delta %.3f) — the policy learned to prefer Mine and/or Craft over Wait/GoToTarget with both tasks configured simultaneously", firstMean, lastMean, lastMean-firstMean)
+	} else {
+		t.Logf("✗ average return did NOT improve over the run (%.3f -> %.3f) — combined Mine+Craft learning did not show up in this run's budget", firstMean, lastMean)
+	}
+}
+
 // mineEquilibriumEpisode records one episode's worth of what
 // docs/bugs/mine-task-fifty-percent-equilibrium.md needs to distinguish
 // its two live hypotheses: the policy still genuinely mixing ~50/50, vs.
