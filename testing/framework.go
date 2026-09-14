@@ -22,6 +22,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/reallyoldfogie/mc-agent/agent"
+	"github.com/reallyoldfogie/mc-agent/config"
 	_ "github.com/reallyoldfogie/mc-agent/handler_versions" // Import to register version handlers
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -774,6 +775,18 @@ func normalizeReplayOutput(version, output, name string) string {
 }
 
 func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, cfg AgentConfig, addToInstance bool) (*ManagedAgent, error) {
+	// Resolved via agent.ResolveAuth (offline mode, no UUID/token — every
+	// spawned test agent is offline) rather than building models.Auth/
+	// bot.Auth by hand below, so this framework gets the same
+	// docs/bugs/offline-login-hello-packet-decode-disconnect.md precheck
+	// every other connection path already has: a cfg.Name over Minecraft's
+	// 16-character limit fails here, immediately and locally, instead of
+	// reaching a real server and producing that bug's opaque symptom.
+	resolvedAuth, err := agent.ResolveAuth(true, cfg.Name, "", "", config.AuthSettings{})
+	if err != nil {
+		return nil, fmt.Errorf("resolve auth: %w", err)
+	}
+
 	// Setup agent logging (redirects log package to file + stdout)
 	// This is done once globally for all agents
 	if err := f.setupAgentLogging(); err != nil {
@@ -846,9 +859,9 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 	// Create bot client (required for agent to actually connect)
 	botClient := bot.NewClient(packetMgr)
 	botClient.SetAuth(bot.Auth{
-		Name:        cfg.Name,
-		UUID:        "", // Offline mode - server generates UUID
-		AccessToken: "", // Offline mode - no access token
+		Name:        resolvedAuth.Name,
+		UUID:        resolvedAuth.UUID,        // Offline mode - server generates UUID
+		AccessToken: resolvedAuth.AccessToken, // Offline mode - no access token
 	})
 
 	// Create skin provider
@@ -874,7 +887,7 @@ func (f *Framework) spawnAgentInternal(ctx context.Context, inst *TestInstance, 
 		Address:           cfg.ServerAddress,
 		Version:           mcVersion,
 		ProtocolVersion:   protocolVersion,
-		Auth:              models.Auth{Name: cfg.Name, UUID: "", AccessToken: ""},
+		Auth:              resolvedAuth,
 		PacketMgr:         packetMgr,
 		BlockMgr:          blockMgr,
 		SoundMgr:          soundMgr,
