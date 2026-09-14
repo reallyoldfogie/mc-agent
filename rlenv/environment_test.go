@@ -49,8 +49,16 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	if got := env.ObservationSize(); got != 14 {
-		t.Fatalf("ObservationSize() = %d, want 14", got)
+	// 17, not 14: indices 0-13 are the original per-task numeric features;
+	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
+	// goalCraftActive) added by
+	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md
+	// — see observation.go's own doc comment on observationSize for the
+	// full layout. This exact value is also what makes cmd/rl-train's
+	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
+	// reject an old checkpoint trained against the pre-goal-block size.
+	if got := env.ObservationSize(); got != 17 {
+		t.Fatalf("ObservationSize() = %d, want 17", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -65,8 +73,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 14 {
-		t.Fatalf("len(obs.Values) = %d, want 14", len(obs.Values))
+	if len(obs.Values) != 17 {
+		t.Fatalf("len(obs.Values) = %d, want 17 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)

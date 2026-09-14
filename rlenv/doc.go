@@ -41,16 +41,22 @@
 //     implements it (Environment.ActionMask, action.go): pkg/reinforce and
 //     pkg/ppo's rollout loops pick it up automatically via rl.ActionMasker,
 //     no extra wiring needed per training run.
-//   - Goal-conditioning for the mine/craft tasks is coarse
-//     (RL_ACTION_SPACE_EXPANSION.md Phase 2a option (a),
-//     RL_TRAINING_LOOP_PLAN.md Phase 1a): one fixed target block/item name
-//     per Environment instance, set once via Config, not a per-episode
-//     observation feature a policy could vary. The finer-grained version
-//     (docs/plans/06's "Note: on the observation side..." / cRL-go's
-//     docs/archive/plans/13's "goal block appended to Observation.Values")
-//     is still the path once a second block/item type or task type
-//     actually needs to vary within a single training run — don't build it
-//     speculatively.
+//   - Per-episode task selection and goal-conditioning
+//     (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
+//     done, not speculative. Config.TaskSelector, if set, is called once
+//     per Reset to choose which task(s) are active that specific episode
+//     (see task.go's own doc comment), overriding TargetOffset/
+//     MineTargetBlock/MineSearchRadius/CraftTargetItem/GoToTargetDisabled
+//     for that episode only — a static Config with no TaskSelector behaves
+//     exactly as before, unchanged. Every Observation this package
+//     produces also now carries a three-bit goal-conditioning block
+//     (indices 14-16 — see observation.go's own doc comment on
+//     observationSize) telling a policy which task(s) are actually active
+//     this episode, mirroring cRL-go's pkg/hierarchical subgoal-one-hot
+//     pattern rather than inventing a new encoding. Promotes
+//     testing/rl_train_test.go's live-verified
+//     newAlternatingMineOrCraftTaskSelector proof-of-concept into this
+//     reusable capability.
 //   - No persistent world-knowledge memory (RL_POLICY_INTEGRATION_PLAN.md's
 //     "Does the Observation Builder need access to *persistent* world
 //     knowledge" open question): out of scope here too.

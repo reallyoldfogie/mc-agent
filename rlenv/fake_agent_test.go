@@ -2,6 +2,7 @@ package rlenv_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -76,6 +77,18 @@ type fakeAgent struct {
 	// recording the call.
 	teleportCalls []teleportCall
 	teleportErr   error
+
+	// FindPath simulation (rlenv's reachability gate, walkability.go):
+	// findPathUnreachable, if set, is called for every FindPath candidate
+	// position — returning true simulates a real pathfinder failure ("no
+	// path found") for exactly that position, independent of whether
+	// findWalkableTarget's own standability check already accepted it.
+	// nil (the default) means every position is reachable, matching
+	// FindPath's behavior before this simulation existed. findPathCalls
+	// records every (x,y,z) queried, so a test can assert exactly which
+	// candidates the reachability gate tried, not just how many.
+	findPathUnreachable func(x, y, z float64) bool
+	findPathCalls       []models.V3
 }
 
 type seedNearbyBlockCall struct {
@@ -175,8 +188,15 @@ func (f *fakeAgent) LineToAndSneak(context.Context, float64, float64, float64) e
 }
 func (f *fakeAgent) StartSneaking() error { return nil }
 func (f *fakeAgent) StopSneaking() error  { return nil }
-func (f *fakeAgent) FindPath(context.Context, float64, float64, float64) (*models.Path, error) {
-	return nil, nil
+func (f *fakeAgent) FindPath(_ context.Context, x, y, z float64) (*models.Path, error) {
+	f.mu.Lock()
+	f.findPathCalls = append(f.findPathCalls, models.V3{X: x, Y: y, Z: z})
+	unreachable := f.findPathUnreachable
+	f.mu.Unlock()
+	if unreachable != nil && unreachable(x, y, z) {
+		return nil, errors.New("fakeAgent: no path found")
+	}
+	return &models.Path{Found: true}, nil
 }
 func (f *fakeAgent) ExecutePath(context.Context, *models.Path) error         { return nil }
 func (f *fakeAgent) LookAt(context.Context, float64, float64, float64) error { return nil }

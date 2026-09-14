@@ -75,7 +75,7 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 		if ctx.Err() != nil {
 			return V3{}, false, ctx.Err()
 		}
-		if !isWalkablePosition(world, shapeMgr, c.pos) {
+		if !IsWalkablePosition(world, shapeMgr, c.pos) {
 			continue
 		}
 		visible, err := agent.CanInteractFromPosition(ctx, c.pos.X, c.pos.Y, c.pos.Z, target.X, target.Y, target.Z)
@@ -87,9 +87,14 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 	return V3{}, false, nil
 }
 
-// isWalkablePosition reports whether a bot could stand at pos: passable
-// feet and head cells, with solid ground support below.
-func isWalkablePosition(world World, shapeMgr BlockShapeManager, pos V3) bool {
+// IsWalkablePosition reports whether a bot could stand at pos: passable
+// feet and head cells, with solid ground support below. Exported (not just
+// FindInteractPosition's own internal helper) because rlenv's goto task
+// needs the identical check for a different reason — see rlenv/walkability.go's
+// own doc comment for why "can a bot physically stand at this candidate
+// target" turned out to matter there too, not just for interaction
+// candidates.
+func IsWalkablePosition(world World, shapeMgr BlockShapeManager, pos V3) bool {
 	feetID, feetLoaded := world.GetBlockAt(pos.X, pos.Y, pos.Z)
 	headID, headLoaded := world.GetBlockAt(pos.X, pos.Y+1, pos.Z)
 	groundID, groundLoaded := world.GetBlockAt(pos.X, pos.Y-1, pos.Z)

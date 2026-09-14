@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	oldrand "math/rand" // only for rlenv.TaskSelector's rng parameter type — rlenv's own internal rng predates this file's math/rand/v2 usage; see newAlternatingMineOrCraftTaskSelector's own doc comment.
 	"math/rand/v2"
 	"os"
 	"path/filepath"
@@ -1295,65 +1296,55 @@ func TestRLTrainingLoop_LongRunShowsLearningOnCombinedMineCraftWithMovementLive(
 	}
 }
 
-// mineCraftClearRadius/mineCraftClearHeight bound the RCON `fill ... air
-// replace minecraft:stone` volume newAlternatingMineOrCraftSeeder uses to
-// positively guarantee no mine target lingers from a prior episode — wide
-// enough to cover SeedNearbyBlock's own placement (a fixed, undocumented-
-// to-this-file offset from the bot, agent/rl_seed.go) plus
-// MineSearchRadius, narrow in height (near the bot's own Y level only) so
-// it can't reach into the flat world's deep natural stone layer
-// (docs/bugs/mine-task-fifty-percent-equilibrium.md entry 13 found that
-// layer is ~59 blocks thick, well below where a surface-placed target or
-// this clear volume ever goes).
-const (
-	mineCraftClearRadius = 6
-	mineCraftClearHeight = 2
-)
-
-// newAlternatingMineOrCraftSeeder returns an rlenv.EpisodeSeeder that
-// randomly makes exactly one of Mine or Craft actually available each
-// episode — seeding the chosen one normally, and *positively* clearing the
-// other's precondition (not just skipping its own seeding call, which
-// would leave a prior episode's leftover block/ingredients in place given
-// TargetOffset:[0,0,0] never moves the bot away from them) — so
-// rlenv.Environment.ActionMask genuinely excludes the unavailable one that
-// episode, rather than it merely being unlikely to help.
+// newAlternatingMineOrCraftTaskSelector returns an rlenv.TaskSelector that
+// randomly makes exactly one of Mine or Craft active each episode —
+// promoting this file's own original proof-of-concept
+// (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md,
+// which cites this exact mechanism as the thing to generalize) into
+// rlenv's new first-class per-episode task-selection hook, replacing what
+// used to be a hand-rolled rlenv.EpisodeSeeder doing double duty as both
+// "choose the task" and "police the other task's precondition."
 //
-// Unlike DefaultEpisodeSeeder (which seeds every configured task every
-// episode, matching every other test in this file), this directly serves
-// TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive's own
-// purpose: making Mine-vs-Craft a real per-episode decision the policy
-// must base on its observation (mineVisible/craftReady), not a
-// permanently-tied choice it can lock onto once and never revisit (see
-// that test's own doc comment for why the prior combined-task tests
-// couldn't test this).
-func newAlternatingMineOrCraftSeeder(env *StandaloneTestEnv, rng *rand.Rand) rlenv.EpisodeSeeder {
-	return func(ctx context.Context, seedAgent rlenv.SeedAgent, cfg rlenv.Config) error {
-		pos, _, _, ok := env.Agent.Agent.GetPosition()
-		if !ok {
-			return fmt.Errorf("alternating seeder: position not yet known")
+// That policing step — an RCON `fill ... air replace minecraft:stone`
+// clearing any leftover mine target, plus clearing any leftover craft
+// ingredients — no longer exists here, and does not need an equivalent:
+// the old EpisodeSeeder-only approach had no way to leave a task
+// *structurally* unset (Config.MineTargetBlock/CraftTargetItem were both
+// always configured, per rlenv.Environment.actionLegal's old-and-still-
+// current-for-Mine "configured AND visible" check), so the only lever
+// available to make one task "the wrong answer" this episode was faking
+// its world-state precondition (mineVisible/craftReady) via RCON, which is
+// exactly what let a stale block/ingredient from a prior episode leak
+// through unless actively cleared. TaskOverride leaves the non-chosen
+// task's Config field genuinely empty for the episode instead — legal or
+// not is decided by rlenv.Environment.actionLegal's normal "is this task
+// configured at all" check, the same one that already made an
+// unconfigured Mine/Craft a safe no-op on any ordinary static Config, so a
+// stray leftover block sitting in the world (unmined, from two episodes
+// ago) simply can't matter anymore: Config.MineTargetBlock == "" that
+// episode means refreshMineTarget never even looks for it (see
+// environment.go).
+//
+// GoToTargetDisabled is deliberately never set here (TaskOverride's zero
+// value already means "not disabled") — this selector varies Mine vs.
+// Craft specifically, preserving
+// TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive's
+// original scope (see that test's own doc comment): GoToTarget/Wait stay
+// legal alternatives in both conditions, not a three-way task switch.
+//
+// rng is rlenv's own math/rand (not math/rand/v2) Rand type, per
+// Config.TaskSelector's signature — deliberately unused here (this
+// closure keeps its own math/rand/v2 source instead, exactly like the
+// EpisodeSeeder version it replaces kept its own separately-seeded rng
+// rather than depending on one rlenv didn't pass in at the time); pass
+// oldrand.Rand rather than a real one at a call site that cares about
+// TaskSelector's own determinism guarantee (see its doc comment) instead.
+func newAlternatingMineOrCraftTaskSelector(mineTargetBlock string, mineSearchRadius int, craftTargetItem string, selectorRNG *rand.Rand) rlenv.TaskSelector {
+	return func(_ int, _ *oldrand.Rand) rlenv.TaskOverride {
+		if selectorRNG.IntN(2) == 0 {
+			return rlenv.TaskOverride{MineTargetBlock: mineTargetBlock, MineSearchRadius: mineSearchRadius}
 		}
-		if rng.IntN(2) == 0 {
-			if err := seedAgent.SeedNearbyBlock(ctx, cfg.MineTargetBlock, cfg.MineSearchRadius); err != nil {
-				return fmt.Errorf("seed mine target: %w", err)
-			}
-			for _, item := range []string{"minecraft:oak_planks", "minecraft:stick"} {
-				if _, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", env.BotName, item)); err != nil {
-					return fmt.Errorf("clear %s via RCON: %w", item, err)
-				}
-			}
-			return nil
-		}
-		if err := seedAgent.SeedCraftIngredients(ctx, cfg.CraftTargetItem); err != nil {
-			return fmt.Errorf("seed craft ingredients: %w", err)
-		}
-		x1, y1, z1 := int(pos.X)-mineCraftClearRadius, int(pos.Y)-mineCraftClearHeight, int(pos.Z)-mineCraftClearRadius
-		x2, y2, z2 := int(pos.X)+mineCraftClearRadius, int(pos.Y)+mineCraftClearHeight, int(pos.Z)+mineCraftClearRadius
-		cmd := fmt.Sprintf("fill %d %d %d %d %d %d air replace minecraft:stone", x1, y1, z1, x2, y2, z2)
-		if _, err := env.Inst.RCON.Exec(ctx, cmd); err != nil {
-			return fmt.Errorf("clear mine target area via RCON: %w", err)
-		}
-		return nil
+		return rlenv.TaskOverride{CraftTargetItem: craftTargetItem}
 	}
 }
 
@@ -1433,8 +1424,10 @@ func (r *conditionalActionRecorder) snapshot() map[availabilityKey][rlenv.NumAct
 // whichever one it locked onto first stayed correct forever (a real but
 // not especially useful outcome, since nothing in the environment ever
 // required distinguishing the two). This test uses
-// newAlternatingMineOrCraftSeeder to make exactly one of them legal at
-// random each episode, and conditionalActionRecorder to check not just
+// newAlternatingMineOrCraftTaskSelector (rlenv.Config.TaskSelector — see
+// its own doc comment for how this differs from and supersedes an
+// earlier EpisodeSeeder-based version of the same idea) to make exactly
+// one of them legal at random each episode, and conditionalActionRecorder to check not just
 // whether return improves, but whether the *specific* action chosen
 // tracks which one was *actually* legal that episode — the genuinely
 // useful capability a real curriculum (mc-rsi-trainer) depends on.
@@ -1504,15 +1497,20 @@ func TestRLTrainingLoop_LongRunLearnsToConditionOnTaskAvailabilityLive(t *testin
 	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent")
 
-	seederRNG := rand.New(rand.NewPCG(1, 1))
+	selectorRNG := rand.New(rand.NewPCG(1, 1))
 	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
 		TargetOffset:     [3]float64{0, 0, 0},
 		ArrivalThreshold: 1.5,
 		StepTimeout:      15 * time.Second,
-		MineTargetBlock:  "minecraft:stone",
-		MineSearchRadius: 4,
-		CraftTargetItem:  "minecraft:stick",
-		Seeder:           newAlternatingMineOrCraftSeeder(env, seederRNG),
+		// MineTargetBlock/CraftTargetItem are deliberately left unset here
+		// — TaskSelector below overwrites one of them (never both) fresh
+		// every Reset, so a base value here would only ever be the very
+		// first episode's default before TaskSelector runs, which would be
+		// misleading to read as "the" configured task. Seeder still needs
+		// to be DefaultEpisodeSeeder so whichever task TaskSelector picked
+		// actually gets its precondition seeded into the world.
+		TaskSelector: newAlternatingMineOrCraftTaskSelector("minecraft:stone", 4, "minecraft:stick", selectorRNG),
+		Seeder:       rlenv.DefaultEpisodeSeeder,
 	})
 	require.NoError(t, err, "construct rlenv.Environment")
 

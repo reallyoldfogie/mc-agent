@@ -2,6 +2,7 @@ package testing
 
 import (
 	"log"
+	"math"
 	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -30,6 +31,22 @@ func NewMockWorld() *MockWorld {
 	}
 }
 
+// blockPosOf floors x/y/z to the integer block coordinates containing
+// that point, matching the real world.Manager.GetBlockAt's own
+// toBlockCoords behavior (world/manager.go) — Minecraft blocks are
+// discrete voxels addressed by integer coordinates, so any fractional
+// position within one resolves to that same block, not a miss. Without
+// this, MockWorld.GetBlockAt/SetBlock used exact float64 map-key
+// equality instead: harmless for the whole-number coordinates most
+// existing tests happen to use, but a real, live-confirmed gap for
+// anything querying a genuinely fractional position (e.g. a jittered
+// rlenv.Config.Jitter target) — every such query missed every block this
+// type had ever been told about, silently reading back "air" everywhere
+// instead of matching the real block placed there.
+func blockPosOf(x, y, z float64) BlockPos {
+	return BlockPos{X: math.Floor(x), Y: math.Floor(y), Z: math.Floor(z)}
+}
+
 // GetBlockAt implements the World interface used by pathfinding
 // Returns the block state ID at the given position, or 0 (air) if not set.
 // The second return value is always true for MockWorld since it's always "fully loaded".
@@ -37,7 +54,7 @@ func (mw *MockWorld) GetBlockAt(x, y, z float64) (uint32, bool) {
 	mw.mu.RLock()
 	defer mw.mu.RUnlock()
 
-	pos := BlockPos{X: x, Y: y, Z: z}
+	pos := blockPosOf(x, y, z)
 	if stateID, exists := mw.blocks[pos]; exists {
 		return stateID, true
 	}
@@ -50,7 +67,7 @@ func (mw *MockWorld) SetBlock(x, y, z float64, stateID uint32) {
 	mw.mu.Lock()
 	defer mw.mu.Unlock()
 
-	pos := BlockPos{X: x, Y: y, Z: z}
+	pos := blockPosOf(x, y, z)
 	if stateID == 0 {
 		// Delete air blocks to save memory
 		delete(mw.blocks, pos)
@@ -67,7 +84,7 @@ func (mw *MockWorld) SetBlockRange(x1, y1, z1, x2, y2, z2 float64, stateID uint3
 	for x := x1; x <= x2; x++ {
 		for y := y1; y <= y2; y++ {
 			for z := z1; z <= z2; z++ {
-				pos := BlockPos{X: x, Y: y, Z: z}
+				pos := blockPosOf(x, y, z)
 				if stateID == 0 {
 					delete(mw.blocks, pos)
 				} else {

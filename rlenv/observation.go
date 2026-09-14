@@ -43,26 +43,74 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          so "does this look worth attempting" is the useful signal
 //	          instead — see docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1c.
 //
-// mineDx/Dy/Dz/mineVisible/craftReady are present in every observation this
+//	index 14: goalGoToActive — 1.0 if ActionGoToTarget is legal this
+//	          episode (!Config.GoToTargetDisabled), 0.0 otherwise.
+//	index 15: goalMineActive — 1.0 if ActionMine is legal this episode
+//	          (Config.MineTargetBlock set), 0.0 otherwise. Reflects whether
+//	          mining is this episode's *task*, not whether a target is
+//	          currently *visible* — that's index 12 (mineVisible)'s job;
+//	          the two differ whenever MineTargetBlock is configured but
+//	          nothing happens to be in view right now.
+//	index 16: goalCraftActive — 1.0 if ActionCraft is legal this episode
+//	          (Config.CraftTargetItem set), 0.0 otherwise. Same
+//	          active-vs-ready distinction as goalMineActive above, against
+//	          index 13 (craftReady).
+//
+// indices 14-16 are this environment's goal-conditioning block
+// (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
+// a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
+// comment on why more than one task can be simultaneously active) signal
+// telling a policy which task(s) this specific episode is actually about,
+// as opposed to indices 0-13's always-present *per-task* numeric signals
+// (dx/dy/dz, mineDx/Dy/Dz, mineVisible, craftReady), which exist and are
+// non-zero whenever their task happens to be configured/visible,
+// regardless of whether Config.TaskSelector chose that task as this
+// episode's actual goal. Mirrors cRL-go's own subgoal-one-hot observation
+// augmentation (pkg/hierarchical/augment.go, see
+// docs/plans/11-hierarchical-meta-controller-and-subpolicies.md) rather
+// than inventing a new encoding — this repo's task generator and this
+// package's own observation builder are the two writers of the same kind
+// of goal block, per ../mc-rsi-trainer/docs/plans/00's explicit
+// instruction not to invent a separate curriculum-only encoding. No
+// additional numeric parameters are appended beyond the three
+// active-flags themselves (unlike a from-scratch goal-conditioning
+// design might need): every numeric parameter goal-conditioning would
+// otherwise want (target distance, mine-target position, ...) already
+// exists in indices 0-13, since this environment's observation was
+// already fully per-task before this block was added — the only thing
+// actually missing was "which of these is the real goal," which a
+// three-bit flag answers completely on its own.
+//
+// mineDx/Dy/Dz/mineVisible/craftReady (and now goalGoToActive/
+// goalMineActive/goalCraftActive) are present in every observation this
 // package produces, whether or not the episode's Config sets
 // MineTargetBlock/CraftTargetItem, and regardless of which action was
 // actually dispatched a given step — mirrors how dx/dy/dz always reflect
 // the GoToTarget target even on steps that dispatch ActionWait, not only
-// on ActionGoToTarget steps. There is otherwise no task-type feature:
-// MineTargetBlock/CraftTargetItem are this
+// on ActionGoToTarget steps. MineTargetBlock/CraftTargetItem are this
 // environment's second and third tasks, layered onto the existing "reach a
 // point" one rather than replacing it (all three can be configured on the
 // same instance; see task.go). See doc.go.
-const observationSize = 14
+//
+// Changing this length is a breaking change for any checkpoint trained
+// against the old 14-length observation — see actorcritic.Load's existing
+// EnvironmentID/shape validation, and mint a new EnvironmentID for
+// anything trained against this length (e.g. cmd/rl-train's own
+// "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
+// ObservationSize()/ActionSpace() directly, so it picks up this change
+// automatically with no separate version bump needed there).
+const observationSize = 17
 
 // buildObservation constructs the fixed-length feature vector described
 // above from the bot's current position/rotation, health/food state,
-// (if configured/visible) nearest mine-target block position, and (if
-// configured) whether the craft target currently looks assembleable.
-// yaw/pitch are float64 to match models.Position.GetPosition's return type;
-// every feature in Values is float32 regardless (rl.Observation's
-// contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool) rl.Observation {
+// (if configured/visible) nearest mine-target block position, (if
+// configured) whether the craft target currently looks assembleable, and
+// this episode's goal-conditioning block (which of the three tasks are
+// actually active — see observationSize's own doc comment on indices
+// 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
+// return type; every feature in Values is float32 regardless
+// (rl.Observation's contract).
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -91,6 +139,21 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			mineDz,
 			visible,
 			ready,
+			boolToFloat32(goToActive),
+			boolToFloat32(mineActive),
+			boolToFloat32(craftActive),
 		},
 	}
+}
+
+// boolToFloat32 converts b to rl.Observation's 1.0/0.0 boolean-flag
+// convention, matching every other boolean feature buildObservation
+// already produces inline (known, visible, ready above) — factored out
+// only for the three goal-conditioning flags, which have no other
+// per-feature computation alongside them to inline into.
+func boolToFloat32(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
 }

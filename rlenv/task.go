@@ -1,6 +1,9 @@
 package rlenv
 
-import "time"
+import (
+	"math/rand"
+	"time"
+)
 
 // Config configures an Environment. There is deliberately no notion of a
 // task *type* here (see doc.go): TargetOffset is the one task this
@@ -127,6 +130,73 @@ type Config struct {
 	// starting conditions reproducible run to run, the same way
 	// cRL-go/crlconfig's own Train.Seed does for the policy side.
 	JitterSeed int64
+
+	// GoToTargetDisabled, if true, makes ActionGoToTarget illegal this
+	// episode (Environment.actionLegal, ActionMask, resolveDispatch),
+	// mirroring how an empty MineTargetBlock/CraftTargetItem already makes
+	// ActionMine/ActionCraft illegal. Unlike those two, ActionGoToTarget has
+	// no natural "unset" representation on TargetOffset itself — TargetOffset's
+	// own doc comment already establishes that its zero value ([3]float64{})
+	// is a legitimate, intentional configuration ("the target is the bot's
+	// own Reset position"), not a sentinel for "no goto task" — so this
+	// needed its own explicit field rather than overloading TargetOffset.
+	// Named so its zero value (false) preserves today's behavior exactly:
+	// every existing caller that never sets this field keeps
+	// ActionGoToTarget unconditionally legal, unchanged. See TaskSelector
+	// below for the mechanism that actually sets this per episode.
+	GoToTargetDisabled bool
+
+	// TaskSelector, if set, is called once per Reset (after any
+	// Config.ResetOrigin teleport, before this episode's target/jitter is
+	// computed) to choose which task(s) are active this specific episode,
+	// promoting docs/plans/RL_TRAINING_LOOP_PLAN.md's live-verified
+	// newAlternatingMineOrCraftSeeder proof-of-concept
+	// (../mc-rsi-trainer/docs/plans/01-curriculum-generator.md item 4) into
+	// a reusable capability: its TaskOverride return value's five fields
+	// (GoToTargetDisabled, TargetOffset, MineTargetBlock, MineSearchRadius,
+	// CraftTargetItem) overwrite this Config's own same-named fields for the
+	// rest of that episode — every other field (ArrivalThreshold,
+	// StepTimeout, Seeder, ResetOrigin, StuckTimeout, Jitter, JitterSeed,
+	// TaskSelector itself) is untouched, so a TaskSelector only has to
+	// describe what varies, not repeat every mechanics field it doesn't
+	// care about. nil (the default) leaves Reset's existing static-Config
+	// behavior completely unchanged — see Environment.Reset.
+	//
+	// Deliberately mutates this Environment's own Config in place at Reset
+	// rather than computing a separate "effective" config alongside it: the
+	// original static values passed to New are not meant to be recovered
+	// once a TaskSelector starts choosing per-episode — the whole point is
+	// that it fully owns task selection from that point on — and every
+	// other read site in this package already reads Config's task fields
+	// directly (e.g. Environment.actionLegal, refreshMineTarget), so this
+	// way nothing else needed to change to pick up per-episode overrides.
+	TaskSelector TaskSelector
+}
+
+// TaskSelector chooses which task(s) are active for one episode. episode
+// is the 0-indexed count of Reset calls made against this Environment so
+// far (0 for the very first episode); rng is this Environment's own
+// jitter random source (Config.JitterSeed), shared rather than given a
+// separate seed so a fixed JitterSeed still makes an entire run's episode
+// conditions — task selection included — reproducible end to end. See
+// Config.TaskSelector's own doc comment for exactly how the returned
+// TaskOverride is applied.
+type TaskSelector func(episode int, rng *rand.Rand) TaskOverride
+
+// TaskOverride is TaskSelector's return value: the subset of Config that
+// can vary per episode. Leaving a field at its zero value disables that
+// task for the episode — GoToTargetDisabled: false is the one exception,
+// since false already means "not disabled" (see its own doc comment on
+// Config); a TaskSelector that wants GoToTarget active this episode must
+// set TargetOffset to a real value AND leave GoToTargetDisabled false,
+// exactly mirroring how MineTargetBlock/CraftTargetItem must be
+// explicitly non-empty to enable their tasks.
+type TaskOverride struct {
+	GoToTargetDisabled bool
+	TargetOffset       [3]float64
+	MineTargetBlock    string
+	MineSearchRadius   int
+	CraftTargetItem    string
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

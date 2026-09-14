@@ -58,8 +58,17 @@ type Environment struct {
 	// rng backs Config.Jitter — one per Environment, seeded once in New
 	// from Config.JitterSeed, not reseeded per Reset (successive Resets
 	// must draw different jitter values from each other, which reseeding
-	// to the same JitterSeed every time would defeat).
+	// to the same JitterSeed every time would defeat). Also shared with
+	// Config.TaskSelector — see its own doc comment for why.
 	rng *rand.Rand
+
+	// episode counts how many times Reset has been called on this
+	// instance, 0-indexed — passed to Config.TaskSelector as its own
+	// episode argument, then incremented. Never reset itself; an
+	// Environment's episode count only ever grows across its whole
+	// lifetime, matching TaskSelector's own doc comment ("0 for the very
+	// first episode").
+	episode int
 }
 
 // New constructs an Environment. registry is typically actions.NewRegistry()
@@ -124,32 +133,86 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 
 	e.stepsWithoutObservationChange = 0
 
+	// Config.TaskSelector: choose this episode's active task(s), if the
+	// caller opted in. Deliberately after the ResetOrigin teleport above
+	// (TaskSelector doesn't influence where the bot resets to) and before
+	// targetOffset is read just below (TaskSelector's TargetOffset override
+	// must be in place before that read, or GoToTarget episodes would still
+	// jitter/pose the stale pre-override target). See Config.TaskSelector's
+	// own doc comment for exactly which fields this mutates.
+	if e.cfg.TaskSelector != nil {
+		override := e.cfg.TaskSelector(e.episode, e.rng)
+		e.cfg.GoToTargetDisabled = override.GoToTargetDisabled
+		e.cfg.TargetOffset = override.TargetOffset
+		e.cfg.MineTargetBlock = override.MineTargetBlock
+		e.cfg.MineSearchRadius = override.MineSearchRadius
+		e.cfg.CraftTargetItem = override.CraftTargetItem
+	}
+	e.episode++
+
 	targetOffset := e.cfg.TargetOffset
 	for i := range targetOffset {
 		targetOffset[i] = e.jitter(targetOffset[i], i)
 	}
-	if e.cfg.Jitter != ([3]float64{}) {
-		// Jitter is active: without this guard, an unlucky draw could pose
-		// a target already within ArrivalThreshold of x/y/z, handing out
-		// arrivalBonus for an episode the agent did nothing to earn — see
-		// Config.Jitter's own doc comment. A disabled (all-zero) Jitter
-		// skips this entirely: a deterministic TargetOffset that happens to
-		// be within ArrivalThreshold is the caller's explicit, visible
-		// choice, not a trap to guard against.
-		for attempt := 0; distance3(x, y, z, x+targetOffset[0], y+targetOffset[1], z+targetOffset[2]) <= e.cfg.ArrivalThreshold; attempt++ {
-			if attempt >= maxJitterRetries {
+
+	// Ground-snap/repair the computed target if the live agent can tell us
+	// about terrain (WalkabilityAgent) and the goto task is actually active
+	// this episode — skipped when GoToTargetDisabled, since an inactive
+	// goto task's target is never walked to and checking it would just be
+	// wasted work (and could spuriously error a mine/craft-only episode
+	// whose TargetOffset happens to be unset/zero). See
+	// findWalkableTarget's own doc comment (walkability.go) for the bug
+	// this closes: TargetOffset is a flat 3D offset with no idea what
+	// terrain is at the far end, so on real (non-flat) worlds it can land
+	// somewhere the pathfinder can never reach, silently producing a
+	// zero-progress episode instead of a loud error.
+	walkAgent, checkWalkability := e.agent.(WalkabilityAgent)
+	checkWalkability = checkWalkability && !e.cfg.GoToTargetDisabled
+	jitterActive := e.cfg.Jitter != ([3]float64{})
+
+	// Draw (and, if Jitter is active, redraw) a target offset until one
+	// both clears ArrivalThreshold and — if checkWalkability — passes
+	// findWalkableTarget, or maxJitterRetries is exhausted. Both checks
+	// share one retry budget: each is just "this particular draw didn't
+	// work out, try another," not fundamentally different problems, and a
+	// bad Config (offset/terrain combination with no usable draw at all)
+	// should still fail loudly rather than retrying forever either way.
+	// Without Jitter there's no randomness to retry with, so a single
+	// deterministic attempt is definitive — matches pre-retry-loop
+	// behavior exactly.
+	tooClose, walkableFound := false, true
+	for attempt := 0; ; attempt++ {
+		e.targetX = x + targetOffset[0]
+		e.targetY = y + targetOffset[1]
+		e.targetZ = z + targetOffset[2]
+
+		tooClose = jitterActive && distance3(x, y, z, e.targetX, e.targetY, e.targetZ) <= e.cfg.ArrivalThreshold
+		walkableFound = true
+		if !tooClose && checkWalkability {
+			var wx, wy, wz float64
+			wx, wy, wz, walkableFound = findWalkableTarget(ctx, walkAgent, e.agent, e.targetX, e.targetY, e.targetZ)
+			if walkableFound {
+				e.targetX, e.targetY, e.targetZ = wx, wy, wz
+			}
+		}
+		if !tooClose && walkableFound {
+			break
+		}
+		if !jitterActive {
+			return rl.Observation{}, fmt.Errorf("rlenv: no walkable+reachable cell found near goto target (%.1f,%.1f,%.1f) within %d blocks vertically / %d horizontally — check Config.TargetOffset/terrain", e.targetX, e.targetY, e.targetZ, verticalSearchRadius, horizontalSearchRadius)
+		}
+		if attempt >= maxJitterRetries {
+			if tooClose {
 				return rl.Observation{}, fmt.Errorf("rlenv: %d consecutive jittered targets landed within ArrivalThreshold (%.2f) of the reset position — check Config.TargetOffset/Jitter/ArrivalThreshold", maxJitterRetries, e.cfg.ArrivalThreshold)
 			}
-			targetOffset = e.cfg.TargetOffset
-			for i := range targetOffset {
-				targetOffset[i] = e.jitter(targetOffset[i], i)
-			}
+			return rl.Observation{}, fmt.Errorf("rlenv: %d consecutive jittered targets found no walkable+reachable cell (last tried (%.1f,%.1f,%.1f)) within %d blocks vertically / %d horizontally — check Config.TargetOffset/Jitter/terrain", maxJitterRetries, e.targetX, e.targetY, e.targetZ, verticalSearchRadius, horizontalSearchRadius)
+		}
+		targetOffset = e.cfg.TargetOffset
+		for i := range targetOffset {
+			targetOffset[i] = e.jitter(targetOffset[i], i)
 		}
 	}
 
-	e.targetX = x + targetOffset[0]
-	e.targetY = y + targetOffset[1]
-	e.targetZ = z + targetOffset[2]
 	e.prevDistance = distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
 	e.episodeStarted = true
 
@@ -171,7 +234,7 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	}
 	e.craftCount = e.craftCountNow()
 	e.craftReady = e.craftReadyNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -355,7 +418,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

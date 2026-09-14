@@ -12,8 +12,9 @@ import "github.com/reallyoldfogie/mc-agent/models"
 // implements models.HealthProvider — see agent/tracking.go's Health method
 // — and already implements BlockNameAt via models.WorldOperations
 // (agent/actions.go). Only BlockNameAt is pulled in here, not all of
-// WorldOperations (GetWorld() World): Environment has no other use for raw
-// World access.
+// WorldOperations (GetWorld() World) — raw World/BlockShapeManager access
+// is a separate, optional capability (WalkabilityAgent, walkability.go),
+// not part of LiveAgent's own required contract.
 type LiveAgent interface {
 	models.CommandAgent
 	models.HealthProvider

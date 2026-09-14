@@ -125,6 +125,9 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 	case ActionWait:
 		return actionDispatch{}, false, nil
 	case ActionGoToTarget:
+		if !e.actionLegal(ActionGoToTarget) {
+			return actionDispatch{}, false, nil
+		}
 		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 	case ActionMine:
 		if !e.actionLegal(ActionMine) {
@@ -154,8 +157,10 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 // one action only.
 func (e *Environment) actionLegal(action rl.Action) bool {
 	switch action {
-	case ActionWait, ActionGoToTarget:
+	case ActionWait:
 		return true
+	case ActionGoToTarget:
+		return !e.cfg.GoToTargetDisabled
 	case ActionMine:
 		return e.cfg.MineTargetBlock != "" && e.mineVisible
 	case ActionCraft:
