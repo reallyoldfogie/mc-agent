@@ -1,32 +1,146 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-func TestIsBoatItemName(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"minecraft:oak_boat", true},
-		{"minecraft:dark_oak_boat", true},
-		{"minecraft:bamboo_chest_raft", true},
-		{"minecraft:bamboo_raft", true},
-		{"minecraft:boat", true},
-		{"minecraft:oak_chest_boat", true},
-		{"minecraft:oak_planks", false},
-		{"minecraft:water_bucket", false},
-		{"", false},
+// fakeMultiSlotResolver returns a different item per hotbar slot index,
+// unlike help_and_screen_test.go's fakeSlotResolver (one fixed item for
+// every slot) - needed here to test picking the *right* slot out of several.
+type fakeMultiSlotResolver struct {
+	itemBySlot map[int16]int32
+}
+
+func (f fakeMultiSlotResolver) ResolveSlot(_ int, index int16) (int32, int, bool) {
+	itemID, ok := f.itemBySlot[index]
+	if !ok {
+		return 0, 0, false
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isBoatItemName(tt.name); got != tt.want {
-				t.Errorf("isBoatItemName(%q) = %v, want %v", tt.name, got, tt.want)
-			}
-		})
+	return itemID, 1, true
+}
+
+type fakeMultiItemMgr struct {
+	nameByID map[int32]string
+}
+
+func (f fakeMultiItemMgr) GetItemNameByID(id int32) string {
+	return f.nameByID[id]
+}
+
+// TestFindHotbarSlotMatching covers the hotbar-scanning half of
+// WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8: given a resolved set of wanted item names, the
+// right hotbar slot (0-indexed, not the raw protocol slot number) must be picked out from among
+// other, non-matching items.
+func TestFindHotbarSlotMatching(t *testing.T) {
+	// Hotbar slots 36-44 (protocol numbering); slot 38 (index 2) holds the boat.
+	a := &agent{
+		slots: fakeMultiSlotResolver{itemBySlot: map[int16]int32{
+			36: 1, // minecraft:dirt
+			37: 2, // minecraft:cobblestone
+			38: 3, // minecraft:oak_boat
+			39: 4, // minecraft:stone
+		}},
+		itemMgr: fakeMultiItemMgr{nameByID: map[int32]string{
+			1: "minecraft:dirt",
+			2: "minecraft:cobblestone",
+			3: "minecraft:oak_boat",
+			4: "minecraft:stone",
+		}},
+	}
+
+	wanted := map[string]bool{"minecraft:oak_boat": true, "minecraft:spruce_boat": true}
+
+	slot, name := a.findHotbarSlotMatching(wanted)
+	if slot != 2 {
+		t.Errorf("expected 0-indexed hotbar slot 2, got %d", slot)
+	}
+	if name != "minecraft:oak_boat" {
+		t.Errorf("expected minecraft:oak_boat, got %q", name)
+	}
+}
+
+func TestFindHotbarSlotMatching_NoMatch(t *testing.T) {
+	a := &agent{
+		slots: fakeMultiSlotResolver{itemBySlot: map[int16]int32{
+			36: 1,
+		}},
+		itemMgr: fakeMultiItemMgr{nameByID: map[int32]string{
+			1: "minecraft:dirt",
+		}},
+	}
+
+	slot, _ := a.findHotbarSlotMatching(map[string]bool{"minecraft:oak_boat": true})
+	if slot >= 0 {
+		t.Errorf("expected no match, got slot %d", slot)
+	}
+}
+
+func TestFindHotbarSlotMatching_NoSlotsOrItemMgr(t *testing.T) {
+	a := &agent{}
+	slot, _ := a.findHotbarSlotMatching(map[string]bool{"minecraft:oak_boat": true})
+	if slot >= 0 {
+		t.Errorf("expected no match when slots/itemMgr are unset, got slot %d", slot)
+	}
+}
+
+// TestResolveTag_RealBoatsTagShape mirrors the actual
+// data/minecraft/tags/item/boats.json shape (a flat list of wood-type boats plus a nested
+// "#minecraft:chest_boats" reference) to confirm resolveTag - the same mechanism craft.go already
+// uses for recipe ingredients - correctly flattens it into concrete item names. This is the
+// authoritative data source WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8 uses instead of a
+// hardcoded name-suffix guess.
+func TestResolveTag_RealBoatsTagShape(t *testing.T) {
+	dataDir := t.TempDir()
+	tagDir := filepath.Join(dataDir, "minecraft", "tags", "item")
+	if err := os.MkdirAll(tagDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	boatsJSON := `{
+		"values": [
+			"minecraft:oak_boat",
+			"minecraft:spruce_boat",
+			"minecraft:bamboo_raft",
+			"#minecraft:chest_boats"
+		]
+	}`
+	chestBoatsJSON := `{
+		"values": [
+			"minecraft:oak_chest_boat",
+			"minecraft:bamboo_chest_raft"
+		]
+	}`
+
+	if err := os.WriteFile(filepath.Join(tagDir, "boats.json"), []byte(boatsJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tagDir, "chest_boats.json"), []byte(chestBoatsJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := resolveTag(dataDir, "#minecraft:boats", map[string][]string{}, 0)
+	if err != nil {
+		t.Fatalf("resolveTag: %v", err)
+	}
+
+	want := map[string]bool{
+		"minecraft:oak_boat":          true,
+		"minecraft:spruce_boat":       true,
+		"minecraft:bamboo_raft":       true,
+		"minecraft:oak_chest_boat":    true,
+		"minecraft:bamboo_chest_raft": true,
+	}
+	if len(names) != len(want) {
+		t.Fatalf("expected %d names, got %d: %v", len(want), len(names), names)
+	}
+	for _, n := range names {
+		if !want[n] {
+			t.Errorf("unexpected name %q in resolved boat tag", n)
+		}
 	}
 }
 
@@ -97,5 +211,14 @@ func TestSnapshotEntityIDs(t *testing.T) {
 	ids := a.snapshotEntityIDs()
 	if len(ids) != 2 || !ids[1] || !ids[2] {
 		t.Errorf("expected snapshot {1, 2}, got %v", ids)
+	}
+}
+
+// TestHasPlaceableBoat_NoSlotsConfigured confirms HasPlaceableBoat degrades to false rather than
+// panicking when slots/itemMgr aren't wired up (e.g. before Init has run).
+func TestHasPlaceableBoat_NoSlotsConfigured(t *testing.T) {
+	a := &agent{boatItemNamesCache: map[string]bool{"minecraft:oak_boat": true}}
+	if a.HasPlaceableBoat() {
+		t.Error("expected HasPlaceableBoat to be false with no slots/itemMgr configured")
 	}
 }

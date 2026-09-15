@@ -230,6 +230,15 @@ type PhysicsMovementExecutor struct {
 	waitingForMount    bool
 	waitingForDismount bool
 
+	// onPlaceVehicleRequired handles a PlaceVehicle step (see
+	// pathfinding.PlaceVehicle): place a carried boat at the step's Position
+	// and mount it. Unlike onMountRequired, there's no known entity ID to
+	// wait for in advance - handlePlaceVehicleStep completes once
+	// mountedEntityID transitions to any mounted state (>= 0), the same
+	// "isMounted" signal used elsewhere (see e.g. IsRiding).
+	onPlaceVehicleRequired func(ctx context.Context, waterPos models.V3) error
+	waitingForPlacement    bool
+
 	logger *slog.Logger
 }
 
@@ -648,6 +657,17 @@ func (pe *PhysicsMovementExecutor) SetMountCallbacks(
 ) {
 	pe.onMountRequired = onMount
 	pe.onDismountRequired = onDismount
+}
+
+// SetPlaceVehicleCallback sets the callback for a PlaceVehicle step (place a
+// carried boat and mount it) during vehicle pathfinding. Optional — a nil
+// callback simply means PlaceVehicle steps can't be executed, which matches
+// pathfinding.VehicleAwarePathFinder never generating one without
+// SetBoatInventoryChecker also being set.
+func (pe *PhysicsMovementExecutor) SetPlaceVehicleCallback(
+	onPlaceVehicle func(ctx context.Context, waterPos models.V3) error,
+) {
+	pe.onPlaceVehicleRequired = onPlaceVehicle
 }
 
 // SendPosition sends a position update to the server.
@@ -1519,6 +1539,14 @@ func (pe *PhysicsMovementExecutor) tick() {
 	}
 }
 
+// isVehicleActionStep reports whether m is one of the vehicle-action step
+// types (MountVehicle/DismountVehicle/PlaceVehicle) whose completion is
+// signaled by their own async handler, not by distance-to-target - see the
+// stuck-detection exclusion in tick()'s step-processing loop.
+func isVehicleActionStep(m pathfinding.MovementType) bool {
+	return m == pathfinding.MountVehicle || m == pathfinding.DismountVehicle || m == pathfinding.PlaceVehicle
+}
+
 // generateIdleInputs generates inputs for idle mode (just physics, no movement).
 func (pe *PhysicsMovementExecutor) generateIdleInputs() physics.Inputs {
 	// Get current position for pitch
@@ -1653,6 +1681,17 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 
 		step = pe.currentPath.Steps[pe.currentStep]
 		pe.pathMu.Unlock()
+	} else if isVehicleActionStep(step.Movement) {
+		// MountVehicle/DismountVehicle/PlaceVehicle don't represent directed
+		// movement toward step.Position - the player is expected to sit
+		// still (idle inputs, see handleMountStep/handlePlaceVehicleStep)
+		// while an async action completes, sometimes taking several seconds
+		// (PlaceVehicle's boatPlacementDetectTimeout, agent/boat_placement.go,
+		// matches the default stuckThreshold below almost exactly). Distance-
+		// based progress/stuck detection has no meaningful signal here and
+		// would otherwise risk firing mid-wait and abandoning a
+		// still-in-flight placement/mount. These steps' own handlers are the
+		// only completion signal that matters.
 	} else {
 		// Check for progress - are we getting closer to the target?
 		distToTarget := currentPos.DistanceTo(step.Position)
@@ -1727,6 +1766,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		return pe.handleMountStep(step)
 	case pathfinding.DismountVehicle:
 		return pe.handleDismountStep(step)
+	case pathfinding.PlaceVehicle:
+		return pe.handlePlaceVehicleStep(step)
 	}
 
 	// Generate inputs - either normal navigation or sideways recovery
@@ -2033,6 +2074,54 @@ func (pe *PhysicsMovementExecutor) handleMountStep(step pathfinding.PathStep) ph
 	}
 
 	// Still waiting for mount
+	return pe.generateIdleInputs()
+}
+
+// handlePlaceVehicleStep handles a PlaceVehicle step - triggers placing a
+// carried boat (at step.Position) and mounting it, then waits for
+// completion. Unlike handleMountStep, there's no entity ID known in advance
+// to compare against - agent.PlaceAndMountBoat discovers it at runtime and
+// mounts directly, so completion here is "became mounted on anything",
+// matching the mountedEntityID >= 0 "isMounted" convention used elsewhere
+// (e.g. IsRiding) rather than an exact-ID match.
+func (pe *PhysicsMovementExecutor) handlePlaceVehicleStep(step pathfinding.PathStep) physics.Inputs {
+	// If not yet waiting, trigger the place-and-mount action
+	if !pe.waitingForPlacement {
+		pe.waitingForPlacement = true
+		if pe.onPlaceVehicleRequired != nil {
+			go func() {
+				err := pe.onPlaceVehicleRequired(pe.ctx, step.Position)
+				if err != nil {
+					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Place vehicle failed: %v", err))
+				}
+			}()
+		}
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Placing vehicle at %s...", step.Position))
+		return pe.generateIdleInputs() // No movement while placing
+	}
+
+	// Check if mount is complete (any vehicle, not a specific ID - see doc comment above)
+	pe.mountedEntityMu.RLock()
+	isMounted := pe.mountedEntityID >= 0
+	pe.mountedEntityMu.RUnlock()
+
+	if isMounted {
+		// Placement + mount complete, advance to next step
+		pe.waitingForPlacement = false
+		pe.pathMu.Lock()
+		pe.currentStep++
+		pe.stepStartTime = time.Now()
+		pos, _, _, _ := pe.physicsState.GetPosition()
+		pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+		pe.lastProgressPos = pe.stepStartPos
+		pe.lastProgressTime = time.Now()
+		pe.pathMu.Unlock()
+
+		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Place vehicle complete, advancing to next step"))
+		return pe.generateIdleInputs()
+	}
+
+	// Still waiting for placement/mount
 	return pe.generateIdleInputs()
 }
 

@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -65,10 +64,61 @@ func (a *agent) PlaceAndMountBoat(ctx context.Context, waterPos models.V3) error
 	return nil
 }
 
-// findBoatItemSlot scans the hotbar for any boat item. Unlike
-// findClutchItemSlot's exact-name match, boat items vary by wood type (and
-// the bamboo raft), so this matches by name shape instead of a fixed list.
+// findBoatItemSlot scans the hotbar for any boat item, matched against the
+// real "#minecraft:boats" datapack tag (boatItemNames) rather than a
+// hardcoded name-suffix guess.
 func (a *agent) findBoatItemSlot() (int16, string) {
+	boatNames, err := a.boatItemNames()
+	if err != nil || len(boatNames) == 0 {
+		return -1, ""
+	}
+	return a.findHotbarSlotMatching(boatNames)
+}
+
+// HasPlaceableBoat reports whether the agent currently carries a boat item
+// in its hotbar. Intended to be checked once per pathfinding attempt (see
+// pathfinding.BoatInventoryChecker / VehicleAwarePathFinder), not per
+// move-generation step, since inventory doesn't change mid-search.
+func (a *agent) HasPlaceableBoat() bool {
+	slot, _ := a.findBoatItemSlot()
+	return slot >= 0
+}
+
+// boatItemNames returns (and caches) the set of concrete boat item names for
+// the connected version, resolved from the real "#minecraft:boats" datapack
+// tag (data/minecraft/tags/item/boats.json, including its nested
+// "#minecraft:chest_boats" reference) via the same resolveTag/
+// craftingRecipeDataDir machinery craft.go already uses for recipe
+// ingredients - not a hardcoded name-suffix guess. See
+// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8.
+func (a *agent) boatItemNames() (map[string]bool, error) {
+	a.boatItemNamesMu.Lock()
+	defer a.boatItemNamesMu.Unlock()
+	if a.boatItemNamesCache != nil {
+		return a.boatItemNamesCache, nil
+	}
+
+	dataDir, err := a.craftingRecipeDataDir()
+	if err != nil {
+		return nil, fmt.Errorf("boat item names: %w", err)
+	}
+	names, err := resolveTag(dataDir, "#minecraft:boats", map[string][]string{}, 0)
+	if err != nil {
+		return nil, fmt.Errorf("boat item names: %w", err)
+	}
+
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	a.boatItemNamesCache = set
+	return set, nil
+}
+
+// findHotbarSlotMatching scans the hotbar for the first item whose name is a
+// member of wanted. Factored out of findBoatItemSlot so the hotbar-scanning
+// logic is testable without a live agent's version-specific data directory.
+func (a *agent) findHotbarSlotMatching(wanted map[string]bool) (int16, string) {
 	a.slotsMu.RLock()
 	defer a.slotsMu.RUnlock()
 	a.itemMgrMu.RLock()
@@ -84,18 +134,11 @@ func (a *agent) findBoatItemSlot() (int16, string) {
 			continue
 		}
 		name := a.itemMgr.GetItemNameByID(itemID)
-		if isBoatItemName(name) {
+		if wanted[name] {
 			return i - mcscreen.HotbarSlotStart, name
 		}
 	}
 	return -1, ""
-}
-
-// isBoatItemName reports whether name (e.g. "minecraft:oak_boat",
-// "minecraft:bamboo_chest_raft") names a boat-family item.
-func isBoatItemName(name string) bool {
-	return strings.HasSuffix(name, "_boat") || name == "minecraft:boat" ||
-		strings.HasSuffix(name, "_raft") || name == "minecraft:bamboo_raft"
 }
 
 // snapshotEntityIDs returns the currently-tracked entity IDs, used by

@@ -336,6 +336,12 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		out.ThrottleX = 0
 		out.ThrottleZ = 0
 
+	case PlaceVehicle:
+		// Place-and-mount step - physics executor handles placing the carried
+		// boat and mounting it. No movement input needed while placing.
+		out.ThrottleX = 0
+		out.ThrottleZ = 0
+
 	case DismountVehicle:
 		// Dismount step - physics executor handles the actual dismount action
 		// No movement input needed while dismounting
@@ -509,6 +515,13 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		// Mount/dismount actions are quick one-time events
 		// Server typically responds in 1-2 ticks
 		return 10
+
+	case PlaceVehicle:
+		// Place-and-mount takes real time: switch hotbar slot, send the
+		// place packet, then wait (bounded by boatPlacementDetectTimeout,
+		// agent/boat_placement.go) for the resulting entity to appear before
+		// mounting - budget generously relative to a plain mount.
+		return 60
 
 	// Vehicle movements
 	case VehicleTraverse:

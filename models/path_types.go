@@ -41,6 +41,7 @@ const (
 	SneakTraverse
 	MountVehicle        // Interact with a vehicle to mount it
 	DismountVehicle     // Sneak to dismount current vehicle
+	PlaceVehicle        // Place a carried boat on water and mount it (no pre-existing entity)
 	VehicleTraverse     // Land vehicle traversal (horse/camel/pig/donkey/mule)
 	VehicleAscend       // Land vehicle jump up 1-block ledge
 	VehicleLavaTraverse // Strider on lava surface
@@ -116,6 +117,8 @@ func (mt MovementType) String() string {
 		return "MountVehicle"
 	case DismountVehicle:
 		return "DismountVehicle"
+	case PlaceVehicle:
+		return "PlaceVehicle"
 	case VehicleTraverse:
 		return "VehicleTraverse"
 	case VehicleAscend:
@@ -189,6 +192,15 @@ func (mt MovementType) BaseCost() float64 {
 		return 3.0
 	case MountVehicle, DismountVehicle:
 		return 3.0 // One-time action cost
+	case PlaceVehicle:
+		// One-time cost for placing a carried boat and mounting it - a real
+		// premium over MountVehicle's 3.0 (switch hotbar slot, send the place
+		// packet, then wait for the resulting entity to actually appear
+		// before mounting), not just the instant interact a pre-existing
+		// vehicle needs. See docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's
+		// Item 8 - keeps a short crossing from choosing placement over a
+		// plain swim that would finish almost as fast.
+		return 10.0
 	case VehicleTraverse:
 		return 0.3 // Much faster than walking
 	case VehicleAscend:

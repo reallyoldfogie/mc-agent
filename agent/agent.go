@@ -326,6 +326,15 @@ type agent struct {
 	// clutch assist
 	lastClutchAction time.Time
 
+	// boatItemNamesMu guards boatItemNamesCache.
+	boatItemNamesMu sync.Mutex
+	// boatItemNamesCache memoizes boatItemNames' resolution of the
+	// "#minecraft:boats" datapack tag for the connected version - the set of
+	// concrete item names doesn't change during a session, so this avoids
+	// re-reading/re-parsing the tag file on every PlaceAndMountBoat/
+	// HasPlaceableBoat call. Nil until the first successful resolution.
+	boatItemNamesCache map[string]bool
+
 	// plan runner
 	planRunner *plan.Runner
 
@@ -862,6 +871,19 @@ func (a *agent) Init(ctx context.Context) error {
 			a.logf("[Agent %s] Mount/dismount callbacks configured", a.cfg.Name)
 		}
 
+		// Set up the place-and-mount callback for boat-placement pathfinding
+		// (see docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8).
+		if placeCallbackSetter, ok := a.moveExec.(interface {
+			SetPlaceVehicleCallback(func(context.Context, models.V3) error)
+		}); ok {
+			placeCallbackSetter.SetPlaceVehicleCallback(
+				func(ctx context.Context, waterPos models.V3) error {
+					return a.PlaceAndMountBoat(ctx, waterPos)
+				},
+			)
+			a.logf("[Agent %s] Place-vehicle callback configured", a.cfg.Name)
+		}
+
 		// Wrap with HPA* for hierarchical pathfinding on long distances
 		// Larger cluster size = fewer clusters, faster building (but more entrances per cluster)
 		// 32x32x32 aligns with Minecraft chunks (16x16) and is power-of-2 for CPU efficiency
@@ -884,6 +906,17 @@ func (a *agent) Init(ctx context.Context) error {
 			a.logger,
 		)
 		a.pathfind = vehicleAwarePathfinder
+
+		// Wire in the carried-boat check (see
+		// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8) so the
+		// vehicle-aware pathfinder can consider placing a boat, not just
+		// riding one that already exists in the world.
+		if boatCheckerSetter, ok := vehicleAwarePathfinder.(interface {
+			SetBoatInventoryChecker(pathfinding.BoatInventoryChecker)
+		}); ok {
+			boatCheckerSetter.SetBoatInventoryChecker(a)
+			a.logf("[Agent %s] Boat inventory checker configured", a.cfg.Name)
+		}
 
 		// Create update handler for dynamic world changes
 		// Need to extract builder from HPA pathfinder

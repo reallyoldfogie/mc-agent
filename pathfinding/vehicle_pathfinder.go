@@ -27,6 +27,16 @@ type VehicleProvider interface {
 	FindRideableEntitiesNear(center models.V3, radius float64, honorPerceptionEffects bool) []RideableEntity
 }
 
+// BoatInventoryChecker reports whether the agent currently carries an item
+// that could be placed as a boat and mounted (see agent.PlaceAndMountBoat).
+// VehicleAwarePathFinder calls this once per FindPath call, not once per
+// move-generation step — inventory doesn't change mid-search, so there's no
+// need to re-check it on every candidate move. See
+// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8.
+type BoatInventoryChecker interface {
+	HasPlaceableBoat() bool
+}
+
 // VehicleAwarePathFinder wraps any PathFinder and considers vehicle paths as well as foot paths.
 type VehicleAwarePathFinder struct {
 	base            models.PathFinder
@@ -35,6 +45,10 @@ type VehicleAwarePathFinder struct {
 	shapeMgr        models.BlockShapeManager
 	searchRadius    float64
 	logger          *slog.Logger
+	// boatChecker is optional (nil-safe) — set via SetBoatInventoryChecker.
+	// When nil, boat-placement candidates are never considered, matching the
+	// pre-Item-8 behavior exactly.
+	boatChecker BoatInventoryChecker
 }
 
 // NewVehicleAwarePathFinder creates a new vehicle-aware pathfinder.
@@ -60,6 +74,14 @@ func NewVehicleAwarePathFinder(
 	}
 }
 
+// SetBoatInventoryChecker wires in the optional carried-boat check (see
+// BoatInventoryChecker's doc comment). Not required — a VehicleAwarePathFinder
+// with no checker set behaves exactly as before Item 8, only ever considering
+// vehicles that already exist in the world.
+func (vap *VehicleAwarePathFinder) SetBoatInventoryChecker(checker BoatInventoryChecker) {
+	vap.boatChecker = checker
+}
+
 // FindPath finds the best path considering both foot and vehicle options.
 func (vap *VehicleAwarePathFinder) FindPath(
 	ctx context.Context,
@@ -76,26 +98,35 @@ func (vap *VehicleAwarePathFinder) FindPath(
 		return footPath, nil // No foot path found; return empty
 	}
 
+	bestPath := footPath
+	bestCost := footPath.TotalCost
+
 	// Check for nearby vehicles. Real path-planning should behave as if
 	// Blindness/Darkness matters — an agent that can't see past 5-15 blocks
 	// shouldn't detour to a mount outside its own vision.
 	vehicles := vap.vehicleProvider.FindRideableEntitiesNear(start, vap.searchRadius, true)
-	if len(vehicles) == 0 {
-		return footPath, nil // No vehicles nearby; use foot path
+	if len(vehicles) > 0 {
+		utils.SafeLogger(vap.logger).Debug("[VehicleAware] found rideable entities", "count", len(vehicles), "x", start.X, "y", start.Y, "z", start.Z)
+
+		for _, vehicle := range vehicles {
+			vehiclePath := vap.buildPathWithVehicle(ctx, start, goal, vehicle, maxSteps)
+			if vehiclePath != nil && vehiclePath.Found && vehiclePath.TotalCost < bestCost {
+				utils.SafeLogger(vap.logger).Debug("[VehicleAware] vehicle path found", "entityType", vehicle.EntityType, "entityID", vehicle.EntityID, "cost", vehiclePath.TotalCost, "footCost", footPath.TotalCost)
+				bestPath = vehiclePath
+				bestCost = vehiclePath.TotalCost
+			}
+		}
 	}
 
-	utils.SafeLogger(vap.logger).Debug("[VehicleAware] found rideable entities", "count", len(vehicles), "x", start.X, "y", start.Y, "z", start.Z)
-
-	// Try each vehicle and keep the best path
-	bestPath := footPath
-	bestCost := footPath.TotalCost
-
-	for _, vehicle := range vehicles {
-		vehiclePath := vap.buildPathWithVehicle(ctx, start, goal, vehicle, maxSteps)
-		if vehiclePath != nil && vehiclePath.Found && vehiclePath.TotalCost < bestCost {
-			utils.SafeLogger(vap.logger).Debug("[VehicleAware] vehicle path found", "entityType", vehicle.EntityType, "entityID", vehicle.EntityID, "cost", vehiclePath.TotalCost, "footCost", footPath.TotalCost)
-			bestPath = vehiclePath
-			bestCost = vehiclePath.TotalCost
+	// Boat placement: checked once here, not once per move-generation step —
+	// inventory doesn't change mid-search. Considered independently of
+	// whether any in-world vehicle exists.
+	if vap.boatChecker != nil && vap.boatChecker.HasPlaceableBoat() {
+		placementPath := vap.buildPathWithBoatPlacement(ctx, footPath, goal, maxSteps)
+		if placementPath != nil && placementPath.Found && placementPath.TotalCost < bestCost {
+			utils.SafeLogger(vap.logger).Debug("[VehicleAware] boat placement path found", "cost", placementPath.TotalCost, "footCost", footPath.TotalCost)
+			bestPath = placementPath
+			bestCost = placementPath.TotalCost
 		}
 	}
 
@@ -139,6 +170,131 @@ func (vap *VehicleAwarePathFinder) buildPathWithVehicle(
 
 	// Splice paths together
 	return vap.splicePaths(pathToVehicle, vehiclePath, footToGoal, vehicle.EntityID)
+}
+
+// buildPathWithBoatPlacement constructs a path that places a carried boat at
+// the water's edge and rides it toward goal:
+// foot_to_water_edge + PlaceVehicle + vehicle_segment + DismountVehicle + foot_to_goal.
+//
+// The placement point is derived from footPath's own first WadeWater/Swim
+// step, rather than an independent "nearest water" search — this directly
+// covers the scenario this whole plan is about (a foot path that already
+// crosses water, per pathfinding/movement.go's WadeWater/Swim generation),
+// letting a boat compete as a cheaper alternative for that same crossing.
+// Known scope limit: if the base pathfinder avoided water entirely (chose a
+// dry detour because swimming wasn't worth it), footPath contains no
+// water-touching step at all, so this returns nil even in cases where
+// placing a boat might have been worth a detour of its own — extending this
+// to search for a water crossing independent of the already-chosen foot path
+// is real, separate follow-up work, not attempted here. See
+// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 8.
+func (vap *VehicleAwarePathFinder) buildPathWithBoatPlacement(
+	ctx context.Context,
+	footPath *Path,
+	goal models.V3,
+	maxSteps int,
+) *Path {
+	waterStepIdx := -1
+	for i, step := range footPath.Steps {
+		if step.Movement == models.WadeWater || step.Movement == models.Swim {
+			waterStepIdx = i
+			break
+		}
+	}
+	if waterStepIdx < 0 {
+		return nil // Foot path never touches water; nothing to place a boat onto
+	}
+
+	// The vehicle segment targets the FAR shore (the last step of this
+	// contiguous water crossing in footPath), not the overall goal directly.
+	// A boat-only search (caps.CanTraverseLand=false) can never satisfy
+	// buildVehiclePath's "within 0.5 blocks of goal" completion condition if
+	// goal is inland past the crossing - it would just exhaust its open set
+	// and report not-found. Deriving both shore points from footPath (which
+	// already knows exactly where the water starts and ends) sidesteps that
+	// entirely.
+	farShoreStepIdx := waterStepIdx
+	for farShoreStepIdx+1 < len(footPath.Steps) {
+		next := footPath.Steps[farShoreStepIdx+1]
+		if next.Movement != models.WadeWater && next.Movement != models.Swim {
+			break
+		}
+		farShoreStepIdx++
+	}
+
+	waterPos := footPath.Steps[waterStepIdx].Position
+	farShorePos := footPath.Steps[farShoreStepIdx].Position
+
+	landSteps := footPath.Steps[:waterStepIdx]
+	pathToWater := &Path{
+		Steps:    append([]PathStep{}, landSteps...),
+		StartPos: footPath.StartPos,
+		GoalPos:  waterPos,
+		Found:    true,
+	}
+	for _, s := range pathToWater.Steps {
+		pathToWater.TotalCost += s.Cost
+	}
+
+	caps := models.GetVehicleCapabilities(models.VehicleTypeBoat)
+	vehiclePath := vap.buildVehiclePath(ctx, waterPos, farShorePos, 0, &caps, maxSteps)
+	if vehiclePath == nil || !vehiclePath.Found {
+		return nil
+	}
+
+	footToGoal, err := vap.base.FindPath(ctx, vehiclePath.GoalPos, goal, maxSteps)
+	if err != nil || !footToGoal.Found {
+		return nil
+	}
+
+	return vap.splicePathsWithPlacement(pathToWater, vehiclePath, footToGoal, waterPos)
+}
+
+// splicePathsWithPlacement is splicePaths' counterpart for a placed (rather
+// than pre-existing) vehicle: a single PlaceVehicle step stands in for
+// MountVehicle, since the real entity ID doesn't exist until execution
+// reaches that step — agent.PlaceAndMountBoat resolves it at runtime and
+// mounts directly, so nothing downstream needs to know it in advance (the
+// following VehicleSwim/DismountVehicle steps' VehicleEntityID is unused —
+// see movement/physics_executor.go's handleDismountStep, which checks
+// pe.mountedEntityID, never step.VehicleEntityID).
+func (vap *VehicleAwarePathFinder) splicePathsWithPlacement(
+	pathToWater, vehiclePath, pathFromVehicle *Path,
+	waterPos models.V3,
+) *Path {
+	steps := make([]PathStep, 0, len(pathToWater.Steps)+len(vehiclePath.Steps)+len(pathFromVehicle.Steps)+2)
+
+	steps = append(steps, pathToWater.Steps...)
+
+	steps = append(steps, PathStep{
+		Position: waterPos,
+		Movement: models.PlaceVehicle,
+		Cost:     models.PlaceVehicle.BaseCost(),
+	})
+
+	steps = append(steps, vehiclePath.Steps...)
+
+	dismountPos := vehiclePath.GoalPos
+	steps = append(steps, PathStep{
+		Position: dismountPos,
+		Movement: models.DismountVehicle,
+		Cost:     models.DismountVehicle.BaseCost(),
+	})
+
+	steps = append(steps, pathFromVehicle.Steps...)
+
+	totalCost := pathToWater.TotalCost + models.PlaceVehicle.BaseCost() +
+		vehiclePath.TotalCost + models.DismountVehicle.BaseCost() +
+		pathFromVehicle.TotalCost
+
+	return &Path{
+		Steps:      steps,
+		TotalCost:  totalCost,
+		StartPos:   pathToWater.StartPos,
+		GoalPos:    pathFromVehicle.GoalPos,
+		Found:      true,
+		SearchTime: pathToWater.SearchTime + vehiclePath.SearchTime + pathFromVehicle.SearchTime,
+	}
 }
 
 // buildVehiclePath finds a path for a vehicle from start toward goal.

@@ -38,6 +38,7 @@ const (
 	SneakTraverse       = models.SneakTraverse
 	MountVehicle        = models.MountVehicle
 	DismountVehicle     = models.DismountVehicle
+	PlaceVehicle        = models.PlaceVehicle
 	VehicleTraverse     = models.VehicleTraverse
 	VehicleAscend       = models.VehicleAscend
 	VehicleLavaTraverse = models.VehicleLavaTraverse
