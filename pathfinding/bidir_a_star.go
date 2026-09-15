@@ -394,7 +394,18 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 
-		// If we can descend FROM neighbor (1-3 above) TO here, then that neighbor is valid
+		// If we can descend FROM neighbor (1-3 above) TO here, then that neighbor
+		// is valid. Unlike forward generation (movement.go), which can stop at
+		// the first valid drop height because 'from' is a fixed, real position
+		// and gravity would stop the fall there, CanDescend itself never
+		// validates 'from' - so here, where we're guessing candidate 'from'
+		// positions at every height, a shallower drop height can spuriously
+		// satisfy CanDescend from a position that was never actually reachable
+		// (e.g. mid-air under an elevated platform). Breaking after the first
+		// match discarded the genuine deeper drop (e.g. straight off a 3-block
+		// platform edge) whenever that happened, silently making the real
+		// source unreachable from backward search. Emit every valid height
+		// instead and let normal graph connectivity discard the bogus ones.
 		for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
 			fromAbove := to.Add(models.V3{X: dir.dx, Y: dropHeight, Z: dir.dz})
 			if pf.movementValidator.CanDescend(fromAbove, to) {
@@ -403,7 +414,6 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 					Movement: Descend,
 					Cost:     Descend.BaseCost(),
 				})
-				break // Only take first valid
 			}
 		}
 
@@ -436,6 +446,37 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Cost:     Jump2.BaseCost() + 0.5,
 			})
 		}
+
+		// WadeWater reverse - could have waded into this water cell from an
+		// adjacent dry or water cell. Forward GetPossibleMoves generates this
+		// for cardinal directions (movement.go); it was previously missing
+		// here entirely, which silently made any water crossing unreachable
+		// from the backward (goal-side) search.
+		if pf.movementValidator.CanWadeWater(from, to) {
+			moves = append(moves, PathStep{
+				Position: from,
+				Movement: WadeWater,
+				Cost:     WadeWater.BaseCost(),
+			})
+		}
+
+		// ExitWater reverse - could have exited water onto this dry position,
+		// either at the same level or via a one-block step-up. Also previously
+		// missing, so backward search could never leave a body of water.
+		if pf.movementValidator.CanExitWater(from, to) {
+			moves = append(moves, PathStep{
+				Position: from,
+				Movement: ExitWater,
+				Cost:     ExitWater.BaseCost(),
+			})
+		}
+		if pf.movementValidator.CanExitWater(fromBelow, to) {
+			moves = append(moves, PathStep{
+				Position: fromBelow,
+				Movement: ExitWater,
+				Cost:     ExitWater.BaseCost() + 0.5,
+			})
+		}
 	}
 
 	// Diagonal movements
@@ -446,6 +487,13 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Position: from,
 				Movement: DiagonalTraverse,
 				Cost:     DiagonalTraverse.BaseCost(),
+			})
+		}
+		if pf.movementValidator.CanDiagonalWadeWater(from, to) {
+			moves = append(moves, PathStep{
+				Position: from,
+				Movement: WadeWater,
+				Cost:     WadeWater.BaseCost(),
 			})
 		}
 
@@ -498,6 +546,31 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 				Position: fromAbove,
 				Movement: EnterClimb,
 				Cost:     EnterClimb.BaseCost(),
+			})
+		}
+
+		// ExitClimb reverse - could have exited a ladder/vine onto this
+		// position, either at the same level or via a one-block step-up (see
+		// MovementValidator.CanExitClimb / getExitClimbTargetY). Also
+		// previously missing, so backward search could never leave a
+		// ladder-gated platform - the exact case that made the goal
+		// unreachable from a course where the only way up is a ladder.
+		sameLevelTo := models.V3{X: to.X, Y: to.Y, Z: to.Z}
+		if pf.movementValidator.CanExitClimb(from, sameLevelTo) &&
+			pf.movementValidator.getExitClimbTargetY(from, sameLevelTo) == to.Y {
+			moves = append(moves, PathStep{
+				Position: from,
+				Movement: ExitClimb,
+				Cost:     ExitClimb.BaseCost(),
+			})
+		}
+		stepUpTo := models.V3{X: to.X, Y: to.Y - 1, Z: to.Z}
+		if pf.movementValidator.CanExitClimb(fromBelow, stepUpTo) &&
+			pf.movementValidator.getExitClimbTargetY(fromBelow, stepUpTo) == to.Y {
+			moves = append(moves, PathStep{
+				Position: fromBelow,
+				Movement: ExitClimb,
+				Cost:     ExitClimb.BaseCost(),
 			})
 		}
 	}
