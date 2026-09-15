@@ -96,9 +96,12 @@ func EffectSpeedMultiplier(hasSpeed bool, speedAmplifier int32, hasSlowness bool
 // sprint state or amplifier. The vertical (Y) multiplier is unaffected by
 // this effect in vanilla (always a fixed 0.8F) and is not this function's
 // concern — callers should keep applying WaterDrag to Y unconditionally.
-func HorizontalWaterDrag(hasDolphinsGrace bool) float64 {
+func HorizontalWaterDrag(hasDolphinsGrace, isSprinting bool) float64 {
 	if hasDolphinsGrace {
 		return DolphinsGraceWaterDragMultiplier
+	}
+	if isSprinting {
+		return SprintWaterDrag
 	}
 	return WaterDrag
 }

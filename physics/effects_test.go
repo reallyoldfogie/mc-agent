@@ -156,14 +156,17 @@ func TestHorizontalWaterDrag(t *testing.T) {
 	tests := []struct {
 		name             string
 		hasDolphinsGrace bool
+		isSprinting      bool
 		expected         float64
 	}{
-		{name: "no effect: normal water drag", hasDolphinsGrace: false, expected: WaterDrag},
-		{name: "dolphins grace: overrides to flat 0.96", hasDolphinsGrace: true, expected: DolphinsGraceWaterDragMultiplier},
+		{name: "no effect, not sprinting: normal water drag", hasDolphinsGrace: false, isSprinting: false, expected: WaterDrag},
+		{name: "sprinting, no Dolphin's Grace: reduced drag", hasDolphinsGrace: false, isSprinting: true, expected: SprintWaterDrag},
+		{name: "dolphins grace: overrides to flat 0.96 regardless of sprint", hasDolphinsGrace: true, isSprinting: false, expected: DolphinsGraceWaterDragMultiplier},
+		{name: "dolphins grace takes precedence over sprint", hasDolphinsGrace: true, isSprinting: true, expected: DolphinsGraceWaterDragMultiplier},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := HorizontalWaterDrag(tt.hasDolphinsGrace)
+			got := HorizontalWaterDrag(tt.hasDolphinsGrace, tt.isSprinting)
 			assert.InDelta(t, tt.expected, got, 1e-9)
 		})
 	}

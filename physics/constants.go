@@ -313,6 +313,17 @@ const (
 	// horizontal (X/Z) multiplier needs to become effect-dependent.
 	WaterDrag = 0.8 // Velocity multiplier per tick
 
+	// SprintWaterDrag overrides the horizontal-only water drag multiplier while
+	// sprinting (and Dolphin's Grace is not active), cited from Java
+	// LivingEntity.travelInFluid's `f = this.isSprinting() ? 0.9F : this.getBaseWaterMovementSpeedMultiplier()`.
+	// This is the only vanilla mechanism behind "swimming is faster than wading" -
+	// it is a pure function of isSprinting(), NOT of submersion depth or whether
+	// the destination has ground support beneath it (verified against source; see
+	// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md). Acceleration (`Acceleration`
+	// constant) is unaffected by sprint in water absent Depth Strider - only drag
+	// changes, unlike on dry land where SprintMultiplier scales throttle instead.
+	SprintWaterDrag = 0.9
+
 	// DolphinsGraceWaterDragMultiplier overrides the horizontal-only water
 	// drag multiplier (see WaterDrag) while Dolphin's Grace is active, cited
 	// from Java LivingEntity.travelInWater's `if (hasStatusEffect(DOLPHINS_GRACE)) { f = 0.96F; }`.

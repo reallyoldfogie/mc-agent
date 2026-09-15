@@ -285,17 +285,21 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		}
 
 	case WadeWater:
-		// Wading/treading through water without full submersion - no sprint benefit
-		// unless also fully submerged (see Swim), default inputs are fine.
+		// Wading/treading through water at the plain (non-sprint) speed -
+		// default inputs are fine, no sprint held.
 
 	case Swim:
-		// Swimming in water (horizontal)
-		// Similar to traverse but slower
-		// Default inputs work, physics will handle water resistance
+		// Committed sprint-swim: hold sprint so the physics engine applies the
+		// reduced water drag (HorizontalWaterDrag/SprintWaterDrag) instead of
+		// the plain WadeWater baseline - this is what actually makes Swim's
+		// lower BaseCost() correspond to a real speed difference at execution
+		// time, not just a cheaper search-time number.
+		out.Sprint = true
 
 	case SwimUp:
 		// Swimming up in water
 		out.Jump = true // Jump button makes you swim up
+		out.Sprint = true
 
 	case SwimDown:
 		// Swimming down in water
@@ -445,8 +449,11 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		return int(dist/0.10) + 15
 
 	case Swim:
-		// Swimming: ~0.12 blocks/tick (even slower)
-		return int(dist/0.10) + 15
+		// Committed sprint-swim: ~0.2 blocks/tick (~4.0 blocks/s), verified against
+		// decompiled source - nearly walking speed, see
+		// WATER_TRAVERSAL_PATHFINDING_PLAN.md. Requires GenerateInputs to actually
+		// hold sprint for this step (see its Swim case) for this estimate to hold.
+		return int(dist/0.20) + 15
 
 	case SwimUp:
 		// Swimming up: ~0.1 blocks/tick

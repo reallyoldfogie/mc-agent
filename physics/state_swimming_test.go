@@ -1,6 +1,7 @@
 package physics
 
 import (
+	"math"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -215,4 +216,34 @@ func TestSwimming_SwimUpReachesSurface(t *testing.T) {
 
 	assert.Greater(t, physicsState.Position().Y, 4.0,
 		"player should have reached near the water surface (pool top Y=5)")
+}
+
+// TestSwimming_SprintingIncreasesHorizontalSpeed verifies the WATER_TRAVERSAL_PATHFINDING_PLAN.md
+// fix: sprinting while in water should reduce horizontal drag (SprintWaterDrag vs WaterDrag),
+// matching the real distinction between WadeWater (non-sprint) and Swim (sprint) BaseCost() values.
+func TestSwimming_SprintingIncreasesHorizontalSpeed(t *testing.T) {
+	world, shapes := createWaterPool(10)
+
+	wading := NewState(shapes, nil)
+	wading.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
+	wading.SetVelocity(models.V3{})
+
+	swimming := NewState(shapes, nil)
+	swimming.SetPosition(models.V3{X: 0, Y: 5, Z: 0}, 0, 0, false)
+	swimming.SetVelocity(models.V3{})
+
+	wadeInput := Inputs{ThrottleX: 1.0}
+	swimInput := Inputs{ThrottleX: 1.0, Sprint: true}
+	const ticks = 20
+	for range ticks {
+		require.NoError(t, wading.Tick(wadeInput, world))
+		require.NoError(t, swimming.Tick(swimInput, world))
+	}
+
+	wadeDist := math.Abs(wading.Position().X)
+	swimDist := math.Abs(swimming.Position().X)
+	t.Logf("after %d ticks: wading=%.4f, sprint-swimming=%.4f", ticks, wadeDist, swimDist)
+
+	assert.Greater(t, swimDist, wadeDist,
+		"sprint-swimming should cover more horizontal distance than plain wading in the same number of ticks")
 }

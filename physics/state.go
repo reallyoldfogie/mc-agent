@@ -635,7 +635,7 @@ func (s *state) Tick(input Inputs, w World) error {
 	}
 
 	// Apply gravity, drag, and water flow based on water state
-	s.applyEnvironmentForces(inertiaFactor, w)
+	s.applyEnvironmentForces(inertiaFactor, input.Sprint, w)
 
 	// Gated: fires every physics tick — see the sibling Tick-start log
 	// above.
@@ -675,16 +675,16 @@ func (s *state) detectWaterState(w World) {
 
 // applyEnvironmentForces applies gravity, drag, and water flow based on current water state.
 // Must only be called while the write lock is held.
-func (s *state) applyEnvironmentForces(inertiaFactor float64, w World) {
+func (s *state) applyEnvironmentForces(inertiaFactor float64, isSprinting bool, w World) {
 	if s.isInWater {
 		// Apply reduced gravity in water
 		s.Vel.Y -= Gravity * WaterGravityFactor
 
 		// Apply water drag (higher than air drag). Horizontal (X/Z) drag is
-		// the effect-dependent axis (Dolphin's Grace overrides it); vertical
-		// (Y) always uses the fixed WaterDrag baseline, matching Java
-		// travelInWater's vec3d.multiply(f, 0.8F, f).
-		horizontalDrag := HorizontalWaterDrag(s.activeEffects.HasDolphinsGrace)
+		// the effect/sprint-dependent axis (Dolphin's Grace, then sprinting,
+		// override the baseline); vertical (Y) always uses the fixed WaterDrag
+		// baseline, matching Java travelInWater's vec3d.multiply(f, 0.8F, f).
+		horizontalDrag := HorizontalWaterDrag(s.activeEffects.HasDolphinsGrace, isSprinting)
 		s.Vel.X *= horizontalDrag
 		s.Vel.Y *= WaterDrag
 		s.Vel.Z *= horizontalDrag
@@ -978,8 +978,12 @@ func (s *state) applyMovementInputs(input Inputs, acceleration, jumpVelocityMult
 	throttleX := input.ThrottleX * speed
 	throttleZ := input.ThrottleZ * speed
 
-	// Apply sprint/sneak multipliers
-	if input.Sprint {
+	// Apply sprint/sneak multipliers. Sprint's throttle boost is a dry-land-only
+	// mechanic - in water, sprinting instead reduces drag (see
+	// applyEnvironmentForces/HorizontalWaterDrag); accel stays at the water
+	// baseline regardless of sprint (verified against source, no Depth Strider
+	// modeled yet - see docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md).
+	if input.Sprint && !s.isInWater {
 		throttleX *= SprintMultiplier
 		throttleZ *= SprintMultiplier
 	} else if input.Sneak {
