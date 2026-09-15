@@ -1398,6 +1398,23 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		}
 	}
 
+	// Air supply (key 8) is captured separately for the bot's own entity, the
+	// same way onEntityEffect caches ownEffects - the bot's own entity is
+	// never present in a.entities (no AddEntity spawn packet for ourselves).
+	if entityID == a.GetEntityID() {
+		for _, entry := range entries {
+			if int(entry.Key) != int(models.EntityMetadataKeyAirSupply) {
+				continue
+			}
+			if airVal, ok := entry.Value.(int32); ok {
+				a.ownAirSupplyMu.Lock()
+				a.ownAirSupply = airVal
+				a.hasOwnAirSupply = true
+				a.ownAirSupplyMu.Unlock()
+			}
+		}
+	}
+
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
 		// Only update if health was actually provided in metadata
@@ -1486,6 +1503,15 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 						entityID, e.HorseFlags,
 						models.HorseFlagSaddled.IsSet(e.HorseFlags),
 						models.HorseFlagTamed.IsSet(e.HorseFlags))
+				}
+			case int(models.EntityMetadataKeyAirSupply):
+				// Key 8 is AIR on every LivingEntity - ticks of air remaining
+				// while submerged. See docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's
+				// Item 6: exposed for the pathfinder/movement layer to avoid
+				// planning/executing a swim route that would drown the bot.
+				if airVal, ok := entry.Value.(int32); ok {
+					e.AirSupply = airVal
+					e.HasAirSupply = true
 				}
 			case int(models.EntityMetadataKeyFireworkShooterEntityID):
 				// Key 9 is only FireworkRocketEntity's SHOOTER_ENTITY_ID on

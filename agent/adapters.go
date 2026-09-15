@@ -779,6 +779,15 @@ func (a *agent) GetOwnActiveEffect(effectName string) (int32, bool) {
 	return effect.Amplifier, true
 }
 
+// GetOwnAirSupply returns the bot's own last-known AIR metadata value (ticks
+// of air remaining while submerged) and whether any update has been received
+// yet. See docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 6.
+func (a *agent) GetOwnAirSupply() (int32, bool) {
+	a.ownAirSupplyMu.RLock()
+	defer a.ownAirSupplyMu.RUnlock()
+	return a.ownAirSupply, a.hasOwnAirSupply
+}
+
 // GetOwnEquippedChestItem returns the local item name (unprefixed, e.g.
 // "elytra") in the agent's own chest armor slot. See
 // models.MountedEntityPositionGetter.GetOwnEquippedChestItem.

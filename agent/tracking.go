@@ -107,6 +107,17 @@ type trackedEntity struct {
 	// arrives, matching HorseFlags/IsBaby's "not seen yet" convention.
 	FireworkShooterEntityID    int32
 	HasFireworkShooterEntityID bool
+
+	// AirSupply mirrors LivingEntity's AIR tracked int (metadata key 8, see
+	// models.EntityMetadataKeyAirSupply) - ticks of air remaining while
+	// submerged, used to avoid planning/executing a swim route that would
+	// drown the bot (see docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item
+	// 6). HasAirSupply stays false until the first update arrives; unlike
+	// HorseFlags/IsBaby, full air (300) IS a valid, frequently-sent value (the
+	// server does resync it), so "not seen" and "full air" are genuinely
+	// different here and must not be conflated.
+	AirSupply    int32
+	HasAirSupply bool
 }
 
 // GetPosition returns the current bot position and rotation.

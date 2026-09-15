@@ -114,6 +114,13 @@ type MountedEntityPositionGetter interface {
 	// is true.
 	GetOwnActiveEffect(effectName string) (amplifier int32, found bool)
 
+	// GetOwnAirSupply returns the agent's own last-known AIR metadata value
+	// (ticks of air remaining while submerged) and whether any update has
+	// been received yet. See docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's
+	// Item 6 - intended for the pathfinder/movement layer to avoid
+	// planning/executing a swim route that would drown the bot.
+	GetOwnAirSupply() (airTicks int32, found bool)
+
 	// GetOwnEquippedChestItem returns the local item name (unprefixed, e.g.
 	// "elytra") of whatever the agent's own player currently has equipped
 	// in its chest armor slot (player inventory slot index 6). Returns

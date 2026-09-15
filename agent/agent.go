@@ -220,6 +220,16 @@ type agent struct {
 	// so GetOwnActiveEffect has somewhere to actually read from.
 	ownEffects map[string]models.ActiveEffect
 
+	// ownAirSupplyMu guards ownAirSupply/hasOwnAirSupply.
+	ownAirSupplyMu sync.RWMutex
+	// ownAirSupply is the agent's own player entity's last-known AIR metadata
+	// value (ticks of air remaining while submerged). Tracked separately from
+	// entities for the same reason ownEffects is - the bot's own entity is
+	// never present there. See GetOwnAirSupply and
+	// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 6.
+	ownAirSupply    int32
+	hasOwnAirSupply bool
+
 	// entityWindowsMu guards entityWindows.
 	entityWindowsMu sync.RWMutex
 	// entityWindows maps an open container window ID to the entity whose

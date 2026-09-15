@@ -49,6 +49,8 @@ func (f *fakeAttributeGetter) GetRiderHeldItem() (string, bool) { return "", fal
 
 func (f *fakeAttributeGetter) GetOwnActiveEffect(string) (int32, bool) { return 0, false }
 
+func (f *fakeAttributeGetter) GetOwnAirSupply() (int32, bool) { return 0, false }
+
 func (f *fakeAttributeGetter) GetOwnEquippedChestItem() (string, bool) { return "", false }
 
 func (f *fakeAttributeGetter) GetOwnEquippedFeetItem() (string, bool) { return "", false }
