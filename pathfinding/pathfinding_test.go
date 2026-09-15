@@ -953,3 +953,61 @@ func TestHPAVariantsCorrectness(t *testing.T) {
 		})
 	}
 }
+
+// TestNarrowRiverCrossing_PrefersDirectCrossingOverDetour is
+// WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 5 regression test: a short river directly between the
+// bot and its goal should be crossed rather than walked around, purely from correct per-tile costs
+// (Items 1-3) and A*'s additive cost summation - no river-specific special-casing.
+//
+// World: a 15x11 flat grass platform (Y=64) with a 3-block-wide water strip at X=6-8 covering
+// Z=0-8, leaving Z=9-10 as a dry "bridge" at the south end. Start=(2,65,2), Goal=(12,65,2).
+//   - Direct crossing: ~10 blocks east, 3 of them through water. Expected cost roughly
+//     7 dry (~7.0) + 3 water (~3-6.5 depending on WadeWater vs Swim) = 10-14ish.
+//   - Going around via the dry bridge at Z=9-10: ~7 south + ~10 east + ~7 north = ~24, all dry.
+//
+// If water were costed disproportionately (the risk flagged when Item 4's cost-bias tuning was
+// designed), the 24-cost dry detour could beat the direct crossing; with the actual verified
+// costs it shouldn't.
+func TestNarrowRiverCrossing_PrefersDirectCrossingOverDetour(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	grassID := registry.GetStateID("minecraft:grass_block", nil)
+	waterID := registry.GetStateID("minecraft:water", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 14, 10, 64, grassID). // Solid ground under the whole platform, including the river bed
+		WaterDirect(6, 65, 0, 8, 65, 8, waterID).    // 3-block-wide river, leaving Z=9-10 dry
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
+
+	start := models.V3{X: 2, Y: 65, Z: 2}
+	goal := models.V3{X: 12, Y: 65, Z: 2}
+
+	path, err := pathFinder.FindPath(context.Background(), start, goal, 5000)
+	if err != nil {
+		t.Fatalf("Failed to find path: %v", err)
+	}
+	if path == nil || len(path.Steps) == 0 {
+		t.Fatal("Path is nil or empty")
+	}
+
+	t.Logf("Path: %d steps, cost=%.2f", len(path.Steps), path.TotalCost)
+
+	const detourCost = 24.0 // all-dry route around the river's south end
+	if path.TotalCost >= detourCost {
+		t.Errorf("expected a direct river crossing (cost well under the %.1f-cost dry detour), got cost=%.2f",
+			detourCost, path.TotalCost)
+	}
+
+	crossedWater := false
+	for _, step := range path.Steps {
+		if step.Movement == pathfinding.WadeWater || step.Movement == pathfinding.Swim {
+			crossedWater = true
+			break
+		}
+	}
+	if !crossedWater {
+		t.Error("expected the chosen path to actually cross the river (WadeWater or Swim step), not avoid it entirely")
+	}
+}
