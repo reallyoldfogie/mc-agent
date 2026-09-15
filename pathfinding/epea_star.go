@@ -114,6 +114,23 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 		}, nil
 	}
 
+	// Cheap upfront reachability check: if nothing within goalRadius of the
+	// goal is even walkable (e.g. the goal is a solid block's own
+	// coordinates), the search below is guaranteed to exhaust its entire
+	// step budget without success, every time, regardless of maxSteps or
+	// context deadline - because the termination condition can never be
+	// satisfied. Fail fast instead of proving that the slow way. See
+	// docs/bugs/hpa-star-slowness.
+	if goalUnreachable(pf.world, pf.shapeMgr, pf.goalRadius, goal) {
+		return &Path{
+			Found:      false,
+			StartPos:   start,
+			GoalPos:    goal,
+			SearchTime: float64(time.Since(startTime).Milliseconds()),
+		}, fmt.Errorf("path not found: goal (%.1f,%.1f,%.1f) has no walkable cell within goal radius %.2f (likely inside a solid block or missing ground support)",
+			goal.X, goal.Y, goal.Z, pf.goalRadius)
+	}
+
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),

@@ -179,7 +179,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 	// docs/bugs/hpa-star-slowness: a real caller did exactly this (passed a
 	// crafting table's own coordinates as the MoveTo target) and every call
 	// burned 100s-900s before finally reporting failure.
-	if pf.goalUnreachable(goal) {
+	if goalUnreachable(pf.world, pf.shapeMgr, pf.goalRadius, goal) {
 		return &Path{
 			Found:      false,
 			StartPos:   start,
@@ -349,36 +349,6 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 // FindGroundBelow delegates to the movement validator to find valid ground
 func (pf *aStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
 	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
-}
-
-// goalUnreachable reports whether goal is *definitely* unreachable: no
-// walkable cell (passable feet+head, solid ground support) exists anywhere
-// within goalRadius of it. Cells in an unloaded chunk are treated as
-// "unknown" rather than unwalkable, so this never produces a false
-// negative that blocks a legitimately pending world - it only fires when
-// every candidate cell's data is available and none of them qualify.
-func (pf *aStarPathFinder) goalUnreachable(goal models.V3) bool {
-	r := int(math.Ceil(pf.goalRadius))
-	for dx := -r; dx <= r; dx++ {
-		for dy := -r; dy <= r; dy++ {
-			for dz := -r; dz <= r; dz++ {
-				candidate := models.V3{X: goal.X + float64(dx), Y: goal.Y + float64(dy), Z: goal.Z + float64(dz)}
-				if candidate.DistanceTo(goal) > pf.goalRadius {
-					continue
-				}
-				feetID, feetLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y, candidate.Z)
-				headID, headLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y+1, candidate.Z)
-				groundID, groundLoaded := pf.world.GetBlockAt(candidate.X, candidate.Y-1, candidate.Z)
-				if !feetLoaded || !headLoaded || !groundLoaded {
-					return false // unknown - don't block, let the real search decide
-				}
-				if pf.shapeMgr.IsPassable(feetID) && pf.shapeMgr.IsPassable(headID) && !pf.shapeMgr.IsPassable(groundID) {
-					return false // found a walkable cell within goalRadius
-				}
-			}
-		}
-	}
-	return true
 }
 
 // reconstructPath builds the path from the goal node back to the start
