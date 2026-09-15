@@ -231,6 +231,27 @@ func (b *HPABuilder) scanXFace(cluster *Cluster, adjacentClusterID ClusterID, x 
 					entrances = append(entrances, entrance)
 				}
 			}
+
+			// Water at this Y level qualifies as an entrance too, regardless of depth -
+			// GetStandingSurfaceHeight is always 0 for water (no collision), which would
+			// otherwise leave large lakes/rivers with zero entrances across a cluster
+			// boundary. Checked at yInt itself (not yInt+surfaceHeight, since there's no
+			// standing surface): isConnectedAcrossBoundary already accounts for the real
+			// WadeWater/Swim cost via GetPossibleMoves, so the abstract graph naturally
+			// deprioritizes this edge versus a land entrance when one exists. See
+			// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md.
+			if b.shapeMgr.IsWater(blockStateID1) || b.shapeMgr.IsWater(blockStateID2) {
+				waterPos1 := models.V3{X: x, Y: float64(yInt), Z: z}
+				waterPos2 := models.V3{X: blockPos2.X, Y: float64(yInt), Z: z}
+				if b.isConnectedAcrossBoundary(waterPos1, waterPos2) {
+					entrances = append(entrances, &Entrance{
+						Pos1:     waterPos1,
+						Pos2:     waterPos2,
+						Cluster1: cluster.ID,
+						Cluster2: adjacentClusterID,
+					})
+				}
+			}
 		}
 	}
 
@@ -276,6 +297,27 @@ func (b *HPABuilder) scanYFace(cluster *Cluster, adjacentClusterID ClusterID, y 
 						Cluster2: adjacentClusterID,
 					}
 					entrances = append(entrances, entrance)
+				}
+			}
+
+			// Water at this Y level qualifies as an entrance too (e.g. a deep water
+			// column spanning a vertical cluster boundary) - see scanXFace's identical
+			// branch for the full rationale.
+			if b.shapeMgr.IsWater(blockStateID) {
+				waterPos1 := models.V3{X: x, Y: float64(yInt), Z: z}
+				var waterPos2 models.V3
+				if direction == Up {
+					waterPos2 = models.V3{X: x, Y: float64(yInt) + 1, Z: z}
+				} else {
+					waterPos2 = models.V3{X: x, Y: float64(yInt) - 1, Z: z}
+				}
+				if b.isConnectedAcrossBoundary(waterPos1, waterPos2) {
+					entrances = append(entrances, &Entrance{
+						Pos1:     waterPos1,
+						Pos2:     waterPos2,
+						Cluster1: cluster.ID,
+						Cluster2: adjacentClusterID,
+					})
 				}
 			}
 		}
@@ -346,6 +388,21 @@ func (b *HPABuilder) scanZFace(cluster *Cluster, adjacentClusterID ClusterID, z 
 						Cluster2: adjacentClusterID,
 					}
 					entrances = append(entrances, entrance)
+				}
+			}
+
+			// Water at this Y level qualifies as an entrance too - see scanXFace's
+			// identical branch for the full rationale.
+			if b.shapeMgr.IsWater(blockStateID1) || b.shapeMgr.IsWater(blockStateID2) {
+				waterPos1 := models.V3{X: x, Y: float64(yInt), Z: z}
+				waterPos2 := models.V3{X: x, Y: float64(yInt), Z: blockPos2.Z}
+				if b.isConnectedAcrossBoundary(waterPos1, waterPos2) {
+					entrances = append(entrances, &Entrance{
+						Pos1:     waterPos1,
+						Pos2:     waterPos2,
+						Cluster1: cluster.ID,
+						Cluster2: adjacentClusterID,
+					})
 				}
 			}
 		}
