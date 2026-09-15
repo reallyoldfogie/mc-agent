@@ -19,6 +19,7 @@ const (
 	DiagonalTraverse
 	DiagonalAscend
 	Swim
+	WadeWater    // Moving through water without full head submersion (no sprint-swim speed boost); ground support under `from` is irrelevant
 	Climb        // Ladder/vine climbing (both ascent and descent)
 	EnterClimb   // Horizontal entry into climbable block (ladder/vine)
 	ExitClimb    // Exit from ladder/vine onto adjacent platform
@@ -73,6 +74,8 @@ func (mt MovementType) String() string {
 		return "DiagonalAscend"
 	case Swim:
 		return "Swim"
+	case WadeWater:
+		return "WadeWater"
 	case Climb:
 		return "Climb"
 	case EnterClimb:
@@ -152,7 +155,14 @@ func (mt MovementType) BaseCost() float64 {
 	case DiagonalAscend:
 		return 2.0
 	case Swim:
-		return 2.0
+		// Sprint-swim, fully submerged: ~4.0 blocks/s vs. dry walk's 4.317 blocks/s,
+		// verified against LivingEntity.travelInFluid (mc-data-gen extractedSrc 1.21.5) -
+		// nearly as fast as walking, not the heavy penalty the old flat 2.0 implied.
+		return 1.08
+	case WadeWater:
+		// Non-sprint water movement (wading on solid ground or treading with none -
+		// confirmed identical speed in source): ~2.0 blocks/s, the genuinely slow case.
+		return 2.16
 	case Climb:
 		return 1.8
 	case EnterClimb:
@@ -164,9 +174,11 @@ func (mt MovementType) BaseCost() float64 {
 	case Jump2ToClimb:
 		return 2.5 // Sprint jump 2 blocks to climbable - more expensive than Jump2
 	case SwimUp:
-		return 2.5
+		// Scaled from the old Swim=2.0 baseline (2.5) to the new Swim=1.08 baseline;
+		// vertical fluid speed itself not independently re-verified against source.
+		return 1.35
 	case SwimDown:
-		return 1.5
+		return 0.81
 	case ExitWater:
 		return 1.0 // Exiting water to ground
 	case Drop2North, Drop2South, Drop2East, Drop2West:
@@ -186,7 +198,9 @@ func (mt MovementType) BaseCost() float64 {
 	case VehicleRailTraverse:
 		return 0.25 // Fast on powered rails
 	case VehicleSwim:
-		return 0.35
+		// Boat on flat water: ~7.2 blocks/s vs. dry walk's 4.317, verified against
+		// AbstractBoatEntity's paddle accel/drag (mc-data-gen extractedSrc 1.21.5).
+		return 0.60
 	case VehicleFly3D:
 		return 0.4
 	default:
