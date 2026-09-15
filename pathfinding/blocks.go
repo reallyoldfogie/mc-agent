@@ -305,6 +305,11 @@ func (bsm *blockShapeManager) IsLava(blockStateID uint32) bool {
 	return info.IsLava()
 }
 
+// IsMagma reports whether the block is a magma block specifically.
+func (bsm *blockShapeManager) IsMagma(blockStateID uint32) bool {
+	return bsm.BlockName(blockStateID) == "minecraft:magma_block"
+}
+
 // IsDangerous detects dangerous blocks (lava, fire, magma blocks, cacti, etc.)
 func (bsm *blockShapeManager) IsDangerous(blockStateID uint32) bool {
 	info := bsm.getInfoFromStateID(blockStateID)

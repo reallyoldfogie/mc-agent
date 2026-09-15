@@ -152,6 +152,10 @@ func (msp *MockShapeProvider) IsDangerous(blockStateID uint32) bool {
 	return false // No dangerous blocks in mock
 }
 
+func (msp *MockShapeProvider) IsMagma(blockStateID uint32) bool {
+	return false // No magma blocks in mock
+}
+
 func (msp *MockShapeProvider) IsDoorLike(blockStateID uint32) bool {
 	return false // No door-like blocks in mock
 }

@@ -209,7 +209,10 @@ func (v *VehicleMovementValidator) generateWaterVehicleMoves(
 
 	for _, dir := range allDirs {
 		to := from.Add(models.V3{X: dir[0], Y: 0, Z: dir[1]})
-		if v.isOnWater(to) {
+		// Magma beneath shallow water sinks a boat on contact in vanilla -
+		// avoid routing a boat over it entirely rather than just penalizing
+		// the cost. See docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 7.
+		if v.isOnWater(to) && !v.hasMagmaBeneath(to) {
 			moves = append(moves, PathStep{
 				Position:        to,
 				Movement:        models.VehicleSwim,
@@ -220,7 +223,7 @@ func (v *VehicleMovementValidator) generateWaterVehicleMoves(
 
 		// Ascending on water (boats can climb out of water)
 		toUp := from.Add(models.V3{X: dir[0], Y: 1, Z: dir[1]})
-		if v.isOnWater(toUp) || v.validator.CanTraverse(from, toUp) {
+		if (v.isOnWater(toUp) && !v.hasMagmaBeneath(toUp)) || v.validator.CanTraverse(from, toUp) {
 			moves = append(moves, PathStep{
 				Position:        toUp,
 				Movement:        models.VehicleSwim,
@@ -369,6 +372,15 @@ func (v *VehicleMovementValidator) isOnWater(pos models.V3) bool {
 	}
 
 	return v.shapeMgr.IsWater(blockStateID)
+}
+
+// hasMagmaBeneath checks whether the block directly below pos is a magma
+// block - vanilla sinks (and damages) a boat that touches magma, a real risk
+// only in water shallow enough for the boat's hull to reach the bottom. See
+// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 7.
+func (v *VehicleMovementValidator) hasMagmaBeneath(pos models.V3) bool {
+	below, loaded := v.world.GetBlockAt(pos.X, pos.Y-1, pos.Z)
+	return loaded && v.shapeMgr.IsMagma(below)
 }
 
 // isFullyInWater checks if a position is fully submerged in water (nautilus).

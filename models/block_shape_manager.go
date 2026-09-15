@@ -23,6 +23,12 @@ type BlockShapeManager interface {
 	IsWater(blockStateID uint32) bool
 	IsLava(blockStateID uint32) bool
 	IsDangerous(blockStateID uint32) bool
+	// IsMagma reports whether the block is a magma block specifically -
+	// narrower than IsDangerous (which also covers lava, fire, cacti, etc.),
+	// for callers that only care about magma's real-vehicle-specific hazard
+	// (sinking a boat that touches it, per vanilla AbstractBoatEntity). See
+	// docs/plans/WATER_TRAVERSAL_PATHFINDING_PLAN.md's Item 7.
+	IsMagma(blockStateID uint32) bool
 	IsDoorLike(blockStateID uint32) bool
 	IsFenceLike(blockStateID uint32) bool
 	IsSlab(blockStateID uint32) bool

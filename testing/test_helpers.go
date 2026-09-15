@@ -35,6 +35,7 @@ func NewSimpleBlockRegistry() *SimpleBlockRegistry {
 	registry.Register("minecraft:water", 34)
 	registry.Register("minecraft:ladder", 3653)
 	registry.Register("minecraft:oak_slab", 8301)
+	registry.Register("minecraft:magma_block", 9987)
 
 	return registry
 }
@@ -231,6 +232,11 @@ func (msm *MockShapeManager) IsFluid(blockStateID uint32) bool {
 func (msm *MockShapeManager) IsDangerous(blockStateID uint32) bool {
 	blockName := msm.blockName(blockStateID)
 	return blockName == "minecraft:lava" || blockName == "minecraft:fire" || blockName == "minecraft:cactus"
+}
+
+// IsMagma returns whether a block is a magma block specifically.
+func (msm *MockShapeManager) IsMagma(blockStateID uint32) bool {
+	return msm.blockName(blockStateID) == "minecraft:magma_block"
 }
 
 // IsDoorLike returns whether a block is door-like

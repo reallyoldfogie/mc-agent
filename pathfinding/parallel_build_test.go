@@ -169,6 +169,10 @@ func (m *testMockShapeManager) IsDangerous(stateID uint32) bool {
 	return false
 }
 
+func (m *testMockShapeManager) IsMagma(stateID uint32) bool {
+	return false
+}
+
 func (m *testMockShapeManager) IsDoorLike(stateID uint32) bool {
 	return false
 }

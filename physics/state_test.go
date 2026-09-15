@@ -203,6 +203,10 @@ func (m *mockShapeProvider) IsDangerous(blockID uint32) bool {
 	return false
 }
 
+func (m *mockShapeProvider) IsMagma(blockID uint32) bool {
+	return false
+}
+
 func (m *mockShapeProvider) IsDoorLike(blockID uint32) bool {
 	return false
 }
