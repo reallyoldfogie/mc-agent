@@ -284,6 +284,10 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 			out.Yaw = ladderYaw
 		}
 
+	case WadeWater:
+		// Wading/treading through water without full submersion - no sprint benefit
+		// unless also fully submerged (see Swim), default inputs are fine.
+
 	case Swim:
 		// Swimming in water (horizontal)
 		// Similar to traverse but slower
@@ -434,6 +438,11 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		// Sprint jump 2 blocks to grab climbable - similar to Jump2
 		// Takes ~25 ticks (sprint jump distance + grab time)
 		return 30
+
+	case WadeWater:
+		// Wading/treading, non-sprint: ~0.10 blocks/tick (~2.0 blocks/s), verified against
+		// decompiled source - see WATER_TRAVERSAL_PATHFINDING_PLAN.md.
+		return int(dist/0.10) + 15
 
 	case Swim:
 		// Swimming: ~0.12 blocks/tick (even slower)

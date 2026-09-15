@@ -16,6 +16,7 @@ const (
 	DiagonalTraverse    = models.DiagonalTraverse
 	DiagonalAscend      = models.DiagonalAscend
 	Swim                = models.Swim
+	WadeWater           = models.WadeWater
 	Climb               = models.Climb
 	EnterClimb          = models.EnterClimb
 	ExitClimb           = models.ExitClimb

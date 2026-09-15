@@ -64,6 +64,12 @@ func (mv *MovementValidator) CanTraverse(from, to models.V3) bool {
 		return false
 	}
 
+	// Water destinations use WadeWater/Swim instead - plain Traverse is dry-ground-only
+	// (they're not the same speed as dry walking, see MovementType.BaseCost()).
+	if mv.destinationIsWater(to) {
+		return false
+	}
+
 	// Check if there's ground to stand on
 	return mv.hasGroundSupport(to)
 }
@@ -326,6 +332,12 @@ func (mv *MovementValidator) hasGroundSupport(pos models.V3) bool {
 	return mv.shapeMgr.IsSolid(stateID)
 }
 
+// destinationIsWater checks whether the block at pos is water.
+func (mv *MovementValidator) destinationIsWater(pos models.V3) bool {
+	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	return loaded && stateID != 0 && mv.shapeMgr.IsWater(stateID)
+}
+
 // CanDiagonalTraverse checks if the bot can walk diagonally on the same Y level
 func (mv *MovementValidator) CanDiagonalTraverse(from, to models.V3) bool {
 	dx := to.X - from.X
@@ -347,12 +359,74 @@ func (mv *MovementValidator) CanDiagonalTraverse(from, to models.V3) bool {
 		return false
 	}
 
+	// Water destinations use CanDiagonalWadeWater/Swim instead
+	if mv.destinationIsWater(to) {
+		return false
+	}
+
 	// Check ground support
 	if !mv.hasGroundSupport(to) {
 		return false
 	}
 
 	// Check that the two adjacent cardinal squares are also passable (no corner cutting)
+	adj1 := from.Add(models.V3{X: dx, Y: 0, Z: 0})
+	adj2 := from.Add(models.V3{X: 0, Y: 0, Z: dz})
+	if !mv.isPositionPassable(adj1) || !mv.isPositionPassable(adj2) {
+		return false
+	}
+
+	return true
+}
+
+// CanWadeWater checks if the bot can wade/tread through water on the same Y level,
+// at non-sprint wade speed (WadeWater), independent of whether there's ground support
+// below `to` - vanilla's travelInFluid speed doesn't depend on it (verified against
+// decompiled source; see WATER_TRAVERSAL_PATHFINDING_PLAN.md). Use CanSwim instead when
+// the water is deep enough to fully submerge, which is cheaper.
+func (mv *MovementValidator) CanWadeWater(from, to models.V3) bool {
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	dy := to.Y - from.Y
+
+	if dy != 0 {
+		return false
+	}
+	if (dx != 0 && dz != 0) || (dx == 0 && dz == 0) {
+		return false // Diagonal or same position
+	}
+	if dx*dx+dz*dz > 1 {
+		return false // Too far
+	}
+
+	if !mv.isPositionPassable(to) {
+		return false
+	}
+
+	return mv.destinationIsWater(to)
+}
+
+// CanDiagonalWadeWater is CanWadeWater's diagonal counterpart, mirroring
+// CanDiagonalTraverse's corner-cutting check.
+func (mv *MovementValidator) CanDiagonalWadeWater(from, to models.V3) bool {
+	dx := to.X - from.X
+	dz := to.Z - from.Z
+	dy := to.Y - from.Y
+
+	if dy != 0 {
+		return false
+	}
+	if (dx == 0 || dz == 0) || (dx*dx > 1 || dz*dz > 1) {
+		return false
+	}
+
+	if !mv.isPositionPassable(to) {
+		return false
+	}
+	if !mv.destinationIsWater(to) {
+		return false
+	}
+
 	adj1 := from.Add(models.V3{X: dx, Y: 0, Z: 0})
 	adj2 := from.Add(models.V3{X: 0, Y: 0, Z: dz})
 	if !mv.isPositionPassable(adj1) || !mv.isPositionPassable(adj2) {
@@ -498,13 +572,11 @@ func (mv *MovementValidator) CanSwim(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water (required)
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if !toLoaded || toStateID == 0 {
-		return false
-	}
-
-	return mv.shapeMgr.IsWater(toStateID)
+	// Check if destination is water (required). Not gated by depth/submersion: verified
+	// against decompiled source, the sprint-swim speed boost (BaseCost's Swim vs WadeWater)
+	// is purely a function of sprinting while touching water, not how deep it is or
+	// whether the head is submerged - see WATER_TRAVERSAL_PATHFINDING_PLAN.md.
+	return mv.destinationIsWater(to)
 }
 
 // CanSwimUp checks if the bot can swim upward in water
@@ -524,13 +596,9 @@ func (mv *MovementValidator) CanSwimUp(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water (required)
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if !toLoaded || toStateID == 0 {
-		return false
-	}
-
-	return mv.shapeMgr.IsWater(toStateID)
+	// Check if destination is water (required) - see CanSwim's doc comment on why this
+	// isn't depth/submersion-gated.
+	return mv.destinationIsWater(to)
 }
 
 // CanSwimDown checks if the bot can swim downward in water
@@ -551,13 +619,8 @@ func (mv *MovementValidator) CanSwimDown(from, to models.V3) bool {
 		return false
 	}
 
-	// Check if destination is water (required)
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
-	if !toLoaded || toStateID == 0 {
-		return false
-	}
-
-	if !mv.shapeMgr.IsWater(toStateID) {
+	// Check if destination is water (required) - see CanSwim's doc comment.
+	if !mv.destinationIsWater(to) {
 		return false
 	}
 
@@ -957,6 +1020,12 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 				Movement: Traverse,
 				Cost:     Traverse.BaseCost(),
 			})
+		} else if mv.CanWadeWater(from, to) {
+			moves = append(moves, PathStep{
+				Position: to,
+				Movement: WadeWater,
+				Cost:     WadeWater.BaseCost(),
+			})
 		}
 
 		// Try ascend (1 block up)
@@ -1034,6 +1103,12 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 				Position: to,
 				Movement: DiagonalTraverse,
 				Cost:     DiagonalTraverse.BaseCost(),
+			})
+		} else if mv.CanDiagonalWadeWater(from, to) {
+			moves = append(moves, PathStep{
+				Position: to,
+				Movement: WadeWater,
+				Cost:     WadeWater.BaseCost(),
 			})
 		}
 

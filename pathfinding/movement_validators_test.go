@@ -202,3 +202,58 @@ func TestCanSwimDown_SolidToWater(t *testing.T) {
 		})
 	}
 }
+
+// TestCanTraverse_RejectsWater verifies a water tile (even directly over solid ground)
+// is no longer treated as a free/dry-land Traverse move - it must go through
+// CanWadeWater/CanSwim instead, which carry the correct (higher) cost.
+func TestCanTraverse_RejectsWater(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	waterID := registry.GetStateID("minecraft:water", nil)
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID). // Stone floor at Y=64
+		WaterDirect(2, 65, 2, 2, 65, 2, waterID).    // Single 1-block-deep puddle over solid ground
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	dryFrom := models.V3{X: 0, Y: 65, Z: 5}
+	dryTo := models.V3{X: 1, Y: 65, Z: 5}
+	require.True(t, validator.CanTraverse(dryFrom, dryTo), "dry ground should still Traverse")
+
+	puddleFrom := models.V3{X: 1, Y: 65, Z: 2}
+	puddleTo := models.V3{X: 2, Y: 65, Z: 2}
+	require.False(t, validator.CanTraverse(puddleFrom, puddleTo),
+		"a puddle over solid ground must not be a free Traverse move")
+	require.True(t, validator.CanWadeWater(puddleFrom, puddleTo),
+		"the same puddle move should be legal as WadeWater")
+}
+
+// TestCanWadeWater_AnyDepthRegardlessOfGroundSupport verifies wading is available both
+// over solid ground and over open/deep water, per the verified real-game finding that
+// ground support doesn't affect wade speed (see WATER_TRAVERSAL_PATHFINDING_PLAN.md).
+func TestCanWadeWater_AnyDepthRegardlessOfGroundSupport(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	waterID := registry.GetStateID("minecraft:water", nil)
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 10, 10, 60, stoneID). // Deep floor, far below the water
+		WaterDirect(0, 65, 0, 5, 68, 5, waterID).    // Deep open water column, no nearby floor
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 1, Y: 65, Z: 1}
+	to := models.V3{X: 2, Y: 65, Z: 1}
+	require.True(t, validator.CanWadeWater(from, to),
+		"wading should be legal in deep open water with no ground support below")
+
+	diagFrom := models.V3{X: 1, Y: 65, Z: 1}
+	diagTo := models.V3{X: 2, Y: 65, Z: 2}
+	require.True(t, validator.CanDiagonalWadeWater(diagFrom, diagTo),
+		"diagonal wading should be legal in deep open water with no ground support below")
+}
