@@ -42,6 +42,28 @@ const (
 	teleportSyncThreshold    = 0.5
 )
 
+// chunkSyncTimeout/chunkSyncPollInterval bound how long TeleportTo waits,
+// after the position itself has synced, for the destination chunk's block
+// data to arrive. Position sync (above) only confirms a
+// player-position-update packet landed; it says nothing about whether the
+// server has sent chunk data for the new area yet, which a teleport into an
+// unvisited/far-away region can easily outrun. Found live via rsi-trainer:
+// Environment.Reset's reachability checks (rlenv/walkability.go) run
+// immediately after TeleportTo returns, and a pathfinding search launched
+// over a not-yet-loaded chunk correctly (if unhelpfully) reports zero
+// possible moves via World.GetBlockAt's own loaded=false - this was
+// previously masked because slower pathfinding (pre block-cache/EPEA*
+// fixes, see pathfinding/movement.go) accidentally gave the chunk enough
+// wall-clock time to arrive before anything queried it; once pathfinding
+// got faster, that accidental buffer shrank enough for the race to start
+// actually losing. World.GetBlockAt's own loaded return is the correct
+// signal to wait on directly, so this closes the actual gap rather than
+// re-introducing incidental slowness as a workaround.
+const (
+	chunkSyncTimeout      = 5 * time.Second
+	chunkSyncPollInterval = 100 * time.Millisecond
+)
+
 // SeedNearbyBlock ensures a block named blockName exists within radius
 // blocks of the bot's current position, via RCON — training convenience
 // only (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4's minimum-viable
@@ -197,7 +219,10 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 // position to land within teleportSyncThreshold blocks of the requested
 // destination before returning, not just for the RCON command to succeed
 // server-side — the same client-sync race SeedNearbyBlock's doc comment
-// describes, here for a player-position-update packet.
+// describes, here for a player-position-update packet. Then, separately
+// (bounded by chunkSyncTimeout), waits for the destination chunk's block
+// data to actually be loaded — see chunkSyncTimeout's own doc comment for
+// why this is a distinct wait from position sync, not a duplicate of it.
 func (a *agent) TeleportTo(ctx context.Context, x, y, z float64) error {
 	if a.cfg.RCON == nil {
 		return fmt.Errorf("teleport: RCON not configured for this agent")
@@ -211,7 +236,7 @@ func (a *agent) TeleportTo(ctx context.Context, x, y, z float64) error {
 		if pos, ok := a.GetPositionSimple(); ok {
 			dx, dy, dz := pos.X-x, pos.Y-y, pos.Z-z
 			if dx*dx+dy*dy+dz*dz <= teleportSyncThreshold*teleportSyncThreshold {
-				return nil
+				return a.waitForChunkLoaded(ctx, x, y, z)
 			}
 		}
 		if !time.Now().Before(deadline) {
@@ -221,6 +246,34 @@ func (a *agent) TeleportTo(ctx context.Context, x, y, z float64) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(teleportSyncPollInterval):
+		}
+	}
+}
+
+// waitForChunkLoaded polls World.GetBlockAt's own loaded return at (x, y, z)
+// until the destination chunk has arrived, bounded by chunkSyncTimeout — see
+// that constant's doc comment for why TeleportTo needs this in addition to
+// (not instead of) its position-sync wait above. Skips the wait entirely if
+// this agent has no world wired up (a minimal test double, say), matching
+// how other optional-capability checks in this codebase degrade (e.g.
+// rlenv/walkability.go's WalkabilityAgent) rather than erroring.
+func (a *agent) waitForChunkLoaded(ctx context.Context, x, y, z float64) error {
+	if a.worldMgr == nil {
+		return nil
+	}
+
+	deadline := time.Now().Add(chunkSyncTimeout)
+	for {
+		if _, loaded := a.worldMgr.GetBlockAt(x, y, z); loaded {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("teleport: destination chunk at (%.2f, %.2f, %.2f) never loaded within %s", x, y, z, chunkSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(chunkSyncPollInterval):
 		}
 	}
 }
