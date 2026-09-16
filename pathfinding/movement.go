@@ -3,6 +3,7 @@ package pathfinding
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
@@ -14,6 +15,39 @@ type MovePruneConfig struct {
 	DriftCap  float64
 }
 
+// dirOffset is a horizontal (X/Z) movement direction offset, shared by every
+// GetPossibleMoves-style neighbor scan (forward in this file, reverse in
+// bidir_a_star.go) so the four/eight-direction tables are allocated once at
+// package init instead of on every single call.
+type dirOffset struct {
+	dx, dz float64
+}
+
+var cardinalDirs = []dirOffset{
+	{1, 0},  // East
+	{-1, 0}, // West
+	{0, 1},  // South
+	{0, -1}, // North
+}
+
+var diagonalDirs = []dirOffset{
+	{1, 1},   // SE
+	{1, -1},  // NE
+	{-1, 1},  // SW
+	{-1, -1}, // NW
+}
+
+var allDirs = []dirOffset{
+	{1, 0}, {-1, 0}, {0, 1}, {0, -1},
+	{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+}
+
+// blockCacheEntry memoizes a single World.GetBlockAt result.
+type blockCacheEntry struct {
+	stateID uint32
+	loaded  bool
+}
+
 // MovementValidator validates whether specific movements are possible
 type MovementValidator struct {
 	world           models.World
@@ -23,6 +57,11 @@ type MovementValidator struct {
 	debugCheckCount int     // Counter for debug logging
 	climbDebugCount int     // Counter for climb debug logging
 	logger          *slog.Logger
+
+	// blockCacheMu guards blockCache. nil blockCache means caching is
+	// disabled (the default) - see ResetBlockCache.
+	blockCacheMu sync.RWMutex
+	blockCache   map[models.V3]blockCacheEntry
 }
 
 // NewMovementValidator creates a new movement validator
@@ -34,6 +73,53 @@ func NewMovementValidator(w models.World, shapeMgr models.BlockShapeManager, log
 		playerWidth:     0.6,
 		logger:          utils.SafeLogger(logger),
 	}
+}
+
+// ResetBlockCache enables and clears the per-search block-state memoization
+// used by getBlock. FindPath implementations (a_star.go, epea_star.go,
+// bidir_a_star.go) must call this once at the start of every search: the
+// world is static for the duration of one bounded search (the same implicit
+// assumption already made by those algorithms' own closedSet/gScores maps),
+// so caching within that window is safe, but a long-lived MovementValidator
+// used across many calls (e.g. HPA*'s cluster-building validator in
+// hpa_builder.go, shared across concurrent goroutines and reused for the
+// builder's whole lifetime as chunks load) must NOT cache indefinitely - it
+// never calls this, so its blockCache stays nil and getBlock falls back to
+// always querying the world directly, unchanged from before this cache
+// existed.
+func (mv *MovementValidator) ResetBlockCache() {
+	mv.blockCacheMu.Lock()
+	mv.blockCache = make(map[models.V3]blockCacheEntry, 256)
+	mv.blockCacheMu.Unlock()
+}
+
+// getBlock is a memoizing wrapper around world.GetBlockAt. GetPossibleMoves
+// makes on the order of twenty Can* checks per call, many of which re-query
+// the exact same handful of positions (e.g. a stair-ascend check and its
+// ground-support fallback both fetch the same groundPos), and repeated calls
+// as the search expands neighboring cells re-query positions already seen.
+// Profiling showed GetBlockAt's map lookup + lock dominating CPU time in all
+// three pathfinders; memoizing it for the lifetime of one search (see
+// ResetBlockCache) turns that into one real query per unique position.
+func (mv *MovementValidator) getBlock(x, y, z float64) (uint32, bool) {
+	pos := models.V3{X: x, Y: y, Z: z}
+
+	mv.blockCacheMu.RLock()
+	entry, ok := mv.blockCache[pos]
+	mv.blockCacheMu.RUnlock()
+	if ok {
+		return entry.stateID, entry.loaded
+	}
+
+	stateID, loaded := mv.world.GetBlockAt(x, y, z)
+
+	mv.blockCacheMu.Lock()
+	if mv.blockCache != nil {
+		mv.blockCache[pos] = blockCacheEntry{stateID: stateID, loaded: loaded}
+	}
+	mv.blockCacheMu.Unlock()
+
+	return stateID, loaded
 }
 
 // CanTraverse checks if the bot can walk from 'from' to 'to' on the same Y level
@@ -97,7 +183,7 @@ func (mv *MovementValidator) CanAscend(from, to models.V3) bool {
 	}
 
 	// Cannot ascend/jump from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
@@ -164,7 +250,7 @@ func (mv *MovementValidator) CanAscendStairs(from, to models.V3) bool {
 	}
 
 	// Cannot ascend stairs from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
@@ -172,7 +258,7 @@ func (mv *MovementValidator) CanAscendStairs(from, to models.V3) bool {
 
 	// Check if the ground block at target is a stair
 	groundPos := to.Add(models.V3{X: 0, Y: -1, Z: 0})
-	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	groundStateID, loaded := mv.getBlock(groundPos.X, groundPos.Y, groundPos.Z)
 	if !loaded || groundStateID == 0 {
 		return false
 	}
@@ -221,7 +307,7 @@ func (mv *MovementValidator) CanDescendStairs(from, to models.V3) bool {
 	// Check if the ground block at current position is a stair
 	// (we're descending FROM a stair)
 	groundPos := from.Add(models.V3{X: 0, Y: -1, Z: 0})
-	groundStateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	groundStateID, loaded := mv.getBlock(groundPos.X, groundPos.Y, groundPos.Z)
 	if !loaded || groundStateID == 0 {
 		return false
 	}
@@ -270,7 +356,7 @@ func (mv *MovementValidator) CanDescend(from, to models.V3) bool {
 	}
 
 	// Check if destination is water (allowed even without ground support below)
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	toStateID, toLoaded := mv.getBlock(to.X, to.Y, to.Z)
 	if toLoaded && toStateID != 0 && mv.shapeMgr.IsWater(toStateID) {
 		return true // Water is a valid drop target even without ground support
 	}
@@ -298,7 +384,7 @@ func (mv *MovementValidator) isPositionPassable(pos models.V3) bool {
 // isBlockPassable checks if a single block is passable
 func (mv *MovementValidator) isBlockPassable(pos models.V3) bool {
 	// Get block state ID from world
-	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	stateID, loaded := mv.getBlock(pos.X, pos.Y, pos.Z)
 
 	if !loaded {
 		return false // Chunk not loaded, not passable
@@ -317,7 +403,7 @@ func (mv *MovementValidator) isBlockPassable(pos models.V3) bool {
 func (mv *MovementValidator) hasGroundSupport(pos models.V3) bool {
 	// Check block directly below feet
 	groundPos := pos.Add(models.V3{X: 0, Y: -1, Z: 0})
-	stateID, loaded := mv.world.GetBlockAt(groundPos.X, groundPos.Y, groundPos.Z)
+	stateID, loaded := mv.getBlock(groundPos.X, groundPos.Y, groundPos.Z)
 
 	if !loaded {
 		return false // Chunk not loaded
@@ -334,7 +420,7 @@ func (mv *MovementValidator) hasGroundSupport(pos models.V3) bool {
 
 // destinationIsWater checks whether the block at pos is water.
 func (mv *MovementValidator) destinationIsWater(pos models.V3) bool {
-	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	stateID, loaded := mv.getBlock(pos.X, pos.Y, pos.Z)
 	return loaded && stateID != 0 && mv.shapeMgr.IsWater(stateID)
 }
 
@@ -453,7 +539,7 @@ func (mv *MovementValidator) CanDiagonalAscend(from, to models.V3) bool {
 	}
 
 	// Cannot diagonally ascend from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
@@ -502,7 +588,7 @@ func (mv *MovementValidator) CanJump2(from, to models.V3) bool {
 	}
 
 	// Cannot jump from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
@@ -540,14 +626,14 @@ func (mv *MovementValidator) CanClimb(from, to models.V3) bool {
 	}
 
 	// Cannot climb from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
 	}
 
 	// Check if there's a climbable block at destination
-	stateID, loaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	stateID, loaded := mv.getBlock(to.X, to.Y, to.Z)
 	if !loaded || stateID == 0 {
 		return false // Chunk not loaded or air, not climbable
 	}
@@ -627,7 +713,7 @@ func (mv *MovementValidator) CanSwimDown(from, to models.V3) bool {
 	// Only allow SwimDown if already in water at the starting position
 	// This ensures we're swimming within water, not transitioning from ground to water
 	// Transitioning from ground to water should use Descend instead
-	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z)
 	if !fromLoaded {
 		return false
 	}
@@ -658,7 +744,7 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 	}
 
 	// Must be currently in water
-	fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z)
+	fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z)
 	if !fromLoaded || !mv.shapeMgr.IsWater(fromStateID) {
 		return false
 	}
@@ -671,7 +757,7 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 	}
 
 	// Check that destination is NOT water (we're exiting water, not swimming sideways)
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	toStateID, toLoaded := mv.getBlock(to.X, to.Y, to.Z)
 	if !toLoaded {
 		return false // Chunk not loaded
 	}
@@ -719,7 +805,7 @@ func (mv *MovementValidator) CanExitWater(from, to models.V3) bool {
 
 // isOnClimbable checks if the given position has a climbable block (ladder/vine)
 func (mv *MovementValidator) isOnClimbable(pos models.V3) bool {
-	stateID, loaded := mv.world.GetBlockAt(pos.X, pos.Y, pos.Z)
+	stateID, loaded := mv.getBlock(pos.X, pos.Y, pos.Z)
 	if !loaded || stateID == 0 {
 		return false
 	}
@@ -749,7 +835,7 @@ func (mv *MovementValidator) CanEnterClimb(from, to models.V3) bool {
 	}
 
 	// Cannot enter climb from water - use ExitWater instead
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
@@ -787,14 +873,14 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 	}
 
 	// Cannot exit climb from water (shouldn't happen if on climbable, but check for safety)
-	if fromStateID, fromLoaded := mv.world.GetBlockAt(from.X, from.Y, from.Z); fromLoaded {
+	if fromStateID, fromLoaded := mv.getBlock(from.X, from.Y, from.Z); fromLoaded {
 		if mv.shapeMgr.IsWater(fromStateID) {
 			return false
 		}
 	}
 
 	// Get the block at target position
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	toStateID, toLoaded := mv.getBlock(to.X, to.Y, to.Z)
 	if !toLoaded {
 		return false
 	}
@@ -814,7 +900,7 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 	// Scenario 2: Step-up exit (to is solid floor, step up onto it)
 	// Check if to+1 is passable (air above the floor)
 	toUp := to.Add(models.V3{X: 0, Y: 1, Z: 0})
-	toUpStateID, toUpLoaded := mv.world.GetBlockAt(toUp.X, toUp.Y, toUp.Z)
+	toUpStateID, toUpLoaded := mv.getBlock(toUp.X, toUp.Y, toUp.Z)
 	if !toUpLoaded {
 		return false
 	}
@@ -844,7 +930,7 @@ func (mv *MovementValidator) CanExitClimb(from, to models.V3) bool {
 // For step-up exits: returns to.Y + 1
 func (mv *MovementValidator) getExitClimbTargetY(from, to models.V3) float64 {
 	// Check if this is a same-level exit
-	toStateID, toLoaded := mv.world.GetBlockAt(to.X, to.Y, to.Z)
+	toStateID, toLoaded := mv.getBlock(to.X, to.Y, to.Z)
 	if !toLoaded {
 		return to.Y
 	}
@@ -867,7 +953,7 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 	utils.DebugVerbose(mv.logger, "[FindGroundBelow] searching", "x", x, "z", z, "startY", startY)
 
 	// Check current position first
-	currentStateID, _ := mv.world.GetBlockAt(x, startY, z)
+	currentStateID, _ := mv.getBlock(x, startY, z)
 
 	// If current position is inside a solid block, search UPWARD to find surface
 	if currentStateID != 0 {
@@ -942,7 +1028,7 @@ func (mv *MovementValidator) logTerrainAround(from models.V3) {
 		utils.DebugVerbose(mv.logger, "[TERRAIN] column", "dir", dir.name, "x", x, "z", z)
 		for dy := float64(-1); dy <= 3; dy++ {
 			y := from.Y + dy
-			stateID, _ := mv.world.GetBlockAt(x, y, z)
+			stateID, _ := mv.getBlock(x, y, z)
 
 			var blockName string
 			var passable bool
@@ -990,27 +1076,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	onClimbable := mv.isOnClimbable(from)
 	atTopOfClimbable := onClimbable && !mv.CanClimb(from, from.Add(models.V3{X: 0, Y: 1, Z: 0}))
 
-	// Cardinal directions (N, S, E, W)
-	cardinalDirs := []struct {
-		dx, dz float64
-	}{
-		{1, 0},  // East
-		{-1, 0}, // West
-		{0, 1},  // South
-		{0, -1}, // North
-	}
-
-	// Diagonal directions (NE, SE, SW, NW)
-	diagonalDirs := []struct {
-		dx, dz float64
-	}{
-		{1, 1},   // SE
-		{1, -1},  // NE
-		{-1, 1},  // SW
-		{-1, -1}, // NW
-	}
-
-	// Cardinal movements
+	// Cardinal movements (cardinalDirs/diagonalDirs are package-level, see top of file)
 	for _, dir := range cardinalDirs {
 		// Try traverse (same level)
 		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
@@ -1196,7 +1262,6 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 	}
 
 	// Swimming (world integration complete)
-	allDirs := append(cardinalDirs, diagonalDirs...)
 	for _, dir := range allDirs {
 		// Horizontal swim
 		to := from.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})

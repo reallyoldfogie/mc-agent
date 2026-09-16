@@ -189,6 +189,9 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
+	// Enable per-search block memoization (see MovementValidator.ResetBlockCache)
+	pf.movementValidator.ResetBlockCache()
+
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),

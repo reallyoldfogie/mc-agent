@@ -55,8 +55,22 @@ type epeaNode struct {
 	hCost    float64
 	fCost    float64
 	index    int
-	// EPEA* specific: tracks which successors have been generated for this f-value threshold
-	generatedSuccessors map[int]bool
+	// neighbors caches this node's GetPossibleMoves result, computed lazily
+	// the first time the node is expanded. EPEA* re-expands a node (pushes it
+	// back onto OPEN) whenever it still has ungenerated successors; without
+	// this cache, every re-expansion re-ran the full ~20-check move-generation
+	// pass for the same position from scratch, which made EPEA* slower than
+	// plain A* despite generating fewer successors per pass - see
+	// docs/PATHFINDING_BENCHMARKS.md.
+	neighbors []PathStep
+	// generatedSuccessors tracks which of neighbors (by index) have been
+	// generated so far across this node's re-expansion passes. A []bool
+	// indexed by neighborIdx instead of a map[int]bool avoids a map
+	// allocation per node - neighbor counts are small (well under 64) and
+	// indices are dense from 0..len(neighbors), so a slice is a strict
+	// improvement with identical lookup semantics.
+	generatedSuccessors []bool
+	generatedCount      int // count of true entries in generatedSuccessors, i.e. len(map) in the old map-based version
 	lastFThreshold      float64
 }
 
@@ -131,6 +145,9 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
+	// Enable per-search block memoization (see MovementValidator.ResetBlockCache)
+	pf.movementValidator.ResetBlockCache()
+
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),
@@ -158,13 +175,12 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 
 	// Add start node
 	startNode := &epeaNode{
-		pos:                 start,
-		parent:              nil,
-		movement:            Traverse,
-		gCost:               0,
-		hCost:               heuristic(start, goal),
-		generatedSuccessors: make(map[int]bool),
-		lastFThreshold:      0,
+		pos:            start,
+		parent:         nil,
+		movement:       Traverse,
+		gCost:          0,
+		hCost:          heuristic(start, goal),
+		lastFThreshold: 0,
 	}
 	startNode.fCost = startNode.gCost + startNode.hCost
 	heap.Push(openSet, startNode)
@@ -234,9 +250,15 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 		// Add to closed set
 		closedSet[current.pos] = true
 
-		// EPEA* partial expansion: only generate successors that could improve f-value
-		// Get all possible moves from current position
-		allNeighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal, prune)
+		// EPEA* partial expansion: only generate successors that could improve f-value.
+		// Get all possible moves from current position - computed once and cached on
+		// the node (see epeaNode.neighbors), since re-expansion below can pop this
+		// same position again and the world hasn't changed.
+		if current.neighbors == nil {
+			current.neighbors = pf.movementValidator.GetPossibleMoves(current.pos, goal, prune)
+			current.generatedSuccessors = make([]bool, len(current.neighbors))
+		}
+		allNeighbors := current.neighbors
 
 		// For each neighbor, check if it should be generated based on f-threshold
 		for neighborIdx, neighborStep := range allNeighbors {
@@ -267,7 +289,10 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 			}
 
 			// Mark this successor as generated for this node
-			current.generatedSuccessors[neighborIdx] = true
+			if !current.generatedSuccessors[neighborIdx] {
+				current.generatedSuccessors[neighborIdx] = true
+				current.generatedCount++
+			}
 			successorsGenerated++
 
 			// Check if this is a better path
@@ -277,14 +302,13 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 				gScores[neighborPos] = tentativeGCost
 
 				neighborNode := &epeaNode{
-					pos:                 neighborPos,
-					parent:              current,
-					movement:            neighborStep.Movement,
-					gCost:               tentativeGCost,
-					hCost:               tentativeHCost,
-					fCost:               tentativeFCost,
-					generatedSuccessors: make(map[int]bool),
-					lastFThreshold:      currentFThreshold,
+					pos:            neighborPos,
+					parent:         current,
+					movement:       neighborStep.Movement,
+					gCost:          tentativeGCost,
+					hCost:          tentativeHCost,
+					fCost:          tentativeFCost,
+					lastFThreshold: currentFThreshold,
 				}
 
 				heap.Push(openSet, neighborNode)
@@ -294,7 +318,7 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 
 		// EPEA* re-expansion: if this node still has unexpanded successors and
 		// could be useful later, add it back to OPEN with updated f-threshold
-		if len(current.generatedSuccessors) < len(allNeighbors) && openSet.Len() > 0 {
+		if current.generatedCount < len(allNeighbors) && openSet.Len() > 0 {
 			nextFThreshold := (*openSet)[0].fCost
 			if nextFThreshold > current.lastFThreshold {
 				// Update the node's f-threshold and add it back to OPEN

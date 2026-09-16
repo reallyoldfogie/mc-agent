@@ -127,6 +127,11 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
+	// Enable per-search block memoization (see MovementValidator.ResetBlockCache) -
+	// the forward and backward searches below probe heavily overlapping
+	// territory near the meeting point, so this is doubly valuable here.
+	pf.movementValidator.ResetBlockCache()
+
 	// Initialize forward search (from start)
 	forwardOpen := &bidirNodeHeap{}
 	heap.Init(forwardOpen)
@@ -351,19 +356,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget models.V3, prune *MovePruneConfig) []PathStep {
 	moves := make([]PathStep, 0, 32)
 
-	// Cardinal directions
-	cardinalDirs := []struct {
-		dx, dz float64
-	}{
-		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
-	}
-
-	// Diagonal directions
-	diagonalDirs := []struct {
-		dx, dz float64
-	}{
-		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
-	}
+	// cardinalDirs/diagonalDirs/allDirs are package-level (see movement.go)
 
 	// For each direction, check what moves could have arrived here
 	for _, dir := range cardinalDirs {
@@ -576,7 +569,6 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	}
 
 	// Swimming reverse
-	allDirs := append(cardinalDirs, diagonalDirs...)
 	for _, dir := range allDirs {
 		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
 		if pf.movementValidator.CanSwim(from, to) {
