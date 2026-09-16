@@ -28,15 +28,21 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 	switch targetStep.Movement {
 	case Descend:
 		// Drop down movements (1-3 blocks)
-		// Tighter horizontal tolerance, only check we're not above target
+		// Tighter horizontal tolerance, only check we're not above target.
+		// deltaPos.Y = target.Y - current.Y, so "not above target" means
+		// current.Y has come down to at or below target.Y, i.e. deltaPos.Y
+		// is not still strongly negative - the bound is >= -0.05, not <= 0.05
+		// (which was true even before any actual fall happened, since
+		// deltaPos.Y stays very negative the whole time the bot is still up
+		// at its pre-descend height).
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y <= 0.05
+		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y >= -0.05
 
 	case Drop2North, Drop2South, Drop2East, Drop2West:
 		// 2-block drops (directional)
 		// Same as regular descend but for 2-block falls
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y <= 0.05
+		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y >= -0.05
 
 	case Climb:
 		// Ladder climbing (both ascent and descent)
