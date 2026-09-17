@@ -78,6 +78,14 @@ type fakeAgent struct {
 	teleportCalls []teleportCall
 	teleportErr   error
 
+	// teleportFailFirstN, if > 0, makes exactly that many leading
+	// TeleportTo calls fail with a transient error before returning to
+	// normal (successful) behavior - unlike teleportErr's permanent
+	// failure, this simulates a one-off flaky teleport to exercise
+	// Environment.Reset's own outer retry-on-attempt-failure loop (see
+	// TestResetOuterRetryRecoversFromATransientTeleportFailure).
+	teleportFailFirstN int
+
 	// FindPath simulation (rlenv's reachability gate, walkability.go):
 	// findPathUnreachable, if set, is called for every FindPath candidate
 	// position — returning true simulates a real pathfinder failure ("no
@@ -395,6 +403,10 @@ func (f *fakeAgent) TeleportTo(_ context.Context, x, y, z float64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.teleportCalls = append(f.teleportCalls, teleportCall{x: x, y: y, z: z})
+	if f.teleportFailFirstN > 0 {
+		f.teleportFailFirstN--
+		return errors.New("fakeAgent: forced transient TeleportTo failure")
+	}
 	if f.teleportErr != nil {
 		return f.teleportErr
 	}

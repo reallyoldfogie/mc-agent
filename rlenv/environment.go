@@ -64,11 +64,15 @@ type Environment struct {
 	rng *rand.Rand
 
 	// episode counts how many times Reset has been called on this
-	// instance, 0-indexed — passed to Config.TaskSelector as its own
-	// episode argument, then incremented. Never reset itself; an
-	// Environment's episode count only ever grows across its whole
-	// lifetime, matching TaskSelector's own doc comment ("0 for the very
-	// first episode").
+	// instance, 0-indexed. Reset captures its current value into a local
+	// episodeIndex, increments it, then passes episodeIndex (not this
+	// field) to Config.TaskSelector on every resetAttempt call that
+	// external Reset call makes — see Reset's own doc comment for why
+	// that indirection matters: without it, a Reset call that internally
+	// retries would let TaskSelector see this field already incremented
+	// past what "0 for the very first episode" promises. Never reset
+	// itself; an Environment's episode count only ever grows across its
+	// whole lifetime.
 	episode int
 }
 
@@ -97,16 +101,71 @@ func (e *Environment) ObservationSize() int { return observationSize }
 // ActionSpace implements rl.Environment.
 func (e *Environment) ActionSpace() int { return NumActions }
 
-// Reset implements rl.Environment. If Config.ResetOrigin is set, it
-// actually teleports the bot there first (see ResetAgent); otherwise it
-// falls back to TargetOffset's original workaround — capturing wherever
-// the bot currently is as this episode's origin and posing a new target
-// relative to it, without repositioning anything. Either way, the posed
-// target is then checked against Config.ArrivalThreshold (see the
-// Config.Jitter retry loop below) so an episode never starts already
-// "arrived" — see Config.Jitter's own doc comment for why that's a real
-// risk once jitter is in play, not a hypothetical one.
+// Reset implements rl.Environment, retrying resetAttempt up to
+// resetOuterRetryAttempts times before giving up. resetAttempt's own
+// walkability retry loop already tolerates "this particular jittered
+// target didn't pan out, try another" within one attempt (bounded by
+// resetWalkabilityBudget); this outer layer instead tolerates "the
+// attempt as a whole hit a bad outcome" - a flaky TeleportTo, or an
+// unlucky run of jitter draws that each needed the full ring search
+// and burned the whole aggregate budget - without crashing potentially
+// hours of otherwise-healthy training over one unlucky episode
+// boundary. Confirmed live as a real failure mode, not a hypothetical
+// one: see docs/bugs/pathfinder-shared-block-cache-contention.md and
+// docs/bugs/movement-adjacency-check-floating-point-drift.md in
+// ../mc-agent for the pathfinding-side bugs that made this loop run
+// far longer than intended before either was fixed.
+//
+// e.episode is incremented exactly once per external Reset call here,
+// not once per internal resetAttempt call - resetAttempt reads
+// e.episode (for Config.TaskSelector) but never mutates it, so a
+// failed-then-retried attempt doesn't silently skip an episode index
+// out from under TaskSelector's own "0 for the very first episode,
+// monotonic thereafter" contract.
+//
+// Every resetAttempt failure is retried blindly, including ones that
+// can never actually succeed on retry (e.g. errResetOriginRequiresResetAgent,
+// a live agent that will never grow the missing capability mid-run):
+// deliberately not special-cased, since those fail near-instantly
+// anyway and classifying every possible error as retryable-or-not would
+// add real complexity for negligible savings. ctx cancellation is the
+// one exception - retrying past the caller's own cancellation would be
+// pure waste.
 func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
+	// episodeIndex is captured once, before any retrying, and passed
+	// explicitly to every resetAttempt call below rather than letting it
+	// read e.episode itself - this is what keeps TaskSelector's "0 for the
+	// very first episode, monotonic thereafter" contract intact regardless
+	// of how many internal attempts a given external Reset call takes.
+	episodeIndex := e.episode
+	e.episode++
+
+	var lastErr error
+	for attempt := 1; attempt <= resetOuterRetryAttempts; attempt++ {
+		obs, err := e.resetAttempt(ctx, episodeIndex)
+		if err == nil {
+			return obs, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return rl.Observation{}, fmt.Errorf("rlenv: Reset failed after %d attempt(s): %w", resetOuterRetryAttempts, lastErr)
+}
+
+// resetAttempt is Reset's single-attempt body. If Config.ResetOrigin is
+// set, it actually teleports the bot there first (see ResetAgent);
+// otherwise it falls back to TargetOffset's original workaround —
+// capturing wherever the bot currently is as this episode's origin and
+// posing a new target relative to it, without repositioning anything.
+// Either way, the posed target is then checked against
+// Config.ArrivalThreshold (see the Config.Jitter retry loop below) so an
+// episode never starts already "arrived" — see Config.Jitter's own doc
+// comment for why that's a real risk once jitter is in play, not a
+// hypothetical one. episodeIndex is Reset's own captured episode counter
+// (see its doc comment), passed through unchanged for Config.TaskSelector.
+func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
 		return rl.Observation{}, errPositionUnknown
@@ -142,14 +201,13 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	// jitter/pose the stale pre-override target). See Config.TaskSelector's
 	// own doc comment for exactly which fields this mutates.
 	if e.cfg.TaskSelector != nil {
-		override := e.cfg.TaskSelector(e.episode, e.rng)
+		override := e.cfg.TaskSelector(episodeIndex, e.rng)
 		e.cfg.GoToTargetDisabled = override.GoToTargetDisabled
 		e.cfg.TargetOffset = override.TargetOffset
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 	}
-	e.episode++
 
 	targetOffset := e.cfg.TargetOffset
 	for i := range targetOffset {
@@ -484,6 +542,18 @@ const maxJitterRetries = 20
 // single Reset call to a small, predictable fraction of a training
 // episode even in the pathological case.
 const resetWalkabilityBudget = 45 * time.Second
+
+// resetOuterRetryAttempts bounds Reset's own outer retry loop around
+// resetAttempt (see Reset's doc comment): how many times to retry the
+// whole attempt - fresh TeleportTo, fresh jitter draws, fresh
+// walkability search - before giving up and returning an error. Worst
+// case this multiplies resetWalkabilityBudget by this constant (up to
+// 3*45s = 135s) before a genuinely broken Config/terrain combination
+// fails loudly, still a small, bounded fraction of a training run, in
+// exchange for tolerating a single unlucky attempt (a flaky TeleportTo,
+// or a run of jitter draws that each needed the full ring search)
+// without crashing potentially hours of otherwise-healthy training.
+const resetOuterRetryAttempts = 3
 
 // jitter adds a uniform-random offset in [-Config.Jitter[axis],
 // +Config.Jitter[axis]] to base — see Config.Jitter's own doc comment. A
