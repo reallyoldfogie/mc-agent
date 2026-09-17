@@ -184,10 +184,13 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 
 	// Prune config for move generation
 	forwardPrune := &MovePruneConfig{
+		Start:     start,
 		StartDist: start.DistanceTo(goal),
 		DriftCap:  8.0, // More generous for bidirectional
 	}
 	backwardPrune := &MovePruneConfig{
+		Start:     start,
+		Goal:      goal,
 		StartDist: start.DistanceTo(goal),
 		DriftCap:  8.0,
 	}
@@ -615,9 +618,19 @@ func (pf *bidirAStarPathFinder) getReverseMoves(mv *MovementValidator, to models
 		for _, move := range moves {
 			fromDist := move.Position.DistanceTo(searchTarget)
 			// For backward search, we want moves that get us closer to start
-			if fromDist <= toDist+prune.DriftCap {
-				filtered = append(filtered, move)
+			if fromDist > toDist+prune.DriftCap {
+				continue
 			}
+			// Bound cumulative detour from the real start-goal line - see
+			// GetPossibleMoves' own identical check (movement.go) for why
+			// the per-step check above isn't enough on its own.
+			if prune.StartDist > 0 {
+				toGoalDist := move.Position.DistanceTo(prune.Goal)
+				if fromDist+toGoalDist > prune.StartDist+prune.DriftCap {
+					continue
+				}
+			}
+			filtered = append(filtered, move)
 		}
 
 		// Remove duplicates

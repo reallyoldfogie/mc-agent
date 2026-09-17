@@ -327,6 +327,7 @@ func (vap *VehicleAwarePathFinder) buildVehiclePath(
 	heap.Push(openSet, startNode)
 
 	prune := &MovePruneConfig{
+		Start:     start,
 		StartDist: start.DistanceTo(goal),
 		DriftCap:  4.0,
 	}

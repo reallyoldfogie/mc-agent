@@ -423,9 +423,19 @@ func (v *VehicleMovementValidator) pruneMovesTowardGoal(
 	for _, step := range moves {
 		toDist := step.Position.DistanceTo(goal)
 		// Allow moves that get closer to the goal or don't drift more than the cap
-		if toDist <= fromDist || (toDist-fromDist) <= prune.DriftCap {
-			filtered = append(filtered, step)
+		if toDist > fromDist && (toDist-fromDist) > prune.DriftCap {
+			continue
 		}
+		// Bound cumulative detour from the real start-goal line - see
+		// pathfinding/movement.go's GetPossibleMoves for why the local,
+		// per-step check above isn't sufficient on its own.
+		if prune.StartDist > 0 {
+			toStartDist := step.Position.DistanceTo(prune.Start)
+			if toStartDist+toDist > prune.StartDist+prune.DriftCap {
+				continue
+			}
+		}
+		filtered = append(filtered, step)
 	}
 
 	return filtered
