@@ -96,6 +96,14 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 		}, ctx.Err()
 	}
 
+	// Snap goal onto the same grid start's own moves can actually reach —
+	// see snapGoalToReachableGrid's own doc comment for the live-confirmed
+	// bug this closes. In particular, the backward search below seeds
+	// its own root node directly from goal (see goalNode below), so an
+	// unreachable raw goal would otherwise poison that search's own
+	// starting point, not just the forward search's termination check.
+	goal = snapGoalToReachableGrid(start, goal)
+
 	// Validate start and goal positions
 	if start.DistanceTo(goal) <= pf.goalRadius {
 		return &Path{

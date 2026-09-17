@@ -158,6 +158,12 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		}, ctx.Err()
 	}
 
+	// Snap goal onto the same grid start's own moves can actually reach —
+	// see snapGoalToReachableGrid's own doc comment for the live-confirmed
+	// bug this closes. Every goalRadius check below, and the main search
+	// loop's own termination check, now operate on an achievable goal.
+	goal = snapGoalToReachableGrid(start, goal)
+
 	// Validate start and goal positions
 	if start.DistanceTo(goal) <= pf.goalRadius {
 		return &Path{
