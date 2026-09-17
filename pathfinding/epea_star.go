@@ -18,12 +18,11 @@ import (
 
 // epeaStarPathFinder implements PathFinder using EPEA*
 type epeaStarPathFinder struct {
-	world             models.World
-	shapeMgr          models.BlockShapeManager
-	movementValidator *MovementValidator
-	goalRadius        float64
-	contextCheckFreq  int
-	logger            *slog.Logger
+	world            models.World
+	shapeMgr         models.BlockShapeManager
+	goalRadius       float64
+	contextCheckFreq int
+	logger           *slog.Logger
 }
 
 // NewEPEAStarPathFinder creates a new EPEA* pathfinder
@@ -37,12 +36,11 @@ func NewEPEAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeM
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
 	logger = utils.SafeLogger(logger)
 	return &epeaStarPathFinder{
-		world:             w,
-		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr, logger),
-		goalRadius:        goalRadius,
-		contextCheckFreq:  contextCheckFreq,
-		logger:            logger,
+		world:            w,
+		shapeMgr:         shapeMgr,
+		goalRadius:       goalRadius,
+		contextCheckFreq: contextCheckFreq,
+		logger:           logger,
 	}
 }
 
@@ -151,15 +149,19 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
-	// Enable per-search block memoization (see MovementValidator.ResetBlockCache)
-	pf.movementValidator.ResetBlockCache()
+	// A fresh MovementValidator per call, not a shared field - see
+	// a_star.go's FindPath for why (concurrent callers on the same
+	// pathfinder instance would otherwise invalidate each other's
+	// memoization via ResetBlockCache).
+	movementValidator := NewMovementValidator(pf.world, pf.shapeMgr, pf.logger)
+	movementValidator.ResetBlockCache()
 
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),
 		DriftCap:  4.0,
 	}
-	startMoves := pf.movementValidator.GetPossibleMoves(start, goal, prune)
+	startMoves := movementValidator.GetPossibleMoves(start, goal, prune)
 	utils.SafeLogger(pf.logger).Debug("[EPEA*] start position possible moves", "x", start.X, "y", start.Y, "z", start.Z, "count", len(startMoves))
 
 	if len(startMoves) > 0 && utils.DebugVerboseEnabled(pf.logger) {
@@ -261,7 +263,7 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 		// the node (see epeaNode.neighbors), since re-expansion below can pop this
 		// same position again and the world hasn't changed.
 		if current.neighbors == nil {
-			current.neighbors = pf.movementValidator.GetPossibleMoves(current.pos, goal, prune)
+			current.neighbors = movementValidator.GetPossibleMoves(current.pos, goal, prune)
 			current.generatedSuccessors = make([]bool, len(current.neighbors))
 		}
 		allNeighbors := current.neighbors
@@ -350,7 +352,7 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 
 // FindGroundBelow delegates to the movement validator to find valid ground
 func (pf *epeaStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
-	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
+	return NewMovementValidator(pf.world, pf.shapeMgr, pf.logger).FindGroundBelow(x, z, startY, maxSearchDepth)
 }
 
 // reconstructPath builds the path from the goal node back to the start

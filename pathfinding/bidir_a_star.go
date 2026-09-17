@@ -15,12 +15,11 @@ import (
 // It searches from both start and goal simultaneously, meeting in the middle.
 // This typically explores 40-80% fewer nodes than standard A* for long paths.
 type bidirAStarPathFinder struct {
-	world             models.World
-	shapeMgr          models.BlockShapeManager
-	movementValidator *MovementValidator
-	goalRadius        float64
-	contextCheckFreq  int
-	logger            *slog.Logger
+	world            models.World
+	shapeMgr         models.BlockShapeManager
+	goalRadius       float64
+	contextCheckFreq int
+	logger           *slog.Logger
 }
 
 // NewBidirAStarPathFinder creates a new bidirectional A* pathfinder
@@ -34,12 +33,11 @@ func NewBidirAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShap
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
 	logger = utils.SafeLogger(logger)
 	return &bidirAStarPathFinder{
-		world:             w,
-		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr, logger),
-		goalRadius:        goalRadius,
-		contextCheckFreq:  contextCheckFreq,
-		logger:            logger,
+		world:            w,
+		shapeMgr:         shapeMgr,
+		goalRadius:       goalRadius,
+		contextCheckFreq: contextCheckFreq,
+		logger:           logger,
 	}
 }
 
@@ -135,10 +133,15 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
-	// Enable per-search block memoization (see MovementValidator.ResetBlockCache) -
-	// the forward and backward searches below probe heavily overlapping
-	// territory near the meeting point, so this is doubly valuable here.
-	pf.movementValidator.ResetBlockCache()
+	// A fresh MovementValidator per call, not a shared field - see
+	// a_star.go's FindPath for why (concurrent callers on the same
+	// pathfinder instance would otherwise invalidate each other's
+	// memoization via ResetBlockCache). The forward and backward
+	// searches below probe heavily overlapping territory near the
+	// meeting point, so this call's own memoization is doubly valuable
+	// here.
+	movementValidator := NewMovementValidator(pf.world, pf.shapeMgr, pf.logger)
+	movementValidator.ResetBlockCache()
 
 	// Initialize forward search (from start)
 	forwardOpen := &bidirNodeHeap{}
@@ -247,7 +250,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 			}
 
 			// Expand forward neighbors
-			neighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal, forwardPrune)
+			neighbors := movementValidator.GetPossibleMoves(current.pos, goal, forwardPrune)
 			for _, neighborStep := range neighbors {
 				neighborPos := neighborStep.Position
 
@@ -300,7 +303,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 			}
 
 			// Expand backward neighbors (using reverse moves)
-			neighbors := pf.getReverseMoves(current.pos, start, backwardPrune)
+			neighbors := pf.getReverseMoves(movementValidator, current.pos, start, backwardPrune)
 			for _, neighborStep := range neighbors {
 				neighborPos := neighborStep.Position
 
@@ -340,7 +343,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 
 	// Reconstruct path if found
 	if bestMeetingNode != nil && bestMeetingNodeBackward != nil {
-		path := pf.reconstructBidirPath(bestMeetingNode, bestMeetingNodeBackward, start, goal)
+		path := pf.reconstructBidirPath(movementValidator, bestMeetingNode, bestMeetingNodeBackward, start, goal)
 		path.SearchTime = float64(time.Since(startTime).Milliseconds())
 
 		utils.SafeLogger(pf.logger).Info("[Bidir-A*] " + path.LogSummary())
@@ -361,7 +364,7 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 
 // getReverseMoves returns moves that could ARRIVE at a position
 // This is the inverse of GetPossibleMoves - what moves could have led TO this position
-func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget models.V3, prune *MovePruneConfig) []PathStep {
+func (pf *bidirAStarPathFinder) getReverseMoves(mv *MovementValidator, to models.V3, searchTarget models.V3, prune *MovePruneConfig) []PathStep {
 	moves := make([]PathStep, 0, 32)
 
 	// cardinalDirs/diagonalDirs/allDirs are package-level (see movement.go)
@@ -370,7 +373,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	for _, dir := range cardinalDirs {
 		// If we can traverse FROM neighbor TO here, then neighbor is a valid reverse move
 		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
-		if pf.movementValidator.CanTraverse(from, to) {
+		if mv.CanTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: Traverse,
@@ -380,14 +383,14 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 		// If we can ascend FROM neighbor (1 below) TO here, then that neighbor is valid
 		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
-		if pf.movementValidator.CanAscend(fromBelow, to) {
+		if mv.CanAscend(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: AscendJump,
 				Cost:     AscendJump.BaseCost(),
 			})
 		}
-		if pf.movementValidator.CanAscendStairs(fromBelow, to) {
+		if mv.CanAscendStairs(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: AscendStairs,
@@ -409,7 +412,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		// instead and let normal graph connectivity discard the bogus ones.
 		for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
 			fromAbove := to.Add(models.V3{X: dir.dx, Y: dropHeight, Z: dir.dz})
-			if pf.movementValidator.CanDescend(fromAbove, to) {
+			if mv.CanDescend(fromAbove, to) {
 				moves = append(moves, PathStep{
 					Position: fromAbove,
 					Movement: Descend,
@@ -420,7 +423,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 		// Descend stairs reverse
 		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
-		if pf.movementValidator.CanDescendStairs(fromAbove, to) {
+		if mv.CanDescendStairs(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,
 				Movement: DescendStairs,
@@ -430,7 +433,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 		// Jump2 reverse - could have jumped 2 blocks to get here
 		fromJump := to.Add(models.V3{X: dir.dx * 2, Y: 0, Z: dir.dz * 2})
-		if pf.movementValidator.CanJump2(fromJump, to) {
+		if mv.CanJump2(fromJump, to) {
 			moves = append(moves, PathStep{
 				Position: fromJump,
 				Movement: Jump2,
@@ -440,7 +443,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 
 		// Jump2 up reverse - could have jumped 2 blocks and up 1 to get here
 		fromJumpBelow := to.Add(models.V3{X: dir.dx * 2, Y: -1, Z: dir.dz * 2})
-		if pf.movementValidator.CanJump2(fromJumpBelow, to) {
+		if mv.CanJump2(fromJumpBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromJumpBelow,
 				Movement: Jump2,
@@ -453,7 +456,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		// for cardinal directions (movement.go); it was previously missing
 		// here entirely, which silently made any water crossing unreachable
 		// from the backward (goal-side) search.
-		if pf.movementValidator.CanWadeWater(from, to) {
+		if mv.CanWadeWater(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: WadeWater,
@@ -464,14 +467,14 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		// ExitWater reverse - could have exited water onto this dry position,
 		// either at the same level or via a one-block step-up. Also previously
 		// missing, so backward search could never leave a body of water.
-		if pf.movementValidator.CanExitWater(from, to) {
+		if mv.CanExitWater(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: ExitWater,
 				Cost:     ExitWater.BaseCost(),
 			})
 		}
-		if pf.movementValidator.CanExitWater(fromBelow, to) {
+		if mv.CanExitWater(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: ExitWater,
@@ -483,14 +486,14 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	// Diagonal movements
 	for _, dir := range diagonalDirs {
 		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
-		if pf.movementValidator.CanDiagonalTraverse(from, to) {
+		if mv.CanDiagonalTraverse(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: DiagonalTraverse,
 				Cost:     DiagonalTraverse.BaseCost(),
 			})
 		}
-		if pf.movementValidator.CanDiagonalWadeWater(from, to) {
+		if mv.CanDiagonalWadeWater(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: WadeWater,
@@ -499,7 +502,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		}
 
 		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
-		if pf.movementValidator.CanDiagonalAscend(fromBelow, to) {
+		if mv.CanDiagonalAscend(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: DiagonalAscend,
@@ -514,7 +517,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			continue
 		}
 		from := to.Add(models.V3{X: 0, Y: dy, Z: 0})
-		if pf.movementValidator.CanClimb(from, to) {
+		if mv.CanClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: Climb,
@@ -526,7 +529,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	// EnterClimb reverse - could have entered climb from adjacent
 	for _, dir := range cardinalDirs {
 		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
-		if pf.movementValidator.CanEnterClimb(from, to) {
+		if mv.CanEnterClimb(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: EnterClimb,
@@ -534,7 +537,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
-		if pf.movementValidator.CanEnterClimb(fromBelow, to) {
+		if mv.CanEnterClimb(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: JumpToClimb,
@@ -542,7 +545,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
-		if pf.movementValidator.CanEnterClimb(fromAbove, to) {
+		if mv.CanEnterClimb(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,
 				Movement: EnterClimb,
@@ -557,8 +560,8 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 		// ladder-gated platform - the exact case that made the goal
 		// unreachable from a course where the only way up is a ladder.
 		sameLevelTo := models.V3{X: to.X, Y: to.Y, Z: to.Z}
-		if pf.movementValidator.CanExitClimb(from, sameLevelTo) &&
-			pf.movementValidator.getExitClimbTargetY(from, sameLevelTo) == to.Y {
+		if mv.CanExitClimb(from, sameLevelTo) &&
+			mv.getExitClimbTargetY(from, sameLevelTo) == to.Y {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: ExitClimb,
@@ -566,8 +569,8 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 		stepUpTo := models.V3{X: to.X, Y: to.Y - 1, Z: to.Z}
-		if pf.movementValidator.CanExitClimb(fromBelow, stepUpTo) &&
-			pf.movementValidator.getExitClimbTargetY(fromBelow, stepUpTo) == to.Y {
+		if mv.CanExitClimb(fromBelow, stepUpTo) &&
+			mv.getExitClimbTargetY(fromBelow, stepUpTo) == to.Y {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: ExitClimb,
@@ -579,7 +582,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 	// Swimming reverse
 	for _, dir := range allDirs {
 		from := to.Add(models.V3{X: dir.dx, Y: 0, Z: dir.dz})
-		if pf.movementValidator.CanSwim(from, to) {
+		if mv.CanSwim(from, to) {
 			moves = append(moves, PathStep{
 				Position: from,
 				Movement: Swim,
@@ -587,7 +590,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 		fromBelow := to.Add(models.V3{X: dir.dx, Y: -1, Z: dir.dz})
-		if pf.movementValidator.CanSwimUp(fromBelow, to) {
+		if mv.CanSwimUp(fromBelow, to) {
 			moves = append(moves, PathStep{
 				Position: fromBelow,
 				Movement: SwimUp,
@@ -595,7 +598,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 			})
 		}
 		fromAbove := to.Add(models.V3{X: dir.dx, Y: 1, Z: dir.dz})
-		if pf.movementValidator.CanSwimDown(fromAbove, to) {
+		if mv.CanSwimDown(fromAbove, to) {
 			moves = append(moves, PathStep{
 				Position: fromAbove,
 				Movement: SwimDown,
@@ -634,7 +637,7 @@ func (pf *bidirAStarPathFinder) getReverseMoves(to models.V3, searchTarget model
 }
 
 // reconstructBidirPath builds the final path from the meeting point
-func (pf *bidirAStarPathFinder) reconstructBidirPath(forwardNode, backwardNode *bidirNode, start, goal models.V3) *Path {
+func (pf *bidirAStarPathFinder) reconstructBidirPath(mv *MovementValidator, forwardNode, backwardNode *bidirNode, start, goal models.V3) *Path {
 	// Build forward path (start -> meeting point)
 	forwardSteps := make([]PathStep, 0)
 	totalCost := 0.0
@@ -665,7 +668,7 @@ func (pf *bidirAStarPathFinder) reconstructBidirPath(forwardNode, backwardNode *
 		// But for the final path, we need the move FROM current.parent TO current
 		// We need to look up what move would take us from current to parent
 		parentPos := current.parent.pos
-		moves := pf.movementValidator.GetPossibleMoves(current.pos, parentPos, nil)
+		moves := mv.GetPossibleMoves(current.pos, parentPos, nil)
 
 		// Find the move that goes to parent
 		var moveToParent PathStep
@@ -711,5 +714,5 @@ func (pf *bidirAStarPathFinder) reconstructBidirPath(forwardNode, backwardNode *
 
 // FindGroundBelow delegates to the movement validator
 func (pf *bidirAStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
-	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
+	return NewMovementValidator(pf.world, pf.shapeMgr, pf.logger).FindGroundBelow(x, z, startY, maxSearchDepth)
 }

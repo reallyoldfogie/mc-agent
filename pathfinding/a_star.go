@@ -14,12 +14,11 @@ import (
 
 // aStarPathFinder implements PathFinder
 type aStarPathFinder struct {
-	world             models.World
-	shapeMgr          models.BlockShapeManager
-	movementValidator *MovementValidator
-	goalRadius        float64
-	contextCheckFreq  int
-	logger            *slog.Logger
+	world            models.World
+	shapeMgr         models.BlockShapeManager
+	goalRadius       float64
+	contextCheckFreq int
+	logger           *slog.Logger
 }
 
 // NewAStarPathFinder creates a new A* pathfinder
@@ -33,12 +32,11 @@ func NewAStarPathFinderWithConfig(w models.World, shapeMgr models.BlockShapeMana
 	contextCheckFreq := normalizeContextCheckFreq(cfg.ContextCheckFreq)
 	logger = utils.SafeLogger(logger)
 	return &aStarPathFinder{
-		world:             w,
-		shapeMgr:          shapeMgr,
-		movementValidator: NewMovementValidator(w, shapeMgr, logger),
-		goalRadius:        goalRadius,
-		contextCheckFreq:  contextCheckFreq,
-		logger:            logger,
+		world:            w,
+		shapeMgr:         shapeMgr,
+		goalRadius:       goalRadius,
+		contextCheckFreq: contextCheckFreq,
+		logger:           logger,
 	}
 }
 
@@ -195,15 +193,30 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 			goal.X, goal.Y, goal.Z, pf.goalRadius)
 	}
 
-	// Enable per-search block memoization (see MovementValidator.ResetBlockCache)
-	pf.movementValidator.ResetBlockCache()
+	// A fresh MovementValidator per call, not a shared field: this
+	// pathfinder is invoked concurrently on the same instance from
+	// several independent callers (a live agent's real-movement
+	// dispatch, rlenv.Reset's own reachable() sanity checks, and
+	// PhysicsMovementExecutor's stuck-recovery callback all ultimately
+	// call through the same low-level A* instance). A shared
+	// MovementValidator's blockCache is mutex-protected against data
+	// races but not against cross-call invalidation: one call's
+	// ResetBlockCache() wiping another's in-progress memoization
+	// degrades a normal tens-of-milliseconds search back to raw,
+	// doubly-mutex-guarded world.GetBlockAt calls per node - confirmed
+	// live as the cause of reachabilityCheckTimeout's 3s budget being
+	// exceeded repeatedly on flat, otherwise-trivial terrain. See
+	// docs/bugs/hpa-star-slowness for the earlier, related investigation
+	// into per-node query cost.
+	movementValidator := NewMovementValidator(pf.world, pf.shapeMgr, pf.logger)
+	movementValidator.ResetBlockCache()
 
 	// Debug: Get possible moves from start to verify we can move
 	prune := &MovePruneConfig{
 		StartDist: start.DistanceTo(goal),
 		DriftCap:  4.0,
 	}
-	startMoves := pf.movementValidator.GetPossibleMoves(start, goal, prune)
+	startMoves := movementValidator.GetPossibleMoves(start, goal, prune)
 	utils.SafeLogger(pf.logger).Debug("[A*] start position possible moves", "x", start.X, "y", start.Y, "z", start.Z, "count", len(startMoves))
 
 	if len(startMoves) > 0 && utils.DebugVerboseEnabled(pf.logger) {
@@ -312,7 +325,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 		closedSet[current.pos] = true
 
 		// Get all possible moves from current position (filtered toward goal)
-		neighbors := pf.movementValidator.GetPossibleMoves(current.pos, goal, prune)
+		neighbors := movementValidator.GetPossibleMoves(current.pos, goal, prune)
 
 		for _, neighborStep := range neighbors {
 			neighborPos := neighborStep.Position
@@ -357,7 +370,7 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 
 // FindGroundBelow delegates to the movement validator to find valid ground
 func (pf *aStarPathFinder) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
-	return pf.movementValidator.FindGroundBelow(x, z, startY, maxSearchDepth)
+	return NewMovementValidator(pf.world, pf.shapeMgr, pf.logger).FindGroundBelow(x, z, startY, maxSearchDepth)
 }
 
 // reconstructPath builds the path from the goal node back to the start
