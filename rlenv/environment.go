@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"time"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -170,6 +171,32 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 	checkWalkability = checkWalkability && !e.cfg.GoToTargetDisabled
 	jitterActive := e.cfg.Jitter != ([3]float64{})
 
+	// walkabilityCtx bounds the *whole* retry loop below with one
+	// aggregate deadline, not just each individual reachable() call.
+	// Without this, the loop's own worst case is maxJitterRetries drawn
+	// targets, each potentially sweeping up to (2*horizontalSearchRadius+1)^2-1
+	// ring candidates (findWalkableTarget), each candidate's own
+	// reachable() bounded only by reachabilityCheckTimeout in isolation —
+	// 20 * 80 * 3s ≈ 81 minutes in the worst case, with nothing to stop
+	// it short of that. Confirmed live against a shared-server training
+	// run's deliberately-flattened world: nearly every nearby column
+	// trivially passes findWalkableTarget's cheap groundSnap check, so a
+	// bot whose actual position is (for whatever reason) reachability-
+	// disconnected from its own surroundings burns the full per-candidate
+	// timeout on every single one of them, repeatedly, well past what a
+	// single Reset call should ever cost — see
+	// docs/bugs/reset-walkability-retry-storm.md. context.WithTimeout's
+	// own "earlier of the two deadlines" semantics mean reachable's
+	// existing per-candidate context.WithTimeout(ctx, ...) call
+	// automatically inherits whichever fires first, so no other code path
+	// needs to change to get this bound enforced.
+	walkabilityCtx := ctx
+	if checkWalkability {
+		var cancelWalkabilityCtx context.CancelFunc
+		walkabilityCtx, cancelWalkabilityCtx = context.WithTimeout(ctx, resetWalkabilityBudget)
+		defer cancelWalkabilityCtx()
+	}
+
 	// Draw (and, if Jitter is active, redraw) a target offset until one
 	// both clears ArrivalThreshold and — if checkWalkability — passes
 	// findWalkableTarget, or maxJitterRetries is exhausted. Both checks
@@ -190,9 +217,12 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 		walkableFound = true
 		if !tooClose && checkWalkability {
 			var wx, wy, wz float64
-			wx, wy, wz, walkableFound = findWalkableTarget(ctx, walkAgent, e.agent, e.targetX, e.targetY, e.targetZ)
+			wx, wy, wz, walkableFound = findWalkableTarget(walkabilityCtx, walkAgent, e.agent, e.targetX, e.targetY, e.targetZ)
 			if walkableFound {
 				e.targetX, e.targetY, e.targetZ = wx, wy, wz
+			}
+			if !walkableFound && walkabilityCtx.Err() != nil {
+				return rl.Observation{}, fmt.Errorf("rlenv: walkability retry loop exceeded its %s aggregate time budget on attempt %d/%d (last tried (%.1f,%.1f,%.1f)) — check Config.TargetOffset/Jitter/terrain, or whether the bot's own position is reachability-disconnected from its surroundings", resetWalkabilityBudget, attempt, maxJitterRetries, e.targetX, e.targetY, e.targetZ)
 			}
 		}
 		if !tooClose && walkableFound {
@@ -442,6 +472,18 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 // TargetOffset/Jitter/ArrivalThreshold combination that can never
 // possibly produce a valid (non-arrived) target.
 const maxJitterRetries = 20
+
+// resetWalkabilityBudget bounds Reset's *entire* walkability retry loop
+// (every jitter draw combined, each draw's own findWalkableTarget ring
+// sweep, each ring candidate's own reachable() call) with one aggregate
+// wall-clock deadline — see the retry loop's own comment for the
+// unbounded-worst-case multiplication (maxJitterRetries * ring candidate
+// count * reachabilityCheckTimeout) this closes. 45s is generous relative
+// to how fast a genuinely reachable target resolves (single-digit
+// milliseconds to low seconds, confirmed live) while still bounding a
+// single Reset call to a small, predictable fraction of a training
+// episode even in the pathological case.
+const resetWalkabilityBudget = 45 * time.Second
 
 // jitter adds a uniform-random offset in [-Config.Jitter[axis],
 // +Config.Jitter[axis]] to base — see Config.Jitter's own doc comment. A

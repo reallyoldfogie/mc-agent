@@ -269,3 +269,54 @@ func TestResetErrorsAfterExhaustingAllJitterRetriesOnUnreachableTargets(t *testi
 		t.Fatal("Reset with every candidate on every retry unreachable: want error, got nil")
 	}
 }
+
+func TestResetAbortsWalkabilityRetryLoopOnceAggregateBudgetExpires(t *testing.T) {
+	// Same "every candidate on every retry is unreachable" shape as the
+	// test above, but this time bounds *how many* FindPath calls Reset is
+	// allowed to make before giving up, by starting from an
+	// already-canceled context. Reproduces the live bug this closes: on
+	// a shared-server training run's deliberately-flattened world, every
+	// nearby column trivially passed findWalkableTarget's cheap
+	// groundSnap check, so a bot stuck in this exact situation drove
+	// FindPath calls continuously for 6.5+ minutes (132 calls observed
+	// live) without giving up, well before exhausting maxJitterRetries —
+	// each individual reachable() call was already bounded
+	// (reachabilityCheckTimeout), but nothing bounded the *aggregate*
+	// cost of maxJitterRetries * a full ring sweep's worth of candidates
+	// each. context.WithTimeout's "earlier of the two deadlines"
+	// semantics mean an already-canceled parent ctx makes
+	// resetWalkabilityBudget's own derived deadline already-expired too,
+	// so this test exercises the real aggregate-budget code path
+	// deterministically without waiting out the real 45s budget.
+	registry := mctesting.NewSimpleBlockRegistry()
+	world := mctesting.NewWorldBuilder(registry).FlatGroundDirect(-50, -50, 50, 50, -1, walkGroundStateID).Build()
+	fake := newFakeAgent(0, 0, 0)
+	fake.findPathUnreachable = func(float64, float64, float64) bool { return true }
+	agent := fakeWalkabilityAgent{fakeAgent: fake, world: world, shapeMgr: mctesting.NewMockShapeManager()}
+
+	env := newWalkabilityTestEnvironment(t, agent, rlenv.Config{
+		TargetOffset:     [3]float64{5, 0, 0},
+		ArrivalThreshold: 0.5,
+		StepTimeout:      200 * time.Millisecond,
+		Jitter:           [3]float64{2, 0, 2},
+		JitterSeed:       1,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := env.Reset(ctx); err == nil {
+		t.Fatal("Reset with an already-expired aggregate walkability budget: want error, got nil")
+	}
+
+	// One fully-exhausted ring sweep's worth of calls (1 exact column +
+	// ringOffsets(4)'s 80 neighbors) is the most a single findWalkableTarget
+	// attempt can make; the bug this closes let Reset keep drawing fresh
+	// jittered targets and repeating that whole sweep up to maxJitterRetries
+	// (20) times — up to 20x more FindPath calls than the aggregate budget
+	// should ever permit once it's already expired before the loop starts.
+	const oneAttemptsWorthOfCalls = 1 + 80
+	if len(fake.findPathCalls) > oneAttemptsWorthOfCalls {
+		t.Fatalf("FindPath was called %d times after the aggregate budget already expired, want at most %d (one ring sweep, no further jitter retries)", len(fake.findPathCalls), oneAttemptsWorthOfCalls)
+	}
+}
