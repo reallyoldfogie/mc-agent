@@ -1,7 +1,6 @@
 package testing
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 func init() {
@@ -23,220 +23,153 @@ func init() {
 	_ = os.MkdirAll(filepath.Join(cacheDir, "replays"), 0755)
 }
 
-// TestNavigationSingleAgent tests that a single agent can navigate to a specified destination.
-func TestNavigationSingleAgent(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			logger := NewTestLogger(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+// NavigationRandomSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for random-terrain navigation tests: one
+// server per version, shared by every test method below, instead of the
+// previous per-test-function StartServer/StopServer pattern. World gen is
+// WorldGenRandom (the package default) because these tests specifically
+// exercise pathfinding over generated terrain - see NavigationFlatSuite in
+// navigation_flat_test.go for the flat-world counterpart that shares a
+// *different* server (world gen is fixed per suite instance, see
+// VersionWorldSuite's own doc comment on why flat and random tests can't
+// share one server).
+type NavigationRandomSuite struct {
+	VersionWorldSuite
+}
 
-			// Create framework
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
+func TestNavigationRandomSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &NavigationRandomSuite{}
+		s.WorldGen = WorldGenRandom
+		return s
+	})
+}
 
-			// Start test server
-			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.MCVersion
-			serverCfg.PullImage = false // set to true to pull latest image
-			RequireIntegrationEnv(t, serverCfg)
+// TestSingleAgent tests that a single agent can navigate to a specified
+// destination. Equivalent to the pre-Phase-1 TestNavigationSingleAgent.
+func (s *NavigationRandomSuite) TestSingleAgent() {
+	t := s.T()
+	logger := NewTestLogger(t)
 
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
+	agent, err := s.SpawnWorkingAreaAgent("TestBot", "nav_single")
+	require.NoError(t, err, "spawn agent")
+	logger.Logf("Agent %s spawned at working area (%.2f, %.2f, %.2f)", agent.Name, agent.Origin.X, agent.Origin.Y, agent.Origin.Z)
 
-			// Always cleanup server
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				if err := framework.StopServer(stopCtx, inst, true); err != nil {
-					logger.Logf("warning: failed to stop server: %v", err)
-				}
-			}()
+	s.Inst.RCON.Say(s.Ctx, "/effect give "+agent.Name+" minecraft:glowing 90 0 true").Exec(s.Ctx)
 
-			logger.Logf("Server started on %s:%d", inst.Server.Host, inst.Server.HostServerPort)
+	startPos := agent.Origin
+	logger.Logf("Agent starting position: %.2f, %.2f, %.2f", startPos.X, startPos.Y, startPos.Z)
 
-			// Spawn test agent with replay recording
-			agentCfg := DefaultAgentConfig(
-				"TestBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_single_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
+	// Define destination (10 blocks east on same Y level)
+	destination := models.V3{
+		X: startPos.X + 10,
+		Y: startPos.Y,
+		Z: startPos.Z,
+	}
+	logger.Logf("Target destination: %.2f, %.2f, %.2f", destination.X, destination.Y, destination.Z)
 
-			// Version handler is auto-detected by the framework
+	// Start position tracking
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
 
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
+	// Command agent to navigate using agent-specific prefix: >>>TestBot<<<
+	navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", destination.X, destination.Y, destination.Z)
+	sayCmd := s.Inst.RCON.Say(s.Ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
+	resp, err := sayCmd.Exec(s.Ctx)
+	require.NoError(t, err, "send navigation command")
+	logger.Logf("Command sent, response: %s", resp)
 
-			logger.Logf("Agent %s spawned (replay: %s)", agent.Name, agentCfg.ReplayOutput)
+	// Calculate expected travel time
+	distance := startPos.DistanceTo(destination)
+	timeout := CalculateMovementTimeout(distance)
+	if timeout < 30*time.Second {
+		timeout = 30 * time.Second // minimum timeout
+	}
 
-			// Wait for agent to join (give it time to connect and receive spawn position)
-			time.Sleep(5 * time.Second)
+	logger.Logf("Distance: %.2f blocks, timeout: %v", distance, timeout)
 
-			inst.RCON.Say(ctx, "/effect give "+agent.Name+" minecraft:glowing 90 0 true").Exec(ctx)
+	// Wait for agent to reach destination (tolerance: 1.0 blocks)
+	err = tracker.WaitForPosition(s.Ctx, agent.Name, destination, 1.0, timeout)
+	if err != nil {
+		// Get final position for debugging
+		finalPos, ok := tracker.GetPosition(agent.Name)
+		if ok {
+			finalDist := finalPos.DistanceTo(destination)
+			logger.Logf("Agent final position: %.2f, %.2f, %.2f (distance from target: %.2f)",
+				finalPos.X, finalPos.Y, finalPos.Z, finalDist)
+		}
+		require.NoError(t, err, "agent should reach destination")
+	}
 
-			// Get agent's starting position
-			startX, startY, startZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
-			require.NoError(t, err, "get starting position")
+	// Verify final position
+	finalX, finalY, finalZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, agent.Name)
+	require.NoError(t, err, "get final position")
 
-			startPos := models.V3{X: startX, Y: startY, Z: startZ}
-			logger.Logf("Agent starting position: %.2f, %.2f, %.2f", startX, startY, startZ)
+	finalPos := models.V3{X: finalX, Y: finalY, Z: finalZ}
+	finalDistance := finalPos.DistanceTo(destination)
 
-			// Define destination (10 blocks east on same Y level)
-			destination := models.V3{
-				X: startX + 10,
-				Y: startY,
-				Z: startZ,
-			}
-			logger.Logf("Target destination: %.2f, %.2f, %.2f", destination.X, destination.Y, destination.Z)
+	logger.Logf("Agent final position: %.2f, %.2f, %.2f", finalX, finalY, finalZ)
+	logger.Logf("Distance from target: %.2f blocks", finalDistance)
 
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond)
-			tracker.Start(ctx)
-			defer tracker.Stop()
+	assert.LessOrEqual(t, finalDistance, 1.0, "agent should be within 1 block of destination")
+}
 
-			// Command agent to navigate using agent-specific prefix: >>>TestBot<<<
-			navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", destination.X, destination.Y, destination.Z)
-			sayCmd := inst.RCON.Say(ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
-			resp, err := sayCmd.Exec(ctx)
-			require.NoError(t, err, "send navigation command")
-			logger.Logf("Command sent, response: %s", resp)
+// TestMultipleDestinations tests navigation to multiple waypoints.
+// Equivalent to the pre-Phase-1 TestNavigationMultipleDestinations.
+func (s *NavigationRandomSuite) TestMultipleDestinations() {
+	t := s.T()
+	logger := NewTestLogger(t)
 
-			// Calculate expected travel time
-			distance := startPos.DistanceTo(destination)
-			timeout := CalculateMovementTimeout(distance)
-			if timeout < 30*time.Second {
-				timeout = 30 * time.Second // minimum timeout
-			}
+	agent, err := s.SpawnWorkingAreaAgent("WaypointBot", "nav_waypoints")
+	require.NoError(t, err, "spawn agent")
+	logger.Logf("Agent %s spawned at working area (%.2f, %.2f, %.2f)", agent.Name, agent.Origin.X, agent.Origin.Y, agent.Origin.Z)
 
-			logger.Logf("Distance: %.2f blocks, timeout: %v", distance, timeout)
+	// Start position tracking
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
 
-			// Wait for agent to reach destination (tolerance: 1.0 blocks)
-			err = tracker.WaitForPosition(ctx, agent.Name, destination, 1.0, timeout)
-			if err != nil {
-				// Get final position for debugging
-				finalPos, ok := tracker.GetPosition(agent.Name)
-				if ok {
-					finalDist := finalPos.DistanceTo(destination)
-					logger.Logf("Agent final position: %.2f, %.2f, %.2f (distance from target: %.2f)",
-						finalPos.X, finalPos.Y, finalPos.Z, finalDist)
-				}
-				require.NoError(t, err, "agent should reach destination")
-			}
+	startPos := agent.Origin
 
-			// Verify final position
-			finalX, finalY, finalZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
-			require.NoError(t, err, "get final position")
+	waypoints := []models.V3{
+		{X: startPos.X + 30, Y: startPos.Y, Z: startPos.Z},      // East
+		{X: startPos.X + 30, Y: startPos.Y, Z: startPos.Z + 30}, // Southeast
+		{X: startPos.X, Y: startPos.Y, Z: startPos.Z + 30},      // South
+		{X: startPos.X, Y: startPos.Y, Z: startPos.Z},           // Back to start
+	}
 
-			finalPos := models.V3{X: finalX, Y: finalY, Z: finalZ}
-			finalDistance := finalPos.DistanceTo(destination)
+	for i, waypoint := range waypoints {
+		logger.Logf("Waypoint %d: %.2f, %.2f, %.2f", i+1, waypoint.X, waypoint.Y, waypoint.Z)
 
-			logger.Logf("Agent final position: %.2f, %.2f, %.2f", finalX, finalY, finalZ)
-			logger.Logf("Distance from target: %.2f blocks", finalDistance)
-			logger.Logf("Replay saved to: %s", agentCfg.ReplayOutput)
+		// Get current position
+		currentX, currentY, currentZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, agent.Name)
+		require.NoError(t, err, "get current position")
+		current := models.V3{X: currentX, Y: currentY, Z: currentZ}
 
-			assert.LessOrEqual(t, finalDistance, 1.0, "agent should be within 1 block of destination")
-		})
+		// Send navigation command using agent-specific prefix
+		navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", waypoint.X, waypoint.Y, waypoint.Z)
+		sayCmd := s.Inst.RCON.Say(s.Ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
+		_, err = sayCmd.Exec(s.Ctx)
+		require.NoError(t, err, "send navigation command")
+
+		// Calculate timeout
+		distance := current.DistanceTo(waypoint)
+		timeout := max(CalculateMovementTimeout(distance), 30*time.Second)
+
+		// Wait for arrival
+		err = tracker.WaitForPosition(s.Ctx, agent.Name, waypoint, 1.0, timeout)
+		require.NoError(t, err, "agent should reach waypoint %d", i+1)
+
+		logger.Logf("Reached waypoint %d - pausing for %d Seconds", i+1, 3)
+		time.Sleep(3 * time.Second) // brief pause between waypoints
 	}
 }
 
-// TestNavigationMultipleDestinations tests navigation to multiple waypoints.
-func TestNavigationMultipleDestinations(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			logger := NewTestLogger(t)
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-			defer cancel()
-
-			// Create framework
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
-
-			// Start test server
-			serverCfg := DefaultServerConfig()
-			serverCfg.Version = tt.MCVersion
-			RequireIntegrationEnv(t, serverCfg)
-
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				if err := framework.StopServer(stopCtx, inst, true); err != nil {
-					logger.Logf("warning: failed to stop server: %v", err)
-				}
-			}()
-
-			// Spawn test agent with replay recording
-			agentCfg := DefaultAgentConfig(
-				"WaypointBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version, fmt.Sprintf("nav_waypoints_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")), agentCfg.Name)
-
-			// Version handler is auto-detected by the framework
-
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			logger.Logf("Agent %s spawned (replay: %s)", agent.Name, agentCfg.ReplayOutput)
-
-			// Wait for agent to join
-			time.Sleep(5 * time.Second)
-
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond)
-			tracker.Start(ctx)
-			defer tracker.Stop()
-
-			// Define waypoints (square pattern)
-			startX, startY, startZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
-			require.NoError(t, err, "get starting position")
-
-			waypoints := []models.V3{
-				{X: startX + 30, Y: startY, Z: startZ},      // East
-				{X: startX + 30, Y: startY, Z: startZ + 30}, // Southeast
-				{X: startX, Y: startY, Z: startZ + 30},      // South
-				{X: startX, Y: startY, Z: startZ},           // Back to start
-			}
-
-			for i, waypoint := range waypoints {
-				logger.Logf("Waypoint %d: %.2f, %.2f, %.2f", i+1, waypoint.X, waypoint.Y, waypoint.Z)
-
-				// Get current position
-				currentX, currentY, currentZ, err := inst.RCON.GetEntityPos(ctx, agent.Name)
-				require.NoError(t, err, "get current position")
-				current := models.V3{X: currentX, Y: currentY, Z: currentZ}
-
-				// Send navigation command using agent-specific prefix
-				navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", waypoint.X, waypoint.Y, waypoint.Z)
-				sayCmd := inst.RCON.Say(ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
-				_, err = sayCmd.Exec(ctx)
-				require.NoError(t, err, "send navigation command")
-
-				// Calculate timeout
-				distance := current.DistanceTo(waypoint)
-				timeout := max(CalculateMovementTimeout(distance), 30*time.Second)
-
-				// Wait for arrival
-				err = tracker.WaitForPosition(ctx, agent.Name, waypoint, 1.0, timeout)
-				require.NoError(t, err, "agent should reach waypoint %d", i+1)
-
-				logger.Logf("Reached waypoint %d - pausing for %d Seconds", i+1, 3)
-				time.Sleep(3 * time.Second) // brief pause between waypoints
-			}
-
-			logger.Logf("Replay saved to: %s", agentCfg.ReplayOutput)
-		})
-	}
-}
-
-// TestNavigationObstacles tests navigation with obstacles.
-func TestNavigationObstacles(t *testing.T) {
-	t.Skip("Obstacle testing requires world setup - implement when needed")
+// TestObstacles tests navigation with obstacles.
+// Equivalent to the pre-Phase-1 TestNavigationObstacles (still a stub).
+func (s *NavigationRandomSuite) TestObstacles() {
+	s.T().Skip("Obstacle testing requires world setup - implement when needed")
 
 	// TODO: Implement
 
