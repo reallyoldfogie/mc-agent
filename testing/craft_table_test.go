@@ -58,7 +58,7 @@ func TestCraftItem_TableRequired_WoodenPickaxe(t *testing.T) {
 			err = env.Agent.Agent.CraftItem(ctx, "minecraft:wooden_pickaxe")
 			require.NoError(t, err, "craft wooden pickaxe")
 
-			hasPickaxe, err := waitForInventoryItem(env, "minecraft:wooden_pickaxe", 5*time.Second)
+			hasPickaxe, err := waitForInventoryItem(env.Ctx, env.Inst.RCON, env.BotName, "minecraft:wooden_pickaxe", 5*time.Second)
 			require.NoError(t, err, "check inventory for crafted wooden pickaxe")
 			require.True(t, hasPickaxe, "should have crafted a wooden pickaxe")
 

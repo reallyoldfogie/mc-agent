@@ -131,7 +131,7 @@ func TestCraftItem_FullPipeline_LogsToWoodenPickaxe(t *testing.T) {
 			// it, and craft against its 3x3 grid.
 			require.NoError(t, env.Agent.Agent.CraftItem(ctx, "minecraft:wooden_pickaxe"), "craft wooden pickaxe using the placed table")
 
-			hasPickaxe, err := waitForInventoryItem(env, "minecraft:wooden_pickaxe", 5*time.Second)
+			hasPickaxe, err := waitForInventoryItem(env.Ctx, env.Inst.RCON, env.BotName, "minecraft:wooden_pickaxe", 5*time.Second)
 			require.NoError(t, err, "check inventory for crafted wooden pickaxe")
 			require.True(t, hasPickaxe, "should have crafted a wooden pickaxe")
 

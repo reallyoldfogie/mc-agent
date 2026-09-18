@@ -62,7 +62,7 @@ func TestCraftItem_StickFromPlanks(t *testing.T) {
 			err = env.Agent.Agent.CraftItem(ctx, "minecraft:stick")
 			require.NoError(t, err, "craft stick")
 
-			hasStick, err := waitForInventoryItem(env, "minecraft:stick", 5*time.Second)
+			hasStick, err := waitForInventoryItem(env.Ctx, env.Inst.RCON, env.BotName, "minecraft:stick", 5*time.Second)
 			require.NoError(t, err, "check inventory for crafted stick")
 			require.True(t, hasStick, "should have crafted a stick")
 
@@ -101,7 +101,7 @@ func TestCraftItem_ShapelessChestBoat(t *testing.T) {
 			err = env.Agent.Agent.CraftItem(ctx, "minecraft:acacia_chest_boat")
 			require.NoError(t, err, "craft acacia chest boat")
 
-			hasChestBoat, err := waitForInventoryItem(env, "minecraft:acacia_chest_boat", 5*time.Second)
+			hasChestBoat, err := waitForInventoryItem(env.Ctx, env.Inst.RCON, env.BotName, "minecraft:acacia_chest_boat", 5*time.Second)
 			require.NoError(t, err, "check inventory for crafted chest boat")
 			require.True(t, hasChestBoat, "should have crafted an acacia chest boat")
 
