@@ -28,13 +28,13 @@ func TestChatCommand_FlyAndLand(t *testing.T) {
 				return ok
 			}, 5*time.Second, 100*time.Millisecond, "abilities should be received shortly after login")
 
-			flying := sayCommandUntil(t, ctx, env, env.BotName, "fly", func() bool {
+			flying := sayCommandUntil(t, ctx, env.Inst.RCON, env.BotName, "fly", func() bool {
 				abilities, _ := env.Agent.Agent.GetPlayerAbilities()
 				return abilities.Flying
 			})
 			require.True(t, flying, "'fly' chat command should have enabled flying")
 
-			landed := sayCommandUntil(t, ctx, env, env.BotName, "land", func() bool {
+			landed := sayCommandUntil(t, ctx, env.Inst.RCON, env.BotName, "land", func() bool {
 				abilities, _ := env.Agent.Agent.GetPlayerAbilities()
 				return !abilities.Flying
 			})

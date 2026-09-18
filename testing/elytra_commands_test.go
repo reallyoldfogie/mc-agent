@@ -9,6 +9,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,10 +18,13 @@ import (
 // `/say`, exercising the actual chat pipeline (agent.OnDisguisedChat ->
 // handleChatCommand -> the real command registry) rather than calling the
 // underlying agent method directly - this is what proves the commands are
-// actually *wired*, not just that the underlying capability works.
-func sayCommand(t *testing.T, ctx context.Context, env *StandaloneTestEnv, botName, command string) {
+// actually *wired*, not just that the underlying capability works. Takes
+// an RCONHelper directly (not *StandaloneTestEnv) so shared-server suite
+// methods (VersionWorldSuite's s.Inst.RCON) can call it too, not just the
+// pre-Phase-1 per-test-server pattern's env.Inst.RCON.
+func sayCommand(t *testing.T, ctx context.Context, rcon testenv.RCONHelper, botName, command string) {
 	t.Helper()
-	_, err := env.Inst.RCON.Exec(ctx, fmt.Sprintf("say >>>%s<<< %s", botName, command))
+	_, err := rcon.Exec(ctx, fmt.Sprintf("say >>>%s<<< %s", botName, command))
 	require.NoError(t, err, "send chat command %q", command)
 }
 
@@ -48,11 +52,11 @@ func sayCommand(t *testing.T, ctx context.Context, env *StandaloneTestEnv, botNa
 // shift-clicking the already-selected item back out of the hotbar - gets
 // detected and the whole send+wait cycle retried instead of silently
 // proceeding on a state that's about to change underneath it.
-func sayCommandUntil(t *testing.T, ctx context.Context, env *StandaloneTestEnv, botName, command string, condition func() bool) bool {
+func sayCommandUntil(t *testing.T, ctx context.Context, rcon testenv.RCONHelper, botName, command string, condition func() bool) bool {
 	t.Helper()
 	const settleDelay = 700 * time.Millisecond
 	for attempt := 0; attempt < 4; attempt++ {
-		sayCommand(t, ctx, env, botName, command)
+		sayCommand(t, ctx, rcon, botName, command)
 		deadline := time.Now().Add(3 * time.Second)
 		for time.Now().Before(deadline) {
 			if condition() {
@@ -98,7 +102,7 @@ func TestChatCommand_EquipAndUseItem(t *testing.T) {
 			}, 10*time.Second)
 			require.True(t, ok, "elytra never appeared in inventory")
 
-			equipped := sayCommandUntil(t, ctx, env, env.BotName, "equip elytra", func() bool {
+			equipped := sayCommandUntil(t, ctx, env.Inst.RCON, env.BotName, "equip elytra", func() bool {
 				return waitForSlotState(env.ScreenMgr, 6, func(s screen.Slot) bool { return s.Count > 0 }, 500*time.Millisecond)
 			})
 			require.True(t, equipped, "'equip elytra' chat command never equipped it")
@@ -111,7 +115,7 @@ func TestChatCommand_EquipAndUseItem(t *testing.T) {
 			}, 10*time.Second)
 			require.True(t, ok, "firework rockets never appeared in inventory")
 
-			selected := sayCommandUntil(t, ctx, env, env.BotName, "equip firework_rocket", func() bool {
+			selected := sayCommandUntil(t, ctx, env.Inst.RCON, env.BotName, "equip firework_rocket", func() bool {
 				return waitForSlotState(env.ScreenMgr, 36, func(s screen.Slot) bool { return s.Count > 0 }, 500*time.Millisecond)
 			})
 			require.True(t, selected, "'equip firework_rocket' chat command never selected it into hand")
@@ -145,7 +149,7 @@ func TestChatCommand_EquipAndUseItem(t *testing.T) {
 			require.True(t, preOK)
 			t.Logf("velocity before 'useItem': vy=%.3f", preVY)
 
-			boosted := sayCommandUntil(t, ctx, env, env.BotName, "useItem", func() bool {
+			boosted := sayCommandUntil(t, ctx, env.Inst.RCON, env.BotName, "useItem", func() bool {
 				return env.Agent.Agent.HasActiveFireworkBoost()
 			})
 			assert.True(t, boosted, "'useItem' chat command should have used the firework rocket and started a boost")
@@ -185,7 +189,7 @@ func TestChatCommand_FlyTo(t *testing.T) {
 			}, 10*time.Second)
 			require.True(t, ok, "elytra never appeared in inventory")
 
-			sayCommand(t, ctx, env, env.BotName, "equip elytra")
+			sayCommand(t, ctx, env.Inst.RCON, env.BotName, "equip elytra")
 			require.True(t, waitForSlotState(env.ScreenMgr, 6, func(s screen.Slot) bool {
 				return s.Count > 0
 			}, 10*time.Second), "'equip elytra' chat command never equipped it")
@@ -201,7 +205,7 @@ func TestChatCommand_FlyTo(t *testing.T) {
 			targetY := botPos.Y
 			targetZ := botPos.Z + 200
 
-			sayCommand(t, ctx, env, env.BotName, fmt.Sprintf("flyTo %.0f %.0f %.0f", targetX, targetY, targetZ))
+			sayCommand(t, ctx, env.Inst.RCON, env.BotName, fmt.Sprintf("flyTo %.0f %.0f %.0f", targetX, targetY, targetZ))
 
 			var finalPos models.V3
 			arrived := false
