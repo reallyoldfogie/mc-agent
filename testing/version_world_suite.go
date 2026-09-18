@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,6 +50,21 @@ type VersionWorldSuite struct {
 	Cancel    context.CancelFunc
 	Framework *Framework
 	Inst      *TestInstance
+
+	// usedNames guards against a real, live-confirmed trap (see
+	// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md):
+	// two test methods sharing this suite's one server that spawn an agent
+	// under the SAME literal name don't each get a fresh spawn - vanilla
+	// Minecraft persists a player's position across reconnects under one
+	// username, so the second call resumes wherever the first one's agent
+	// last stood (after however far it moved during its own test), and the
+	// working-area-offset math then compounds on top of that already-wrong
+	// position instead of a genuine spawn point. spawnAndReadPosition checks
+	// and records every name here so this fails loudly at spawn time
+	// instead of silently producing a contaminated, hard-to-diagnose
+	// starting position.
+	usedNamesMu sync.Mutex
+	usedNames   map[string]bool
 }
 
 // SetupSuite starts this suite's one shared server. Runs once, before any
@@ -121,11 +137,114 @@ type WorkingAreaAgent struct {
 	Origin models.V3
 }
 
-// SpawnWorkingAreaAgent spawns a per-test agent (with replay recording, as
-// DefaultAgentConfig/SpawnAgent already do for every pre-Phase-1 test) and
-// moves it to its own, never-before-used working area (NextWorkingAreaOffset)
-// along X, so concurrent or sequential test methods sharing this suite's one
-// server never collide and random-terrain tests always get fresh, unexplored
+// spawnAndReadPosition spawns a per-test agent (with replay recording, as
+// DefaultAgentConfig/SpawnAgent already do for every pre-Phase-1 test),
+// waits for it to connect, and returns its natural post-spawn position
+// (read via GetEntityPos) - before any working-area placement. Shared by
+// SpawnWorkingAreaAgent (which then claims a brand-new working area) and
+// SpawnAgentNear (which instead places the agent near an area a different
+// call already claimed).
+//
+// name is used as-is for the agent (and its Cam companion) - callers should
+// keep it short and distinct per test method so replay filenames and RCON
+// target names stay unambiguous.
+func (s *VersionWorldSuite) spawnAndReadPosition(name, replayPrefix string) (*ManagedAgent, models.V3, error) {
+	s.usedNamesMu.Lock()
+	if s.usedNames == nil {
+		s.usedNames = make(map[string]bool)
+	}
+	if s.usedNames[name] {
+		s.usedNamesMu.Unlock()
+		return nil, models.V3{}, fmt.Errorf(
+			"spawnAndReadPosition: agent name %q already used earlier in this suite run - "+
+				"reusing a name across test methods sharing one server means the second spawn "+
+				"resumes the first one's saved position instead of a fresh spawn (see "+
+				"VersionWorldSuite.usedNames' doc comment); give this test method's agent its own "+
+				"distinct name instead", name)
+	}
+	s.usedNames[name] = true
+	s.usedNamesMu.Unlock()
+
+	agentCfg := DefaultAgentConfig(
+		name,
+		fmt.Sprintf("%s:%d", s.Inst.Server.Host, s.Inst.Server.HostServerPort),
+		s.Version,
+	)
+	agentCfg.EnableReplay = true
+	agentCfg.ReplayOutput = normalizeReplayOutput(s.Version, fmt.Sprintf("%s_%s_%s.mcpr", replayPrefix, s.Version, time.Now().Format("20060102_150405")), agentCfg.Name)
+
+	managed, err := s.Framework.SpawnAgent(s.Ctx, s.Inst, agentCfg)
+	if err != nil {
+		return nil, models.V3{}, err
+	}
+
+	// Disconnect this agent (and its Cam companion, via ManagedAgent.Stop's
+	// own cascade) when THIS test method finishes, not when the whole suite
+	// does. Every pre-Phase-1 test got this for free: each test owned its
+	// own server/container, so an agent simply died with it. A shared
+	// server survives across every test method in this suite, so without
+	// this, agents from earlier methods stay connected and accumulate for
+	// the suite's entire run - live-confirmed to matter, not just
+	// theoretical: docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
+	// found TestSingleAgent missing its 1.0-block arrival tolerance by a
+	// hair (1.02) running 3rd in FollowFlatSuite, with ~14 stale
+	// connections still on the server from the two multi-agent tests ahead
+	// of it in alphabetical run order.
+	t := s.T()
+	t.Cleanup(func() {
+		stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer stopCancel()
+		if err := managed.Stop(stopCtx); err != nil {
+			t.Logf("warning: failed to stop agent %s: %v", managed.Name, err)
+		}
+	})
+
+	// Give the agent time to connect and receive its initial spawn position
+	// before reading it - matches every pre-Phase-1 test's own
+	// time.Sleep(5 * time.Second) after SpawnAgent.
+	time.Sleep(5 * time.Second)
+
+	spawnX, spawnY, spawnZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, managed.Name)
+	if err != nil {
+		return nil, models.V3{}, fmt.Errorf("get spawn position for %s: %w", managed.Name, err)
+	}
+
+	return managed, models.V3{X: spawnX, Y: spawnY, Z: spawnZ}, nil
+}
+
+// teleportAndSettle moves agent to (targetX, targetZ), then re-reads its
+// settled position after a short physics-settle delay. Y handling depends
+// on s.WorldGen - see SpawnWorkingAreaAgent's doc comment for the full
+// rationale (flat/controlled terrain is uniform, so an explicit
+// fallbackY - the agent's own pre-teleport Y - is safe; random terrain's Y
+// is unknown at the target, so the agent's *current* Y is kept via vanilla's
+// `~` syntax instead).
+func (s *VersionWorldSuite) teleportAndSettle(agentName string, targetX, targetZ, fallbackY float64) (models.V3, error) {
+	if s.WorldGen == WorldGenFlat || s.WorldGen == WorldGenControlled {
+		if _, err := s.Inst.RCON.Teleport(s.Ctx, agentName, targetX, fallbackY, targetZ).Exec(s.Ctx); err != nil {
+			return models.V3{}, fmt.Errorf("teleport %s to working area: %w", agentName, err)
+		}
+	} else {
+		cmd := fmt.Sprintf("tp %s %.2f ~ %.2f", agentName, targetX, targetZ)
+		if _, err := s.Inst.RCON.Exec(s.Ctx, cmd); err != nil {
+			return models.V3{}, fmt.Errorf("teleport %s to working area: %w", agentName, err)
+		}
+	}
+	// Let physics settle after the teleport before trusting the agent's
+	// position.
+	time.Sleep(2 * time.Second)
+
+	finalX, finalY, finalZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, agentName)
+	if err != nil {
+		return models.V3{}, fmt.Errorf("get settled position for %s: %w", agentName, err)
+	}
+	return models.V3{X: finalX, Y: finalY, Z: finalZ}, nil
+}
+
+// SpawnWorkingAreaAgent spawns a per-test agent and moves it to its own,
+// never-before-used working area (NextWorkingAreaOffset) along X, so
+// concurrent or sequential test methods sharing this suite's one server
+// never collide and random-terrain tests always get fresh, unexplored
 // chunks.
 //
 // For WorldGenFlat/WorldGenControlled suites, Y is uniform everywhere, so
@@ -143,59 +262,66 @@ type WorkingAreaAgent struct {
 // for what was actually observed live and why WorldGenRandom suites are not
 // (yet) marked t.Parallel()-safe in Phase 2 as a result.
 //
-// name is used as-is for the agent (and its Cam companion) - callers should
-// keep it short and distinct per test method so replay filenames and RCON
-// target names stay unambiguous.
+// This claims a NEW working area every call - for a multi-agent test (e.g.
+// a leader and one or more followers that need to start near each other,
+// not each independently offset 256+ blocks apart), only the FIRST agent in
+// a test should be spawned this way; every other agent in that same test
+// belongs in the same claimed area and should use SpawnAgentNear against
+// this call's own Origin instead - see SpawnAgentNear's doc comment and
+// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
+// for why this distinction matters in practice, live-confirmed.
 func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*WorkingAreaAgent, error) {
-	agentCfg := DefaultAgentConfig(
-		name,
-		fmt.Sprintf("%s:%d", s.Inst.Server.Host, s.Inst.Server.HostServerPort),
-		s.Version,
-	)
-	agentCfg.EnableReplay = true
-	agentCfg.ReplayOutput = normalizeReplayOutput(s.Version, fmt.Sprintf("%s_%s_%s.mcpr", replayPrefix, s.Version, time.Now().Format("20060102_150405")), agentCfg.Name)
-
-	managed, err := s.Framework.SpawnAgent(s.Ctx, s.Inst, agentCfg)
+	managed, spawnPos, err := s.spawnAndReadPosition(name, replayPrefix)
 	if err != nil {
 		return nil, err
 	}
 
-	// Give the agent time to connect and receive its initial spawn position
-	// before reading/overriding it - matches every pre-Phase-1 test's own
-	// time.Sleep(5 * time.Second) after SpawnAgent.
-	time.Sleep(5 * time.Second)
-
-	spawnX, spawnY, spawnZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, managed.Name)
-	if err != nil {
-		return nil, fmt.Errorf("get spawn position for %s: %w", managed.Name, err)
-	}
-
 	offsetX, offsetZ := NextWorkingAreaOffset()
-	if offsetX != 0 || offsetZ != 0 {
-		targetX := spawnX + offsetX
-		targetZ := spawnZ + offsetZ
-		if s.WorldGen == WorldGenFlat || s.WorldGen == WorldGenControlled {
-			if _, err := s.Inst.RCON.Teleport(s.Ctx, managed.Name, targetX, spawnY, targetZ).Exec(s.Ctx); err != nil {
-				return nil, fmt.Errorf("teleport %s to working area: %w", managed.Name, err)
-			}
-		} else {
-			// Keep current Y ("~") - see doc comment above.
-			cmd := fmt.Sprintf("tp %s %.2f ~ %.2f", managed.Name, targetX, targetZ)
-			if _, err := s.Inst.RCON.Exec(s.Ctx, cmd); err != nil {
-				return nil, fmt.Errorf("teleport %s to working area: %w", managed.Name, err)
-			}
-		}
-		// Let physics settle after the offset teleport before trusting the
-		// agent's position.
-		time.Sleep(2 * time.Second)
+	if offsetX == 0 && offsetZ == 0 {
+		// The very first claim in a process needs no teleport at all - the
+		// agent's own natural spawn point already IS the working area.
+		return &WorkingAreaAgent{ManagedAgent: managed, Origin: spawnPos}, nil
 	}
 
-	finalX, finalY, finalZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, managed.Name)
+	origin, err := s.teleportAndSettle(managed.Name, spawnPos.X+offsetX, spawnPos.Z+offsetZ, spawnPos.Y)
 	if err != nil {
-		return nil, fmt.Errorf("get settled working-area position for %s: %w", managed.Name, err)
+		return nil, err
+	}
+	return &WorkingAreaAgent{ManagedAgent: managed, Origin: origin}, nil
+}
+
+// SpawnAgentNear spawns a per-test agent WITHOUT claiming a new working
+// area of its own - instead teleporting it to (dx, dz) relative to origin,
+// an already-claimed WorkingAreaAgent.Origin from an earlier
+// SpawnWorkingAreaAgent call in the SAME test. Use this for every agent
+// after the first in a multi-agent test, so they land near each other
+// inside one shared working area rather than each getting their own
+// independent 256-block-separated region (which would defeat the point of
+// a "leader" and "follower" test - see the doc comment on
+// SpawnWorkingAreaAgent and
+// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md).
+//
+// Y handling mirrors SpawnWorkingAreaAgent: origin.Y for
+// WorldGenFlat/WorldGenControlled (uniform terrain, safe), the newly-spawned
+// agent's own natural Y (via `~`) for WorldGenRandom (origin.Y could be far
+// from this agent's own spawn terrain height, since origin itself may have
+// come from a teleport elsewhere).
+func (s *VersionWorldSuite) SpawnAgentNear(name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
+	managed, spawnPos, err := s.spawnAndReadPosition(name, replayPrefix)
+	if err != nil {
+		return nil, err
 	}
 
-	return &WorkingAreaAgent{ManagedAgent: managed, Origin: models.V3{X: finalX, Y: finalY, Z: finalZ}}, nil
+	fallbackY := origin.Y
+	if s.WorldGen != WorldGenFlat && s.WorldGen != WorldGenControlled {
+		fallbackY = spawnPos.Y
+	}
+
+	pos, err := s.teleportAndSettle(managed.Name, origin.X+dx, origin.Z+dz, fallbackY)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkingAreaAgent{ManagedAgent: managed, Origin: pos}, nil
 }
 
 // RunVersionWorldSuite is the top-level driver: builds a fresh instance of
