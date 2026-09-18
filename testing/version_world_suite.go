@@ -62,6 +62,19 @@ type VersionWorldSuite struct {
 	// different suite.
 	Difficulty Difficulty
 
+	// GameMode overrides SharedServerConfig/SharedFlatWorldServerConfig's
+	// own "survival" default for this suite's server, when set (zero value
+	// leaves the survival default in place - see buildServerConfig). Added
+	// for docs/plans/integration-test-shared-server/15-phase1-flying-conversion.md:
+	// flying_ability_test.go/flying_command_test.go/flying_physics_test.go
+	// all need GameModeCreative specifically (a server-granted ability,
+	// not something a bot can toggle on its own in survival). Like
+	// WorldGen/Difficulty, every test method in one suite instance shares
+	// this - a test that needs a different game mode (e.g.
+	// flying_ability_test.go's own "survival denies flying" scenario)
+	// belongs in a different suite.
+	GameMode GameMode
+
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Framework *Framework
@@ -116,6 +129,9 @@ func (s *VersionWorldSuite) buildServerConfig() ServerConfig {
 	cfg.PullImage = false
 	if s.Difficulty != "" {
 		cfg.Difficulty = s.Difficulty
+	}
+	if s.GameMode != "" {
+		cfg.GameMode = s.GameMode
 	}
 	return cfg
 }
