@@ -10,11 +10,20 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // TestSwimming_FallIntoWaterNoFallDamage verifies that an agent dropped from a
 // lethal height into a deep water pool survives without taking fall damage.
 // This validates the fall distance reset when entering water.
+//
+// Left on the pre-Phase-1 per-test-server pattern (docs/plans/integration-test-shared-server/00-plan.md):
+// this and TestSwimming_SwimToSurface use DifficultyNormal via
+// setupStandaloneTestWithModeAndBlockPlacement, not DifficultyPeaceful like
+// the 4 pathfinding tests below - VersionWorldSuite.Difficulty could host
+// them too, but as a *second*, smaller suite (they'd collide with the
+// Peaceful suite's single fixed difficulty). Not converted this pass - see
+// docs/plans/integration-test-shared-server/10-phase1-swimming-pathfinding-conversion.md.
 func TestSwimming_FallIntoWaterNoFallDamage(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -100,6 +109,9 @@ func TestSwimming_FallIntoWaterNoFallDamage(t *testing.T) {
 // upward toward the surface. The agent is placed at the bottom of a deep pool,
 // then given an upward movement target. The physics engine should apply swim-up
 // velocity (via jump input in water) to move the agent upward.
+//
+// See TestSwimming_FallIntoWaterNoFallDamage's doc comment above for why this
+// is also left on the pre-Phase-1 pattern.
 func TestSwimming_SwimToSurface(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -179,10 +191,32 @@ func TestSwimming_SwimToSurface(t *testing.T) {
 	}
 }
 
-// TestSwimming_PathfindingAcrossWater verifies that the pathfinder can find and
+// SwimmingPeacefulSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for the 4 swimming-pathfinding tests that
+// build their own server inline (not via setupStandaloneTestWithModeAndBlockPlacement)
+// with DifficultyPeaceful - which matches VersionWorldSuite's own default,
+// so no Difficulty override is needed here (unlike KnockbackFlatSuite/
+// EffectsFlatSuite). See docs/plans/integration-test-shared-server/10-phase1-swimming-pathfinding-conversion.md
+// for why these 4 specifically (not the 2 DifficultyNormal functions above,
+// which stay on the old pattern - a different difficulty needs a different
+// suite).
+type SwimmingPeacefulSuite struct {
+	VersionWorldSuite
+}
+
+func TestSwimmingPeacefulSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &SwimmingPeacefulSuite{}
+		s.WorldGen = WorldGenFlat
+		return s
+	})
+}
+
+// TestPathfindingAcrossWater verifies that the pathfinder can find and
 // execute a path that crosses a water channel. The channel has shallow edge
 // shelves (solid floor for entry/exit) and a deep middle section that forces
-// the agent to use Swim movement steps.
+// the agent to use Swim movement steps. Equivalent to the pre-Phase-1
+// TestSwimming_PathfindingAcrossWater.
 //
 // Layout (side view, X going right):
 //
@@ -191,168 +225,109 @@ func TestSwimming_SwimToSurface(t *testing.T) {
 //	[Ground]  Stone  Stone  Stone  Stone  Stone  [Ground]  <- pool floor
 //
 // Walls on the Z-sides prevent the agent from walking around the channel.
-func TestSwimming_PathfindingAcrossWater(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+func (s *SwimmingPeacefulSuite) TestPathfindingAcrossWater() {
+	t := s.T()
 
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
+	leader, err := s.SpawnWorkingAreaAgent("SwimPathBot", "swimming_pathfind_across")
+	require.NoError(t, err, "spawn agent")
 
-			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.MCVersion
-			serverCfg.Difficulty = DifficultyPeaceful
-			RequireIntegrationEnv(t, serverCfg)
+	// Channel coordinates: 5 blocks wide in X, centered around the agent's
+	// own working-area origin.
+	groundY := int(math.Floor(leader.Origin.Y)) - 1
+	channelStartX := int(math.Floor(leader.Origin.X)) + 4
+	channelEndX := channelStartX + 5
+	channelZ1 := int(math.Floor(leader.Origin.Z)) - 3
+	channelZ2 := channelZ1 + 6
 
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = framework.StopServer(stopCtx, inst, true)
-			}()
-
-			require.NoError(t, framework.setupAgentLogging(), "setup agent logging")
-			defer framework.CloseAgentLog()
-
-			agentCfg := DefaultAgentConfig(
-				"SwimPathBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_pathfind_across_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
-				agentCfg.Name)
-
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			defer func() {
-				if agent != nil {
-					stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_ = agent.Stop(stopCtx)
-					stopCancel()
-					if agent.BotClient() != nil {
-						_ = agent.BotClient().Close()
-					}
-				}
-			}()
-
-			time.Sleep(5 * time.Second)
-
-			// Get agent position on the flat world (surface at Y=63, standing at Y=64)
-			startPos, initialized := agent.Agent.GetPositionSimple()
-			require.True(t, initialized, "agent position initialized")
-			t.Logf("Agent start: %s", startPos)
-
-			// Channel coordinates: 5 blocks wide in X, centered around startZ
-			// Flat world surface: Y=63 (grass). Agent feet at Y=64.
-			groundY := int(math.Floor(startPos.Y)) - 1 // Y=63
-			channelStartX := int(math.Floor(startPos.X)) + 4
-			channelEndX := channelStartX + 5
-			channelZ1 := int(math.Floor(startPos.X)) - 3 // reuse startX's integer for a nearby Z
-			channelZ2 := channelZ1 + 6
-
-			// Use agent Z for the path
-			pos, _ := agent.Agent.GetPositionSimple()
-			_, _, agentZ := pos.X, pos.Y, pos.Z
-			channelZ1 = int(math.Floor(agentZ)) - 3
-			channelZ2 = channelZ1 + 6
-
-			// Dig the channel: remove grass and dirt layers
-			for digY := groundY; digY >= groundY-2; digY-- {
-				digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
-					channelStartX, digY, channelZ1, channelEndX, digY, channelZ2)
-				_, err := inst.RCON.Exec(ctx, digCmd)
-				require.NoError(t, err, "dig channel at Y=%d", digY)
-			}
-
-			// Place stone floor at the bottom of the channel
-			floorY := groundY - 3
-			floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-				channelStartX, floorY, channelZ1, channelEndX, floorY, channelZ2)
-			_, err = inst.RCON.Exec(ctx, floorCmd)
-			require.NoError(t, err, "place channel floor")
-
-			// Place edge shelves (stone at floorY+1) for first and last X column
-			for _, shelfX := range []int{channelStartX, channelEndX} {
-				shelfCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-					shelfX, floorY+1, channelZ1, shelfX, floorY+1, channelZ2)
-				_, err = inst.RCON.Exec(ctx, shelfCmd)
-				require.NoError(t, err, "place edge shelf at X=%d", shelfX)
-			}
-
-			// Fill the channel with water from floorY+1 to groundY (surface)
-			for waterY := floorY + 1; waterY <= groundY; waterY++ {
-				waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					channelStartX, waterY, channelZ1, channelEndX, waterY, channelZ2)
-				_, err = inst.RCON.Exec(ctx, waterCmd)
-				require.NoError(t, err, "fill water at Y=%d", waterY)
-			}
-
-			// Build walls on Z-sides to prevent walking around
-			for wallY := floorY; wallY <= groundY+3; wallY++ {
-				for _, wallZ := range []int{channelZ1 - 1, channelZ2 + 1} {
-					wallCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-						channelStartX-1, wallY, wallZ, channelEndX+1, wallY, wallZ)
-					_, _ = inst.RCON.Exec(ctx, wallCmd)
-				}
-			}
-
-			time.Sleep(3 * time.Second)
-
-			// Teleport agent to start side, facing the channel
-			tpX := float64(channelStartX) - 2.5
-			tpZ := float64(channelZ1+channelZ2) / 2.0
-			tpY := float64(groundY + 1)
-			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", agentCfg.Name, tpX, tpY, tpZ)
-			_, err = inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent to start")
-			t.Logf("Agent teleported to (%.1f, %.1f, %.1f)", tpX, tpY, tpZ)
-
-			time.Sleep(3 * time.Second)
-
-			// Goal: on the far side of the channel
-			goalX := float64(channelEndX) + 2.5
-			goalY := float64(groundY + 1)
-			goalZ := tpZ
-			t.Logf("Goal: (%.1f, %.1f, %.1f)", goalX, goalY, goalZ)
-
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond)
-			tracker.Start(ctx)
-			defer tracker.Stop()
-
-			// Navigate using pathfinding
-			err = agent.Agent.MoveTo(ctx, goalX, goalY, goalZ, true)
-			if err != nil {
-				t.Logf("MoveTo returned error: %v", err)
-			}
-
-			// Wait for agent to reach destination
-			timeout := 60 * time.Second
-			err = tracker.WaitForPosition(ctx, agentCfg.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
-
-			finalPos, posOK := tracker.GetPosition(agentCfg.Name)
-			require.True(t, posOK, "should have final position")
-			t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
-
-			goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
-			finalDist := finalPos.DistanceTo(goal)
-			t.Logf("Distance from goal: %.2f", finalDist)
-
-			assert.LessOrEqual(t, finalDist, 3.0,
-				"agent should reach the goal on the far side of the water channel")
-		})
+	// Dig the channel: remove grass and dirt layers
+	for digY := groundY; digY >= groundY-2; digY-- {
+		digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
+			channelStartX, digY, channelZ1, channelEndX, digY, channelZ2)
+		_, err := s.Inst.RCON.Exec(s.Ctx, digCmd)
+		require.NoError(t, err, "dig channel at Y=%d", digY)
 	}
+
+	// Place stone floor at the bottom of the channel
+	floorY := groundY - 3
+	floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+		channelStartX, floorY, channelZ1, channelEndX, floorY, channelZ2)
+	_, err = s.Inst.RCON.Exec(s.Ctx, floorCmd)
+	require.NoError(t, err, "place channel floor")
+
+	// Place edge shelves (stone at floorY+1) for first and last X column
+	for _, shelfX := range []int{channelStartX, channelEndX} {
+		shelfCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+			shelfX, floorY+1, channelZ1, shelfX, floorY+1, channelZ2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, shelfCmd)
+		require.NoError(t, err, "place edge shelf at X=%d", shelfX)
+	}
+
+	// Fill the channel with water from floorY+1 to groundY (surface)
+	for waterY := floorY + 1; waterY <= groundY; waterY++ {
+		waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			channelStartX, waterY, channelZ1, channelEndX, waterY, channelZ2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, waterCmd)
+		require.NoError(t, err, "fill water at Y=%d", waterY)
+	}
+
+	// Build walls on Z-sides to prevent walking around
+	for wallY := floorY; wallY <= groundY+3; wallY++ {
+		for _, wallZ := range []int{channelZ1 - 1, channelZ2 + 1} {
+			wallCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+				channelStartX-1, wallY, wallZ, channelEndX+1, wallY, wallZ)
+			_, _ = s.Inst.RCON.Exec(s.Ctx, wallCmd)
+		}
+	}
+
+	time.Sleep(3 * time.Second)
+
+	// Teleport agent to start side, facing the channel
+	tpX := float64(channelStartX) - 2.5
+	tpZ := float64(channelZ1+channelZ2) / 2.0
+	tpY := float64(groundY + 1)
+	tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpX, tpY, tpZ)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent to start")
+	t.Logf("Agent teleported to (%.1f, %.1f, %.1f)", tpX, tpY, tpZ)
+
+	time.Sleep(3 * time.Second)
+
+	// Goal: on the far side of the channel
+	goalX := float64(channelEndX) + 2.5
+	goalY := float64(groundY + 1)
+	goalZ := tpZ
+	t.Logf("Goal: (%.1f, %.1f, %.1f)", goalX, goalY, goalZ)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
+
+	err = leader.Agent.MoveTo(s.Ctx, goalX, goalY, goalZ, true)
+	if err != nil {
+		t.Logf("MoveTo returned error: %v", err)
+	}
+
+	timeout := 60 * time.Second
+	err = tracker.WaitForPosition(s.Ctx, leader.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
+
+	finalPos, posOK := tracker.GetPosition(leader.Name)
+	require.True(t, posOK, "should have final position")
+	t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
+
+	goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
+	finalDist := finalPos.DistanceTo(goal)
+	t.Logf("Distance from goal: %.2f", finalDist)
+
+	assert.LessOrEqual(t, finalDist, 3.0,
+		"agent should reach the goal on the far side of the water channel")
 }
 
-// TestSwimming_PathfindingDropIntoWater verifies that the pathfinder can route
-// an agent from an elevated platform down into a water-filled trench and across
-// to a goal on the far side. The agent must descend from the platform into the
-// water (testing the Descend move into water) and then navigate through the
-// water to reach the goal.
+// TestPathfindingDropIntoWater verifies that the pathfinder can route an
+// agent from an elevated platform down into a water-filled trench and
+// across to a goal on the far side. The agent must descend from the
+// platform into the water (testing the Descend move into water) and then
+// navigate through the water to reach the goal. Equivalent to the
+// pre-Phase-1 TestSwimming_PathfindingDropIntoWater.
 //
 // Layout (side view, X going right):
 //
@@ -362,460 +337,283 @@ func TestSwimming_PathfindingAcrossWater(t *testing.T) {
 //	Y=64:  [Ground  ]  Water  Water  Water  [Ground = Goal]
 //	Y=63:  [Ground  ]  Stone  Water  Stone  [Ground]
 //	Y=62:  [Ground  ]  Stone  Stone  Stone  [Ground]
-func TestSwimming_PathfindingDropIntoWater(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+func (s *SwimmingPeacefulSuite) TestPathfindingDropIntoWater() {
+	t := s.T()
 
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
+	leader, err := s.SpawnWorkingAreaAgent("SwimDropBot", "swimming_phys_pathfind")
+	require.NoError(t, err, "spawn agent")
 
-			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.MCVersion
-			serverCfg.Difficulty = DifficultyPeaceful
-			RequireIntegrationEnv(t, serverCfg)
+	groundY := int(math.Floor(leader.Origin.Y)) - 1
+	platformX := int(math.Floor(leader.Origin.X))
+	platZ := int(math.Floor(leader.Origin.Z))
 
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = framework.StopServer(stopCtx, inst, true)
-			}()
-
-			require.NoError(t, framework.setupAgentLogging(), "setup agent logging")
-			defer framework.CloseAgentLog()
-
-			agentCfg := DefaultAgentConfig(
-				"SwimDropBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_phys_pathfind_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
-				agentCfg.Name)
-
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			defer func() {
-				if agent != nil {
-					stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_ = agent.Stop(stopCtx)
-					stopCancel()
-					if agent.BotClient() != nil {
-						_ = agent.BotClient().Close()
-					}
-				}
-			}()
-
-			time.Sleep(5 * time.Second)
-
-			// Get agent position on the flat world
-			agentPos, posOK := agent.Agent.GetPositionSimple()
-			startY := agentPos.Y
-			require.True(t, posOK, "agent position initialized")
-
-			// Flat world surface Y=63, standing at Y=64
-			groundY := int(math.Floor(startY)) - 1 // Y=63
-			pos, _ := agent.Agent.GetPositionSimple()
-			_, _, agentZ := pos.X, pos.Y, pos.Z
-			platformX := int(math.Floor(startY)) // pick an X near spawn
-			platZ := int(math.Floor(agentZ))
-
-			// Use the agent's actual position for the platform
-
-			agentPos, _ = agent.Agent.GetPositionSimple()
-			agentX := agentPos.X
-			platformX = int(math.Floor(agentX))
-
-			// Build elevated platform: 3 blocks of stone at platformX, Z=platZ±1
-			platformHeight := 3
-			for platY := groundY + 1; platY <= groundY+platformHeight; platY++ {
-				platCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-					platformX-1, platY, platZ-1, platformX+1, platY, platZ+1)
-				_, err = inst.RCON.Exec(ctx, platCmd)
-				require.NoError(t, err, "build platform at Y=%d", platY)
-			}
-			platTopY := groundY + platformHeight // Y=66
-			agentOnPlatY := platTopY + 1         // Y=67
-
-			// Water trench: starts 2 blocks away from platform in +X direction
-			trenchStartX := platformX + 3
-			trenchEndX := trenchStartX + 4 // 5 blocks wide
-			trenchZ1 := platZ - 2
-			trenchZ2 := platZ + 2
-
-			// Dig the trench (remove blocks down to groundY-2)
-			for digY := groundY; digY >= groundY-2; digY-- {
-				digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
-					trenchStartX, digY, trenchZ1, trenchEndX, digY, trenchZ2)
-				_, err = inst.RCON.Exec(ctx, digCmd)
-				require.NoError(t, err, "dig trench at Y=%d", digY)
-			}
-
-			// Stone floor at the bottom
-			floorY := groundY - 3
-			floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-				trenchStartX, floorY, trenchZ1, trenchEndX, floorY, trenchZ2)
-			_, err = inst.RCON.Exec(ctx, floorCmd)
-			require.NoError(t, err, "place trench floor")
-
-			// Edge shelves: stone at floorY+1 on the first and last X columns
-			for _, shelfX := range []int{trenchStartX, trenchEndX} {
-				shelfCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-					shelfX, floorY+1, trenchZ1, shelfX, floorY+1, trenchZ2)
-				_, err = inst.RCON.Exec(ctx, shelfCmd)
-				require.NoError(t, err, "place edge shelf at X=%d", shelfX)
-			}
-
-			// Fill trench with water
-			for waterY := floorY + 1; waterY <= groundY; waterY++ {
-				waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					trenchStartX, waterY, trenchZ1, trenchEndX, waterY, trenchZ2)
-				_, err = inst.RCON.Exec(ctx, waterCmd)
-				require.NoError(t, err, "fill water at Y=%d", waterY)
-			}
-
-			// Build walls on Z-sides to force path through water
-			for wallY := floorY; wallY <= groundY+4; wallY++ {
-				for _, wallZ := range []int{trenchZ1 - 1, trenchZ2 + 1} {
-					wallCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-						platformX-1, wallY, wallZ, trenchEndX+2, wallY, wallZ)
-					_, _ = inst.RCON.Exec(ctx, wallCmd)
-				}
-			}
-
-			time.Sleep(3 * time.Second)
-
-			// Teleport agent to top of the elevated platform
-			tpX := float64(platformX) + 0.5
-			tpZ := float64(platZ) + 0.5
-			tpCmd := fmt.Sprintf("tp %s %.1f %d %.1f", agentCfg.Name, tpX, agentOnPlatY, tpZ)
-			_, err = inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent to platform top")
-			t.Logf("Agent teleported to platform top (%.1f, %d, %.1f)", tpX, agentOnPlatY, tpZ)
-
-			time.Sleep(3 * time.Second)
-
-			// Goal: on the ground on the far side of the trench
-			goalX := float64(trenchEndX) + 2.5
-			goalY := float64(groundY + 1) // Y=64 (standing on grass)
-			goalZ := tpZ
-			t.Logf("Goal: (%.1f, %.1f, %.1f) — drop from Y=%d to water then across",
-				goalX, goalY, goalZ, agentOnPlatY)
-
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond)
-			tracker.Start(ctx)
-			defer tracker.Stop()
-
-			// Navigate using pathfinding
-			err = agent.Agent.MoveTo(ctx, goalX, goalY, goalZ, true)
-			if err != nil {
-				t.Logf("MoveTo returned error: %v", err)
-			}
-
-			// Wait for agent to reach destination
-			timeout := 90 * time.Second
-			err = tracker.WaitForPosition(ctx, agentCfg.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
-
-			finalPos, posOK := tracker.GetPosition(agentCfg.Name)
-			require.True(t, posOK, "should have final position")
-			t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
-
-			goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
-			finalDist := finalPos.DistanceTo(goal)
-			t.Logf("Distance from goal: %.2f", finalDist)
-
-			assert.LessOrEqual(t, finalDist, 3.0,
-				"agent should reach the goal after dropping from elevation through water")
-		})
+	// Build elevated platform: 3 blocks of stone at platformX, Z=platZ±1
+	platformHeight := 3
+	for platY := groundY + 1; platY <= groundY+platformHeight; platY++ {
+		platCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+			platformX-1, platY, platZ-1, platformX+1, platY, platZ+1)
+		_, err = s.Inst.RCON.Exec(s.Ctx, platCmd)
+		require.NoError(t, err, "build platform at Y=%d", platY)
 	}
+	platTopY := groundY + platformHeight
+	agentOnPlatY := platTopY + 1
+
+	// Water trench: starts 2 blocks away from platform in +X direction
+	trenchStartX := platformX + 3
+	trenchEndX := trenchStartX + 4 // 5 blocks wide
+	trenchZ1 := platZ - 2
+	trenchZ2 := platZ + 2
+
+	// Dig the trench (remove blocks down to groundY-2)
+	for digY := groundY; digY >= groundY-2; digY-- {
+		digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
+			trenchStartX, digY, trenchZ1, trenchEndX, digY, trenchZ2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, digCmd)
+		require.NoError(t, err, "dig trench at Y=%d", digY)
+	}
+
+	// Stone floor at the bottom
+	floorY := groundY - 3
+	floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+		trenchStartX, floorY, trenchZ1, trenchEndX, floorY, trenchZ2)
+	_, err = s.Inst.RCON.Exec(s.Ctx, floorCmd)
+	require.NoError(t, err, "place trench floor")
+
+	// Edge shelves: stone at floorY+1 on the first and last X columns
+	for _, shelfX := range []int{trenchStartX, trenchEndX} {
+		shelfCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+			shelfX, floorY+1, trenchZ1, shelfX, floorY+1, trenchZ2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, shelfCmd)
+		require.NoError(t, err, "place edge shelf at X=%d", shelfX)
+	}
+
+	// Fill trench with water
+	for waterY := floorY + 1; waterY <= groundY; waterY++ {
+		waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			trenchStartX, waterY, trenchZ1, trenchEndX, waterY, trenchZ2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, waterCmd)
+		require.NoError(t, err, "fill water at Y=%d", waterY)
+	}
+
+	// Build walls on Z-sides to force path through water
+	for wallY := floorY; wallY <= groundY+4; wallY++ {
+		for _, wallZ := range []int{trenchZ1 - 1, trenchZ2 + 1} {
+			wallCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+				platformX-1, wallY, wallZ, trenchEndX+2, wallY, wallZ)
+			_, _ = s.Inst.RCON.Exec(s.Ctx, wallCmd)
+		}
+	}
+
+	time.Sleep(3 * time.Second)
+
+	// Teleport agent to top of the elevated platform
+	tpX := float64(platformX) + 0.5
+	tpZ := float64(platZ) + 0.5
+	tpCmd := fmt.Sprintf("tp %s %.1f %d %.1f", leader.Name, tpX, agentOnPlatY, tpZ)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent to platform top")
+	t.Logf("Agent teleported to platform top (%.1f, %d, %.1f)", tpX, agentOnPlatY, tpZ)
+
+	time.Sleep(3 * time.Second)
+
+	// Goal: on the ground on the far side of the trench
+	goalX := float64(trenchEndX) + 2.5
+	goalY := float64(groundY + 1)
+	goalZ := tpZ
+	t.Logf("Goal: (%.1f, %.1f, %.1f) — drop from Y=%d to water then across",
+		goalX, goalY, goalZ, agentOnPlatY)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
+
+	err = leader.Agent.MoveTo(s.Ctx, goalX, goalY, goalZ, true)
+	if err != nil {
+		t.Logf("MoveTo returned error: %v", err)
+	}
+
+	timeout := 90 * time.Second
+	err = tracker.WaitForPosition(s.Ctx, leader.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
+
+	finalPos, posOK := tracker.GetPosition(leader.Name)
+	require.True(t, posOK, "should have final position")
+	t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
+
+	goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
+	finalDist := finalPos.DistanceTo(goal)
+	t.Logf("Distance from goal: %.2f", finalDist)
+
+	assert.LessOrEqual(t, finalDist, 3.0,
+		"agent should reach the goal after dropping from elevation through water")
 }
 
-// TestSwimming_PathfindingSwimUp verifies that the agent can pathfind upward through
-// a deep vertical water column to reach a goal above. The agent must use SwimUp movements
-// to ascend through multiple water blocks without any shelves.
-func TestSwimming_PathfindingSwimUp(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+// TestPathfindingSwimUp verifies that the agent can pathfind upward through
+// a deep vertical water column to reach a goal above. The agent must use
+// SwimUp movements to ascend through multiple water blocks without any
+// shelves. Equivalent to the pre-Phase-1 TestSwimming_PathfindingSwimUp.
+func (s *SwimmingPeacefulSuite) TestPathfindingSwimUp() {
+	t := s.T()
 
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
+	leader, err := s.SpawnWorkingAreaAgent("SwimUpBot", "swimming_phys_fluid")
+	require.NoError(t, err, "spawn agent")
 
-			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.MCVersion
-			serverCfg.Difficulty = DifficultyPeaceful
-			RequireIntegrationEnv(t, serverCfg)
+	groundY := int(math.Floor(leader.Origin.Y))
+	wellX := int(math.Floor(leader.Origin.X)) + 5
+	wellZ := int(math.Floor(leader.Origin.Z))
 
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = framework.StopServer(stopCtx, inst, true)
-			}()
+	// Create a vertical water column (well): 5 blocks wide, 8 blocks deep
+	wellWidth := 5
+	wellDepth := 8
+	wellBottomY := groundY - wellDepth
 
-			require.NoError(t, framework.setupAgentLogging(), "setup agent logging")
-			defer framework.CloseAgentLog()
-
-			agentCfg := DefaultAgentConfig(
-				"SwimUpBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_phys_fluid_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
-				agentCfg.Name)
-
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			defer func() {
-				if agent != nil {
-					stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_ = agent.Stop(stopCtx)
-					stopCancel()
-					if agent.BotClient() != nil {
-						_ = agent.BotClient().Close()
-					}
-				}
-			}()
-
-			time.Sleep(5 * time.Second)
-
-			// Get agent position on flat world
-			agentPos, posOK := agent.Agent.GetPositionSimple()
-			require.True(t, posOK, "agent position initialized")
-
-			// Flat world surface: Y=0, standing at Y=1
-			groundY := int(math.Floor(agentPos.Y))
-			wellX := int(math.Floor(agentPos.X)) + 5
-			wellZ := int(math.Floor(agentPos.Z))
-
-			// Create a vertical water column (well): 5 blocks wide, 8 blocks deep
-			wellWidth := 5
-			wellDepth := 8
-			wellBottomY := groundY - wellDepth
-
-			// Dig the well
-			for digY := groundY; digY >= wellBottomY; digY-- {
-				digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
-					wellX-wellWidth/2, digY, wellZ-wellWidth/2, wellX+wellWidth/2, digY, wellZ+wellWidth/2)
-				_, err := inst.RCON.Exec(ctx, digCmd)
-				require.NoError(t, err, "dig well at Y=%d", digY)
-			}
-
-			// Place stone floor at bottom
-			floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-				wellX-wellWidth/2, wellBottomY, wellZ-wellWidth/2, wellX+wellWidth/2, wellBottomY, wellZ+wellWidth/2)
-			_, err = inst.RCON.Exec(ctx, floorCmd)
-			require.NoError(t, err, "place well floor")
-
-			// Fill well with water from floor up to ground level
-			for waterY := wellBottomY + 1; waterY < groundY; waterY++ {
-				waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					wellX-wellWidth/2, waterY, wellZ-wellWidth/2, wellX+wellWidth/2, waterY, wellZ+wellWidth/2)
-				_, err = inst.RCON.Exec(ctx, waterCmd)
-				require.NoError(t, err, "fill well at Y=%d", waterY)
-			}
-
-			// Teleport agent to the bottom of the well
-			tpX := float64(wellX) + 0.5
-			tpZ := float64(wellZ) + 0.5
-			tpY := float64(wellBottomY + 1)
-			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", agentCfg.Name, tpX, tpY, tpZ)
-			_, err = inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent to well bottom")
-			t.Logf("Agent teleported to well bottom (%.1f, %.1f, %.1f)", tpX, tpY, tpZ)
-
-			time.Sleep(3 * time.Second)
-
-			// Goal: on the ground away from the well
-			goalX := float64(wellX) + 5
-			goalY := float64(groundY)     // At ground level
-			goalZ := float64(wellZ) + 3.0 // Offset from well center
-			t.Logf("Goal: (%.1f, %.1f, %.1f) — swim up from well bottom to ground level",
-				goalX, goalY, goalZ)
-
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond).Start(ctx)
-			defer tracker.Stop()
-
-			// Navigate using pathfinding
-			// Give MoveTo a reasonable timeout to avoid hanging indefinitely
-			moveCtx, moveCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-			err = agent.Agent.MoveTo(moveCtx, goalX, goalY, goalZ, true)
-			moveCancel()
-			if err != nil {
-				t.Logf("MoveTo returned error: %v", err)
-			}
-			t.Logf("MoveTo completed")
-
-			t.Logf("Waiting for agent %s to reach target position (%.2f %.2f %.2f)", agent.Name, goalX, goalY, goalZ)
-
-			// Wait for agent to reach destination
-			timeout := 90 * time.Second
-			t.Logf("Calling WaitForPosition with %v timeout at %v", timeout, time.Now())
-			err = tracker.WaitForPosition(ctx, agentCfg.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
-			t.Logf("WaitForPosition returned at %v with error: %v", time.Now(), err)
-
-			finalPos, posOK := tracker.GetPosition(agentCfg.Name)
-			t.Logf("GetPosition called, found: %v", posOK)
-			require.True(t, posOK, "should have final position")
-			t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
-
-			goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
-			finalDist := finalPos.DistanceTo(goal)
-			t.Logf("Distance from goal: %.2f", finalDist)
-
-			assert.LessOrEqual(t, finalDist, 3.0,
-				"agent should swim up from well bottom to reach the ground level goal")
-		})
+	// Dig the well
+	for digY := groundY; digY >= wellBottomY; digY-- {
+		digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
+			wellX-wellWidth/2, digY, wellZ-wellWidth/2, wellX+wellWidth/2, digY, wellZ+wellWidth/2)
+		_, err := s.Inst.RCON.Exec(s.Ctx, digCmd)
+		require.NoError(t, err, "dig well at Y=%d", digY)
 	}
+
+	// Place stone floor at bottom
+	floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+		wellX-wellWidth/2, wellBottomY, wellZ-wellWidth/2, wellX+wellWidth/2, wellBottomY, wellZ+wellWidth/2)
+	_, err = s.Inst.RCON.Exec(s.Ctx, floorCmd)
+	require.NoError(t, err, "place well floor")
+
+	// Fill well with water from floor up to ground level
+	for waterY := wellBottomY + 1; waterY < groundY; waterY++ {
+		waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			wellX-wellWidth/2, waterY, wellZ-wellWidth/2, wellX+wellWidth/2, waterY, wellZ+wellWidth/2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, waterCmd)
+		require.NoError(t, err, "fill well at Y=%d", waterY)
+	}
+
+	// Teleport agent to the bottom of the well
+	tpX := float64(wellX) + 0.5
+	tpZ := float64(wellZ) + 0.5
+	tpY := float64(wellBottomY + 1)
+	tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpX, tpY, tpZ)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent to well bottom")
+	t.Logf("Agent teleported to well bottom (%.1f, %.1f, %.1f)", tpX, tpY, tpZ)
+
+	time.Sleep(3 * time.Second)
+
+	// Goal: on the ground away from the well
+	goalX := float64(wellX) + 5
+	goalY := float64(groundY)     // At ground level
+	goalZ := float64(wellZ) + 3.0 // Offset from well center
+	t.Logf("Goal: (%.1f, %.1f, %.1f) — swim up from well bottom to ground level",
+		goalX, goalY, goalZ)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond).Start(s.Ctx)
+	defer tracker.Stop()
+
+	moveCtx, moveCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	err = leader.Agent.MoveTo(moveCtx, goalX, goalY, goalZ, true)
+	moveCancel()
+	if err != nil {
+		t.Logf("MoveTo returned error: %v", err)
+	}
+
+	timeout := 90 * time.Second
+	err = tracker.WaitForPosition(s.Ctx, leader.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
+	t.Logf("WaitForPosition returned: %v", err)
+
+	finalPos, posOK := tracker.GetPosition(leader.Name)
+	require.True(t, posOK, "should have final position")
+	t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
+
+	goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
+	finalDist := finalPos.DistanceTo(goal)
+	t.Logf("Distance from goal: %.2f", finalDist)
+
+	assert.LessOrEqual(t, finalDist, 3.0,
+		"agent should swim up from well bottom to reach the ground level goal")
 }
 
-// TestSwimming_PathfindingSwimDown verifies that the agent can pathfind downward
-// through a deep vertical water column to reach a goal at depth. The agent must enter
-// water from solid ground and use SwimDown movements to descend through multiple levels.
-func TestSwimming_PathfindingSwimDown(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+// TestPathfindingSwimDown verifies that the agent can pathfind downward
+// through a deep vertical water column to reach a goal at depth. The agent
+// must enter water from solid ground and use SwimDown movements to descend
+// through multiple levels. Equivalent to the pre-Phase-1
+// TestSwimming_PathfindingSwimDown.
+func (s *SwimmingPeacefulSuite) TestPathfindingSwimDown() {
+	t := s.T()
 
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
+	leader, err := s.SpawnWorkingAreaAgent("SwimDownBot", "swimming_jump_climb")
+	require.NoError(t, err, "spawn agent")
 
-			serverCfg := FlatWorldServerConfig()
-			serverCfg.Version = tt.MCVersion
-			serverCfg.Difficulty = DifficultyPeaceful
-			RequireIntegrationEnv(t, serverCfg)
+	groundY := int(math.Floor(leader.Origin.Y))
+	wellX := int(math.Floor(leader.Origin.X)) + 5
+	wellZ := int(math.Floor(leader.Origin.Z))
 
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = framework.StopServer(stopCtx, inst, true)
-			}()
+	// Create a vertical water well: 5 blocks wide, 6 blocks deep from surface
+	wellWidth := 5
+	wellDepth := 6
+	wellBottomY := groundY - wellDepth
 
-			require.NoError(t, framework.setupAgentLogging(), "setup agent logging")
-			defer framework.CloseAgentLog()
-
-			agentCfg := DefaultAgentConfig(
-				"SwimDownBot",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				serverCfg.Version,
-			)
-			agentCfg.EnableReplay = true
-			agentCfg.ReplayOutput = normalizeReplayOutput(serverCfg.Version,
-				fmt.Sprintf("swimming_jump_climb_%s_%s.mcpr", tt.Name, time.Now().Format("20060102_150405")),
-				agentCfg.Name)
-
-			agent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			defer func() {
-				if agent != nil {
-					stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					_ = agent.Stop(stopCtx)
-					stopCancel()
-					if agent.BotClient() != nil {
-						_ = agent.BotClient().Close()
-					}
-				}
-			}()
-
-			time.Sleep(5 * time.Second)
-
-			// Get agent position on flat world
-			agentPos, posOK := agent.Agent.GetPositionSimple()
-			require.True(t, posOK, "agent position initialized")
-
-			// Flat world surface: Y=0, standing at Y=1
-			groundY := int(math.Floor(agentPos.Y))
-			wellX := int(math.Floor(agentPos.X)) + 5
-			wellZ := int(math.Floor(agentPos.Z))
-
-			// Create a vertical water well: 5 blocks wide, 6 blocks deep from surface
-			wellWidth := 5
-			wellDepth := 6
-			wellBottomY := groundY - wellDepth
-
-			t.Logf("agentPos: %s", agentPos)
-			t.Logf("wellPos : (X=%d, Z=%d), groundY=%d, wellBottomY=%d", wellX, wellZ, groundY, wellBottomY)
-
-			// Dig the well
-			for digY := groundY; digY >= wellBottomY; digY-- {
-				digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
-					wellX-wellWidth/2, digY, wellZ-wellWidth/2, wellX+wellWidth/2, digY, wellZ+wellWidth/2)
-				_, err := inst.RCON.Exec(ctx, digCmd)
-				require.NoError(t, err, "dig well at Y=%d", digY)
-			}
-
-			// Place stone floor with goal marker at bottom
-			floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
-				wellX-wellWidth/2, wellBottomY, wellZ-wellWidth/2, wellX+wellWidth/2, wellBottomY, wellZ+wellWidth/2)
-			_, err = inst.RCON.Exec(ctx, floorCmd)
-			require.NoError(t, err, "place well floor")
-
-			// Fill well with water from floor up to ground level
-			for waterY := wellBottomY + 1; waterY < groundY; waterY++ {
-				waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					wellX-wellWidth/2, waterY, wellZ-wellWidth/2, wellX+wellWidth/2, waterY, wellZ+wellWidth/2)
-				_, err = inst.RCON.Exec(ctx, waterCmd)
-				require.NoError(t, err, "fill well at Y=%d", waterY)
-			}
-
-			time.Sleep(3 * time.Second)
-
-			// Start position: on solid ground next to the well
-			startX := float64(wellX-wellWidth/2-2) + 0.5
-			startY := float64(groundY + 1)
-			startZ := float64(wellZ) + 0.5
-			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", agentCfg.Name, startX, startY, startZ)
-			_, err = inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent to start position")
-			t.Logf("Agent teleported to start (%.1f, %.1f, %.1f)", startX, startY, startZ)
-
-			time.Sleep(3 * time.Second)
-
-			// Goal: at the bottom of the well
-			goalX := float64(wellX) + 0.5
-			goalY := float64(wellBottomY + 1)
-			goalZ := float64(wellZ) + 0.5
-			t.Logf("Goal: (%.1f, %.1f, %.1f) — swim down into well from solid ground",
-				goalX, goalY, goalZ)
-
-			// Start position tracking
-			tracker := NewPositionTracker(inst, 500*time.Millisecond)
-			tracker.Start(ctx)
-			defer tracker.Stop()
-
-			// Navigate using pathfinding
-			err = agent.Agent.MoveTo(ctx, goalX, goalY, goalZ, true)
-			if err != nil {
-				t.Logf("MoveTo returned error: %v", err)
-			}
-
-			// Wait for agent to reach destination
-			timeout := 90 * time.Second
-			err = tracker.WaitForPosition(ctx, agentCfg.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
-
-			finalPos, posOK := tracker.GetPosition(agentCfg.Name)
-			require.True(t, posOK, "should have final position")
-			t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
-
-			goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
-			finalDist := finalPos.DistanceTo(goal)
-			t.Logf("Distance from goal: %.2f", finalDist)
-
-			assert.LessOrEqual(t, finalDist, 3.0,
-				"agent should swim down from ground level into the well to reach the goal")
-		})
+	// Dig the well
+	for digY := groundY; digY >= wellBottomY; digY-- {
+		digCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air",
+			wellX-wellWidth/2, digY, wellZ-wellWidth/2, wellX+wellWidth/2, digY, wellZ+wellWidth/2)
+		_, err := s.Inst.RCON.Exec(s.Ctx, digCmd)
+		require.NoError(t, err, "dig well at Y=%d", digY)
 	}
+
+	// Place stone floor with goal marker at bottom
+	floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:stone",
+		wellX-wellWidth/2, wellBottomY, wellZ-wellWidth/2, wellX+wellWidth/2, wellBottomY, wellZ+wellWidth/2)
+	_, err = s.Inst.RCON.Exec(s.Ctx, floorCmd)
+	require.NoError(t, err, "place well floor")
+
+	// Fill well with water from floor up to ground level
+	for waterY := wellBottomY + 1; waterY < groundY; waterY++ {
+		waterCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			wellX-wellWidth/2, waterY, wellZ-wellWidth/2, wellX+wellWidth/2, waterY, wellZ+wellWidth/2)
+		_, err = s.Inst.RCON.Exec(s.Ctx, waterCmd)
+		require.NoError(t, err, "fill well at Y=%d", waterY)
+	}
+
+	time.Sleep(3 * time.Second)
+
+	// Start position: on solid ground next to the well
+	startX := float64(wellX-wellWidth/2-2) + 0.5
+	startY := float64(groundY + 1)
+	startZ := float64(wellZ) + 0.5
+	tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, startX, startY, startZ)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent to start position")
+	t.Logf("Agent teleported to start (%.1f, %.1f, %.1f)", startX, startY, startZ)
+
+	time.Sleep(3 * time.Second)
+
+	// Goal: at the bottom of the well
+	goalX := float64(wellX) + 0.5
+	goalY := float64(wellBottomY + 1)
+	goalZ := float64(wellZ) + 0.5
+	t.Logf("Goal: (%.1f, %.1f, %.1f) — swim down into well from solid ground",
+		goalX, goalY, goalZ)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
+
+	err = leader.Agent.MoveTo(s.Ctx, goalX, goalY, goalZ, true)
+	if err != nil {
+		t.Logf("MoveTo returned error: %v", err)
+	}
+
+	timeout := 90 * time.Second
+	err = tracker.WaitForPosition(s.Ctx, leader.Name, models.V3{X: goalX, Y: goalY, Z: goalZ}, 2.5, timeout)
+
+	finalPos, posOK := tracker.GetPosition(leader.Name)
+	require.True(t, posOK, "should have final position")
+	t.Logf("Final position: (%.2f, %.2f, %.2f)", finalPos.X, finalPos.Y, finalPos.Z)
+
+	goal := models.V3{X: goalX, Y: goalY, Z: goalZ}
+	finalDist := finalPos.DistanceTo(goal)
+	t.Logf("Distance from goal: %.2f", finalDist)
+
+	assert.LessOrEqual(t, finalDist, 3.0,
+		"agent should swim down from ground level into the well to reach the goal")
 }
