@@ -46,6 +46,22 @@ type VersionWorldSuite struct {
 	// lifetime).
 	WorldGen WorldGenType
 
+	// Difficulty overrides SharedServerConfig/SharedFlatWorldServerConfig's
+	// own Peaceful default for this suite's server, when set (zero value
+	// leaves the Peaceful default in place - see buildServerConfig). Added
+	// for docs/plans/integration-test-shared-server/08-phase1-effects-conversion.md:
+	// several pre-conversion test files pin an explicit non-Peaceful
+	// difficulty (DifficultyEasy/DifficultyNormal) - some for reasons the
+	// specific assertions don't actually depend on (preserved anyway, to
+	// avoid silently diverging from a previously-passing test's own
+	// conditions), others load-bearing (entity_interaction_test.go's
+	// zombie-attack tests need DifficultyNormal specifically - Peaceful
+	// despawns hostile mobs outright, which would break them outright, not
+	// just subtly). Like WorldGen, every test method in one suite instance
+	// shares this - a test that needs a different difficulty belongs in a
+	// different suite.
+	Difficulty Difficulty
+
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Framework *Framework
@@ -98,6 +114,9 @@ func (s *VersionWorldSuite) buildServerConfig() ServerConfig {
 	}
 	cfg.Version = s.Version
 	cfg.PullImage = false
+	if s.Difficulty != "" {
+		cfg.Difficulty = s.Difficulty
+	}
 	return cfg
 }
 
