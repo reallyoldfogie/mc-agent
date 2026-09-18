@@ -167,6 +167,8 @@ github.com/reallyoldfogie/mc-bot-go v0.2.4 h1:H3e4NTa+PN1I83nP0whijjpeJNNwprUdVa
 github.com/reallyoldfogie/mc-bot-go v0.2.4/go.mod h1:a1PEyOa8tw4vgLPQHSKKYUkQmyxNV5Btdt9e+UVuDgA=
 github.com/reallyoldfogie/mc-client-test-go v0.1.2 h1:B+X3kJFIzkT2mj9k5McJ8E/mtPSqpEp+EiwZevboRtw=
 github.com/reallyoldfogie/mc-client-test-go v0.1.2/go.mod h1:dL6Ts3HmHcQLJ733f7xwAeWIuR7pHhBgSxrYBl7KFHU=
+github.com/reallyoldfogie/mc-client-test-go v0.1.3 h1:tQMzIbiYjeWIywBjAD7rPgCeWEF//F32IkOen/TjNUA=
+github.com/reallyoldfogie/mc-client-test-go v0.1.3/go.mod h1:dL6Ts3HmHcQLJ733f7xwAeWIuR7pHhBgSxrYBl7KFHU=
 github.com/reallyoldfogie/mc-data-gen/loader v0.0.4 h1:UfLayatot4n1EhW6MKbm9vouHg9/QUsToXcExea9HFI=
 github.com/reallyoldfogie/mc-data-gen/loader v0.0.4/go.mod h1:CG/tCLZ5NpGVnT05ezX0wJJ2Pl/SxnhOd2xh4skMmmg=
 github.com/reallyoldfogie/mc-protocol-go v0.1.0 h1:mM9k3v981n/Tr/Yu/tj57Bh4xTZEHpYRIvuWBsEAuiE=
