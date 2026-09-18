@@ -283,6 +283,41 @@ type ServerConfig struct {
 	MountDirs            []string      // directories to be mounted to container
 }
 
+// defaultTestSeedEnvVar overrides the default world SEED (see
+// defaultTestSeed) applied to non-flat-terrain test servers. Naming matches
+// this file's existing MC_AGENT_GENERATE_STRUCTURES/MC_AGENT_TEST_IMAGE
+// convention (testing/require_integration_env.go).
+const defaultTestSeedEnvVar = "MC_AGENT_TEST_SEED"
+
+// defaultTestSeedValue is "Seed A" from
+// docs/plans/integration-test-shared-server/05-navigation-random-suite-seed-investigation.md
+// - not an arbitrary choice. That investigation live-confirmed it 6/6 times
+// (3 runs of the original pre-conversion TestNavigationSingleAgent, 3 runs
+// of the converted NavigationRandomSuite code path, including two runs that
+// exercised a real 256/512-block working-area teleport onto this exact
+// terrain) as a seed TestSingleAgent's fixed +10-block-east moveTo reliably
+// completes within its 30s floor.
+const defaultTestSeedValue = "12345"
+
+// defaultTestSeed returns the world SEED to use for a non-flat-terrain test
+// server, overridable via MC_AGENT_TEST_SEED. Pinning a default (rather than
+// leaving SEED unset, which asks the itzg image to pick a new random one
+// every boot) is what
+// docs/plans/integration-test-shared-server/06-pinned-default-seed.md is
+// for: WorldGenRandom's terrain otherwise differs every run, which
+// 05-navigation-random-suite-seed-investigation.md traced as the actual
+// cause of NavigationRandomSuite's live flakiness (a fixed test target can
+// land somewhere a given seed's terrain makes slow or unreachable within a
+// test's timeout - not a bug in the shared-server conversion itself, but a
+// property of "fixed offset + random terrain" that a fixed, known-good seed
+// sidesteps).
+func defaultTestSeed() string {
+	if v := os.Getenv(defaultTestSeedEnvVar); v != "" {
+		return v
+	}
+	return defaultTestSeedValue
+}
+
 // DefaultServerConfig returns a sensible default configuration for tests.
 // Uses reduced memory (512M) to prevent OOM on systems with limited RAM.
 // Uses random terrain for full integration testing.
@@ -403,6 +438,27 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 			"biome":"minecraft:plains"
 		}`
 	}
+
+	// Pin a default world SEED for non-flat terrain (docs/plans/integration-test-shared-server/06-pinned-default-seed.md),
+	// overridable via MC_AGENT_TEST_SEED - see defaultTestSeed's own doc
+	// comment. Scoped to "not flat and not controlled" rather than
+	// "== WorldGenRandom": despite its name, WorldGenControlled uses the
+	// exact same LEVEL_TYPE=flat/GENERATOR_SETTINGS preset as WorldGenFlat
+	// (see the block above - both conditions share one `if`), it just
+	// additionally places obstacles programmatically via RCON on top of that
+	// flat base, so a SEED is as irrelevant to it as it is to WorldGenFlat
+	// itself. The inverse form (rather than == WorldGenRandom) also covers a
+	// hand-built ServerConfig{} that leaves WorldGen at its zero value
+	// (""  != WorldGenRandom's "default", but behaves identically to it -
+	// itzg's own image generates normal random terrain when LEVEL_TYPE is
+	// unset either way). A caller-supplied SEED (a test that already set one
+	// explicitly in ExtraEnv) always wins - this only fills in an unset one.
+	if cfg.WorldGen != WorldGenFlat && cfg.WorldGen != WorldGenControlled {
+		if _, ok := extraEnv["SEED"]; !ok {
+			extraEnv["SEED"] = defaultTestSeed()
+		}
+	}
+
 	// Set memory limit to reduce OOM risk
 	if cfg.Memory != "" {
 		extraEnv["MEMORY"] = cfg.Memory
