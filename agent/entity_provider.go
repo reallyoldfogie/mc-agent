@@ -14,7 +14,7 @@ func (a *agent) GetEntitiesSnapshot() map[int32]models.EntitySnapshot {
 	defer a.entitiesMu.RUnlock()
 
 	out := make(map[int32]models.EntitySnapshot, len(a.entities))
-	agentID := a.entID // Read under existing lock (could add RLock for entIDMu, but agent's lifecycle is stable)
+	agentID := a.GetEntityID() // entID has its own entIDMu, distinct from entitiesMu held here
 
 	for id, e := range a.entities {
 		// Skip removed entities and self
