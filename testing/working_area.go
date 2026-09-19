@@ -85,6 +85,16 @@ func SharedServerConfig() ServerConfig {
 	cfg.ExtraEnv = map[string]string{
 		"VIEW_DISTANCE":       "6",
 		"SIMULATION_DISTANCE": "4",
+		// itzg/minecraft-server defaults this off - without it, command
+		// blocks keep ticking (LastExecution advances normally) but their
+		// Command never actually runs (SuccessCount stays 0 forever),
+		// silently. See container_standalone_test.go's own copy of this
+		// setting for the live-diagnosed symptom this fixes (found again
+		// the hard way converting the elytra navigation-course test to this
+		// shared-server pattern: SetupNavigationCourse's command blocks
+		// never triggered on a shared server, despite an RCON-issued copy
+		// of the exact same command succeeding instantly).
+		"ENABLE_COMMAND_BLOCK": "true",
 	}
 	return cfg
 }
