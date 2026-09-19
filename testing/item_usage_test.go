@@ -34,10 +34,10 @@ const eyeHeight = 1.62
 // subsequent use-item interaction nowhere near the real target — found live
 // while building this test (bot position logged mid-test as ~8 blocks from
 // where it had just been teleported).
-func waitForBotNear(env *StandaloneTestEnv, target models.V3, tolerance float64, timeout time.Duration) error {
+func waitForBotNear(agent models.Position, target models.V3, tolerance float64, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
-		pos, ok := env.Agent.Agent.GetPositionSimple()
+		pos, ok := agent.GetPositionSimple()
 		if ok {
 			dx, dy, dz := pos.X-target.X, pos.Y-target.Y, pos.Z-target.Z
 			if math.Sqrt(dx*dx+dy*dy+dz*dz) <= tolerance {
@@ -130,7 +130,7 @@ func TestItemUsage_CollectWater(t *testing.T) {
 			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
 			_, err = env.Inst.RCON.Exec(env.Ctx, cmd)
 			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+			require.NoError(t, waitForBotNear(env.Agent.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
 
 			// Give the bot an empty bucket in hotbar slot 0
 			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", env.BotName)
@@ -181,7 +181,7 @@ func TestItemUsage_WaterBucketOnLava(t *testing.T) {
 			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
 			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
 			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+			require.NoError(t, waitForBotNear(env.Agent.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
 
 			// Give the bot a water bucket in hotbar slot 0
 			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with water_bucket 1", env.BotName)

@@ -3,6 +3,7 @@ package testing
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // blockIsAir reports whether the block at the given position is air, using
@@ -85,110 +87,140 @@ func waitForItemEntityNear(ctx context.Context, rcon testenv.RCONHelper, pos mod
 	}
 }
 
-// TestMineBlockAt_StoneWithPickaxe tests MineBlockAt end to end: give the
-// bot a wooden pickaxe (anywhere in inventory — MineBlockAt's
-// selectBestToolForBlock finds and equips the best matching tool itself, no
-// manual hotbar selection needed), mine a stone block, and verify both that
-// the block broke and that it dropped cobblestone. The drop specifically
-// (rather than just the block-gone check) confirms the right tool was
-// actually selected — mining stone bare-handed breaks the block but drops
-// nothing (see TestMineBlockAt_BareHandedNoDrop), so a cobblestone drop
-// proves the tool auto-selection path worked, not just that digging packets
-// were sent. Verified via the dropped item *entity*'s existence, not via
-// the bot's inventory: found live that the bot, teleported ~2 blocks from
-// the block for mining reach, is outside vanilla's much shorter (~1.5
-// block) item pickup radius, so nothing gets auto-collected — checking the
-// entity directly avoids depending on pickup mechanics, which aren't what
-// this test is about.
+// MineFlatSuite covers MineBlockAt end to end against a shared flat-world
+// server - one stone block placed per method (via PlaceBlockAndWait, not the
+// direct Origin-substitution pattern most other conversions have used, since
+// this test needs a real solid block to mine, not just a spawn point to
+// compute destinations from - see the checklist's own note on why this file
+// was deferred until now).
+type MineFlatSuite struct {
+	VersionWorldSuite
+}
+
+func TestMineFlatSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &MineFlatSuite{}
+		s.WorldGen = WorldGenFlat
+		s.Difficulty = DifficultyEasy
+		return s
+	})
+}
+
+// placeMineTarget places a stone block 5 blocks over from leader's working
+// area (matching setupStandaloneTestWithModeAndBlockPlacement's own
+// containerX/Y/Z math) and returns its center position (matching
+// StandaloneTestEnv.ContainerPos exactly, so the rest of this file's logic -
+// teleport offset, mining distance - carries over unchanged).
+func placeMineTarget(s *VersionWorldSuite, leader *WorkingAreaAgent) (models.V3, error) {
+	blockX := int(math.Floor(leader.Origin.X)) + 5
+	blockY := int(math.Floor(leader.Origin.Y))
+	blockZ := int(math.Floor(leader.Origin.Z))
+	blockPos := models.V3{X: float64(blockX), Y: float64(blockY), Z: float64(blockZ)}
+	if _, err := PlaceBlockAndWait(s.Ctx, s.Inst.RCON, leader.ManagedAgent, blockPos, "minecraft:stone", "stone", 30*time.Second); err != nil {
+		return models.V3{}, err
+	}
+	return models.V3{X: float64(blockX) + 0.5, Y: float64(blockY), Z: float64(blockZ) + 0.5}, nil
+}
+
+// TestStoneWithPickaxe tests MineBlockAt end to end: give the bot a wooden
+// pickaxe (anywhere in inventory — MineBlockAt's selectBestToolForBlock finds
+// and equips the best matching tool itself, no manual hotbar selection
+// needed), mine a stone block, and verify both that the block broke and that
+// it dropped cobblestone. The drop specifically (rather than just the
+// block-gone check) confirms the right tool was actually selected — mining
+// stone bare-handed breaks the block but drops nothing (see
+// TestBareHandedNoDrop), so a cobblestone drop proves the tool auto-selection
+// path worked, not just that digging packets were sent. Verified via the
+// dropped item *entity*'s existence, not via the bot's inventory: found live
+// that the bot, teleported ~2 blocks from the block for mining reach, is
+// outside vanilla's much shorter (~1.5 block) item pickup radius, so nothing
+// gets auto-collected — checking the entity directly avoids depending on
+// pickup mechanics, which aren't what this test is about.
 //
 // Stone with a wooden pickaxe has a real (non-instant) break time, so this
 // also exercises MineBlockAt's wait-for-break-time loop and FinishDigging
 // send, not just the breakTime<=0.05 "instant break" early return.
-func TestMineBlockAt_StoneWithPickaxe(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "stone", tt.MCVersion)
-			defer env.Cancel()
+func (s *MineFlatSuite) TestStoneWithPickaxe() {
+	t := s.T()
 
-			// Teleport near the stone block
-			tpTarget := models.V3{X: env.ContainerPos.X - 2, Y: env.ContainerPos.Y, Z: env.ContainerPos.Z}
-			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
-			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+	leader, err := s.SpawnWorkingAreaAgent("MineStoneBot", "mine_stone_pickaxe")
+	require.NoError(t, err, "spawn agent")
 
-			// Give the bot a wooden pickaxe in hotbar slot 1, deliberately
-			// not slot 0 (the bot's default held slot from spawn): placing
-			// it in slot 0 would let selectBestToolForBlock's
-			// SelectHotbarSlot(0) take its "already selected" fast path,
-			// which never exercises a real switch at all. Using slot 1
-			// forces a genuine one — this is also a regression test for a
-			// real bug SelectHotbarSlot had (see agent/hotbar.go): it used
-			// to block forever waiting for a ClientboundHeldItemSlot echo
-			// that vanilla never sends back to the switching client,
-			// found live via this exact test hanging until context
-			// timeout.
-			giveCmd := fmt.Sprintf("item replace entity %s hotbar.1 with wooden_pickaxe 1", env.BotName)
-			_, err = env.Inst.RCON.Exec(env.Ctx, giveCmd)
-			require.NoError(t, err, "give wooden pickaxe")
-			time.Sleep(500 * time.Millisecond)
+	minePos, err := placeMineTarget(&s.VersionWorldSuite, leader)
+	require.NoError(t, err, "place stone block")
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+	// Teleport near the stone block
+	tpTarget := models.V3{X: minePos.X - 2, Y: minePos.Y, Z: minePos.Z}
+	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpTarget.X, tpTarget.Y, tpTarget.Z)
+	_, err = s.Inst.RCON.Exec(s.Ctx, cmd)
+	require.NoError(t, err)
+	require.NoError(t, waitForBotNear(leader.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
 
-			err = env.Agent.Agent.MineBlockAt(ctx, env.ContainerPos, models.FaceDown)
-			require.NoError(t, err, "mine stone block")
+	// Give the bot a wooden pickaxe in hotbar slot 1, deliberately not slot 0
+	// (the bot's default held slot from spawn): placing it in slot 0 would
+	// let selectBestToolForBlock's SelectHotbarSlot(0) take its "already
+	// selected" fast path, which never exercises a real switch at all. Using
+	// slot 1 forces a genuine one — this is also a regression test for a
+	// real bug SelectHotbarSlot had (see agent/hotbar.go): it used to block
+	// forever waiting for a ClientboundHeldItemSlot echo that vanilla never
+	// sends back to the switching client, found live via this exact test
+	// hanging until context timeout.
+	giveCmd := fmt.Sprintf("item replace entity %s hotbar.1 with wooden_pickaxe 1", leader.Name)
+	_, err = s.Inst.RCON.Exec(s.Ctx, giveCmd)
+	require.NoError(t, err, "give wooden pickaxe")
+	time.Sleep(500 * time.Millisecond)
 
-			// MineBlockAt returning only means the client-side dig sequence
-			// finished; the server needs a moment to actually apply the
-			// break and, afterward, spawn the dropped item entity — poll
-			// both rather than a single fixed-delay check, which was
-			// observed to flake live under load (see waitForBlockAir).
-			blockX, blockY, blockZ := int(env.ContainerPos.X), int(env.ContainerPos.Y), int(env.ContainerPos.Z)
-			isAir, err := waitForBlockAir(env.Ctx, env.Inst.RCON, blockX, blockY, blockZ, 5*time.Second)
-			require.NoError(t, err, "check block state via RCON")
-			require.True(t, isAir, "stone block should have been broken")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-			found, err := waitForItemEntityNear(env.Ctx, env.Inst.RCON, env.ContainerPos, "minecraft:cobblestone", 3.0, 5*time.Second)
-			require.NoError(t, err, "check for dropped item via RCON")
-			require.True(t, found, "should have dropped a cobblestone item entity")
+	err = leader.Agent.MineBlockAt(ctx, minePos, models.FaceDown)
+	require.NoError(t, err, "mine stone block")
 
-			t.Log("✓ Mine stone with pickaxe test passed")
-		})
-	}
+	// MineBlockAt returning only means the client-side dig sequence
+	// finished; the server needs a moment to actually apply the break and,
+	// afterward, spawn the dropped item entity — poll both rather than a
+	// single fixed-delay check, which was observed to flake live under load
+	// (see waitForBlockAir).
+	blockX, blockY, blockZ := int(minePos.X), int(minePos.Y), int(minePos.Z)
+	isAir, err := waitForBlockAir(s.Ctx, s.Inst.RCON, blockX, blockY, blockZ, 5*time.Second)
+	require.NoError(t, err, "check block state via RCON")
+	require.True(t, isAir, "stone block should have been broken")
+
+	found, err := waitForItemEntityNear(s.Ctx, s.Inst.RCON, minePos, "minecraft:cobblestone", 3.0, 5*time.Second)
+	require.NoError(t, err, "check for dropped item via RCON")
+	require.True(t, found, "should have dropped a cobblestone item entity")
 }
 
-// TestMineBlockAt_BareHandedNoDrop tests that mining a block bare-handed
-// (no matching tool in inventory) still breaks it — MineBlockAt's fallback
-// to mining.HandTool() when no tool is found — without expecting an item
-// drop, since stone specifically requires a pickaxe to drop cobblestone.
-func TestMineBlockAt_BareHandedNoDrop(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "stone", tt.MCVersion)
-			defer env.Cancel()
+// TestBareHandedNoDrop tests that mining a block bare-handed (no matching
+// tool in inventory) still breaks it — MineBlockAt's fallback to
+// mining.HandTool() when no tool is found — without expecting an item drop,
+// since stone specifically requires a pickaxe to drop cobblestone.
+func (s *MineFlatSuite) TestBareHandedNoDrop() {
+	t := s.T()
 
-			tpTarget := models.V3{X: env.ContainerPos.X - 2, Y: env.ContainerPos.Y, Z: env.ContainerPos.Z}
-			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
-			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+	leader, err := s.SpawnWorkingAreaAgent("MineBareHandBot", "mine_stone_bare_handed")
+	require.NoError(t, err, "spawn agent")
 
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
+	minePos, err := placeMineTarget(&s.VersionWorldSuite, leader)
+	require.NoError(t, err, "place stone block")
 
-			err = env.Agent.Agent.MineBlockAt(ctx, env.ContainerPos, models.FaceDown)
-			require.NoError(t, err, "mine stone block bare-handed")
+	tpTarget := models.V3{X: minePos.X - 2, Y: minePos.Y, Z: minePos.Z}
+	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpTarget.X, tpTarget.Y, tpTarget.Z)
+	_, err = s.Inst.RCON.Exec(s.Ctx, cmd)
+	require.NoError(t, err)
+	require.NoError(t, waitForBotNear(leader.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
 
-			// No item-drop check here (bare-handed stone drops nothing);
-			// poll for the break rather than a single fixed-delay check
-			// (see waitForBlockAir).
-			blockX, blockY, blockZ := int(env.ContainerPos.X), int(env.ContainerPos.Y), int(env.ContainerPos.Z)
-			isAir, err := waitForBlockAir(env.Ctx, env.Inst.RCON, blockX, blockY, blockZ, 5*time.Second)
-			require.NoError(t, err, "check block state via RCON")
-			require.True(t, isAir, "stone block should have been broken")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-			t.Log("✓ Mine stone bare-handed test passed")
-		})
-	}
+	err = leader.Agent.MineBlockAt(ctx, minePos, models.FaceDown)
+	require.NoError(t, err, "mine stone block bare-handed")
+
+	// No item-drop check here (bare-handed stone drops nothing); poll for
+	// the break rather than a single fixed-delay check (see
+	// waitForBlockAir).
+	blockX, blockY, blockZ := int(minePos.X), int(minePos.Y), int(minePos.Z)
+	isAir, err := waitForBlockAir(s.Ctx, s.Inst.RCON, blockX, blockY, blockZ, 5*time.Second)
+	require.NoError(t, err, "check block state via RCON")
+	require.True(t, isAir, "stone block should have been broken")
 }
