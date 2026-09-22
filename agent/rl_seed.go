@@ -17,6 +17,16 @@ const seedBlockOffset = 2
 // ingredient, so a training episode doesn't run out mid-attempt.
 const seedGiveCount = 9
 
+// craftTableSeedRadius bounds how far SeedCraftIngredients looks for (and,
+// via SeedNearbyBlock, places) a crafting table when the target recipe
+// doesn't fit the player's own 2x2 inventory grid — see
+// craftingRecipe.fitsInventoryGrid (craft.go) for that check and
+// craftTableSearchRadius (craft.go) for the larger radius CraftItem's own
+// openCraftingTable later searches within during the real craft attempt;
+// keeping this well inside that radius means a table SeedNearbyBlock just
+// placed is never at risk of falling outside CraftItem's own later search.
+const craftTableSeedRadius = 8
+
 // seedSyncTimeout/seedSyncPollInterval bound how long SeedNearbyBlock/
 // SeedCraftIngredients wait for this bot's own client-tracked state to
 // catch up with an RCON write it just made — see their doc comments for
@@ -172,6 +182,21 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 	recipe, ok := recipes[normalizeItemName(itemName)]
 	if !ok {
 		return fmt.Errorf("no known crafting recipe for %s", itemName)
+	}
+
+	// A recipe that doesn't fit the player's own 2x2 inventory grid needs
+	// a real crafting table's 3x3 grid instead (see
+	// craftingRecipe.fitsInventoryGrid, CraftItem's own openCraftingTable)
+	// — ensure one exists in range before giving ingredients, the same way
+	// SeedNearbyBlock already guarantees a Mine task's target block exists.
+	// Without this, every episode for such an item fails outright (found
+	// live: "no crafting table found within 32 blocks" on 100% of attempts
+	// for minecraft:chest/minecraft:bowl against a fresh, tableless world),
+	// since nothing else in episode seeding ever places one.
+	if !recipe.fitsInventoryGrid() {
+		if err := a.SeedNearbyBlock(ctx, "minecraft:crafting_table", craftTableSeedRadius); err != nil {
+			return fmt.Errorf("seed craft ingredients: ensuring a crafting table for %s: %w", itemName, err)
+		}
 	}
 
 	// Clear the complete inventory, not just the items we are about to give.
