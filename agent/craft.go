@@ -679,38 +679,77 @@ func (a *agent) executeCraft(ctx context.Context, itemName string, recipe crafti
 	return nil
 }
 
+// ingredientSearchTimeout/ingredientSearchPollInterval bound how long
+// placeCraftIngredient retries its inventory scan before giving up -
+// mirrors awaitInventoryIncrease/SeedNearbyBlock's own poll-until-synced
+// idiom. Needed because opening a crafting table's window
+// (agent.OpenContainer) only waits a blind, fixed 2s for the server's
+// resulting slot data to arrive before returning - not an event-driven
+// wait keyed on that data actually landing - so a single, immediate scan
+// can lose the race against the container's ClientboundContainerSetContent
+// under load (multiple concurrent bots sharing one server) and see an
+// empty/stale container (or, per findIngredientSlot -> craftWindowSlots,
+// a window not yet registered as open) even though the ingredient really
+// is there. Found live: hundreds of "missing ingredient"/"window N not
+// open" failures against real-crafting-table recipes (chest/bowl) that
+// never happened against the 2x2 inventory-only path (window 0, no
+// container-open race to lose).
+const (
+	ingredientSearchTimeout      = 2 * time.Second
+	ingredientSearchPollInterval = 100 * time.Millisecond
+)
+
 // placeCraftIngredient finds the first inventory item matching one of
 // candidates (searching layout's window from layout.inventoryStart onward -
 // see findIngredientSlot) and moves a single unit of it into gridSlot
-// (also in layout's window - see craftWindowSlots).
+// (also in layout's window - see craftWindowSlots). Retries the whole scan
+// (bounded by ingredientSearchTimeout) rather than searching once - see
+// that constant's own doc comment for why a single immediate scan isn't
+// reliable here, unlike a plain 2x2-grid craft against window 0.
 func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, layout craftWindowLayout, candidates []string) error {
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		srcSlot, found, err := a.findIngredientSlot(candidate, layout)
-		if err != nil {
-			return fmt.Errorf("search inventory for %s: %w", candidate, err)
-		}
-		if !found {
-			continue
-		}
+	deadline := time.Now().Add(ingredientSearchTimeout)
+	var lastErr error
+	for {
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			srcSlot, found, err := a.findIngredientSlot(candidate, layout)
+			if err != nil {
+				lastErr = fmt.Errorf("search inventory for %s: %w", candidate, err)
+				continue
+			}
+			if !found {
+				continue
+			}
 
-		slots, err := a.craftWindowSlots(layout)
-		if err != nil {
-			return err
+			slots, err := a.craftWindowSlots(layout)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if srcSlot < 0 || srcSlot >= len(slots) || int(gridSlot) >= len(slots) {
+				return fmt.Errorf("invalid slot index")
+			}
+			srcItem := itemStackFromScreenSlot(slots[srcSlot])
+			destItem := itemStackFromScreenSlot(slots[gridSlot])
+			if err := a.MoveSingle(int16(srcSlot), gridSlot, srcItem, destItem); err != nil {
+				return fmt.Errorf("place %s: %w", candidate, err)
+			}
+			return nil
 		}
-		if srcSlot < 0 || srcSlot >= len(slots) || int(gridSlot) >= len(slots) {
-			return fmt.Errorf("invalid slot index")
+		if !time.Now().Before(deadline) {
+			if lastErr != nil {
+				return lastErr
+			}
+			return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 		}
-		srcItem := itemStackFromScreenSlot(slots[srcSlot])
-		destItem := itemStackFromScreenSlot(slots[gridSlot])
-		if err := a.MoveSingle(int16(srcSlot), gridSlot, srcItem, destItem); err != nil {
-			return fmt.Errorf("place %s: %w", candidate, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(ingredientSearchPollInterval):
 		}
-		return nil
 	}
-	return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 }
 
 // waitForCraftOutput polls layout's output slot (in layout's window - see
