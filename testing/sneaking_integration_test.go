@@ -1,7 +1,6 @@
 package testing
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -10,210 +9,171 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-// TestSneaking_EdgePrevention tests that the bot cannot walk off block edges while sneaking
-func TestSneaking_EdgePrevention(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-
-			fw, err := NewFramework()
-			require.NoError(t, err)
-
-			srv := DefaultServerConfig()
-			srv.Version = tt.MCVersion
-			RequireIntegrationEnv(t, srv)
-
-			inst, err := fw.StartServer(ctx, srv)
-			require.NoError(t, err)
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = fw.StopServer(stopCtx, inst, true)
-			}()
-
-			agCfg := DefaultAgentConfig(
-				"SneakBot_EdgePrevention",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				srv.Version,
-			)
-
-			// Enable/disable cam agent
-			// agCfg.EnableCamAgent = true
-			agCfg.EnableCamAgent = false
-			agCfg.EnableReplay = true
-
-			ag, err := fw.SpawnAgent(ctx, inst, agCfg)
-			require.NoError(t, err)
-
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				if ag != nil {
-					_ = ag.Stop(stopCtx) // Handles agent + cam agent cleanup
-				}
-			}()
-			time.Sleep(2 * time.Second)
-
-			// Get bot position
-			botPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized, "bot position initialized")
-
-			platformX := int(math.Floor(botPos.X))
-			platformY := int(math.Floor(botPos.Y)) - 1
-			platformZ := int(math.Floor(botPos.Z))
-
-			// create a pit around the platform to test edge prevention
-			fillCmd := fmt.Sprintf(`fill %d %d %d %d %d %d minecraft:air`, platformX-20, platformY, platformZ-20, platformX+20, platformY-5, platformZ+20)
-			fillResponse, err := inst.RCON.Exec(ctx, fillCmd)
-			t.Logf("%s => %s", fillCmd, fillResponse)
-			require.NoError(t, err)
-
-			// Build a 3x3 platform
-			for x := platformX - 1; x <= platformX+1; x++ {
-				for z := platformZ - 1; z <= platformZ+1; z++ {
-					_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:grass_block`, x, platformY, z))
-					require.NoError(t, err)
-				}
-			}
-
-			time.Sleep(3 * time.Second)
-
-			// Teleport bot to center of platform
-			tp := fmt.Sprintf(`teleport %s %.1f %.1f %.1f`, ag.Name, float64(platformX)+0.5, float64(platformY+1)+0.5, float64(platformZ)+0.5)
-			_, err = inst.RCON.Exec(ctx, tp)
-			require.NoError(t, err)
-
-			time.Sleep(500 * time.Millisecond)
-
-			initialPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized, "bot position should be available")
-
-			// Start sneaking
-			err = ag.Agent.StartSneaking()
-			require.NoError(t, err, "StartSneaking error")
-
-			// Move forward while sneaking to test edge prevention
-			err = ag.Agent.MoveForward(ctx, 3.0)
-			if err != nil { // expected, since the edge prevention should stop movement to the full 3 blocks
-				t.Logf("MoveForward error: %v", err)
-			}
-
-			// give time to move
-			time.Sleep(6 * time.Second)
-
-			// Check bot position - should not have walked off edge, but should have still moved
-			finalPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized, "bot position should be available")
-
-			distanceMoved := initialPos.DistanceTo(finalPos)
-			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
-
-			assert.NotEqual(t, initialPos, finalPos)
-
-			// Bot should still be on platform (within reasonable bounds)
-			assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
-				"bot should still be on platform level after sneaking movement attempt")
-		})
-	}
+// SneakingFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for sneaking-movement tests: one server per
+// version, shared by every test method below, instead of the previous
+// per-test-function StartServer/StopServer pattern. WorldGen = WorldGenFlat,
+// a deliberate deviation from the pre-conversion tests' own
+// DefaultServerConfig() (WorldGenRandom): both methods dig out and rebuild
+// their own platform from scratch regardless of what terrain was there, so
+// nothing depends on it being "real" - matches the reasoning already used
+// for inventory_integration_test.go's conversion. Difficulty is left at
+// VersionWorldSuite's own Peaceful default, matching the original.
+//
+// Both methods build their platform in open sky (see skyPlatformY) rather
+// than at natural ground level, the way the pre-conversion tests did (each
+// dug a pit straight through the flat world's own ground, down to 5 blocks
+// below the surface). That was safe when every test owned its own solo
+// server, but is a real, live-confirmed bug on a shared server: whichever
+// method's working area happens to land at offset (0,0) - the world's own
+// fixed spawn point, since NextWorkingAreaOffset's very first claim needs
+// no teleport at all - leaves a hole there for the rest of the suite's run.
+// Every subsequent agent that joins this shared server does so at that same
+// fixed spawn point before it ever gets its own working-area teleport, so
+// it free-falls into the hole and reads a corrupted, several-blocks-too-low
+// Y - which then becomes the *fallback* Y for its own teleport
+// (VersionWorldSuite.teleportAndSettle's Flat-world branch), landing that
+// agent embedded in solid stone at its own, otherwise perfectly fine,
+// working area. Confirmed directly: TestSneakingFlatSuite/TestMovementAllowed
+// entered the world at pos=(6.50, -6.00, -1.50) - already inside
+// TestEdgePrevention's pit - on its very first join packet, before any of
+// this suite's own code ran. See
+// docs/plans/integration-test-shared-server/24-phase1-sneaking-conversion.md.
+type SneakingFlatSuite struct {
+	VersionWorldSuite
 }
 
-// TestSneaking_MovementAllowed tests that bot can move normally when not near edges
-func TestSneaking_MovementAllowed(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
+// skyPlatformY is the Y level both methods build their platform at, well
+// above any of this suite's WorldGenFlat terrain (top of the flat preset's
+// grass layer is Y=-1) - see SneakingFlatSuite's own doc comment for why
+// building at natural ground level is unsafe on a shared server.
+const skyPlatformY = 99
 
-			fw, err := NewFramework()
-			require.NoError(t, err)
+func TestSneakingFlatSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &SneakingFlatSuite{}
+		s.WorldGen = WorldGenFlat
+		return s
+	})
+}
 
-			srv := DefaultServerConfig()
-			srv.Version = tt.MCVersion
-			RequireIntegrationEnv(t, srv)
+// TestEdgePrevention tests that the bot cannot walk off block edges while
+// sneaking. Equivalent to the pre-Phase-1 TestSneaking_EdgePrevention.
+//
+// Spawned NoCam (preserved from the original, which disabled its Cam
+// companion for this method but not TestMovementAllowed): the platform here
+// is only 3x3, small enough that a companion entity standing on or near it
+// risks physically interfering with the precise edge-stopping behavior
+// under test, unlike TestMovementAllowed's much larger 11x11 platform.
+func (s *SneakingFlatSuite) TestEdgePrevention() {
+	t := s.T()
 
-			inst, err := fw.StartServer(ctx, srv)
-			require.NoError(t, err)
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = fw.StopServer(stopCtx, inst, true)
-			}()
+	leader, err := s.SpawnWorkingAreaAgentNoCam("SneakEdgeBot", "sneaking_edge_prevention")
+	require.NoError(t, err, "spawn agent")
 
-			agCfg := DefaultAgentConfig(
-				"SneakBot_Movement",
-				fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort),
-				srv.Version,
-			)
-			ag, err := fw.SpawnAgent(ctx, inst, agCfg)
-			require.NoError(t, err)
-			defer func() {
-				if ag != nil && ag.BotClient() != nil {
-					_ = ag.BotClient().Close()
-				}
-			}()
+	platformX := int(math.Floor(leader.Origin.X))
+	platformY := skyPlatformY
+	platformZ := int(math.Floor(leader.Origin.Z))
 
-			time.Sleep(2 * time.Second)
+	// Build a 3x3 platform in open sky - no pit to dig, the surrounding air
+	// already provides the fall-off-the-edge hazard the test needs (see
+	// SneakingFlatSuite's own doc comment for why this isn't built at
+	// natural ground level).
+	require.NoError(t, BuildPlatform(s.Ctx, s.Inst.RCON, platformX-1, platformY, platformZ-1, 3, 3, "minecraft:grass_block"), "build platform")
 
-			// Get bot position
-			botPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized, "bot position initialized")
+	time.Sleep(3 * time.Second)
 
-			platformX := int(math.Floor(botPos.X))
-			platformY := int(math.Floor(botPos.Y)) - 1
-			platformZ := int(math.Floor(botPos.Z))
+	// Teleport bot to center of platform.
+	tp := fmt.Sprintf(`teleport %s %.1f %.1f %.1f`, leader.Name, float64(platformX)+0.5, float64(platformY+1)+0.5, float64(platformZ)+0.5)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tp)
+	require.NoError(t, err, "teleport to platform")
 
-			fillCmd := fmt.Sprintf(`fill %d %d %d %d %d %d minecraft:air`, platformX-20, platformY, platformZ-20, platformX+20, platformY-5, platformZ+20)
-			fillResponse, err := inst.RCON.Exec(ctx, fillCmd)
-			t.Logf("%s => %s", fillCmd, fillResponse)
-			require.NoError(t, err)
+	time.Sleep(500 * time.Millisecond)
 
-			// Build a large platform (10x10) so bot is far from edges
-			for x := platformX - 5; x <= platformX+5; x++ {
-				for z := platformZ - 5; z <= platformZ+5; z++ {
-					_, err = inst.RCON.Exec(ctx, fmt.Sprintf(`setblock %d %d %d minecraft:grass_block`, x, platformY, z))
-					require.NoError(t, err)
-				}
-			}
+	initialPos, initialized := leader.Agent.GetPositionSimple()
+	require.True(t, initialized, "bot position should be available")
 
-			time.Sleep(500 * time.Millisecond)
+	// Start sneaking.
+	err = leader.Agent.StartSneaking()
+	require.NoError(t, err, "StartSneaking error")
 
-			// Teleport bot to center
-			tp := fmt.Sprintf(`teleport %s %.1f %.1f %.1f`, ag.Name, float64(platformX)+0.5, float64(platformY+1)+0.5, float64(platformZ)+0.5)
-			_, err = inst.RCON.Exec(ctx, tp)
-			require.NoError(t, err)
-
-			time.Sleep(500 * time.Millisecond)
-
-			initialPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized)
-
-			// Start sneaking and move
-			err = ag.Agent.StartSneaking()
-			require.NoError(t, err)
-
-			err = ag.Agent.MoveForward(ctx, 3.0)
-			require.NoError(t, err, "bot should be able to move when not near edge")
-
-			// give time to move
-			time.Sleep(5 * time.Second)
-
-			// Check bot moved
-			finalPos, initialized := ag.Agent.GetPositionSimple()
-			require.True(t, initialized)
-
-			distanceMoved := initialPos.DistanceTo(finalPos)
-			ag.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
-
-			assert.NotEqual(t, initialPos, finalPos)
-
-			// Should have moved a measurable distance
-			assert.InDeltaf(t, distanceMoved, 3.0, .15,
-				"bot should move at least 3 blocks when sneaking and not near edge")
-			assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
-				"bot should still be on platform")
-		})
+	// Move forward while sneaking to test edge prevention.
+	err = leader.Agent.MoveForward(s.Ctx, 3.0)
+	if err != nil { // expected, since the edge prevention should stop movement to the full 3 blocks
+		t.Logf("MoveForward error: %v", err)
 	}
+
+	// give time to move
+	time.Sleep(6 * time.Second)
+
+	// Check bot position - should not have walked off edge, but should have still moved.
+	finalPos, initialized := leader.Agent.GetPositionSimple()
+	require.True(t, initialized, "bot position should be available")
+
+	distanceMoved := initialPos.DistanceTo(finalPos)
+	leader.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
+
+	assert.NotEqual(t, initialPos, finalPos)
+
+	// Bot should still be on platform (within reasonable bounds).
+	assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
+		"bot should still be on platform level after sneaking movement attempt")
+}
+
+// TestMovementAllowed tests that the bot can move normally when not near
+// edges. Equivalent to the pre-Phase-1 TestSneaking_MovementAllowed.
+func (s *SneakingFlatSuite) TestMovementAllowed() {
+	t := s.T()
+
+	leader, err := s.SpawnWorkingAreaAgent("SneakMoveBot", "sneaking_movement_allowed")
+	require.NoError(t, err, "spawn agent")
+
+	platformX := int(math.Floor(leader.Origin.X))
+	platformY := skyPlatformY
+	platformZ := int(math.Floor(leader.Origin.Z))
+
+	// Build a large (11x11) platform in open sky, far from any edge (see
+	// SneakingFlatSuite's own doc comment for why this isn't built at
+	// natural ground level).
+	require.NoError(t, BuildPlatform(s.Ctx, s.Inst.RCON, platformX-5, platformY, platformZ-5, 11, 11, "minecraft:grass_block"), "build platform")
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Teleport bot to center.
+	tp := fmt.Sprintf(`teleport %s %.1f %.1f %.1f`, leader.Name, float64(platformX)+0.5, float64(platformY+1)+0.5, float64(platformZ)+0.5)
+	_, err = s.Inst.RCON.Exec(s.Ctx, tp)
+	require.NoError(t, err, "teleport to platform")
+
+	time.Sleep(500 * time.Millisecond)
+
+	initialPos, initialized := leader.Agent.GetPositionSimple()
+	require.True(t, initialized)
+
+	// Start sneaking and move.
+	err = leader.Agent.StartSneaking()
+	require.NoError(t, err)
+
+	err = leader.Agent.MoveForward(s.Ctx, 3.0)
+	require.NoError(t, err, "bot should be able to move when not near edge")
+
+	// give time to move
+	time.Sleep(5 * time.Second)
+
+	// Check bot moved.
+	finalPos, initialized := leader.Agent.GetPositionSimple()
+	require.True(t, initialized)
+
+	distanceMoved := initialPos.DistanceTo(finalPos)
+	leader.Agent.SendChat(fmt.Sprintf("Movement test: Moved from %s to %s (%.2f blocks)", initialPos, finalPos, distanceMoved))
+
+	assert.NotEqual(t, initialPos, finalPos)
+
+	// Should have moved a measurable distance.
+	assert.InDeltaf(t, distanceMoved, 3.0, .15,
+		"bot should move at least 3 blocks when sneaking and not near edge")
+	assert.GreaterOrEqual(t, finalPos.Y, float64(platformY)+0.5,
+		"bot should still be on platform")
 }
