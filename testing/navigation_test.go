@@ -166,6 +166,161 @@ func (s *NavigationRandomSuite) TestMultipleDestinations() {
 	}
 }
 
+// TestSingleAgentWithPathfinding tests that a single agent can navigate to
+// a destination using pathfinding, with lenient "made progress" fallback
+// assertions suited to random terrain that may turn out to be impassable
+// (unlike TestSingleAgent's exact-arrival check). Equivalent to the
+// pre-Phase-1 TestPathfindingSingleAgent
+// (navigation_pathfinding_test.go) - folded in here rather than given its
+// own suite since its config (DefaultServerConfig(): WorldGenRandom,
+// Peaceful, survival) matches this suite exactly.
+func (s *NavigationRandomSuite) TestSingleAgentWithPathfinding() {
+	t := s.T()
+	logger := NewTestLogger(t)
+
+	agent, err := s.SpawnWorkingAreaAgent("PathfindingBot", "nav_pathfinding_single")
+	require.NoError(t, err, "spawn agent")
+	logger.Logf("Agent %s spawned at working area (%.2f, %.2f, %.2f)", agent.Name, agent.Origin.X, agent.Origin.Y, agent.Origin.Z)
+
+	startPos := agent.Origin
+	logger.Logf("Agent starting position: %.2f, %.2f, %.2f", startPos.X, startPos.Y, startPos.Z)
+
+	// Define destination (can be at different elevation on random terrain).
+	destination := models.V3{
+		X: startPos.X + 20,
+		Y: startPos.Y,
+		Z: startPos.Z + 15,
+	}
+	logger.Logf("Target destination: %.2f, %.2f, %.2f", destination.X, destination.Y, destination.Z)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
+
+	navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", destination.X, destination.Y, destination.Z)
+	sayCmd := s.Inst.RCON.Say(s.Ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
+	resp, err := sayCmd.Exec(s.Ctx)
+	require.NoError(t, err, "send navigation command")
+	logger.Logf("Command sent, response: %s", resp)
+
+	distance := startPos.DistanceTo(destination)
+	timeout := max(CalculateMovementTimeout(distance), 30*time.Second)
+	logger.Logf("Distance: %.2f blocks, timeout: %v", distance, timeout)
+
+	err = tracker.WaitForPosition(s.Ctx, agent.Name, destination, 2.0, timeout)
+	if err != nil {
+		finalPos, ok := tracker.GetPosition(agent.Name)
+		require.True(t, ok, "Could not get agent position")
+
+		// Analyze movement to differentiate between failure modes.
+		totalDist, progressToward, madeProgress := tracker.AnalyzeMovementProgress(
+			agent.Name,
+			startPos,
+			destination,
+			5.0, // require at least 5 blocks of progress toward target
+		)
+
+		finalDist := finalPos.DistanceTo(destination)
+		logger.Logf("Agent final position: %.2f, %.2f, %.2f (distance from target: %.2f)",
+			finalPos.X, finalPos.Y, finalPos.Z, finalDist)
+		logger.Logf("Movement analysis: total distance traveled: %.2f blocks, net progress toward target: %.2f blocks",
+			totalDist, progressToward)
+
+		// Test FAILS if agent didn't make progress - indicates pathfinding is broken.
+		require.True(t, madeProgress,
+			"Agent must make meaningful progress toward target (moved %.2f blocks, progress %.2f blocks). "+
+				"No progress indicates pathfinding failure, not impassable terrain.",
+			totalDist, progressToward)
+
+		logger.Logf("Note: Agent made progress (%.2f blocks toward target) but did not reach destination - terrain may be impassable",
+			progressToward)
+		return
+	}
+
+	finalX, finalY, finalZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, agent.Name)
+	require.NoError(t, err, "get final position")
+
+	finalPos := models.V3{X: finalX, Y: finalY, Z: finalZ}
+	finalDistance := finalPos.DistanceTo(destination)
+
+	logger.Logf("Agent final position: %.2f, %.2f, %.2f", finalX, finalY, finalZ)
+	logger.Logf("Distance from target: %.2f blocks", finalDistance)
+
+	assert.LessOrEqual(t, finalDistance, 2.0, "agent should reach destination using pathfinding")
+}
+
+// TestMultipleDestinationsWithPathfinding tests navigation to multiple
+// waypoints using pathfinding, requiring only that the agent reach at
+// least half of them (unlike TestMultipleDestinations, which requires all
+// four). Equivalent to the pre-Phase-1 TestPathfindingMultipleDestinations
+// (navigation_pathfinding_test.go) - folded in here for the same
+// exact-config-match reason as TestSingleAgentWithPathfinding above.
+// Agent renamed from the original's "WaypointBot" to "PathfindingWaypointBot"
+// to avoid colliding with TestMultipleDestinations' own agent name in this
+// same suite.
+func (s *NavigationRandomSuite) TestMultipleDestinationsWithPathfinding() {
+	t := s.T()
+	logger := NewTestLogger(t)
+
+	agent, err := s.SpawnWorkingAreaAgent("PathfindingWaypointBot", "nav_pathfinding_waypoints")
+	require.NoError(t, err, "spawn agent")
+	logger.Logf("Agent %s spawned at working area (%.2f, %.2f, %.2f)", agent.Name, agent.Origin.X, agent.Origin.Y, agent.Origin.Z)
+
+	tracker := NewPositionTracker(s.Inst, 500*time.Millisecond)
+	tracker.Start(s.Ctx)
+	defer tracker.Stop()
+
+	startPos := agent.Origin
+
+	waypoints := []models.V3{
+		{X: startPos.X + 15, Y: startPos.Y, Z: startPos.Z},      // East
+		{X: startPos.X + 15, Y: startPos.Y, Z: startPos.Z + 20}, // Southeast
+		{X: startPos.X, Y: startPos.Y, Z: startPos.Z + 20},      // South
+	}
+
+	successCount := 0
+	for i, waypoint := range waypoints {
+		logger.Logf("Waypoint %d: %.2f, %.2f, %.2f", i+1, waypoint.X, waypoint.Y, waypoint.Z)
+
+		currentX, currentY, currentZ, err := s.Inst.RCON.GetEntityPos(s.Ctx, agent.Name)
+		require.NoError(t, err, "get current position")
+		current := models.V3{X: currentX, Y: currentY, Z: currentZ}
+
+		navCmd := fmt.Sprintf("moveTo %.2f %.2f %.2f", waypoint.X, waypoint.Y, waypoint.Z)
+		sayCmd := s.Inst.RCON.Say(s.Ctx, fmt.Sprintf(">>>%s<<< %s", agent.Name, navCmd))
+		_, err = sayCmd.Exec(s.Ctx)
+		require.NoError(t, err, "send navigation command")
+
+		distance := current.DistanceTo(waypoint)
+		timeout := max(CalculateMovementTimeout(distance), 30*time.Second)
+
+		err = tracker.WaitForPosition(s.Ctx, agent.Name, waypoint, 1.5, timeout)
+		if err != nil {
+			totalDist, progressToward, madeProgress := tracker.AnalyzeMovementProgress(
+				agent.Name,
+				current,
+				waypoint,
+				3.0, // require at least 3 blocks of progress
+			)
+			logger.Logf("Waypoint %d: traveled %.2f blocks, progress toward target: %.2f blocks",
+				i+1, totalDist, progressToward)
+
+			require.True(t, madeProgress,
+				"Agent must make progress toward waypoint %d (moved %.2f blocks, progress %.2f blocks)",
+				i+1, totalDist, progressToward)
+
+			logger.Logf("Warning: Agent made progress but did not reach waypoint %d (terrain may be impassable)", i+1)
+		} else {
+			successCount++
+			logger.Logf("Reached waypoint %d", i+1)
+		}
+	}
+
+	logger.Logf("Successfully reached %d/%d waypoints", successCount, len(waypoints))
+
+	assert.GreaterOrEqual(t, successCount, len(waypoints)/2, "agent should reach at least half of waypoints with pathfinding")
+}
+
 // TestObstacles tests navigation with obstacles.
 // Equivalent to the pre-Phase-1 TestNavigationObstacles (still a stub).
 func (s *NavigationRandomSuite) TestObstacles() {
