@@ -180,10 +180,23 @@ type WorkingAreaAgent struct {
 // SpawnAgentNear (which instead places the agent near an area a different
 // call already claimed).
 //
-// name is used as-is for the agent (and its Cam companion) - callers should
-// keep it short and distinct per test method so replay filenames and RCON
-// target names stay unambiguous.
+// name is used as-is for the agent (and its Cam companion, when enabled) -
+// callers should keep it short and distinct per test method so replay
+// filenames and RCON target names stay unambiguous.
 func (s *VersionWorldSuite) spawnAndReadPosition(name, replayPrefix string) (*ManagedAgent, models.V3, error) {
+	return s.spawnAndReadPositionOpts(name, replayPrefix, true)
+}
+
+// spawnAndReadPositionOpts is spawnAndReadPosition with enableCam exposed -
+// added for attribute_modifier_test.go's TestSpeedEffectModifiesTrackedAttribute
+// (see docs/plans/integration-test-shared-server/20-phase1-attribute-modifier-conversion.md),
+// which tracks a second agent via NearestPlayerInfo and needs that agent (and
+// the querying agent) to have no Cam companion nearby to be mistaken for the
+// "nearest player" - the same real concern 00-plan.md already flags for
+// perception_nearest_player_test.go. A separate function rather than adding
+// a parameter to spawnAndReadPosition/SpawnWorkingAreaAgent themselves, so
+// every existing caller's call site is untouched.
+func (s *VersionWorldSuite) spawnAndReadPositionOpts(name, replayPrefix string, enableCam bool) (*ManagedAgent, models.V3, error) {
 	s.usedNamesMu.Lock()
 	if s.usedNames == nil {
 		s.usedNames = make(map[string]bool)
@@ -205,6 +218,7 @@ func (s *VersionWorldSuite) spawnAndReadPosition(name, replayPrefix string) (*Ma
 		fmt.Sprintf("%s:%d", s.Inst.Server.Host, s.Inst.Server.HostServerPort),
 		s.Version,
 	)
+	agentCfg.EnableCamAgent = enableCam
 	agentCfg.EnableReplay = true
 	agentCfg.ReplayOutput = normalizeReplayOutput(s.Version, fmt.Sprintf("%s_%s_%s.mcpr", replayPrefix, s.Version, time.Now().Format("20060102_150405")), agentCfg.Name)
 
@@ -306,7 +320,21 @@ func (s *VersionWorldSuite) teleportAndSettle(agentName string, targetX, targetZ
 // docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
 // for why this distinction matters in practice, live-confirmed.
 func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*WorkingAreaAgent, error) {
-	managed, spawnPos, err := s.spawnAndReadPosition(name, replayPrefix)
+	return s.spawnWorkingAreaAgentOpts(name, replayPrefix, true)
+}
+
+// SpawnWorkingAreaAgentNoCam is SpawnWorkingAreaAgent without a Cam
+// companion - for a test that queries NearestPlayerInfo (or anything else
+// that resolves "the nearest player") and needs to guarantee no companion
+// agent nearby could be mistaken for the tracked one. See
+// spawnAndReadPositionOpts' doc comment for why this exists as a separate
+// function rather than a parameter on the original.
+func (s *VersionWorldSuite) SpawnWorkingAreaAgentNoCam(name, replayPrefix string) (*WorkingAreaAgent, error) {
+	return s.spawnWorkingAreaAgentOpts(name, replayPrefix, false)
+}
+
+func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(name, replayPrefix string, enableCam bool) (*WorkingAreaAgent, error) {
+	managed, spawnPos, err := s.spawnAndReadPositionOpts(name, replayPrefix, enableCam)
 	if err != nil {
 		return nil, err
 	}
@@ -342,7 +370,17 @@ func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*W
 // from this agent's own spawn terrain height, since origin itself may have
 // come from a teleport elsewhere).
 func (s *VersionWorldSuite) SpawnAgentNear(name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
-	managed, spawnPos, err := s.spawnAndReadPosition(name, replayPrefix)
+	return s.spawnAgentNearOpts(name, replayPrefix, origin, dx, dz, true)
+}
+
+// SpawnAgentNearNoCam is SpawnAgentNear without a Cam companion - see
+// SpawnWorkingAreaAgentNoCam's doc comment for why this exists.
+func (s *VersionWorldSuite) SpawnAgentNearNoCam(name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
+	return s.spawnAgentNearOpts(name, replayPrefix, origin, dx, dz, false)
+}
+
+func (s *VersionWorldSuite) spawnAgentNearOpts(name, replayPrefix string, origin models.V3, dx, dz float64, enableCam bool) (*WorkingAreaAgent, error) {
+	managed, spawnPos, err := s.spawnAndReadPositionOpts(name, replayPrefix, enableCam)
 	if err != nil {
 		return nil, err
 	}
