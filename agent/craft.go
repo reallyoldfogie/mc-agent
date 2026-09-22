@@ -168,22 +168,54 @@ type rawRecipeJSON struct {
 	} `json:"result"`
 }
 
-// ingredientRef is one recipe ingredient descriptor, decoded from either of
-// two on-disk schema variants observed across this codebase's own cached
-// recipe JSON for otherwise-identical recipes: a flat string
+// ingredientListPrefix/ingredientListSeparator encode a recipe
+// ingredient's third on-disk schema variant - a raw JSON array of
+// concrete item alternatives (e.g. torch.json's own
+// "X": ["minecraft:coal", "minecraft:charcoal"], vanilla's "any of these
+// items" ingredient form, distinct from both a single item id and a
+// "#namespace:tag" tag reference) - into one ingredientRef string, so the
+// rest of this file's single-descriptor-per-grid-cell pipeline
+// (rawRecipeJSON.Key/Ingredients -> resolveIngredient) doesn't need a
+// parallel []string case threaded through it. resolveIngredient splits
+// a descriptor with this prefix back apart on the separator rather than
+// treating the joined string as one (unresolvable) item id or (malformed)
+// tag reference. Neither character can appear in a real item id or tag
+// reference (both are restricted to [a-z0-9_.-] plus ':' and a leading
+// '#'), so there's no collision risk with a genuine descriptor.
+//
+// Found live: ingredientRef.UnmarshalJSON only handled the flat-string and
+// {item,tag}-object variants, so torch.json's array-form "X" key failed
+// json.Unmarshal(raw, &rj) outright - loadCraftingRecipes' per-file
+// best-effort `continue` on that error then silently dropped the entire
+// recipe, not just that one ingredient, surfacing as "no known crafting
+// recipe for minecraft:torch" despite the file being valid and present.
+const (
+	ingredientListPrefix    = "$"
+	ingredientListSeparator = "\x1f"
+)
+
+// ingredientRef is one recipe ingredient descriptor, decoded from any of
+// three on-disk schema variants observed across this codebase's own cached
+// recipe JSON for otherwise-identical or sibling recipes: a flat string
 // ("minecraft:iron_ingot", or the tag-reference form "#minecraft:planks") -
-// used from version 1.21.2 onward - or an older object form
+// used from version 1.21.2 onward - an older object form
 // ({"item": "minecraft:iron_ingot"} or {"tag": "minecraft:planks"}) - the
-// only form seen in 1.21.1's cache. Confirmed by direct comparison of the
-// same recipe (e.g. stick.json) across versions, not assumed. Normalizes to
-// the same flat-string shape resolveIngredient already expects either way,
-// so the rest of this file doesn't need to know which variant it came from.
+// only form seen in 1.21.1's cache - or a raw array of alternative item ids
+// (see ingredientListPrefix). Confirmed by direct comparison of the same
+// recipe (e.g. stick.json) across versions, not assumed. Normalizes to the
+// same flat-string shape resolveIngredient already expects either way, so
+// the rest of this file doesn't need to know which variant it came from.
 type ingredientRef string
 
 func (r *ingredientRef) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
 		*r = ingredientRef(s)
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*r = ingredientRef(ingredientListPrefix + strings.Join(list, ingredientListSeparator))
 		return nil
 	}
 	var obj struct {
@@ -336,10 +368,23 @@ func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) 
 }
 
 // resolveIngredient turns one recipe ingredient descriptor - a concrete
-// item id ("minecraft:iron_ingot") or a tag reference
-// ("#minecraft:planks") - into the list of concrete item names that would
-// satisfy it.
+// item id ("minecraft:iron_ingot"), a tag reference ("#minecraft:planks"),
+// or an inline list of item alternatives (see ingredientListPrefix) - into
+// the list of concrete item names that would satisfy it.
 func resolveIngredient(dataDir, descriptor string, tagCache map[string][]string) ([]string, error) {
+	if strings.HasPrefix(descriptor, ingredientListPrefix) {
+		items := strings.Split(strings.TrimPrefix(descriptor, ingredientListPrefix), ingredientListSeparator)
+		var resolved []string
+		for _, item := range items {
+			if n := normalizeItemName(item); n != "" {
+				resolved = append(resolved, n)
+			}
+		}
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("empty ingredient list")
+		}
+		return resolved, nil
+	}
 	if !strings.HasPrefix(descriptor, "#") {
 		normalized := normalizeItemName(descriptor)
 		if normalized == "" {
