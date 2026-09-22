@@ -200,20 +200,31 @@ type WorkingAreaAgent struct {
 // name is used as-is for the agent (and its Cam companion, when enabled) -
 // callers should keep it short and distinct per test method so replay
 // filenames and RCON target names stay unambiguous.
-func (s *VersionWorldSuite) spawnAndReadPosition(name, replayPrefix string) (*ManagedAgent, models.V3, error) {
-	return s.spawnAndReadPositionOpts(name, replayPrefix, true)
-}
-
-// spawnAndReadPositionOpts is spawnAndReadPosition with enableCam exposed -
-// added for attribute_modifier_test.go's TestSpeedEffectModifiesTrackedAttribute
+//
+// enableCam: added for attribute_modifier_test.go's TestSpeedEffectModifiesTrackedAttribute
 // (see docs/plans/integration-test-shared-server/20-phase1-attribute-modifier-conversion.md),
 // which tracks a second agent via NearestPlayerInfo and needs that agent (and
 // the querying agent) to have no Cam companion nearby to be mistaken for the
 // "nearest player" - the same real concern 00-plan.md already flags for
-// perception_nearest_player_test.go. A separate function rather than adding
-// a parameter to spawnAndReadPosition/SpawnWorkingAreaAgent themselves, so
-// every existing caller's call site is untouched.
-func (s *VersionWorldSuite) spawnAndReadPositionOpts(name, replayPrefix string, enableCam bool) (*ManagedAgent, models.V3, error) {
+// perception_nearest_player_test.go.
+//
+// t: defaults to s.T() for every existing caller, but a caller that spawns
+// an agent from *inside* a manually-created t.Run() subtest (rather than
+// directly in a suite method body) needs to pass that subtest's own t
+// instead. testify's Suite.T() is only rebound once per top-level suite
+// method by the suite runner - a nested t.Run() call inside that method
+// body does NOT rebind it - so registering cleanup against s.T() from
+// inside such a subtest ties that cleanup to the *outer* method's
+// lifetime, not the subtest's own. Found live, not hypothetical:
+// docs/plans/integration-test-shared-server/28-phase1-vertical-navigation-conversion.md's
+// VerticalNavigationFlatSuite spawns a new agent inside each of ~27 nested
+// t.Run() sub-cases sharing one TestSmoke method - without this, none of
+// those agents disconnect until TestSmoke itself finishes, and the
+// accumulation hits vanilla's default 20-player server cap partway
+// through. A separate parameter rather than always calling s.T() lets
+// every other existing caller keep its current (correct, for them)
+// behavior unchanged.
+func (s *VersionWorldSuite) spawnAndReadPositionOpts(t *testing.T, name, replayPrefix string, enableCam bool) (*ManagedAgent, models.V3, error) {
 	s.usedNamesMu.Lock()
 	if s.usedNames == nil {
 		s.usedNames = make(map[string]bool)
@@ -256,7 +267,6 @@ func (s *VersionWorldSuite) spawnAndReadPositionOpts(name, replayPrefix string, 
 	// hair (1.02) running 3rd in FollowFlatSuite, with ~14 stale
 	// connections still on the server from the two multi-agent tests ahead
 	// of it in alphabetical run order.
-	t := s.T()
 	t.Cleanup(func() {
 		stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer stopCancel()
@@ -337,7 +347,7 @@ func (s *VersionWorldSuite) teleportAndSettle(agentName string, targetX, targetZ
 // docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
 // for why this distinction matters in practice, live-confirmed.
 func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*WorkingAreaAgent, error) {
-	return s.spawnWorkingAreaAgentOpts(name, replayPrefix, true)
+	return s.spawnWorkingAreaAgentOpts(s.T(), name, replayPrefix, true)
 }
 
 // SpawnWorkingAreaAgentNoCam is SpawnWorkingAreaAgent without a Cam
@@ -347,11 +357,28 @@ func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*W
 // spawnAndReadPositionOpts' doc comment for why this exists as a separate
 // function rather than a parameter on the original.
 func (s *VersionWorldSuite) SpawnWorkingAreaAgentNoCam(name, replayPrefix string) (*WorkingAreaAgent, error) {
-	return s.spawnWorkingAreaAgentOpts(name, replayPrefix, false)
+	return s.spawnWorkingAreaAgentOpts(s.T(), name, replayPrefix, false)
 }
 
-func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(name, replayPrefix string, enableCam bool) (*WorkingAreaAgent, error) {
-	managed, spawnPos, err := s.spawnAndReadPositionOpts(name, replayPrefix, enableCam)
+// SpawnWorkingAreaAgentWithT is SpawnWorkingAreaAgent with the
+// cleanup-owning *testing.T exposed - for a caller spawning an agent from
+// *inside* a manually-created t.Run() subtest, which must pass that
+// subtest's own t (not s.T()) for its cleanup to fire when the subtest
+// itself ends, not only at the end of the suite method containing it. See
+// spawnAndReadPositionOpts' doc comment for the live-confirmed failure
+// this fixes.
+func (s *VersionWorldSuite) SpawnWorkingAreaAgentWithT(t *testing.T, name, replayPrefix string) (*WorkingAreaAgent, error) {
+	return s.spawnWorkingAreaAgentOpts(t, name, replayPrefix, true)
+}
+
+// SpawnWorkingAreaAgentNoCamWithT combines SpawnWorkingAreaAgentNoCam and
+// SpawnWorkingAreaAgentWithT - see both their doc comments.
+func (s *VersionWorldSuite) SpawnWorkingAreaAgentNoCamWithT(t *testing.T, name, replayPrefix string) (*WorkingAreaAgent, error) {
+	return s.spawnWorkingAreaAgentOpts(t, name, replayPrefix, false)
+}
+
+func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(t *testing.T, name, replayPrefix string, enableCam bool) (*WorkingAreaAgent, error) {
+	managed, spawnPos, err := s.spawnAndReadPositionOpts(t, name, replayPrefix, enableCam)
 	if err != nil {
 		return nil, err
 	}
@@ -384,17 +411,30 @@ func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(name, replayPrefix string,
 // from this agent's own spawn terrain height, since origin itself may have
 // come from a teleport elsewhere).
 func (s *VersionWorldSuite) SpawnAgentNear(name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
-	return s.spawnAgentNearOpts(name, replayPrefix, origin, dx, dz, true)
+	return s.spawnAgentNearOpts(s.T(), name, replayPrefix, origin, dx, dz, true)
 }
 
 // SpawnAgentNearNoCam is SpawnAgentNear without a Cam companion - see
 // SpawnWorkingAreaAgentNoCam's doc comment for why this exists.
 func (s *VersionWorldSuite) SpawnAgentNearNoCam(name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
-	return s.spawnAgentNearOpts(name, replayPrefix, origin, dx, dz, false)
+	return s.spawnAgentNearOpts(s.T(), name, replayPrefix, origin, dx, dz, false)
 }
 
-func (s *VersionWorldSuite) spawnAgentNearOpts(name, replayPrefix string, origin models.V3, dx, dz float64, enableCam bool) (*WorkingAreaAgent, error) {
-	managed, spawnPos, err := s.spawnAndReadPositionOpts(name, replayPrefix, enableCam)
+// SpawnAgentNearWithT is SpawnAgentNear with the cleanup-owning *testing.T
+// exposed - see SpawnWorkingAreaAgentWithT's doc comment for why this
+// exists.
+func (s *VersionWorldSuite) SpawnAgentNearWithT(t *testing.T, name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
+	return s.spawnAgentNearOpts(t, name, replayPrefix, origin, dx, dz, true)
+}
+
+// SpawnAgentNearNoCamWithT combines SpawnAgentNearNoCam and
+// SpawnAgentNearWithT - see both their doc comments.
+func (s *VersionWorldSuite) SpawnAgentNearNoCamWithT(t *testing.T, name, replayPrefix string, origin models.V3, dx, dz float64) (*WorkingAreaAgent, error) {
+	return s.spawnAgentNearOpts(t, name, replayPrefix, origin, dx, dz, false)
+}
+
+func (s *VersionWorldSuite) spawnAgentNearOpts(t *testing.T, name, replayPrefix string, origin models.V3, dx, dz float64, enableCam bool) (*WorkingAreaAgent, error) {
+	managed, spawnPos, err := s.spawnAndReadPositionOpts(t, name, replayPrefix, enableCam)
 	if err != nil {
 		return nil, err
 	}
