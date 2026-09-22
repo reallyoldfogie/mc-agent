@@ -75,6 +75,17 @@ type VersionWorldSuite struct {
 	// belongs in a different suite.
 	GameMode GameMode
 
+	// ExtraEnv adds to (never replaces) SharedServerConfig/SharedFlatWorldServerConfig's
+	// own ExtraEnv (VIEW_DISTANCE/SIMULATION_DISTANCE/ENABLE_COMMAND_BLOCK) - see
+	// buildServerConfig. Added for
+	// docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md:
+	// inventory_integration_test.go's pre-conversion server config set
+	// FORCE_GAMEMODE=true (also used by container_suite_test.go, the
+	// pre-VersionWorldSuite prior art this whole shared-server pattern
+	// generalized from), and no evidence was found that dropping it is safe -
+	// keys here win if they collide with the shared defaults.
+	ExtraEnv map[string]string
+
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Framework *Framework
@@ -132,6 +143,12 @@ func (s *VersionWorldSuite) buildServerConfig() ServerConfig {
 	}
 	if s.GameMode != "" {
 		cfg.GameMode = s.GameMode
+	}
+	for k, v := range s.ExtraEnv {
+		if cfg.ExtraEnv == nil {
+			cfg.ExtraEnv = make(map[string]string, len(s.ExtraEnv))
+		}
+		cfg.ExtraEnv[k] = v
 	}
 	return cfg
 }

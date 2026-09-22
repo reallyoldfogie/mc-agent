@@ -15,158 +15,132 @@ import (
 	"github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
-func TestInventoryClickIntegration(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
+// InventoryFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for the raw slot-click inventory-move test:
+// one server per version, shared by every test method below, instead of
+// the previous per-test-function StartServer/StopServer pattern. WorldGen =
+// WorldGenFlat, a deliberate deviation from the pre-conversion test's own
+// DefaultServerConfig() (WorldGenRandom) - the test only moves an item
+// between the bot's own inventory slots (window ID 0, never a real
+// container GUI - see 00-plan.md's own note on this file), with no terrain
+// dependency of any kind, so nothing is lost preserving Random and nothing
+// is gained keeping it; Flat removes any chance of the WorldGenRandom
+// working-area risk 19-phase1-projectile-conversion.md found the hard way
+// for a genuinely terrain-sensitive cluster. Difficulty is left at
+// VersionWorldSuite's own Peaceful default, matching the original.
+//
+// ExtraEnv carries FORCE_GAMEMODE=true forward from the pre-conversion
+// config - also used by container_suite_test.go (the pre-VersionWorldSuite
+// prior art this whole pattern generalized from) - via the new
+// VersionWorldSuite.ExtraEnv field (see
+// docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md).
+type InventoryFlatSuite struct {
+	VersionWorldSuite
+}
 
-			if err := os.MkdirAll("logs", 0755); err == nil {
-				debugPath := filepath.Join("logs", "inventory_click_debug.log")
-				t.Logf("enabling click debug log: %s", debugPath)
-				_ = os.Setenv("MC_AGENT_CLICK_DEBUG_PATH", debugPath)
-				if f, err := os.OpenFile(debugPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
-					fmt.Fprintf(f, "\n\n==============================\n")
-					fmt.Fprintf(f, "\n[%s] TestInventoryClickIntegration Start\n", time.Now().Format(time.RFC3339Nano))
-					_ = f.Close()
-				}
+func TestInventoryFlatSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &InventoryFlatSuite{}
+		s.WorldGen = WorldGenFlat
+		s.ExtraEnv = map[string]string{"FORCE_GAMEMODE": "true"}
+		return s
+	})
+}
 
-				defer func() {
-					f, err := os.OpenFile(debugPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-					if err == nil {
-						fmt.Fprintf(f, "[%s] TestInventoryClickIntegration End\n", time.Now().Format(time.RFC3339Nano))
-						fmt.Fprintf(f, "==============================\n\n")
-						_ = f.Close()
-					}
-				}()
+// TestInventoryClickIntegration verifies a raw inventory-slot-click move
+// (via items.InventoryManager, window 0 - the player's own always-open
+// inventory) round-trips correctly against a real server: give an item,
+// find its slot, find an empty slot, move it, and verify via RCON that the
+// source slot cleared and the target slot received it. Equivalent to the
+// pre-Phase-1 TestInventoryClickIntegration.
+func (s *InventoryFlatSuite) TestInventoryClickIntegration() {
+	t := s.T()
+
+	if err := os.MkdirAll("logs", 0755); err == nil {
+		debugPath := filepath.Join("logs", "inventory_click_debug.log")
+		t.Logf("enabling click debug log: %s", debugPath)
+		_ = os.Setenv("MC_AGENT_CLICK_DEBUG_PATH", debugPath)
+		if f, err := os.OpenFile(debugPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			fmt.Fprintf(f, "\n\n==============================\n")
+			fmt.Fprintf(f, "\n[%s] TestInventoryClickIntegration Start\n", time.Now().Format(time.RFC3339Nano))
+			_ = f.Close()
+		}
+
+		defer func() {
+			f, err := os.OpenFile(debugPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err == nil {
+				fmt.Fprintf(f, "[%s] TestInventoryClickIntegration End\n", time.Now().Format(time.RFC3339Nano))
+				fmt.Fprintf(f, "==============================\n\n")
+				_ = f.Close()
 			}
-
-			cwd, err := os.Getwd()
-			require.NoError(t, err, "get current working directory")
-
-			framework, err := NewFramework()
-			require.NoError(t, err, "create framework")
-			t.Log("framework initialized")
-
-			serverCfg := DefaultServerConfig()
-			serverCfg.Memory = "512M"
-			serverCfg.Version = tt.MCVersion
-			serverCfg.GameMode = "survival"
-			serverCfg.ExtraEnv = map[string]string{
-				"FORCE_GAMEMODE": "true",
-			}
-
-			serverCfg.PullImage = false
-
-			serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "TestInventoryClickIntegration", tt.MCVersion)
-			RequireIntegrationEnv(t, serverCfg)
-
-			// Optionally copy protocol dumper mod for packet debugging
-			// Set ENABLE_PROTOCOL_DUMPER=1 to enable
-			if os.Getenv("ENABLE_PROTOCOL_DUMPER") == "1" {
-				modDir := filepath.Join(serverCfg.CacheDir, "mods")
-				os.MkdirAll(modDir, 0755)
-				err = copyFile(t, filepath.Join(cwd, "..", "..", "mc-protocol-dumper", "build", "libs", "protocol-dumper-0.0.3-fabric.jar"), filepath.Join(modDir, "protocol-dumper-0.0.3-fabric.jar"))
-				if err != nil {
-					t.Logf("Warning: failed to copy protocol dumper mod: %v", err)
-				} else {
-					t.Log("Protocol dumper mod enabled")
-				}
-			}
-
-			inst, err := framework.StartServer(ctx, serverCfg)
-			require.NoError(t, err, "start server")
-			t.Logf("server started: %s:%d", inst.Server.Host, inst.Server.HostServerPort)
-			require.NoError(t, framework.setupAgentLogging(), "setup agent logging for diagnostics")
-			defer framework.CloseAgentLog()
-			defer func() {
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer stopCancel()
-				_ = framework.StopServer(stopCtx, inst, true)
-			}()
-
-			addr := fmt.Sprintf("%s:%d", inst.Server.Host, inst.Server.HostServerPort)
-			botName := "InventoryBot"
-			agentCfg := AgentConfig{
-				Name:          botName,
-				ServerAddress: addr,
-				Version:       serverCfg.Version,
-			}
-
-			// Version handler is auto-detected by the framework
-
-			managedAgent, err := framework.SpawnAgent(ctx, inst, agentCfg)
-			require.NoError(t, err, "spawn agent")
-			scr := managedAgent.ScreenManager()
-			botClient := managedAgent.BotClient()
-			require.NotNil(t, botClient, "bot client should be available")
-
-			require.True(t, waitForPlayerOnline(ctx, inst.RCON, botName, 30*time.Second), "agent never appeared in server player list")
-
-			t.Log("giving item to bot")
-			_, err = inst.RCON.Exec(ctx, fmt.Sprintf("give %s minecraft:stone 1", botName))
-			require.NoError(t, err, "give item")
-			t.Log("give command executed")
-
-			t.Log("waiting for item to appear in bot inventory")
-			fromSlot, fromSlotData, ok := waitForInventorySlot(scr, func(index int, s screen.Slot) bool {
-				return index >= 9 && index <= 44 && s.Count > 0
-			}, 20*time.Second)
-			require.True(t, ok, "no item found in main/hotbar inventory")
-			t.Logf("found source slot %d", fromSlot)
-
-			t.Log("Looking for empty slot to put item in")
-			toSlot, _, ok := waitForInventorySlot(scr, func(index int, s screen.Slot) bool {
-				return index >= 9 && index <= 44 && index != fromSlot && s.Count <= 0
-			}, 20*time.Second)
-			require.True(t, ok, "no empty slot available in main/hotbar")
-			t.Logf("found target slot %d", toSlot)
-
-			fromNBTSlot, ok := windowSlotToNBT(fromSlot)
-			require.True(t, ok, "unsupported source slot for NBT mapping")
-			toNBTSlot, ok := windowSlotToNBT(toSlot)
-			require.True(t, ok, "unsupported target slot for NBT mapping")
-
-			fromStack := slotToItemStack(fromSlotData)
-			toStack := models.ItemStack{}
-			t.Logf("from stack: item=%d count=%d components=%d removes=%d", fromStack.ItemID, fromStack.Count, len(fromStack.Components), len(fromStack.RemoveComponents))
-			for _, component := range fromStack.Components {
-				t.Logf("from stack component: type=%d data=%T", component.Type, component.Data)
-			}
-
-			invMgr := items.NewInventoryManager(scr)
-			invMgr.SetWindow(0)
-			invMgr.SetWaitForUpdates(false) // Test state ID fix without sync wait
-
-			err = invMgr.MoveItem(int16(fromSlot), int16(toSlot), fromStack, toStack)
-			require.NoError(t, err, "move item")
-			t.Log("move item request sent")
-
-			if itemsBySlot, err := GetInventoryItems(ctx, inst.RCON, botName); err == nil {
-				t.Logf("inventory after move: %+v", itemsBySlot)
-			} else {
-				t.Logf("inventory read failed after move: %v", err)
-			}
-
-			t.Log("verifying source slot is empty via RCON")
-			ok = waitForInventorySlotStateRCON(ctx, inst.RCON, botName, fromNBTSlot, func(item InventoryItem) bool {
-				return item.Count == 0
-			}, 10*time.Second)
-			require.True(t, ok, "source slot did not clear after move")
-			t.Log("source slot cleared")
-
-			t.Log("verifying target slot has item via RCON")
-			ok = waitForInventorySlotStateRCON(ctx, inst.RCON, botName, toNBTSlot, func(item InventoryItem) bool {
-				return item.Count > 0
-			}, 10*time.Second)
-			require.True(t, ok, "target slot did not receive item")
-			t.Log("target slot received item")
-
-			_ = botClient.Close()
-		})
+		}()
 	}
+
+	leader, err := s.SpawnWorkingAreaAgent("InventoryBot", "inventory_click")
+	require.NoError(t, err, "spawn agent")
+	scr := leader.ScreenManager()
+
+	t.Log("giving item to bot")
+	_, err = s.Inst.RCON.Exec(s.Ctx, "give "+leader.Name+" minecraft:stone 1")
+	require.NoError(t, err, "give item")
+	t.Log("give command executed")
+
+	t.Log("waiting for item to appear in bot inventory")
+	fromSlot, fromSlotData, ok := waitForInventorySlot(scr, func(index int, s screen.Slot) bool {
+		return index >= 9 && index <= 44 && s.Count > 0
+	}, 20*time.Second)
+	require.True(t, ok, "no item found in main/hotbar inventory")
+	t.Logf("found source slot %d", fromSlot)
+
+	t.Log("Looking for empty slot to put item in")
+	toSlot, _, ok := waitForInventorySlot(scr, func(index int, s screen.Slot) bool {
+		return index >= 9 && index <= 44 && index != fromSlot && s.Count <= 0
+	}, 20*time.Second)
+	require.True(t, ok, "no empty slot available in main/hotbar")
+	t.Logf("found target slot %d", toSlot)
+
+	fromNBTSlot, ok := windowSlotToNBT(fromSlot)
+	require.True(t, ok, "unsupported source slot for NBT mapping")
+	toNBTSlot, ok := windowSlotToNBT(toSlot)
+	require.True(t, ok, "unsupported target slot for NBT mapping")
+
+	fromStack := slotToItemStack(fromSlotData)
+	toStack := models.ItemStack{}
+	t.Logf("from stack: item=%d count=%d components=%d removes=%d", fromStack.ItemID, fromStack.Count, len(fromStack.Components), len(fromStack.RemoveComponents))
+	for _, component := range fromStack.Components {
+		t.Logf("from stack component: type=%d data=%T", component.Type, component.Data)
+	}
+
+	invMgr := items.NewInventoryManager(scr)
+	invMgr.SetWindow(0)
+	invMgr.SetWaitForUpdates(false) // Test state ID fix without sync wait
+
+	err = invMgr.MoveItem(int16(fromSlot), int16(toSlot), fromStack, toStack)
+	require.NoError(t, err, "move item")
+	t.Log("move item request sent")
+
+	if itemsBySlot, err := GetInventoryItems(s.Ctx, s.Inst.RCON, leader.Name); err == nil {
+		t.Logf("inventory after move: %+v", itemsBySlot)
+	} else {
+		t.Logf("inventory read failed after move: %v", err)
+	}
+
+	t.Log("verifying source slot is empty via RCON")
+	ok = waitForInventorySlotStateRCON(s.Ctx, s.Inst.RCON, leader.Name, fromNBTSlot, func(item InventoryItem) bool {
+		return item.Count == 0
+	}, 10*time.Second)
+	require.True(t, ok, "source slot did not clear after move")
+	t.Log("source slot cleared")
+
+	t.Log("verifying target slot has item via RCON")
+	ok = waitForInventorySlotStateRCON(s.Ctx, s.Inst.RCON, leader.Name, toNBTSlot, func(item InventoryItem) bool {
+		return item.Count > 0
+	}, 10*time.Second)
+	require.True(t, ok, "target slot did not receive item")
+	t.Log("target slot received item")
 }
 
 func waitForInventorySlot(scr screen.Manager, match func(index int, s screen.Slot) bool, timeout time.Duration) (int, screen.Slot, bool) {
