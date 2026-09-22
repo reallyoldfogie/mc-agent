@@ -33,12 +33,31 @@ var (
 // globally monotonic within one `go test` process so two suites running
 // concurrently (Phase 2) still never collide with each other, not just
 // within their own suite.
+//
+// The first offset handed out is defaultWorkingAreaSeparationBlocks, never
+// (0, 0) - deliberately: (0, 0) is the world's own fixed spawn point, which
+// every agent that joins a shared server lands at first, before it ever
+// gets its own working-area teleport. A working area that never moves away
+// from (0, 0) (the old behavior - the first claim's own natural spawn
+// position already "was" its working area) leaves that fixed point exactly
+// wherever that test last left it; anything built or removed there persists
+// for the rest of that server's life and affects the *initial, pre-teleport*
+// join position of every agent spawned afterward, including ones with their
+// own entirely separate working area. Live-confirmed real, not
+// hypothetical: docs/plans/integration-test-shared-server/24-phase1-sneaking-conversion.md's
+// TestEdgePrevention dug a pit through the ground at (0, 0); the next
+// method's agent free-fell into it on its very first join packet, before a
+// single line of that method's own code had run, corrupting the Y its own
+// unrelated working-area teleport then used as a fallback. Guaranteeing
+// every working area sits at least one full separation away from (0, 0)
+// closes this off for every current and future suite, not just the one
+// that happened to find it - see SpawnWorkingAreaAgent, which no longer
+// special-cases a zero offset as a result.
 func NextWorkingAreaOffset() (x, z float64) {
 	workingAreaMu.Lock()
 	defer workingAreaMu.Unlock()
-	offset := workingAreaIndex
 	workingAreaIndex++
-	return float64(offset * defaultWorkingAreaSeparationBlocks), 0
+	return float64(workingAreaIndex * defaultWorkingAreaSeparationBlocks), 0
 }
 
 // sharedServerGamerules disables ambient simulation load that would

@@ -356,13 +356,10 @@ func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(name, replayPrefix string,
 		return nil, err
 	}
 
+	// NextWorkingAreaOffset never hands out (0, 0) - see its own doc comment
+	// - so every claim, including the first in a process, always teleports
+	// away from the world's fixed spawn point.
 	offsetX, offsetZ := NextWorkingAreaOffset()
-	if offsetX == 0 && offsetZ == 0 {
-		// The very first claim in a process needs no teleport at all - the
-		// agent's own natural spawn point already IS the working area.
-		return &WorkingAreaAgent{ManagedAgent: managed, Origin: spawnPos}, nil
-	}
-
 	origin, err := s.teleportAndSettle(managed.Name, spawnPos.X+offsetX, spawnPos.Z+offsetZ, spawnPos.Y)
 	if err != nil {
 		return nil, err
