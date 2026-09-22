@@ -171,6 +171,19 @@ func (a *agent) SendChat(message string) error {
 	return firstErr
 }
 
+// SendCommand sends a server command through the agent's player connection.
+// Unlike SendChat("/command"), this uses Minecraft's dedicated command
+// packet, so the server executes it as this player rather than through RCON.
+// command must not include the leading slash.
+func (a *agent) SendCommand(command string) error {
+	vh := a.versionHandler
+	c := a.client
+	if vh == nil || c == nil || c.Conn() == nil {
+		return fmt.Errorf("send command: agent is not connected")
+	}
+	return vh.Play().Chat().SendCommand(c.Conn(), strings.TrimPrefix(command, "/"))
+}
+
 // sendChatMessage sends a single message - already within
 // chatMessageMaxLength - via the version handler or fallback chat manager.
 func (a *agent) sendChatMessage(message string) error {
