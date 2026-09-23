@@ -589,6 +589,44 @@ func TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound(t *testing
 	}
 }
 
+// TestPhysicsExecutor_SetTickRate_UpdatesTheLiveRate covers SetTickRate
+// (added so a ClientboundSetTickingState packet — the vanilla /tick
+// command, added 1.20.5 — can keep this executor's own physics loop
+// synchronized with a server that changed its tick rate away from the
+// 20 TPS default): the atomic value continuousTickLoop actually reads
+// must reflect the new rate, converted correctly (2x rate -> half the
+// nanoseconds-per-tick).
+func TestPhysicsExecutor_SetTickRate_UpdatesTheLiveRate(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	baselineNanos := int64(exec.tickRate) // 50ms/20TPS, per createTestPhysicsExecutor's own construction.
+
+	exec.SetTickRate(40) // 2x the 20 TPS default.
+
+	got := exec.tickRateNanos.Load()
+	want := baselineNanos / 2
+	if got != want {
+		t.Errorf("SetTickRate(40) stored %d ns/tick, want %d (half of the 20 TPS baseline %d)", got, want, baselineNanos)
+	}
+}
+
+// TestPhysicsExecutor_SetTickRate_IgnoresNonPositiveRates covers the
+// guard against a malformed or not-yet-meaningful report (e.g. 0 before
+// any real SetTickingState packet has ever arrived) dividing by zero or
+// leaving the live rate at an unusable value.
+func TestPhysicsExecutor_SetTickRate_IgnoresNonPositiveRates(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	exec.SetTickRate(40)
+	before := exec.tickRateNanos.Load()
+
+	exec.SetTickRate(0)
+	exec.SetTickRate(-5)
+
+	after := exec.tickRateNanos.Load()
+	if after != before {
+		t.Errorf("SetTickRate with a non-positive rate must be a no-op, got %d ns/tick (was %d)", after, before)
+	}
+}
+
 // BenchmarkPhysicsExecutor_SyncWithServer benchmarks server correction handling
 func BenchmarkPhysicsExecutor_SyncWithServer(b *testing.B) {
 	exec := createTestPhysicsExecutor()

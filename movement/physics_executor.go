@@ -81,6 +81,16 @@ type PhysicsMovementExecutor struct {
 
 	// Timing
 	tickRate time.Duration // Time per tick (default: 50ms for 20 TPS)
+	// tickRateNanos is the actual live source of truth for
+	// continuousTickLoop once it's running — seeded from tickRate at
+	// loop start, then updated by SetTickRate (see that method's own
+	// doc comment for why this needs to be atomic rather than plain
+	// tickRate: the loop's own goroutine and whichever goroutine calls
+	// SetTickRate — a packet handler — are different goroutines).
+	// tickRate itself is left untouched by SetTickRate so it keeps
+	// meaning "the rate this executor was constructed with," matching
+	// existing callers/tests that read it directly.
+	tickRateNanos atomic.Int64
 
 	// Server correction tracking
 	predictionErrors []float64 // Recent prediction errors for logging
@@ -1440,10 +1450,16 @@ func (pe *PhysicsMovementExecutor) ResetManualInputs() error {
 	return nil
 }
 
-// continuousTickLoop is the main physics simulation loop that runs at 20 TPS.
+// continuousTickLoop is the main physics simulation loop, at pe.tickRate
+// (20 TPS) by default — but see SetTickRate: a server that changes its
+// own tick rate via the vanilla /tick command (added 1.20.5) can change
+// how often this loop should actually fire, at any time, for as long as
+// this executor runs.
 func (pe *PhysicsMovementExecutor) continuousTickLoop() {
+	pe.tickRateNanos.Store(int64(pe.tickRate))
 	ticker := time.NewTicker(pe.tickRate)
 	defer ticker.Stop()
+	currentNanos := int64(pe.tickRate)
 
 	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Continuous tick loop started"))
 
@@ -1458,9 +1474,45 @@ func (pe *PhysicsMovementExecutor) continuousTickLoop() {
 			return
 
 		case <-ticker.C:
+			// Picked up right before the tick it applies to, not
+			// immediately when SetTickRate is called from another
+			// goroutine — a ticker can only be reconfigured from the
+			// goroutine that owns it, matching time.Ticker's own
+			// documented contract.
+			if newNanos := pe.tickRateNanos.Load(); newNanos != currentNanos && newNanos > 0 {
+				ticker.Reset(time.Duration(newNanos))
+				currentNanos = newNanos
+			}
 			pe.tick()
 		}
 	}
+}
+
+// SetTickRate updates the rate continuousTickLoop calls tick() at, to
+// match a server-reported tick rate change (see agent.onSetTickingState,
+// the ClientboundSetTickingState handler wired to call this). The
+// vanilla /tick command (added 1.20.5) lets an operator change the
+// server's own tick rate — and therefore how many real seconds one game
+// tick takes — at any time; each tick() call already applies exactly one
+// game tick's worth of physics (gravity, movement) regardless of how
+// often it's invoked, matching vanilla's own tick-based (not
+// continuous-time) physics model, so keeping this loop's firing interval
+// in sync with the server's actual pacing is what keeps this executor's
+// local prediction from drifting against server-authoritative state as
+// the server speeds up or slows down — not any change to the physics math
+// itself.
+//
+// A no-op for ticksPerSecond <= 0 (a malformed or not-yet-meaningful
+// report) rather than dividing by zero or spinning the loop unbounded.
+func (pe *PhysicsMovementExecutor) SetTickRate(ticksPerSecond float32) {
+	if ticksPerSecond <= 0 {
+		return
+	}
+	nanos := int64(float64(time.Second) / float64(ticksPerSecond))
+	if nanos <= 0 {
+		return
+	}
+	pe.tickRateNanos.Store(nanos)
 }
 
 // tick performs one physics simulation tick.

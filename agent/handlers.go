@@ -230,6 +230,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onUpdateTime,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetTickingState"),
+			Name:     "ClientboundSetTickingState",
+			Priority: 0,
+			F:        a.onSetTickingState,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundCustomPayload"),
 			Name:     "ClientboundCustomPayload",
 			Priority: 0,
@@ -2421,6 +2427,55 @@ func (a *agent) onUpdateTime(p pk.Packet) error {
 		a.mcAgentWorld.SetWorldTime(worldAge, timeOfDay)
 		a.logf("[Agent %s] Updated world time: age=%d ticks (%.1f days), timeOfDay=%d",
 			a.cfg.Name, worldAge, float64(worldAge)/24000.0, timeOfDay)
+	}
+
+	return nil
+}
+
+// tickRateSetter is the optional capability onSetTickingState uses, if
+// a.moveExec implements it, to keep this agent's own physics simulation
+// in sync with the server's actual pacing — see
+// movement.PhysicsMovementExecutor.SetTickRate's own doc comment for
+// why. Optional and type-asserted (matching this file's own
+// SetStuckRecoveryCallback wiring in agent.go) so a moveExec that
+// doesn't implement it — a test fake, or a future alternate executor —
+// degrades gracefully rather than requiring every models.MovementExecutor
+// implementation to grow a method most of them have no use for.
+type tickRateSetter interface {
+	SetTickRate(ticksPerSecond float32)
+}
+
+// onSetTickingState handles the ClientboundSetTickingState packet — sent
+// whenever the server's tick rate changes, via the vanilla /tick command
+// (added 1.20.5: /tick rate|freeze|unfreeze|sprint), and once on join
+// reflecting whatever's already in effect. Without this, this agent's
+// own physics executor kept simulating at a hardcoded 20 TPS regardless
+// of what the server was actually doing — harmless at the server's
+// default rate, but a real source of drift (this executor's local
+// movement/gravity prediction running at a different cadence than the
+// server's authoritative one) once an operator changes it, confirmed
+// live via cmd/rsi-train's own -tick-rate experiments (see that repo's
+// history around 2026-09-23): a 2x-4x server speedup ran without any
+// disconnect or protocol error even before this handler existed, but
+// with a mild, rate-proportional increase in the physics executor's own
+// stuck-detector firing spuriously (successfully self-recovering every
+// time, per PhysicsMovementExecutor's own zero-step-path fix, just more
+// often than the true baseline) — the signature of exactly this
+// client/server pacing mismatch, not a correctness bug on either side.
+func (a *agent) onSetTickingState(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return nil
+	}
+
+	tickRate, isFrozen, err := a.versionHandler.Play().World().ParseSetTickingState(p)
+	if err != nil {
+		a.logf("[Agent %s] Failed to parse SetTickingState packet: %v", a.cfg.Name, err)
+		return nil
+	}
+	a.logf("[Agent %s] Server tick rate changed: %.1f TPS (frozen=%v)", a.cfg.Name, tickRate, isFrozen)
+
+	if setter, ok := a.moveExec.(tickRateSetter); ok {
+		setter.SetTickRate(tickRate)
 	}
 
 	return nil
