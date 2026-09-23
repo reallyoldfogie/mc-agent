@@ -22,9 +22,9 @@ import (
 // something togglable in survival).
 //
 // flying_ability_test.go's OTHER scenario ("survival mode denies flying")
-// needs GameModeSurvival instead and stays on the per-test-server pattern in
-// that file - a suite's GameMode is shared by every method in it, so a
-// different game mode needs a different suite.
+// needs GameModeSurvival instead and lives in its own FlyingSurvivalSuite
+// in that same file - a suite's GameMode is shared by every method in it,
+// so a different game mode needs a different suite.
 type FlyingCreativeSuite struct {
 	VersionWorldSuite
 }
