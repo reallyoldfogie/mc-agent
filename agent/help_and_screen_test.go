@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -55,7 +56,13 @@ type fakeItemMgr struct{ name string }
 func (f fakeItemMgr) GetItemNameByID(id int32) string { return f.name }
 
 func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
-	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	// LogLevel: slog.LevelDebug - OnScreenSlotChange logs at Debug, not
+	// Info (see its own doc comment: a full inventory sync can fire this
+	// once per slot, up to 46 times for one packet, so it's suppressed by
+	// default to keep that volume off by default), so this test needs to
+	// opt in to see it, matching how an operator debugging this specific
+	// path would.
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", LogLevel: slog.LevelDebug})
 	require.NoError(t, err)
 
 	agent := agentInt.(*agent)
@@ -72,7 +79,7 @@ func TestOnScreenSlotChange_DecodesItem(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "TestItem") || !strings.Contains(out, "x3") || !strings.Contains(out, "id=5") {
+	if !strings.Contains(out, "item=TestItem") || !strings.Contains(out, "count=3") || !strings.Contains(out, "itemID=5") {
 		t.Fatalf("expected decoded item log, got: %s", out)
 	}
 }
