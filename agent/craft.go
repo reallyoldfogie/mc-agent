@@ -255,23 +255,44 @@ func (a *agent) craftingRecipeDataDir() (string, error) {
 	return filepath.Join(baseCacheDir, "downloads", a.cfg.Version, "data_generator", "data"), nil
 }
 
-// loadCraftingRecipes reads every cached recipe JSON file for the connected
-// version and returns an index of craftable recipes (2x2 inventory grid or
-// 3x3 crafting table - see fitsInventoryGrid) keyed by normalized result
-// item name.
+// loadCraftingRecipes returns an index of craftable recipes (2x2
+// inventory grid or 3x3 crafting table - see fitsInventoryGrid) keyed by
+// normalized result item name, loading and parsing every cached recipe
+// JSON file for the connected version on the *first* call and reusing
+// that result (via craftingRecipesOnce) for every call after - the
+// underlying files never change during one connected session, so this is
+// a pure, behavior-preserving cache, not a semantic change.
 //
-// Known simplification, not solved here (docs/plans/RL_ACTION_SPACE_EXPANSION.md
-// Phase 3's MVP framing): reloaded from disk and re-parsed on every
-// CraftItem call rather than cached on the agent - a few hundred small JSON
-// files, acceptable for a command that isn't called in a tight loop; revisit
-// if that changes. Only minecraft:crafting_shaped/crafting_shapeless
-// recipes that fit within a 3x3 grid are indexed - smelting/stonecutting/
-// smithing/etc., and dynamic crafting_special_* recipes (armor dye, book
-// cloning, ...), are out of scope entirely (see
-// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes). If multiple
-// recipes produce the same result item, only the first one encountered
-// (directory iteration order, not otherwise meaningful) is kept.
+// Was previously reloaded from disk and re-parsed on every single
+// CraftItem/SeedCraftIngredients call ("a few hundred small JSON files,
+// acceptable for a command that isn't called in a tight loop" per this
+// function's own earlier doc comment) - found live (2026-09-23,
+// cmd/rsi-train's -parallel-envs x tick-rate scaling investigation) to
+// actually be 1,373 files for 1.21.5's cached data_generator output, and
+// very much in a tight loop once curriculum-driven training calls this
+// repeatedly across several concurrently-running agents - real, avoidable
+// I/O contention that plausibly contributed to a separate finding from
+// the same investigation (bursty, multi-agent-synchronized pathfinding
+// failures, consistent with system-wide I/O/scheduler pressure during a
+// craft-heavy burst).
 func (a *agent) loadCraftingRecipes() (map[string]craftingRecipe, error) {
+	a.craftingRecipesOnce.Do(func() {
+		a.craftingRecipesCache, a.craftingRecipesCacheErr = a.loadCraftingRecipesUncached()
+	})
+	return a.craftingRecipesCache, a.craftingRecipesCacheErr
+}
+
+// loadCraftingRecipesUncached does the actual disk read/parse work
+// loadCraftingRecipes now only performs once per agent - see that
+// function's own doc comment. Only minecraft:crafting_shaped/
+// crafting_shapeless recipes that fit within a 3x3 grid are indexed -
+// smelting/stonecutting/smithing/etc., and dynamic crafting_special_*
+// recipes (armor dye, book cloning, ...), are out of scope entirely (see
+// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes). If
+// multiple recipes produce the same result item, only the first one
+// encountered (directory iteration order, not otherwise meaningful) is
+// kept.
+func (a *agent) loadCraftingRecipesUncached() (map[string]craftingRecipe, error) {
 	dataDir, err := a.craftingRecipeDataDir()
 	if err != nil {
 		return nil, err

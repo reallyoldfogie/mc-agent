@@ -372,6 +372,13 @@ type agent struct {
 	// critical error handling
 	criticalErrorMu sync.Mutex
 	criticalError   error
+
+	// craftingRecipesOnce/craftingRecipesCache/craftingRecipesCacheErr
+	// cache loadCraftingRecipes' result (agent/craft.go) - see that
+	// function's own doc comment for why caching it is safe.
+	craftingRecipesOnce     sync.Once
+	craftingRecipesCache    map[string]craftingRecipe
+	craftingRecipesCacheErr error
 }
 
 // New constructs an agent with the provided configuration.
