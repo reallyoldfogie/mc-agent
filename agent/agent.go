@@ -845,9 +845,29 @@ func (a *agent) Init(ctx context.Context) error {
 					return nil
 				}
 
-				if !path.Found || len(path.Steps) == 0 {
+				// A*'s own FindPath (pathfinding/a_star.go) already
+				// short-circuits start.DistanceTo(goal) <= goalRadius into
+				// Found=true with an *empty* Steps slice - "you're already
+				// there, nothing to do" is success, not failure. Checking
+				// len(path.Steps) == 0 here as a second failure condition
+				// (alongside !path.Found) misreported that exact case as
+				// "no path found" and returned nil, which
+				// PhysicsMovementExecutor.attemptRepathRecovery then also
+				// treated as a failed recovery (see that function's own
+				// matching fix) - so a bot whose stuck-detector fired while
+				// it was already within goalRadius of its goal could never
+				// actually clear the stuck state: every recovery attempt
+				// "failed" by definition, forever. Found live: one bot's
+				// stuck-recovery callback fired here roughly every 2-3
+				// seconds indefinitely, always for the identical
+				// snappedStart == snappedGoal pair, never progressing.
+				if !path.Found {
 					a.logf("[Agent %s] Stuck recovery: no path found from current position", a.cfg.Name)
 					return nil
+				}
+				if len(path.Steps) == 0 {
+					a.logf("[Agent %s] Stuck recovery: already at goal, no steps needed", a.cfg.Name)
+					return path
 				}
 
 				a.logf("[Agent %s] Stuck recovery: found path with %d steps", a.cfg.Name, len(path.Steps))

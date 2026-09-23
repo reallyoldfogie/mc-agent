@@ -537,6 +537,58 @@ func TestPhysicsExecutor_MoveTowards_NotSupported(t *testing.T) {
 	}
 }
 
+// TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess
+// covers the live-found bug where a stuck-recovery callback returning
+// Found=true with zero Steps (pathfinding.FindPath's own short-circuit for
+// "start already within goalRadius of goal" - see
+// pathfinding/a_star.go:166) was treated identically to a genuine !Found
+// failure here, so a bot whose stuck-detector fired while it was already
+// basically at its goal could never clear that state: every recovery
+// "failed" by definition, forever (agent/agent.go's own stuck-recovery
+// callback has the matching fix and doc comment). A zero-step Found path
+// must be accepted as the new current path, not rejected - see
+// generateNavigationInputs's own currentStep >= len(Steps) guard for why
+// that's already safe (it's the same "path complete" handling a normal
+// arrival uses).
+func TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	emptyFoundPath := &pathfinding.Path{Found: true, Steps: []pathfinding.PathStep{}}
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+		return emptyFoundPath
+	})
+
+	pos := models.V3{X: 9, Y: -59, Z: -1}
+	exec.attemptRepathRecovery(pos, pos)
+
+	exec.pathMu.RLock()
+	defer exec.pathMu.RUnlock()
+	if exec.currentPath != emptyFoundPath {
+		t.Error("attemptRepathRecovery must accept a Found=true, zero-step path (already at goal) as a successful recovery, not silently discard it as a failure")
+	}
+}
+
+// TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound covers
+// the other side of the same fix: a real !Found path (or nil) must still
+// be treated as a failed recovery, so this doesn't regress into accepting
+// everything.
+func TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+		return &pathfinding.Path{Found: false}
+	})
+
+	pos := models.V3{X: 9, Y: -59, Z: -1}
+	exec.attemptRepathRecovery(pos, pos)
+
+	exec.pathMu.RLock()
+	defer exec.pathMu.RUnlock()
+	if exec.currentPath != nil {
+		t.Error("attemptRepathRecovery must still reject a genuine Found=false path as a failed recovery")
+	}
+}
+
 // BenchmarkPhysicsExecutor_SyncWithServer benchmarks server correction handling
 func BenchmarkPhysicsExecutor_SyncWithServer(b *testing.B) {
 	exec := createTestPhysicsExecutor()

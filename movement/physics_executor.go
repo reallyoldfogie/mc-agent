@@ -1968,9 +1968,19 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Attempting re-path recovery from (%.2f, %.2f, %.2f) to goal (%.0f, %.0f, %.0f)",
 		currentPos.X, currentPos.Y, currentPos.Z, goalPos.X, goalPos.Y, goalPos.Z))
 
-	// Call the recovery callback to re-pathfind
+	// Call the recovery callback to re-pathfind. newPath.Found with zero
+	// Steps means "already within goal radius, nothing to walk" - a
+	// legitimate success (see the stuck-recovery callback's own doc
+	// comment in agent/agent.go for why treating that the same as
+	// !newPath.Found here left a bot that was already basically at its
+	// goal permanently unable to clear a spurious stuck state), so it's
+	// deliberately excluded from this failure check; the empty path is
+	// set as pe.currentPath below like any other, and
+	// generateNavigationInputs's own currentStep >= len(Steps) guard
+	// already handles zero steps correctly (immediate "path complete",
+	// same as a normal arrival).
 	newPath := pe.stuckRecovery(currentPos, goalPos)
-	if newPath == nil || !newPath.Found || len(newPath.Steps) == 0 {
+	if newPath == nil || !newPath.Found {
 		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Re-path recovery failed: no valid path found from current position"))
 		// Reset progress tracking to avoid immediate re-trigger
 		pe.lastProgressTime = time.Now()
