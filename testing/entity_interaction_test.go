@@ -26,15 +26,19 @@ func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, bo
 	return entityID, dist, found
 }
 
-// EntityInteractionSuite covers the 5 non-combat entity-interaction methods
-// (villager/horse/armor-stand right-click variants) - DifficultyEasy, no
-// platform needed (they never spawn a hostile mob, so the natural flat
-// ground under each agent's own working area is enough). The 3 zombie-combat
-// methods need DifficultyNormal instead (see EntityInteractionCombatSuite
-// below) - no evidence found that either difficulty choice is
-// interchangeable with the other, so kept as two suites rather than
-// unified into one and assumed safe (the same discipline applied to
-// swimming_test.go's DifficultyPeaceful/DifficultyNormal split).
+// EntityInteractionSuite covers all 8 entity-interaction methods: 5
+// non-combat (villager/horse/armor-stand right-click variants) and 3
+// zombie-combat methods. The two groups need different Difficulty values
+// (Easy for non-combat, Normal for combat - Peaceful would despawn the
+// combat methods' zombies outright), so each method calls
+// VersionWorldSuite.SetDifficulty at its own start rather than relying on
+// a suite-wide default (see that method's own doc comment for why this is
+// safe). The combat methods also each build their own platform (with a
+// sun-blocking roof, belt-and-suspenders alongside the zombie's own
+// leather helmet) since a zombie needs solid, clear ground to fight on,
+// unlike the non-combat methods' simple entities, which need no platform
+// at all (the natural flat ground under each agent's own working area is
+// enough).
 type EntityInteractionSuite struct {
 	VersionWorldSuite
 }
@@ -43,7 +47,6 @@ func TestEntityInteractionSuite(t *testing.T) {
 	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
 		s := &EntityInteractionSuite{}
 		s.WorldGen = WorldGenFlat
-		s.Difficulty = DifficultyEasy
 		return s
 	})
 }
@@ -51,6 +54,7 @@ func TestEntityInteractionSuite(t *testing.T) {
 // TestSimpleInteract tests right-clicking an entity
 func (s *EntityInteractionSuite) TestSimpleInteract() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyEasy)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityInteractBot", "entity_interact")
 	require.NoError(t, err, "spawn agent")
@@ -94,6 +98,7 @@ func (s *EntityInteractionSuite) TestSimpleInteract() {
 // TestInteractAt tests right-clicking at a specific position on entity
 func (s *EntityInteractionSuite) TestInteractAt() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyEasy)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityInteractAtBot", "entity_interact_at")
 	require.NoError(t, err, "spawn agent")
@@ -142,6 +147,7 @@ func (s *EntityInteractionSuite) TestInteractAt() {
 // TestSneaking tests entity interaction while sneaking
 func (s *EntityInteractionSuite) TestSneaking() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyEasy)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntitySneakBot", "entity_interact_sneak")
 	require.NoError(t, err, "spawn agent")
@@ -185,6 +191,7 @@ func (s *EntityInteractionSuite) TestSneaking() {
 // TestVillagerTrade tests purchasing items from a villager
 func (s *EntityInteractionSuite) TestVillagerTrade() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyEasy)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityTradeBot", "entity_villager_trade")
 	require.NoError(t, err, "spawn agent")
@@ -263,6 +270,7 @@ func (s *EntityInteractionSuite) TestVillagerTrade() {
 // TestMultipleEntities tests interacting with different entity types sequentially
 func (s *EntityInteractionSuite) TestMultipleEntities() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyEasy)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityMultiBot", "entity_multiple_interact")
 	require.NoError(t, err, "spawn agent")
@@ -391,32 +399,11 @@ func (s *EntityInteractionSuite) TestMultipleEntities() {
 	}
 }
 
-// EntityInteractionCombatSuite covers the 3 zombie-combat methods, which need
-// DifficultyNormal rather than DifficultyEasy - no evidence found that this
-// choice is interchangeable with the non-combat suite's Easy (see
-// EntityInteractionSuite's own doc comment), so kept separate rather than
-// assumed safe to unify. Each method builds its own platform (with a
-// sun-blocking roof, belt-and-suspenders alongside the zombie's own
-// leather helmet) since a zombie needs solid, clear ground to fight on,
-// unlike the non-combat suite's simple entities.
-type EntityInteractionCombatSuite struct {
-	VersionWorldSuite
-}
-
-func TestEntityInteractionCombatSuite(t *testing.T) {
-	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
-		s := &EntityInteractionCombatSuite{}
-		s.WorldGen = WorldGenFlat
-		s.Difficulty = DifficultyNormal
-		return s
-	})
-}
-
 // buildCombatArena builds a 20x20 platform around origin (offset -10,-10, so
 // it fits well within one working area's 256-block separation), clears
 // headroom above it, and builds a second platform 10 blocks up to block sun
 // exposure for a zombie spawned there.
-func (s *EntityInteractionCombatSuite) buildCombatArena(origin models.V3) {
+func (s *EntityInteractionSuite) buildCombatArena(origin models.V3) {
 	t := s.T()
 
 	platformY := int(math.Floor(origin.Y)) - 1 // Platform is below agent's feet
@@ -437,8 +424,9 @@ func (s *EntityInteractionCombatSuite) buildCombatArena(origin models.V3) {
 }
 
 // TestAttack tests attacking an entity
-func (s *EntityInteractionCombatSuite) TestAttack() {
+func (s *EntityInteractionSuite) TestAttack() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyNormal)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityAttackBot", "entity_attack")
 	require.NoError(t, err, "spawn agent")
@@ -559,8 +547,9 @@ func (s *EntityInteractionCombatSuite) TestAttack() {
 }
 
 // TestOffhandAttack tests attacking with offhand item
-func (s *EntityInteractionCombatSuite) TestOffhandAttack() {
+func (s *EntityInteractionSuite) TestOffhandAttack() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyNormal)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityOffhandBot", "entity_attack_offhand")
 	require.NoError(t, err, "spawn agent")
@@ -621,8 +610,9 @@ func (s *EntityInteractionCombatSuite) TestOffhandAttack() {
 }
 
 // TestRapidAttacks tests rapid successive attacks
-func (s *EntityInteractionCombatSuite) TestRapidAttacks() {
+func (s *EntityInteractionSuite) TestRapidAttacks() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyNormal)
 
 	leader, err := s.SpawnWorkingAreaAgent("EntityRapidBot", "entity_attack_rapid")
 	require.NoError(t, err, "spawn agent")

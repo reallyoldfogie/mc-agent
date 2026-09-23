@@ -13,201 +13,189 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// TestSwimming_FallIntoWaterNoFallDamage verifies that an agent dropped from a
-// lethal height into a deep water pool survives without taking fall damage.
-// This validates the fall distance reset when entering water.
+// SwimmingSuite is a version-parameterized suite for all 6 swimming tests
+// below: one server per version, shared by every method, instead of the
+// previous per-test-function StartServer/StopServer pattern. WorldGen =
+// WorldGenFlat.
 //
-// Left on the original per-test-server pattern:
-// this and TestSwimming_SwimToSurface use DifficultyNormal via
-// setupStandaloneTestWithModeAndBlockPlacement, not DifficultyPeaceful like
-// the 4 pathfinding tests below - VersionWorldSuite.Difficulty could host
-// them too, but as a *second*, smaller suite (they'd collide with the
-// Peaceful suite's single fixed difficulty). Not converted.
-func TestSwimming_FallIntoWaterNoFallDamage(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "swimming_fall", "survival", false, tt.MCVersion, DifficultyNormal, true)
-			defer env.Cancel()
-
-			ctx := context.Background()
-
-			baseY := int(math.Floor(env.ContainerPos.Y)) - 1
-			baseX := int(math.Floor(env.ContainerPos.X)) - 5
-			baseZ := int(math.Floor(env.ContainerPos.Z)) - 5
-
-			poolWidth := 10
-			poolDepth := 5
-			dropHeight := 30
-
-			// Build a stone floor under the pool
-			err := BuildPlatform(ctx, env.Inst.RCON, baseX, baseY, baseZ, poolWidth, poolWidth, "minecraft:stone")
-			require.NoError(t, err, "build pool floor")
-
-			// Fill pool with water (5 blocks deep)
-			for waterY := baseY + 1; waterY <= baseY+poolDepth; waterY++ {
-				fillCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					baseX, waterY, baseZ, baseX+poolWidth-1, waterY, baseZ+poolWidth-1)
-				_, err := env.Inst.RCON.Exec(ctx, fillCmd)
-				require.NoError(t, err, "fill water layer at Y=%d", waterY)
-			}
-
-			// Clear air above the pool so the agent can fall freely
-			clearTopY := baseY + poolDepth + dropHeight + 5
-			if err := ClearArea(ctx, env.Inst.RCON,
-				baseX, baseY+poolDepth+1, baseZ,
-				baseX+poolWidth-1, clearTopY, baseZ+poolWidth-1); err != nil {
-				t.Logf("warning: failed to clear area above pool: %v", err)
-			}
-
-			// Wait for world to settle
-			time.Sleep(2 * time.Second)
-
-			// Ensure the agent starts with full health
-			healCmd := fmt.Sprintf("effect give %s minecraft:instant_health 1 10", env.BotName)
-			_, _ = env.Inst.RCON.Exec(ctx, healCmd)
-			time.Sleep(500 * time.Millisecond)
-
-			healthBefore, err := GetPlayerHealth(ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get health before drop")
-			t.Logf("Health before drop: %.1f", healthBefore)
-			require.Equal(t, float32(20.0), healthBefore, "agent should start with full health")
-
-			// Teleport agent above the center of the pool at lethal fall height
-			centerX := float64(baseX) + float64(poolWidth)/2.0
-			centerZ := float64(baseZ) + float64(poolWidth)/2.0
-			dropY := float64(baseY + poolDepth + dropHeight)
-			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, centerX, dropY, centerZ)
-			resp, err := env.Inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent above pool")
-			t.Logf("Teleported to (%.1f, %.1f, %.1f): %s", centerX, dropY, centerZ, resp)
-
-			// Wait for the agent to fall into the water and settle
-			// At ~30 blocks drop height, this takes several seconds
-			time.Sleep(8 * time.Second)
-
-			// Verify the agent's position is inside/near the water pool (they fell down)
-			afterPos, err := GetPlayerPosition(ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get position after fall")
-			t.Logf("Position after fall: (%.2f, %.2f, %.2f)", afterPos.X, afterPos.Y, afterPos.Z)
-
-			assert.Less(t, afterPos.Y, dropY-5.0,
-				"agent should have fallen from the drop height")
-
-			// Verify the agent survived (health should still be full)
-			healthAfter, err := GetPlayerHealth(ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get health after fall")
-			t.Logf("Health after fall into water: %.1f", healthAfter)
-
-			assert.Equal(t, float32(20.0), healthAfter,
-				"agent should not take fall damage when landing in water")
-		})
-	}
-}
-
-// TestSwimming_SwimToSurface verifies that an agent submerged in water can swim
-// upward toward the surface. The agent is placed at the bottom of a deep pool,
-// then given an upward movement target. The physics engine should apply swim-up
-// velocity (via jump input in water) to move the agent upward.
-//
-// See TestSwimming_FallIntoWaterNoFallDamage's doc comment above for why this
-// is also left on the original pattern.
-func TestSwimming_SwimToSurface(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "swimming_surface", "survival", false, tt.MCVersion, DifficultyNormal, true)
-			defer env.Cancel()
-
-			ctx := context.Background()
-
-			baseY := int(math.Floor(env.ContainerPos.Y)) - 1
-			baseX := int(math.Floor(env.ContainerPos.X)) - 5
-			baseZ := int(math.Floor(env.ContainerPos.Z)) - 5
-
-			poolWidth := 10
-			poolDepth := 8
-
-			// Build a stone floor under the pool
-			err := BuildPlatform(ctx, env.Inst.RCON, baseX, baseY, baseZ, poolWidth, poolWidth, "minecraft:stone")
-			require.NoError(t, err, "build pool floor")
-
-			// Fill pool with water
-			for waterY := baseY + 1; waterY <= baseY+poolDepth; waterY++ {
-				fillCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
-					baseX, waterY, baseZ, baseX+poolWidth-1, waterY, baseZ+poolWidth-1)
-				_, err := env.Inst.RCON.Exec(ctx, fillCmd)
-				require.NoError(t, err, "fill water layer at Y=%d", waterY)
-			}
-
-			// Clear air above the pool
-			if err := ClearArea(ctx, env.Inst.RCON,
-				baseX, baseY+poolDepth+1, baseZ,
-				baseX+poolWidth-1, baseY+poolDepth+10, baseZ+poolWidth-1); err != nil {
-				t.Logf("warning: failed to clear area above pool: %v", err)
-			}
-
-			// Wait for world to settle
-			time.Sleep(2 * time.Second)
-
-			// Teleport agent to bottom of pool
-			centerX := float64(baseX) + float64(poolWidth)/2.0
-			centerZ := float64(baseZ) + float64(poolWidth)/2.0
-			bottomY := float64(baseY + 1)
-			tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, centerX, bottomY, centerZ)
-			resp, err := env.Inst.RCON.Exec(ctx, tpCmd)
-			require.NoError(t, err, "teleport agent to bottom of pool")
-			t.Logf("Teleported to pool bottom (%.1f, %.1f, %.1f): %s", centerX, bottomY, centerZ, resp)
-
-			// Wait for physics to settle and water detection
-			time.Sleep(2 * time.Second)
-
-			// Record position at bottom
-			beforePos, err := GetPlayerPosition(ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get position before swimming")
-			t.Logf("Position before swimming: (%.2f, %.2f, %.2f)", beforePos.X, beforePos.Y, beforePos.Z)
-
-			// Move the agent upward — MoveUp uses position updates to swim up
-			surfaceY := float64(baseY + poolDepth + 1)
-			err = env.Agent.Agent.MoveUp(ctx, surfaceY-beforePos.Y)
-			if err != nil {
-				t.Logf("MoveUp returned error (may be expected): %v", err)
-			}
-
-			// Wait for movement to complete
-			time.Sleep(3 * time.Second)
-
-			// Record position after swimming
-			afterPos, err := GetPlayerPosition(ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get position after swimming")
-			t.Logf("Position after swimming: (%.2f, %.2f, %.2f)", afterPos.X, afterPos.Y, afterPos.Z)
-
-			// Agent should have moved upward
-			yDisplacement := afterPos.Y - beforePos.Y
-			t.Logf("Y displacement: %.2f", yDisplacement)
-
-			assert.Greater(t, yDisplacement, 1.0,
-				"agent should have swum upward by at least 1 block")
-		})
-	}
-}
-
-// SwimmingPeacefulSuite is a
-// version-parameterized suite for the 4 swimming-pathfinding tests that
-// build their own server inline (not via setupStandaloneTestWithModeAndBlockPlacement)
-// with DifficultyPeaceful - which matches VersionWorldSuite's own default,
-// so no Difficulty override is needed here (unlike KnockbackFlatSuite/
-// EffectsFlatSuite). Only these 4 converted, not the 2 DifficultyNormal
-// functions above, which stay on the old pattern - a different difficulty
-// needs a different suite.
-type SwimmingPeacefulSuite struct {
+// Two different Difficulty values are needed across these 6 methods
+// (TestFallIntoWaterNoFallDamage/TestSwimToSurface need DifficultyNormal;
+// the 4 pathfinding methods need DifficultyPeaceful) - rather than splitting
+// into two suites over that, each method calls VersionWorldSuite.SetDifficulty
+// at its own start (see that method's own doc comment for why this is safe).
+type SwimmingSuite struct {
 	VersionWorldSuite
 }
 
-func TestSwimmingPeacefulSuite(t *testing.T) {
+func TestSwimmingSuite(t *testing.T) {
 	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
-		s := &SwimmingPeacefulSuite{}
+		s := &SwimmingSuite{}
 		s.WorldGen = WorldGenFlat
 		return s
 	})
+}
+
+// TestFallIntoWaterNoFallDamage verifies that an agent dropped from a
+// lethal height into a deep water pool survives without taking fall
+// damage. This validates the fall distance reset when entering water.
+// Equivalent to the original TestSwimming_FallIntoWaterNoFallDamage.
+func (s *SwimmingSuite) TestFallIntoWaterNoFallDamage() {
+	t := s.T()
+	s.SetDifficulty(t, DifficultyNormal)
+
+	leader, err := s.SpawnWorkingAreaAgent("SwimFallBot", "swimming_fall")
+	require.NoError(t, err, "spawn agent")
+
+	baseY := int(math.Floor(leader.Origin.Y)) - 1
+	baseX := int(math.Floor(leader.Origin.X)) - 5
+	baseZ := int(math.Floor(leader.Origin.Z)) - 5
+
+	poolWidth := 10
+	poolDepth := 5
+	dropHeight := 30
+
+	// Build a stone floor under the pool
+	err = BuildPlatform(s.Ctx, s.Inst.RCON, baseX, baseY, baseZ, poolWidth, poolWidth, "minecraft:stone")
+	require.NoError(t, err, "build pool floor")
+
+	// Fill pool with water (5 blocks deep)
+	for waterY := baseY + 1; waterY <= baseY+poolDepth; waterY++ {
+		fillCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			baseX, waterY, baseZ, baseX+poolWidth-1, waterY, baseZ+poolWidth-1)
+		_, err := s.Inst.RCON.Exec(s.Ctx, fillCmd)
+		require.NoError(t, err, "fill water layer at Y=%d", waterY)
+	}
+
+	// Clear air above the pool so the agent can fall freely
+	clearTopY := baseY + poolDepth + dropHeight + 5
+	if err := ClearArea(s.Ctx, s.Inst.RCON,
+		baseX, baseY+poolDepth+1, baseZ,
+		baseX+poolWidth-1, clearTopY, baseZ+poolWidth-1); err != nil {
+		t.Logf("warning: failed to clear area above pool: %v", err)
+	}
+
+	// Wait for world to settle
+	time.Sleep(2 * time.Second)
+
+	// Ensure the agent starts with full health
+	healCmd := fmt.Sprintf("effect give %s minecraft:instant_health 1 10", leader.Name)
+	_, _ = s.Inst.RCON.Exec(s.Ctx, healCmd)
+	time.Sleep(500 * time.Millisecond)
+
+	healthBefore, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get health before drop")
+	t.Logf("Health before drop: %.1f", healthBefore)
+	require.Equal(t, float32(20.0), healthBefore, "agent should start with full health")
+
+	// Teleport agent above the center of the pool at lethal fall height
+	centerX := float64(baseX) + float64(poolWidth)/2.0
+	centerZ := float64(baseZ) + float64(poolWidth)/2.0
+	dropY := float64(baseY + poolDepth + dropHeight)
+	tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, centerX, dropY, centerZ)
+	resp, err := s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent above pool")
+	t.Logf("Teleported to (%.1f, %.1f, %.1f): %s", centerX, dropY, centerZ, resp)
+
+	// Wait for the agent to fall into the water and settle
+	// At ~30 blocks drop height, this takes several seconds
+	time.Sleep(8 * time.Second)
+
+	// Verify the agent's position is inside/near the water pool (they fell down)
+	afterPos, err := GetPlayerPosition(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get position after fall")
+	t.Logf("Position after fall: (%.2f, %.2f, %.2f)", afterPos.X, afterPos.Y, afterPos.Z)
+
+	assert.Less(t, afterPos.Y, dropY-5.0,
+		"agent should have fallen from the drop height")
+
+	// Verify the agent survived (health should still be full)
+	healthAfter, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get health after fall")
+	t.Logf("Health after fall into water: %.1f", healthAfter)
+
+	assert.Equal(t, float32(20.0), healthAfter,
+		"agent should not take fall damage when landing in water")
+}
+
+// TestSwimToSurface verifies that an agent submerged in water can swim
+// upward toward the surface. The agent is placed at the bottom of a deep
+// pool, then given an upward movement target. The physics engine should
+// apply swim-up velocity (via jump input in water) to move the agent
+// upward. Equivalent to the original TestSwimming_SwimToSurface.
+func (s *SwimmingSuite) TestSwimToSurface() {
+	t := s.T()
+	s.SetDifficulty(t, DifficultyNormal)
+
+	leader, err := s.SpawnWorkingAreaAgent("SwimSurfaceBot", "swimming_surface")
+	require.NoError(t, err, "spawn agent")
+
+	baseY := int(math.Floor(leader.Origin.Y)) - 1
+	baseX := int(math.Floor(leader.Origin.X)) - 5
+	baseZ := int(math.Floor(leader.Origin.Z)) - 5
+
+	poolWidth := 10
+	poolDepth := 8
+
+	// Build a stone floor under the pool
+	err = BuildPlatform(s.Ctx, s.Inst.RCON, baseX, baseY, baseZ, poolWidth, poolWidth, "minecraft:stone")
+	require.NoError(t, err, "build pool floor")
+
+	// Fill pool with water
+	for waterY := baseY + 1; waterY <= baseY+poolDepth; waterY++ {
+		fillCmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water",
+			baseX, waterY, baseZ, baseX+poolWidth-1, waterY, baseZ+poolWidth-1)
+		_, err := s.Inst.RCON.Exec(s.Ctx, fillCmd)
+		require.NoError(t, err, "fill water layer at Y=%d", waterY)
+	}
+
+	// Clear air above the pool
+	if err := ClearArea(s.Ctx, s.Inst.RCON,
+		baseX, baseY+poolDepth+1, baseZ,
+		baseX+poolWidth-1, baseY+poolDepth+10, baseZ+poolWidth-1); err != nil {
+		t.Logf("warning: failed to clear area above pool: %v", err)
+	}
+
+	// Wait for world to settle
+	time.Sleep(2 * time.Second)
+
+	// Teleport agent to bottom of pool
+	centerX := float64(baseX) + float64(poolWidth)/2.0
+	centerZ := float64(baseZ) + float64(poolWidth)/2.0
+	bottomY := float64(baseY + 1)
+	tpCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, centerX, bottomY, centerZ)
+	resp, err := s.Inst.RCON.Exec(s.Ctx, tpCmd)
+	require.NoError(t, err, "teleport agent to bottom of pool")
+	t.Logf("Teleported to pool bottom (%.1f, %.1f, %.1f): %s", centerX, bottomY, centerZ, resp)
+
+	// Wait for physics to settle and water detection
+	time.Sleep(2 * time.Second)
+
+	// Record position at bottom
+	beforePos, err := GetPlayerPosition(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get position before swimming")
+	t.Logf("Position before swimming: (%.2f, %.2f, %.2f)", beforePos.X, beforePos.Y, beforePos.Z)
+
+	// Move the agent upward — MoveUp uses position updates to swim up
+	surfaceY := float64(baseY + poolDepth + 1)
+	err = leader.Agent.MoveUp(s.Ctx, surfaceY-beforePos.Y)
+	if err != nil {
+		t.Logf("MoveUp returned error (may be expected): %v", err)
+	}
+
+	// Wait for movement to complete
+	time.Sleep(3 * time.Second)
+
+	// Record position after swimming
+	afterPos, err := GetPlayerPosition(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get position after swimming")
+	t.Logf("Position after swimming: (%.2f, %.2f, %.2f)", afterPos.X, afterPos.Y, afterPos.Z)
+
+	// Agent should have moved upward
+	yDisplacement := afterPos.Y - beforePos.Y
+	t.Logf("Y displacement: %.2f", yDisplacement)
+
+	assert.Greater(t, yDisplacement, 1.0,
+		"agent should have swum upward by at least 1 block")
 }
 
 // TestPathfindingAcrossWater verifies that the pathfinder can find and
@@ -223,8 +211,9 @@ func TestSwimmingPeacefulSuite(t *testing.T) {
 //	[Ground]  Stone  Stone  Stone  Stone  Stone  [Ground]  <- pool floor
 //
 // Walls on the Z-sides prevent the agent from walking around the channel.
-func (s *SwimmingPeacefulSuite) TestPathfindingAcrossWater() {
+func (s *SwimmingSuite) TestPathfindingAcrossWater() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyPeaceful)
 
 	leader, err := s.SpawnWorkingAreaAgent("SwimPathBot", "swimming_pathfind_across")
 	require.NoError(t, err, "spawn agent")
@@ -335,8 +324,9 @@ func (s *SwimmingPeacefulSuite) TestPathfindingAcrossWater() {
 //	Y=64:  [Ground  ]  Water  Water  Water  [Ground = Goal]
 //	Y=63:  [Ground  ]  Stone  Water  Stone  [Ground]
 //	Y=62:  [Ground  ]  Stone  Stone  Stone  [Ground]
-func (s *SwimmingPeacefulSuite) TestPathfindingDropIntoWater() {
+func (s *SwimmingSuite) TestPathfindingDropIntoWater() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyPeaceful)
 
 	leader, err := s.SpawnWorkingAreaAgent("SwimDropBot", "swimming_phys_pathfind")
 	require.NoError(t, err, "spawn agent")
@@ -449,8 +439,9 @@ func (s *SwimmingPeacefulSuite) TestPathfindingDropIntoWater() {
 // a deep vertical water column to reach a goal above. The agent must use
 // SwimUp movements to ascend through multiple water blocks without any
 // shelves. Equivalent to the original TestSwimming_PathfindingSwimUp.
-func (s *SwimmingPeacefulSuite) TestPathfindingSwimUp() {
+func (s *SwimmingSuite) TestPathfindingSwimUp() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyPeaceful)
 
 	leader, err := s.SpawnWorkingAreaAgent("SwimUpBot", "swimming_phys_fluid")
 	require.NoError(t, err, "spawn agent")
@@ -535,8 +526,9 @@ func (s *SwimmingPeacefulSuite) TestPathfindingSwimUp() {
 // must enter water from solid ground and use SwimDown movements to descend
 // through multiple levels. Equivalent to the original
 // TestSwimming_PathfindingSwimDown.
-func (s *SwimmingPeacefulSuite) TestPathfindingSwimDown() {
+func (s *SwimmingSuite) TestPathfindingSwimDown() {
 	t := s.T()
+	s.SetDifficulty(t, DifficultyPeaceful)
 
 	leader, err := s.SpawnWorkingAreaAgent("SwimDownBot", "swimming_jump_climb")
 	require.NoError(t, err, "spawn agent")

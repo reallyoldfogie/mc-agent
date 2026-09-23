@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -472,4 +473,20 @@ func RunVersionWorldSuite(t *testing.T, versions []models.VersionTest, newSuite 
 // per-version suite instance its Version before suite.Run.
 func (s *VersionWorldSuite) SetVersion(version string) {
 	s.Version = version
+}
+
+// SetDifficulty changes this suite's shared server's difficulty via RCON,
+// for a suite whose test methods need more than one Difficulty value across
+// their run (Difficulty itself only sets the server's difficulty once, at
+// boot, via SetupSuite). This is safe specifically because /difficulty is a
+// live, mutable server property (unlike WorldGen, which is fixed in
+// already-generated chunks and genuinely can't change after boot) and
+// because a suite's test methods run sequentially, never in parallel with
+// each other - a method that needs a specific difficulty should call this
+// at its own start rather than trust whatever a previous method (run in
+// unspecified order) left it as.
+func (s *VersionWorldSuite) SetDifficulty(t *testing.T, difficulty Difficulty) {
+	t.Helper()
+	_, err := s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("difficulty %s", difficulty))
+	require.NoError(t, err, "set difficulty to %s", difficulty)
 }
