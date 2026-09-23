@@ -17,8 +17,10 @@ import (
 	"github.com/reallyoldfogie/cRL-go/pkg/reinforce"
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 
 	"github.com/reallyoldfogie/mc-agent/actions"
+	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/rlenv"
 )
 
@@ -67,18 +69,60 @@ func rlTrainSettings(epochs int) config.Settings {
 	}
 }
 
-// TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips reproduces
-// Phase 5's Run 1 (docs/plans/RL_TRAINING_LOOP_PLAN.md): construct
-// rlenv.Environment against a real live bot session, drive it through
-// cRL-go's REINFORCE trainer via reinforce.NewWithPersistentEnv exactly the
-// way cmd/rl-train does, run a couple of real epochs, and confirm a saved
-// checkpoint reloads cleanly. No mine/craft task — just the base
-// GoToTarget/ReturnHome/Wait vocabulary.
-func TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips(t *testing.T) {
-	env := setupStandaloneTestForEntity(t, "rl_train_basic", rlTrainTestVersion)
-	defer env.Cancel()
+// RLTrainFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for this file's four always-run (not
+// MCAGENT_LONG_RL_TRAIN_TEST-gated) tests: one server, shared by every
+// method below, instead of the previous per-test-function
+// StartServer/StopServer pattern. WorldGen = WorldGenFlat and Difficulty =
+// DifficultyEasy, matching setupStandaloneTestForEntity's own choice
+// (GameMode is left at VersionWorldSuite's own survival default, also
+// matching).
+//
+// Deliberately run against a single version (rlTrainTestVersion), not
+// models.StandardVersionTests - see rlTrainTestVersion's own doc comment
+// above for why every test in this file, converted or not, makes this same
+// choice: nothing under test here is protocol-version-specific.
+//
+// The other 11 functions in this file (every one gated behind
+// MCAGENT_LONG_RL_TRAIN_TEST=1 - 8 explicit "LongRun" diagnostics needing
+// 25-27+ minutes *each* per their own doc comments, plus 3 shorter-named
+// root-cause investigations under the same gate) are deliberately NOT
+// converted - see
+// docs/plans/integration-test-shared-server/30-phase1-rl-train-conversion.md
+// for why: amortizing this pattern's ~10-30s boot-time saving is
+// meaningless against methods that individually run for tens of minutes,
+// and running 15 such methods sequentially on one shared server would
+// require extending VersionWorldSuite's 45-minute suite context to several
+// hours, for a rare, deliberately-manual opt-in workflow this
+// session has no evidence needs it.
+type RLTrainFlatSuite struct {
+	VersionWorldSuite
+}
 
-	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+func TestRLTrainFlatSuite(t *testing.T) {
+	RunVersionWorldSuite(t, []models.VersionTest{{Name: rlTrainTestVersion, MCVersion: rlTrainTestVersion}}, func() suite.TestingSuite {
+		s := &RLTrainFlatSuite{}
+		s.WorldGen = WorldGenFlat
+		s.Difficulty = DifficultyEasy
+		return s
+	})
+}
+
+// TestBasicTaskTrainsAndCheckpointRoundTrips reproduces Phase 5's Run 1
+// (docs/plans/RL_TRAINING_LOOP_PLAN.md): construct rlenv.Environment
+// against a real live bot session, drive it through cRL-go's REINFORCE
+// trainer via reinforce.NewWithPersistentEnv exactly the way cmd/rl-train
+// does, run a couple of real epochs, and confirm a saved checkpoint
+// reloads cleanly. No mine/craft task - just the base
+// GoToTarget/ReturnHome/Wait vocabulary. Equivalent to the pre-Phase-1
+// TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips.
+func (s *RLTrainFlatSuite) TestBasicTaskTrainsAndCheckpointRoundTrips() {
+	t := s.T()
+
+	leader, err := s.SpawnWorkingAreaAgent("RLBasicBot", "rl_train_basic")
+	require.NoError(t, err, "spawn agent")
+
+	liveAgent, ok := leader.Agent.(rlenv.LiveAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
 
 	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
@@ -98,7 +142,7 @@ func TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips(t *testing.T) {
 	require.NoError(t, err, "construct trainer")
 
 	for epoch := 0; epoch < settings.Epochs; epoch++ {
-		stats, err := trainer.RunEpoch(env.Ctx, epoch)
+		stats, err := trainer.RunEpoch(s.Ctx, epoch)
 		require.NoError(t, err, "RunEpoch %d", epoch)
 		t.Logf("epoch %d: average return %.3f, samples %d", stats.Epoch, stats.AverageReturn, stats.SampleCount)
 	}
@@ -119,22 +163,25 @@ func TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips(t *testing.T) {
 	t.Log("✓ RL training loop against a live server ran end to end and its checkpoint round-tripped")
 }
 
-// TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode reproduces
-// Phase 5's Run 2: the mine task combined with RCON episode seeding
+// TestMineTaskSeedingEarnsRewardAndEndsEpisode reproduces Phase 5's Run 2:
+// the mine task combined with RCON episode seeding
 // (rlenv.DefaultEpisodeSeeder, docs/plans/RL_TRAINING_LOOP_PLAN.md Phase
 // 4) — the genuinely new, first-time-exercised-live path, not just a
 // rerun of already-covered mine/craft chat-command behavior. Drives
 // Environment.Reset/Step directly (not through a randomly-initialized
 // policy) so the assertions are deterministic: force ActionMine and check
 // the seeded block actually gets mined and rewarded, rather than hoping a
-// random policy happens to choose it within a short episode.
-func TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) {
-	env := setupStandaloneTestForEntity(t, "rl_train_mine_seed", rlTrainTestVersion)
-	defer env.Cancel()
+// random policy happens to choose it within a short episode. Equivalent
+// to the pre-Phase-1 TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode.
+func (s *RLTrainFlatSuite) TestMineTaskSeedingEarnsRewardAndEndsEpisode() {
+	t := s.T()
 
-	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	leader, err := s.SpawnWorkingAreaAgent("RLMineSeedBot", "rl_train_mine_seed")
+	require.NoError(t, err, "spawn agent")
+
+	liveAgent, ok := leader.Agent.(rlenv.LiveAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
-	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	_, ok = leader.Agent.(rlenv.SeedAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent (the test framework already wires RCON into agent.Config.RCON for every spawned agent)")
 
 	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
@@ -154,7 +201,7 @@ func TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) {
 	})
 	require.NoError(t, err, "construct rlenv.Environment")
 
-	obs, err := rlEnv.Reset(env.Ctx)
+	obs, err := rlEnv.Reset(s.Ctx)
 	require.NoError(t, err, "Reset (includes RCON episode seeding)")
 	require.Equal(t, float32(1), obs.Values[12], "mineVisible should be 1 right after seeding placed a stone block within search radius")
 
@@ -163,29 +210,32 @@ func TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) {
 	// signal doesn't guarantee this bot's local BlockNameAt tracking has
 	// caught up within that same call — found live, not anticipated, by
 	// this exact test.
-	result := stepUntilDone(t, rlEnv, env.Ctx, rlenv.ActionMine, rlTrainStepRetryAttempts)
+	result := stepUntilDone(t, rlEnv, s.Ctx, rlenv.ActionMine, rlTrainStepRetryAttempts)
 	require.True(t, result.Done, "episode should end once the seeded block is mined (within %d attempts)", rlTrainStepRetryAttempts)
 	require.Greater(t, result.Reward, float32(5), "reward should include mineRewardBonus")
 
 	t.Log("✓ RCON episode seeding + ActionMine dispatch + reward all confirmed against a live server")
 }
 
-// TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode is
-// TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode's craft
-// analogue — the gap docs/plans/RL_TRAINING_LOOP_PLAN.md's Phase 5 update
-// explicitly left open ("only the mine path is exercised... a reasonable
-// next addition, not attempted here"). Confirms SeedCraftIngredients (whose
-// own fix was previously verified only by code-reading parity with
-// SeedNearbyBlock's proven fix, not by a live run of its own) actually
-// works end to end: RCON give → craftReady observation → ActionCraft
-// dispatch → craftRewardBonus.
-func TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) {
-	env := setupStandaloneTestForEntity(t, "rl_train_craft_seed", rlTrainTestVersion)
-	defer env.Cancel()
+// TestCraftTaskSeedingEarnsRewardAndEndsEpisode is
+// TestMineTaskSeedingEarnsRewardAndEndsEpisode's craft analogue — the gap
+// docs/plans/RL_TRAINING_LOOP_PLAN.md's Phase 5 update explicitly left
+// open ("only the mine path is exercised... a reasonable next addition,
+// not attempted here"). Confirms SeedCraftIngredients (whose own fix was
+// previously verified only by code-reading parity with SeedNearbyBlock's
+// proven fix, not by a live run of its own) actually works end to end:
+// RCON give → craftReady observation → ActionCraft dispatch →
+// craftRewardBonus. Equivalent to the pre-Phase-1
+// TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode.
+func (s *RLTrainFlatSuite) TestCraftTaskSeedingEarnsRewardAndEndsEpisode() {
+	t := s.T()
 
-	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	leader, err := s.SpawnWorkingAreaAgent("RLCraftSeedBot", "rl_train_craft_seed")
+	require.NoError(t, err, "spawn agent")
+
+	liveAgent, ok := leader.Agent.(rlenv.LiveAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
-	_, ok = env.Agent.Agent.(rlenv.SeedAgent)
+	_, ok = leader.Agent.(rlenv.SeedAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.SeedAgent (the test framework already wires RCON into agent.Config.RCON for every spawned agent)")
 
 	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
@@ -206,7 +256,7 @@ func TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) 
 	})
 	require.NoError(t, err, "construct rlenv.Environment")
 
-	obs, err := rlEnv.Reset(env.Ctx)
+	obs, err := rlEnv.Reset(s.Ctx)
 	require.NoError(t, err, "Reset (includes RCON episode seeding)")
 	require.Equal(t, float32(1), obs.Values[13], "craftReady should be 1 right after seeding gave the recipe's ingredients")
 
@@ -214,15 +264,15 @@ func TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) 
 	// own real inventory-click sequence is exactly the same class of
 	// real-round-trip action MineBlockAt is, so the same class of
 	// finished-but-not-yet-locally-visible race is expected here too.
-	result := stepUntilDone(t, rlEnv, env.Ctx, rlenv.ActionCraft, rlTrainStepRetryAttempts)
+	result := stepUntilDone(t, rlEnv, s.Ctx, rlenv.ActionCraft, rlTrainStepRetryAttempts)
 	require.True(t, result.Done, "episode should end once the seeded ingredients are crafted (within %d attempts)", rlTrainStepRetryAttempts)
 	require.Greater(t, result.Reward, float32(5), "reward should include craftRewardBonus")
 
 	t.Log("✓ RCON ingredient seeding + ActionCraft dispatch + reward all confirmed against a live server")
 }
 
-// TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive is the live
-// end-to-end check for cRL-go's action masking (rl.ActionMasker,
+// TestActionMaskExcludesUnconfiguredTasksLive is the live end-to-end check
+// for cRL-go's action masking (rl.ActionMasker,
 // docs/plans/19-training-time-action-masking.md in ../cRL-go, resolved at
 // commit d3a3153; rlenv.Environment implements it, see
 // rlenv/action.go's ActionMask). Unit coverage already confirms
@@ -241,12 +291,15 @@ func TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode(t *testing.T) 
 // sampling toward or away from any particular action) must never return
 // ActionMine or ActionCraft, deterministically, not just "rarely": a
 // correctly implemented mask makes an illegal action's post-mask
-// probability exactly zero, not merely small.
-func TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive(t *testing.T) {
-	env := setupStandaloneTestForEntity(t, "rl_train_action_mask", rlTrainTestVersion)
-	defer env.Cancel()
+// probability exactly zero, not merely small. Equivalent to the
+// pre-Phase-1 TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive.
+func (s *RLTrainFlatSuite) TestActionMaskExcludesUnconfiguredTasksLive() {
+	t := s.T()
 
-	liveAgent, ok := env.Agent.Agent.(rlenv.LiveAgent)
+	leader, err := s.SpawnWorkingAreaAgent("RLActionMaskBot", "rl_train_action_mask")
+	require.NoError(t, err, "spawn agent")
+
+	liveAgent, ok := leader.Agent.(rlenv.LiveAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
 
 	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
@@ -259,7 +312,7 @@ func TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive(t *testing.T) {
 	})
 	require.NoError(t, err, "construct rlenv.Environment")
 
-	obs, err := rlEnv.Reset(env.Ctx)
+	obs, err := rlEnv.Reset(s.Ctx)
 	require.NoError(t, err, "Reset")
 
 	mask := rlEnv.ActionMask()
