@@ -14,16 +14,15 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerButtonFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerButtonFlatSuite is a
 // version-parameterized suite for the button-clicking container tests below (stonecutter, loom,
 // enchanting table, beacon): one server per version, shared by every method, instead of the
-// previous per-test-function setupStandaloneTest server-per-test pattern. Part of the
-// container-bound category unlocked by the window-ID re-measurement - see
-// docs/plans/integration-test-shared-server/31-window-id-limit-remeasurement.md and
-// 32-phase1-container-standalone-conversion.md (the proof-of-concept for this category) and
-// 33-phase1-container-button-conversion.md (this conversion's own live validation). Unlike that
-// proof of concept, these methods also exercise ContainerButtonClick (via items.ButtonClicker),
-// a materially different load than plain open/close.
+// previous per-test-function setupStandaloneTest server-per-test pattern. These container types
+// were historically left on the per-test-server pattern out of concern for a container
+// window-ID limit per connection; that limit was re-measured and found stale (25 sequential
+// open/close cycles succeed cleanly - see container_window_id_probe_test.go), clearing the way
+// for this conversion. Unlike a plain open/close, these methods also exercise
+// ContainerButtonClick (via items.ButtonClicker), a materially different load.
 type ContainerButtonFlatSuite struct {
 	VersionWorldSuite
 }
@@ -46,7 +45,7 @@ func newButtonClicker(leader *WorkingAreaAgent) *items.ButtonClicker {
 }
 
 // TestStonecutter verifies stonecutter recipe-selection button clicks.
-// Equivalent to the pre-Phase-1 TestStonecutter_Standalone.
+// Equivalent to the original TestStonecutter_Standalone.
 func (s *ContainerButtonFlatSuite) TestStonecutter() {
 	t := s.T()
 
@@ -91,7 +90,7 @@ func (s *ContainerButtonFlatSuite) TestStonecutter() {
 }
 
 // TestLoomSurvivalDebug verifies loom pattern-selection button clicks with
-// packet debug logging enabled, matching the pre-Phase-1 TestLoom_Survival's
+// packet debug logging enabled, matching the original TestLoom_Survival's
 // distinct purpose (debugging aid, single version). Deliberately kept
 // separate from TestLoomAllFaces below rather than merged, preserving the
 // original's own split.
@@ -154,7 +153,7 @@ func (s *ContainerButtonFlatSuite) TestLoomSurvivalDebug() {
 // TestLoomAllFaces verifies loom pattern-selection button clicks, trying
 // multiple block faces defensively (the original's own approach - see the
 // FaceUp/FaceEast/FaceNorth fallback chain below). Equivalent to the
-// pre-Phase-1 TestLoom_Standalone.
+// original TestLoom_Standalone.
 func (s *ContainerButtonFlatSuite) TestLoomAllFaces() {
 	t := s.T()
 
@@ -218,7 +217,7 @@ func (s *ContainerButtonFlatSuite) TestLoomAllFaces() {
 }
 
 // TestEnchantingTable verifies enchanting-table enchantment-selection
-// button clicks. Equivalent to the pre-Phase-1 TestEnchantingTable_Standalone.
+// button clicks. Equivalent to the original TestEnchantingTable_Standalone.
 func (s *ContainerButtonFlatSuite) TestEnchantingTable() {
 	t := s.T()
 
@@ -270,7 +269,7 @@ func (s *ContainerButtonFlatSuite) TestEnchantingTable() {
 }
 
 // TestBeacon verifies beacon effect-selection button clicks. Equivalent to
-// the pre-Phase-1 TestBeacon_Standalone.
+// the original TestBeacon_Standalone.
 func (s *ContainerButtonFlatSuite) TestBeacon() {
 	t := s.T()
 

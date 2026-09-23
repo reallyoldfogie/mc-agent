@@ -35,21 +35,21 @@ func waitForAgentHasItem(ctx context.Context, agent models.Agent, itemName strin
 	}
 }
 
-// CraftItemFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// CraftItemFlatSuite is a
 // version-parameterized suite for the CraftItem tests below: one server per version, shared by
 // both methods, instead of the previous per-test-function setupStandaloneTestForEntity
 // server-per-test pattern. WorldGen = WorldGenFlat + Difficulty = DifficultyEasy, matching
 // setupStandaloneTestForEntity's own default exactly.
 //
-// This file was listed in the checklist as "genuinely window-ID-constrained (`minecraft:chest`)"
-// on the strength of a "chest" substring match - but that match was
+// This file was once assumed to be window-ID-constrained on the strength of a "chest"
+// substring match in its recipe names - but that match was
 // `minecraft:acacia_chest_boat`/`minecraft:chest` as *crafting ingredients*, not an opened
 // container: both recipes here (a shaped stick, a shapeless chest boat) fit the player's own 2x2
 // crafting grid, so CraftItem never opens a real container window at all (no
 // OpenContainerWithLOS/ScreenMgr call appears anywhere in this file). The same
-// substring-vs-actual-usage gap `29-phase1-cam-follow-spectator-noclip-conversion.md` already
-// found and corrected for `elytra_unequip_test.go`'s `ScreenMgr.` hit. Confirmed container-free,
-// not just presumed, before converting.
+// substring-vs-actual-usage gap was separately found and corrected for
+// `elytra_unequip_test.go`'s `ScreenMgr.` hit. Confirmed container-free, not just presumed,
+// before converting.
 type CraftItemFlatSuite struct {
 	VersionWorldSuite
 }
@@ -71,7 +71,7 @@ func TestCraftItemFlatSuite(t *testing.T) {
 // tag-to-inventory-item resolution, the two things
 // TestLoadCraftingRecipes_AgainstRealCache (agent/craft_test.go) already
 // verifies for parsing but can't verify for the actual inventory-click
-// sequence, which needs a live server. Equivalent to the pre-Phase-1
+// sequence, which needs a live server. Equivalent to the original
 // TestCraftItem_StickFromPlanks.
 func (s *CraftItemFlatSuite) TestStickFromPlanks() {
 	t := s.T()
@@ -104,7 +104,7 @@ func (s *CraftItemFlatSuite) TestStickFromPlanks() {
 // confirmed present with this exact ingredient list across every version in
 // models.StandardVersionTests. Covers the shapeless path (order-independent
 // grid placement) that TestStickFromPlanks's shaped recipe doesn't
-// exercise. Equivalent to the pre-Phase-1 TestCraftItem_ShapelessChestBoat.
+// exercise. Equivalent to the original TestCraftItem_ShapelessChestBoat.
 func (s *CraftItemFlatSuite) TestShapelessChestBoat() {
 	t := s.T()
 

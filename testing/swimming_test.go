@@ -17,13 +17,12 @@ import (
 // lethal height into a deep water pool survives without taking fall damage.
 // This validates the fall distance reset when entering water.
 //
-// Left on the pre-Phase-1 per-test-server pattern (docs/plans/integration-test-shared-server/00-plan.md):
+// Left on the original per-test-server pattern:
 // this and TestSwimming_SwimToSurface use DifficultyNormal via
 // setupStandaloneTestWithModeAndBlockPlacement, not DifficultyPeaceful like
 // the 4 pathfinding tests below - VersionWorldSuite.Difficulty could host
 // them too, but as a *second*, smaller suite (they'd collide with the
-// Peaceful suite's single fixed difficulty). Not converted this pass - see
-// docs/plans/integration-test-shared-server/10-phase1-swimming-pathfinding-conversion.md.
+// Peaceful suite's single fixed difficulty). Not converted.
 func TestSwimming_FallIntoWaterNoFallDamage(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -111,7 +110,7 @@ func TestSwimming_FallIntoWaterNoFallDamage(t *testing.T) {
 // velocity (via jump input in water) to move the agent upward.
 //
 // See TestSwimming_FallIntoWaterNoFallDamage's doc comment above for why this
-// is also left on the pre-Phase-1 pattern.
+// is also left on the original pattern.
 func TestSwimming_SwimToSurface(t *testing.T) {
 	for _, tt := range models.StandardVersionTests {
 		t.Run(tt.Name, func(t *testing.T) {
@@ -191,15 +190,14 @@ func TestSwimming_SwimToSurface(t *testing.T) {
 	}
 }
 
-// SwimmingPeacefulSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// SwimmingPeacefulSuite is a
 // version-parameterized suite for the 4 swimming-pathfinding tests that
 // build their own server inline (not via setupStandaloneTestWithModeAndBlockPlacement)
 // with DifficultyPeaceful - which matches VersionWorldSuite's own default,
 // so no Difficulty override is needed here (unlike KnockbackFlatSuite/
-// EffectsFlatSuite). See docs/plans/integration-test-shared-server/10-phase1-swimming-pathfinding-conversion.md
-// for why these 4 specifically (not the 2 DifficultyNormal functions above,
-// which stay on the old pattern - a different difficulty needs a different
-// suite).
+// EffectsFlatSuite). Only these 4 converted, not the 2 DifficultyNormal
+// functions above, which stay on the old pattern - a different difficulty
+// needs a different suite.
 type SwimmingPeacefulSuite struct {
 	VersionWorldSuite
 }
@@ -215,7 +213,7 @@ func TestSwimmingPeacefulSuite(t *testing.T) {
 // TestPathfindingAcrossWater verifies that the pathfinder can find and
 // execute a path that crosses a water channel. The channel has shallow edge
 // shelves (solid floor for entry/exit) and a deep middle section that forces
-// the agent to use Swim movement steps. Equivalent to the pre-Phase-1
+// the agent to use Swim movement steps. Equivalent to the original
 // TestSwimming_PathfindingAcrossWater.
 //
 // Layout (side view, X going right):
@@ -327,7 +325,7 @@ func (s *SwimmingPeacefulSuite) TestPathfindingAcrossWater() {
 // across to a goal on the far side. The agent must descend from the
 // platform into the water (testing the Descend move into water) and then
 // navigate through the water to reach the goal. Equivalent to the
-// pre-Phase-1 TestSwimming_PathfindingDropIntoWater.
+// original TestSwimming_PathfindingDropIntoWater.
 //
 // Layout (side view, X going right):
 //
@@ -450,7 +448,7 @@ func (s *SwimmingPeacefulSuite) TestPathfindingDropIntoWater() {
 // TestPathfindingSwimUp verifies that the agent can pathfind upward through
 // a deep vertical water column to reach a goal above. The agent must use
 // SwimUp movements to ascend through multiple water blocks without any
-// shelves. Equivalent to the pre-Phase-1 TestSwimming_PathfindingSwimUp.
+// shelves. Equivalent to the original TestSwimming_PathfindingSwimUp.
 func (s *SwimmingPeacefulSuite) TestPathfindingSwimUp() {
 	t := s.T()
 
@@ -535,7 +533,7 @@ func (s *SwimmingPeacefulSuite) TestPathfindingSwimUp() {
 // TestPathfindingSwimDown verifies that the agent can pathfind downward
 // through a deep vertical water column to reach a goal at depth. The agent
 // must enter water from solid ground and use SwimDown movements to descend
-// through multiple levels. Equivalent to the pre-Phase-1
+// through multiple levels. Equivalent to the original
 // TestSwimming_PathfindingSwimDown.
 func (s *SwimmingPeacefulSuite) TestPathfindingSwimDown() {
 	t := s.T()

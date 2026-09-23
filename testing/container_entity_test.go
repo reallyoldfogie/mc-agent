@@ -168,15 +168,13 @@ func TestVersionGatingSurvivesSchemeChange(t *testing.T) {
 	})
 }
 
-// ContainerEntityFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerEntityFlatSuite is a
 // version-parameterized suite for the entity-container inventory-cache tests below (horse, chest
 // boat, chest minecart, camel/camel husk/skeleton horse/zombie horse, donkey/mule, llama): one
 // server per version, shared by every method, instead of the previous per-test-function
 // setupStandaloneTestForEntityWithReplay server-per-test pattern. The heaviest file in the
 // container-bound category unlocked by the window-ID re-measurement (see
-// docs/plans/integration-test-shared-server/31-window-id-limit-remeasurement.md,
-// 32-phase1-container-standalone-conversion.md, 33-phase1-container-button-conversion.md, and
-// 34-phase1-container-entity-conversion.md for this conversion's own live validation): 10 live
+// container_window_id_probe_test.go's TestWindowIDLimitProbe): 10 live
 // methods opening entity containers (not just block containers) on one shared connection per
 // version. `entity_inventory_helper_test.go`'s helpers (`waitForEntityTypeID`,
 // `waitForNearestEntityByType`, `seedEntityContainerSlot`) were generalized away from
@@ -197,7 +195,7 @@ func TestContainerEntityFlatSuite(t *testing.T) {
 
 // TestHorseInventoryCache verifies that a horse's saddle/armour inventory
 // snapshot is cached after its container is opened and closed. Equivalent
-// to the pre-Phase-1 TestHorseInventoryCache.
+// to the original TestHorseInventoryCache.
 func (s *ContainerEntityFlatSuite) TestHorseInventoryCache() {
 	t := s.T()
 
@@ -263,7 +261,7 @@ func (s *ContainerEntityFlatSuite) TestHorseInventoryCache() {
 
 // TestChestBoatInventoryCache verifies that a chest boat's storage snapshot
 // is cached and survives after its container is opened and closed.
-// Equivalent to the pre-Phase-1 TestChestBoatInventoryCache.
+// Equivalent to the original TestChestBoatInventoryCache.
 func (s *ContainerEntityFlatSuite) TestChestBoatInventoryCache() {
 	t := s.T()
 
@@ -337,7 +335,7 @@ func (s *ContainerEntityFlatSuite) TestChestBoatInventoryCache() {
 
 // TestChestMinecartInventoryCache verifies that a chest minecart's storage
 // snapshot is cached and survives after its container is opened and closed.
-// Equivalent to the pre-Phase-1 TestChestMinecartInventoryCache.
+// Equivalent to the original TestChestMinecartInventoryCache.
 func (s *ContainerEntityFlatSuite) TestChestMinecartInventoryCache() {
 	t := s.T()
 
@@ -479,7 +477,7 @@ func (s *ContainerEntityFlatSuite) saddledMountInventoryCache(agentName, entityT
 // TestCamelInventoryCache verifies that a camel's saddle inventory snapshot
 // is cached after its container is opened and closed. Camels take a saddle
 // but, unlike donkeys/mules/llamas, can never carry a chest. Equivalent to
-// the pre-Phase-1 TestCamelInventoryCache.
+// the original TestCamelInventoryCache.
 func (s *ContainerEntityFlatSuite) TestCamelInventoryCache() {
 	s.saddledMountInventoryCache("CamelCacheBot", "camel", "entity_camel", 0, 0)
 }
@@ -487,21 +485,21 @@ func (s *ContainerEntityFlatSuite) TestCamelInventoryCache() {
 // TestCamelHuskInventoryCache verifies the same contract as
 // TestCamelInventoryCache for camel husks, which were added in Minecraft
 // 1.21.11 and are skipped on earlier versions. Equivalent to the
-// pre-Phase-1 TestCamelHuskInventoryCache.
+// original TestCamelHuskInventoryCache.
 func (s *ContainerEntityFlatSuite) TestCamelHuskInventoryCache() {
 	s.saddledMountInventoryCache("CamelHuskCacheBot", "camel_husk", "entity_camel_husk", 21, 11)
 }
 
 // TestSkeletonHorseInventoryCache verifies that a skeleton horse's saddle
 // inventory snapshot is cached after its container is opened and closed.
-// Equivalent to the pre-Phase-1 TestSkeletonHorseInventoryCache.
+// Equivalent to the original TestSkeletonHorseInventoryCache.
 func (s *ContainerEntityFlatSuite) TestSkeletonHorseInventoryCache() {
 	s.saddledMountInventoryCache("SkeleHorseCacheBot", "skeleton_horse", "entity_skeleton_horse", 0, 0)
 }
 
 // TestZombieHorseInventoryCache verifies that a zombie horse's saddle
 // inventory snapshot is cached after its container is opened and closed.
-// Equivalent to the pre-Phase-1 TestZombieHorseInventoryCache.
+// Equivalent to the original TestZombieHorseInventoryCache.
 func (s *ContainerEntityFlatSuite) TestZombieHorseInventoryCache() {
 	s.saddledMountInventoryCache("ZombieHorseCacheBot", "zombie_horse", "entity_zombie_horse", 0, 0)
 }
@@ -584,14 +582,14 @@ func (s *ContainerEntityFlatSuite) chestedMountInventoryCache(agentName, entityT
 // TestDonkeyInventoryCache verifies that a donkey's saddle+chest inventory
 // snapshot is cached after its container is opened and closed. This is the
 // capability TestHorseInventoryCache structurally can't cover, since plain
-// horses can never carry a chest. Equivalent to the pre-Phase-1
+// horses can never carry a chest. Equivalent to the original
 // TestDonkeyInventoryCache.
 func (s *ContainerEntityFlatSuite) TestDonkeyInventoryCache() {
 	s.chestedMountInventoryCache("DonkeyCacheBot", "donkey", "entity_donkey")
 }
 
 // TestMuleInventoryCache verifies the same contract as
-// TestDonkeyInventoryCache for mules. Equivalent to the pre-Phase-1
+// TestDonkeyInventoryCache for mules. Equivalent to the original
 // TestMuleInventoryCache.
 func (s *ContainerEntityFlatSuite) TestMuleInventoryCache() {
 	s.chestedMountInventoryCache("MuleCacheBot", "mule", "entity_mule")
@@ -605,7 +603,7 @@ func (s *ContainerEntityFlatSuite) TestMuleInventoryCache() {
 // slot plus a strength-based chest (3-15 slots, here maxed at Strength:5).
 // Unlike TestDonkeyInventoryCache/TestMuleInventoryCache this doesn't share
 // chestedMountInventoryCache, since llamas have no saddle slot and a fixed
-// (non-version-split) spawn NBT. Equivalent to the pre-Phase-1
+// (non-version-split) spawn NBT. Equivalent to the original
 // TestLlamaInventoryCache.
 func (s *ContainerEntityFlatSuite) TestLlamaInventoryCache() {
 	t := s.T()

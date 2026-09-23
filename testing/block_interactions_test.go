@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// BlockInteractionsFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// BlockInteractionsFlatSuite is a
 // version-parameterized suite for Phase-5 block-interaction tests: one
 // server per version, shared by every test method below, instead of the
 // previous per-test-function StartServer/StopServer pattern (each via
@@ -38,7 +38,7 @@ func TestBlockInteractionsFlatSuite(t *testing.T) {
 // sinks the agent to the real floor beneath it (powder snow has no static
 // collision box) and slows horizontal movement to a crawl; with leather
 // boots equipped, the agent instead stands on top of the patch and crosses
-// it at normal speed. Equivalent to the pre-Phase-1
+// it at normal speed. Equivalent to the original
 // TestPowderSnowSinksSlowsAndLeatherBootsFixBoth. See
 // physics/state_active_effects_test.go's
 // TestState_PowderSnowSlowsMovementWithoutLeatherBoots/
@@ -140,7 +140,7 @@ func (s *BlockInteractionsFlatSuite) TestPowderSnowLeatherBoots() {
 // honey slows horizontal movement (velocityMultiplier) and reduces jump
 // height (jumpVelocityMultiplier) relative to normal ground, both via the
 // real chat/manual-movement pipeline against a live server. Equivalent to
-// the pre-Phase-1 TestHoneyBlockSlowsMovementAndReducesJumpHeight. See
+// the original TestHoneyBlockSlowsMovementAndReducesJumpHeight. See
 // physics/state_active_effects_test.go's
 // TestState_HoneyBlockSlowsGroundMovement/TestState_HoneyBlockReducesJumpHeight
 // for the mock-world-level coverage this builds on.
@@ -236,7 +236,7 @@ func (s *BlockInteractionsFlatSuite) TestHoneyBlockMovement() {
 // implemented item: falling directly alongside (not on top of) a tall
 // honey column caps descent to a slow glide and continually resets fall
 // distance, mirroring HoneyBlock.isSliding/updateSlidingVelocity.
-// Equivalent to the pre-Phase-1 TestHoneyBlockSideSlideAvoidsFallDamage.
+// Equivalent to the original TestHoneyBlockSideSlideAvoidsFallDamage.
 // See physics/state.go's isSlidingOnHoney and
 // physics/state_active_effects_test.go's
 // TestState_HoneyBlockSideSlideCapsDescent for the mock-world-level
@@ -316,7 +316,7 @@ func (s *BlockInteractionsFlatSuite) TestHoneyBlockSideSlide() {
 // grabs and climbs it with no explicit climb-direction input (the
 // jump-to-climb mechanic - see physics/constants.go's JumpToClimbBoost),
 // and sneaking on scaffolding does not freeze descent the way it does on a
-// ladder. Equivalent to the pre-Phase-1
+// ladder. Equivalent to the original
 // TestScaffoldingJumpToClimbAndSneakDoesNotFreezeDescent (already covered
 // at the mock-world level by physics/state_test.go's
 // TestState_ScaffoldingJumpToClimb/TestState_ScaffoldingSneakingDoesNotPreventDescend).
@@ -385,7 +385,7 @@ func (s *BlockInteractionsFlatSuite) TestScaffoldingClimbAndSneak() {
 // ground-friction item end-to-end: ice (a genuine
 // AbstractBlock.Settings.slipperiness(0.98F) value) accelerates slower than
 // normal ground from a standing start but carries much more momentum once
-// moving. Equivalent to the pre-Phase-1
+// moving. Equivalent to the original
 // TestIceCoastsFurtherThanStoneAfterThrottleRelease, matching
 // physics/state_active_effects_test.go's
 // TestState_IceAcceleratesSlowerButCoastsFurther.

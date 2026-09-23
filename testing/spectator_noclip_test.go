@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// SpectatorNoclipFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// SpectatorNoclipFlatSuite is a
 // version-parameterized suite for the spectator-noclip test: one server
 // per version, shared by every test method below (currently one), instead
 // of the previous per-test-function StartServer/StopServer pattern.
@@ -44,7 +44,7 @@ func TestSpectatorNoclipFlatSuite(t *testing.T) {
 // creative's allowFlying-only default - see testing/flying_ability_test.go's
 // creative case for the contrast), and a spectator can fly straight
 // through a solid wall a normal player would collide with. Equivalent to
-// the pre-Phase-1 TestSpectatorAutoFliesAndClipsThroughWalls.
+// the original TestSpectatorAutoFliesAndClipsThroughWalls.
 func (s *SpectatorNoclipFlatSuite) TestAutoFliesAndClipsThroughWalls() {
 	t := s.T()
 

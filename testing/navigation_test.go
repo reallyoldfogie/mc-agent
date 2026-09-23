@@ -23,7 +23,7 @@ func init() {
 	_ = os.MkdirAll(filepath.Join(cacheDir, "replays"), 0755)
 }
 
-// NavigationRandomSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// NavigationRandomSuite is a
 // version-parameterized suite for random-terrain navigation tests: one
 // server per version, shared by every test method below, instead of the
 // previous per-test-function StartServer/StopServer pattern. World gen is
@@ -46,7 +46,7 @@ func TestNavigationRandomSuite(t *testing.T) {
 }
 
 // TestSingleAgent tests that a single agent can navigate to a specified
-// destination. Equivalent to the pre-Phase-1 TestNavigationSingleAgent.
+// destination. Equivalent to the original TestNavigationSingleAgent.
 func (s *NavigationRandomSuite) TestSingleAgent() {
 	t := s.T()
 	logger := NewTestLogger(t)
@@ -116,7 +116,7 @@ func (s *NavigationRandomSuite) TestSingleAgent() {
 }
 
 // TestMultipleDestinations tests navigation to multiple waypoints.
-// Equivalent to the pre-Phase-1 TestNavigationMultipleDestinations.
+// Equivalent to the original TestNavigationMultipleDestinations.
 func (s *NavigationRandomSuite) TestMultipleDestinations() {
 	t := s.T()
 	logger := NewTestLogger(t)
@@ -170,7 +170,7 @@ func (s *NavigationRandomSuite) TestMultipleDestinations() {
 // a destination using pathfinding, with lenient "made progress" fallback
 // assertions suited to random terrain that may turn out to be impassable
 // (unlike TestSingleAgent's exact-arrival check). Equivalent to the
-// pre-Phase-1 TestPathfindingSingleAgent
+// original TestPathfindingSingleAgent
 // (navigation_pathfinding_test.go) - folded in here rather than given its
 // own suite since its config (DefaultServerConfig(): WorldGenRandom,
 // Peaceful, survival) matches this suite exactly.
@@ -252,7 +252,7 @@ func (s *NavigationRandomSuite) TestSingleAgentWithPathfinding() {
 // TestMultipleDestinationsWithPathfinding tests navigation to multiple
 // waypoints using pathfinding, requiring only that the agent reach at
 // least half of them (unlike TestMultipleDestinations, which requires all
-// four). Equivalent to the pre-Phase-1 TestPathfindingMultipleDestinations
+// four). Equivalent to the original TestPathfindingMultipleDestinations
 // (navigation_pathfinding_test.go) - folded in here for the same
 // exact-config-match reason as TestSingleAgentWithPathfinding above.
 // Agent renamed from the original's "WaypointBot" to "PathfindingWaypointBot"
@@ -322,7 +322,7 @@ func (s *NavigationRandomSuite) TestMultipleDestinationsWithPathfinding() {
 }
 
 // TestObstacles tests navigation with obstacles.
-// Equivalent to the pre-Phase-1 TestNavigationObstacles (still a stub).
+// Equivalent to the original TestNavigationObstacles (still a stub).
 func (s *NavigationRandomSuite) TestObstacles() {
 	s.T().Skip("Obstacle testing requires world setup - implement when needed")
 

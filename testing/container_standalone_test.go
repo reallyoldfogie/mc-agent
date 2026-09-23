@@ -345,18 +345,18 @@ func getContainerBlockType(testName string) string {
 // 	return movement.SendRotation(env.Agent.BotClient(), env.Agent.Config.PacketMgr, yaw, pitch, true)
 // }
 
-// ContainerStandaloneFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerStandaloneFlatSuite is a
 // version-parameterized suite for the 4 basic container-type checks below
 // (chest, barrel, furnace, shulker box): one server per version, shared by
 // every method, instead of the previous per-test-function
 // setupStandaloneTest server-per-test pattern. This is the proof-of-concept
-// conversion for the container-bound file category - see
-// docs/plans/integration-test-shared-server/31-window-id-limit-remeasurement.md
-// for why that category was previously left entirely unconverted (a
-// ~6-7-container-per-connection limit, empirically re-measured and found
-// stale) and 32-phase1-container-standalone-conversion.md for this specific
-// conversion's own live validation. Each method places its own container
-// type at its own working-area origin (SpawnWorkingAreaAgent), so all 4
+// conversion for the container-bound file category, previously left
+// entirely unconverted out of concern for a ~6-7-container-per-connection
+// window-ID limit - empirically re-measured and found stale (see
+// container_window_id_probe_test.go's TestWindowIDLimitProbe, which opens
+// and closes the same chest 25 times cleanly on one connection). Each
+// method here places its own container type at its own working-area
+// origin (SpawnWorkingAreaAgent), so all 4
 // container types + open/close cycles run on the SAME connection per
 // version - directly exercising the window-ID re-measurement's finding,
 // not just relying on it.
@@ -374,7 +374,7 @@ func TestContainerStandaloneFlatSuite(t *testing.T) {
 }
 
 // TestChest verifies a chest opens as a 3-row Chest container. Equivalent
-// to the pre-Phase-1 TestChest_Standalone.
+// to the original TestChest_Standalone.
 func (s *ContainerStandaloneFlatSuite) TestChest() {
 	t := s.T()
 
@@ -409,7 +409,7 @@ func (s *ContainerStandaloneFlatSuite) TestChest() {
 
 // TestBarrel verifies a barrel opens as a Chest-type container with 63
 // total slots (barrels reuse the chest container type). Equivalent to the
-// pre-Phase-1 TestBarrel_Standalone.
+// original TestBarrel_Standalone.
 func (s *ContainerStandaloneFlatSuite) TestBarrel() {
 	t := s.T()
 
@@ -443,7 +443,7 @@ func (s *ContainerStandaloneFlatSuite) TestBarrel() {
 }
 
 // TestFurnace verifies a furnace opens as a GenericContainer of type 14
-// with 3 container slots. Equivalent to the pre-Phase-1 TestFurnace_Standalone.
+// with 3 container slots. Equivalent to the original TestFurnace_Standalone.
 func (s *ContainerStandaloneFlatSuite) TestFurnace() {
 	t := s.T()
 
@@ -479,7 +479,7 @@ func (s *ContainerStandaloneFlatSuite) TestFurnace() {
 
 // TestShulkerBox verifies a shulker box opens as a GenericContainer of
 // type 20 with 27 container slots (63 total with the player's own
-// inventory section). Equivalent to the pre-Phase-1 TestShulkerBox_Standalone.
+// inventory section). Equivalent to the original TestShulkerBox_Standalone.
 func (s *ContainerStandaloneFlatSuite) TestShulkerBox() {
 	t := s.T()
 

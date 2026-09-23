@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ArmSwingFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ArmSwingFlatSuite is a
 // version-parameterized suite for arm-swing action tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern (each via
@@ -30,7 +30,7 @@ func TestArmSwingFlatSuite(t *testing.T) {
 }
 
 // TestMainHand tests arm swing animation in main hand. Equivalent to the
-// pre-Phase-1 TestArmSwing_MainHand.
+// original TestArmSwing_MainHand.
 func (s *ArmSwingFlatSuite) TestMainHand() {
 	t := s.T()
 
@@ -55,7 +55,7 @@ func (s *ArmSwingFlatSuite) TestMainHand() {
 }
 
 // TestOffhand tests arm swing animation in offhand. Equivalent to the
-// pre-Phase-1 TestArmSwing_Offhand.
+// original TestArmSwing_Offhand.
 func (s *ArmSwingFlatSuite) TestOffhand() {
 	t := s.T()
 
@@ -78,7 +78,7 @@ func (s *ArmSwingFlatSuite) TestOffhand() {
 	t.Log("✓ Offhand arm swing test passed")
 }
 
-// TestRapid tests rapid arm swinging. Equivalent to the pre-Phase-1
+// TestRapid tests rapid arm swinging. Equivalent to the original
 // TestArmSwing_Rapid.
 func (s *ArmSwingFlatSuite) TestRapid() {
 	t := s.T()

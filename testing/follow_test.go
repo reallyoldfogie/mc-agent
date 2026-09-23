@@ -23,7 +23,7 @@ func requirePhysicsExecutor(t *testing.T, agent *ManagedAgent) {
 	require.Equal(t, movement.PhysicsExecutor, provider.MovementExecutorType(), "agent should use physics movement executor")
 }
 
-// FollowFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// FollowFlatSuite is a
 // version-parameterized suite for follow-behavior tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern. WorldGen = WorldGenFlat,
@@ -37,11 +37,11 @@ func requirePhysicsExecutor(t *testing.T, agent *ManagedAgent) {
 // NavigationRandomSuite tests are. Only the leader claims this test's one
 // working area (SpawnWorkingAreaAgent); every follower is placed near the
 // leader's settled Origin via SpawnAgentNear instead of claiming its own
-// separate area - see docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
-// for why the original (single-call-per-agent) SpawnWorkingAreaAgent
-// semantics would have been wrong for this file specifically, and why that
-// gap was fixed in testing/version_world_suite.go rather than worked around
-// here.
+// separate area - the original (single-call-per-agent) SpawnWorkingAreaAgent
+// semantics would have been wrong for this file specifically (each follower
+// landing 256+ blocks from the leader it's supposed to follow), so that gap
+// was fixed in testing/version_world_suite.go (adding SpawnAgentNear)
+// rather than worked around here.
 type FollowFlatSuite struct {
 	VersionWorldSuite
 }
@@ -55,7 +55,7 @@ func TestFollowFlatSuite(t *testing.T) {
 }
 
 // TestSingleAgent tests that a single follower agent can follow a leader to
-// a destination. Equivalent to the pre-Phase-1 TestFollowSingleAgent.
+// a destination. Equivalent to the original TestFollowSingleAgent.
 func (s *FollowFlatSuite) TestSingleAgent() {
 	t := s.T()
 	logger := NewTestLogger(t)
@@ -156,7 +156,7 @@ func (s *FollowFlatSuite) TestSingleAgent() {
 }
 
 // TestMultipleAgents tests multiple agents following a single leader.
-// Equivalent to the pre-Phase-1 TestFollowMultipleAgents. The pre-conversion
+// Equivalent to the original TestFollowMultipleAgents. The pre-conversion
 // original didn't explicitly position its 3 followers relative to the
 // leader - every agent joining a fresh, single-purpose server naturally
 // spawns at (nearly) the same world spawn point, so "near the leader" was
@@ -258,7 +258,7 @@ func (s *FollowFlatSuite) TestMultipleAgents() {
 }
 
 // TestDynamicTarget tests following a leader that changes direction.
-// Equivalent to the pre-Phase-1 TestFollowDynamicTarget. Same "explicit
+// Equivalent to the original TestFollowDynamicTarget. Same "explicit
 // SpawnAgentNear placement, original relied on shared spawn point" note as
 // TestMultipleAgents.
 func (s *FollowFlatSuite) TestDynamicTarget() {
@@ -323,7 +323,7 @@ func (s *FollowFlatSuite) TestDynamicTarget() {
 }
 
 // TestStopCommand tests that a follower can stop following. Equivalent to
-// the pre-Phase-1 TestFollowStopCommand.
+// the original TestFollowStopCommand.
 func (s *FollowFlatSuite) TestStopCommand() {
 	t := s.T()
 	logger := NewTestLogger(t)

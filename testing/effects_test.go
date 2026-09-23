@@ -13,16 +13,16 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// EffectsFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// EffectsFlatSuite is a
 // version-parameterized suite for status-effect tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern (each via
 // setupStandaloneTestWithModeAndBlockPlacement). WorldGen = WorldGenFlat and
 // Difficulty = DifficultyEasy, matching every pre-conversion TestXxx
-// function's own choice - see
-// docs/plans/integration-test-shared-server/08-phase1-effects-conversion.md
-// for why Easy (not Peaceful, VersionWorldSuite's own default) is preserved
-// even though none of these tests actually depend on it.
+// function's own choice - preserved even though none of these tests
+// actually depend on Easy specifically (over Peaceful, VersionWorldSuite's
+// own default), to avoid silently diverging from a previously-passing
+// test's own conditions.
 type EffectsFlatSuite struct {
 	VersionWorldSuite
 }
@@ -49,7 +49,7 @@ const openAirY = 76.0
 // (Phase 4a) causes the agent's own predicted physics position to rise, not
 // fall - end-to-end confirmation that ClientboundEntityEffect is parsed,
 // tracked, and actually wired into physics.State.Tick() against a real
-// server, not just unit-tested in isolation. Equivalent to the pre-Phase-1
+// server, not just unit-tested in isolation. Equivalent to the original
 // TestLevitationLiftsAgent. See physics/effects_test.go and
 // physics/state_active_effects_test.go for the formula-level coverage this
 // builds on.
@@ -93,7 +93,7 @@ func (s *EffectsFlatSuite) TestLevitation() {
 // TestSlowFalling verifies that applying the Slow Falling status effect
 // causes the agent's own predicted physics position to descend far slower
 // than ordinary gravity would, end-to-end against a real server. Equivalent
-// to the pre-Phase-1 TestSlowFallingSlowsAgentDescent - see that function's
+// to the original TestSlowFallingSlowsAgentDescent - see that function's
 // own doc comment (git history) for the full steady-state-math rationale
 // behind the bound below, unchanged here.
 func (s *EffectsFlatSuite) TestSlowFalling() {
@@ -130,7 +130,7 @@ func (s *EffectsFlatSuite) TestSlowFalling() {
 
 // TestJumpBoost verifies that applying the Jump Boost status effect (§4.7)
 // causes the agent's own predicted physics position to jump higher than an
-// unboosted baseline jump. Equivalent to the pre-Phase-1
+// unboosted baseline jump. Equivalent to the original
 // TestJumpBoostRaisesJumpHeight.
 func (s *EffectsFlatSuite) TestJumpBoost() {
 	t := s.T()
@@ -183,7 +183,7 @@ func (s *EffectsFlatSuite) TestJumpBoost() {
 // TestSpeedAndSlowness verifies that applying Speed/Slowness (§4.5/§4.6)
 // changes how far the agent's own predicted physics position moves for the
 // same manual throttle input over the same time window. Equivalent to the
-// pre-Phase-1 TestSpeedAndSlownessScaleGroundDistance.
+// original TestSpeedAndSlownessScaleGroundDistance.
 func (s *EffectsFlatSuite) TestSpeedAndSlowness() {
 	t := s.T()
 
@@ -237,7 +237,7 @@ func (s *EffectsFlatSuite) TestSpeedAndSlowness() {
 
 // TestBlindnessPreventsSprinting verifies that applying the Blindness status
 // effect (§4.9) both prevents starting a new sprint and cancels one already
-// in progress. Equivalent to the pre-Phase-1 function of the same name.
+// in progress. Equivalent to the original function of the same name.
 func (s *EffectsFlatSuite) TestBlindnessPreventsSprinting() {
 	t := s.T()
 
@@ -272,7 +272,7 @@ func (s *EffectsFlatSuite) TestBlindnessPreventsSprinting() {
 // TestDolphinsGrace verifies that applying the Dolphin's Grace status effect
 // increases how far the agent's own predicted physics position moves for
 // the same manual throttle input while submerged in water. Equivalent to
-// the pre-Phase-1 TestDolphinsGraceIncreasesSwimSpeed.
+// the original TestDolphinsGraceIncreasesSwimSpeed.
 func (s *EffectsFlatSuite) TestDolphinsGrace() {
 	t := s.T()
 
@@ -340,7 +340,7 @@ func (s *EffectsFlatSuite) TestDolphinsGrace() {
 // end-to-end against a real server: that walking into cobwebs slows
 // horizontal movement well below normal, and that Weaving halves that
 // slowdown's severity rather than restoring full speed. Equivalent to the
-// pre-Phase-1 function of the same name.
+// original function of the same name.
 func (s *EffectsFlatSuite) TestWeavingReducesCobwebSlowdown() {
 	t := s.T()
 

@@ -91,8 +91,7 @@ func waitForItemEntityNear(ctx context.Context, rcon testenv.RCONHelper, pos mod
 // server - one stone block placed per method (via PlaceBlockAndWait, not the
 // direct Origin-substitution pattern most other conversions have used, since
 // this test needs a real solid block to mine, not just a spawn point to
-// compute destinations from - see the checklist's own note on why this file
-// was deferred until now).
+// compute destinations from).
 type MineFlatSuite struct {
 	VersionWorldSuite
 }

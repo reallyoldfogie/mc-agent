@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// SneakingFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// SneakingFlatSuite is a
 // version-parameterized suite for sneaking-movement tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern. WorldGen = WorldGenFlat,
@@ -40,8 +40,8 @@ import (
 // working area. Confirmed directly: TestSneakingFlatSuite/TestMovementAllowed
 // entered the world at pos=(6.50, -6.00, -1.50) - already inside
 // TestEdgePrevention's pit - on its very first join packet, before any of
-// this suite's own code ran. See
-// docs/plans/integration-test-shared-server/24-phase1-sneaking-conversion.md.
+// this suite's own code ran. This is the concrete finding that led to
+// NextWorkingAreaOffset never handing out (0, 0) - see its own doc comment.
 type SneakingFlatSuite struct {
 	VersionWorldSuite
 }
@@ -61,7 +61,7 @@ func TestSneakingFlatSuite(t *testing.T) {
 }
 
 // TestEdgePrevention tests that the bot cannot walk off block edges while
-// sneaking. Equivalent to the pre-Phase-1 TestSneaking_EdgePrevention.
+// sneaking. Equivalent to the original TestSneaking_EdgePrevention.
 //
 // Spawned NoCam (preserved from the original, which disabled its Cam
 // companion for this method but not TestMovementAllowed): the platform here
@@ -124,7 +124,7 @@ func (s *SneakingFlatSuite) TestEdgePrevention() {
 }
 
 // TestMovementAllowed tests that the bot can move normally when not near
-// edges. Equivalent to the pre-Phase-1 TestSneaking_MovementAllowed.
+// edges. Equivalent to the original TestSneaking_MovementAllowed.
 func (s *SneakingFlatSuite) TestMovementAllowed() {
 	t := s.T()
 

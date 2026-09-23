@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// VerticalNavigationFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// VerticalNavigationFlatSuite is a
 // version-parameterized suite for the vertical-navigation smoke-test
 // matrix: one server per version, shared by every sub-case below, instead
 // of the previous pattern where every single sub-case (9 by default, 27
@@ -35,7 +35,7 @@ func TestVerticalNavigationFlatSuite(t *testing.T) {
 // TestSmoke is the smoke test suite for vertical navigation. Tests one
 // orientation for each structure type (9 sub-cases). Set
 // VERTICAL_NAV_FULL=1 to run full coverage (all orientations, 27
-// sub-cases). Equivalent to the pre-Phase-1 TestVerticalNavigationSmoke.
+// sub-cases). Equivalent to the original TestVerticalNavigationSmoke.
 func (s *VerticalNavigationFlatSuite) TestSmoke() {
 	t := s.T()
 

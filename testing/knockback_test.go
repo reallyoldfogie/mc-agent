@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// KnockbackFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// KnockbackFlatSuite is a
 // version-parameterized suite for knockback tests: one server per version,
 // shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern (each via
@@ -57,7 +57,7 @@ func buildKnockbackPlatform(s *KnockbackFlatSuite, origin models.V3, roofed bool
 
 // TestAttackFromEntity verifies that when the agent takes damage from a
 // nearby entity, it is knocked back in the direction away from the
-// attacker. Equivalent to the pre-Phase-1 TestKnockback_AttackFromEntity.
+// attacker. Equivalent to the original TestKnockback_AttackFromEntity.
 func (s *KnockbackFlatSuite) TestAttackFromEntity() {
 	t := s.T()
 
@@ -123,7 +123,7 @@ func (s *KnockbackFlatSuite) TestAttackFromEntity() {
 
 // TestAttackFromSourcePosition verifies knockback when the damage source
 // position is provided explicitly (no tracked entity), such as when the
-// attacker entity is out of tracking range. Equivalent to the pre-Phase-1
+// attacker entity is out of tracking range. Equivalent to the original
 // TestKnockback_AttackFromSourcePosition.
 func (s *KnockbackFlatSuite) TestAttackFromSourcePosition() {
 	t := s.T()
@@ -170,7 +170,7 @@ func (s *KnockbackFlatSuite) TestAttackFromSourcePosition() {
 // §2.2/§4.12 end-to-end: an entity with Wind Charged dying nearby triggers a
 // knockback-only explosion (WindChargedStatusEffect.onEntityRemoval), and
 // the agent's own predicted position is pushed away from it. Equivalent to
-// the pre-Phase-1 function of the same name.
+// the original function of the same name.
 func (s *KnockbackFlatSuite) TestWindChargedExplosionKnocksBackNearbyPlayer() {
 	t := s.T()
 

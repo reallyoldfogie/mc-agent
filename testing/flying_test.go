@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// FlyingCreativeSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// FlyingCreativeSuite is a
 // version-parameterized suite consolidating flying_ability_test.go's
 // creative-mode scenario, flying_command_test.go, and
 // flying_physics_test.go: one server per version, shared by every test
@@ -22,10 +22,9 @@ import (
 // something togglable in survival).
 //
 // flying_ability_test.go's OTHER scenario ("survival mode denies flying")
-// needs GameModeSurvival instead and stays on the pre-conversion pattern in
+// needs GameModeSurvival instead and stays on the per-test-server pattern in
 // that file - a suite's GameMode is shared by every method in it, so a
-// different game mode needs a different suite. See
-// docs/plans/integration-test-shared-server/15-phase1-flying-conversion.md.
+// different game mode needs a different suite.
 type FlyingCreativeSuite struct {
 	VersionWorldSuite
 }
@@ -45,7 +44,7 @@ func TestFlyingCreativeSuite(t *testing.T) {
 // Flight): the clientbound Abilities packet and the player's own game mode
 // (from the Login packet) are correctly parsed and tracked, and SetFlying
 // respects the server-granted AllowFlying permission. Equivalent to the
-// pre-Phase-1 TestPlayerAbilities_TrackedFromServer's "creative mode grants
+// original TestPlayerAbilities_TrackedFromServer's "creative mode grants
 // AllowFlying" subtest.
 func (s *FlyingCreativeSuite) TestCreativeModeGrantsAllowFlying() {
 	t := s.T()
@@ -81,7 +80,7 @@ func (s *FlyingCreativeSuite) TestCreativeModeGrantsAllowFlying() {
 // RCON, not called directly, so this proves the commands are actually
 // wired into the real dispatch pipeline, not just that agent.SetFlying
 // itself works (already covered by TestCreativeModeGrantsAllowFlying
-// above). Equivalent to the pre-Phase-1 TestChatCommand_FlyAndLand.
+// above). Equivalent to the original TestChatCommand_FlyAndLand.
 func (s *FlyingCreativeSuite) TestFlyAndLand() {
 	t := s.T()
 
@@ -111,7 +110,7 @@ func (s *FlyingCreativeSuite) TestFlyAndLand() {
 // creative-mode flying actually produces sustained ascend/descend physics
 // through the real movement executor and a live server, not just
 // unit-level formula checks (physics/state_flying_test.go already covers
-// those). Equivalent to the pre-Phase-1 TestFlyingPhysicsClimbsAndDescends,
+// those). Equivalent to the original TestFlyingPhysicsClimbsAndDescends,
 // which deliberately ran only against "1.21.1" (not the full
 // models.StandardVersionTests set) - preserved here as a per-version skip
 // rather than silently broadening that scope: this suite's server still
@@ -120,7 +119,7 @@ func (s *FlyingCreativeSuite) TestFlyAndLand() {
 func (s *FlyingCreativeSuite) TestClimbsAndDescends() {
 	t := s.T()
 	if s.Version != "1.21.1" {
-		t.Skip("pre-Phase-1 TestFlyingPhysicsClimbsAndDescends only ever ran against 1.21.1 - preserved as-is, not broadened to every version")
+		t.Skip("original TestFlyingPhysicsClimbsAndDescends only ever ran against 1.21.1 - preserved as-is, not broadened to every version")
 	}
 
 	leader, err := s.SpawnWorkingAreaAgent("FlyPhysicsBot", "flying_physics_climb")

@@ -12,7 +12,7 @@ import (
 // - see ../mc-rsi-trainer/pkg/parallelenv/parallelenv.go - so this package's
 // working areas are spaced the same distance apart that repo already
 // live-validated as safe against a server's own reduced
-// VIEW_DISTANCE/SIMULATION_DISTANCE (see docs/plans/integration-test-shared-server/00-plan.md).
+// VIEW_DISTANCE/SIMULATION_DISTANCE.
 const defaultWorkingAreaSeparationBlocks = 256
 
 var (
@@ -21,18 +21,16 @@ var (
 )
 
 // NextWorkingAreaOffset hands out the next non-overlapping (x, z) offset for
-// a test to claim as its own working area on a shared server - Phase 0 of
-// docs/plans/integration-test-shared-server/00-plan.md. Offsets are
+// a test to claim as its own working area on a shared server. Offsets are
 // monotonically increasing and spaced defaultWorkingAreaSeparationBlocks
 // apart along X, so concurrent or sequential test methods sharing one server
 // never spatially collide, and random-terrain tests always land on chunks no
 // previous test has touched (fresh terrain by construction, not by cleanup -
-// see the plan's Phase 0 rationale for why this eliminates most of the
-// per-test reset logic earlier proposals assumed was necessary). The counter
-// is package-level and mutex-guarded, not per-suite: it needs to stay
-// globally monotonic within one `go test` process so two suites running
-// concurrently (Phase 2) still never collide with each other, not just
-// within their own suite.
+// this eliminates most of the per-test reset logic a per-test-server design
+// otherwise needs). The counter is package-level and mutex-guarded, not
+// per-suite: it needs to stay globally monotonic within one `go test`
+// process so two suites running concurrently under `-parallel` still never
+// collide with each other, not just within their own suite.
 //
 // The first offset handed out is defaultWorkingAreaSeparationBlocks, never
 // (0, 0) - deliberately: (0, 0) is the world's own fixed spawn point, which
@@ -44,11 +42,11 @@ var (
 // for the rest of that server's life and affects the *initial, pre-teleport*
 // join position of every agent spawned afterward, including ones with their
 // own entirely separate working area. Live-confirmed real, not
-// hypothetical: docs/plans/integration-test-shared-server/24-phase1-sneaking-conversion.md's
-// TestEdgePrevention dug a pit through the ground at (0, 0); the next
-// method's agent free-fell into it on its very first join packet, before a
-// single line of that method's own code had run, corrupting the Y its own
-// unrelated working-area teleport then used as a fallback. Guaranteeing
+// hypothetical: a sneaking-edge-prevention test (TestEdgePrevention) dug a
+// pit through the ground at (0, 0); the next method's agent free-fell into
+// it on its very first join packet, before a single line of that method's
+// own code had run, corrupting the Y its own unrelated working-area
+// teleport then used as a fallback. Guaranteeing
 // every working area sits at least one full separation away from (0, 0)
 // closes this off for every current and future suite, not just the one
 // that happened to find it - see SpawnWorkingAreaAgent, which no longer
@@ -90,8 +88,7 @@ func ApplySharedServerGamerules(ctx context.Context, rcon testenv.RCONHelper) er
 }
 
 // SharedServerConfig returns a ServerConfig for a server that many tests or
-// agents will share (Phase 1/2 of docs/plans/integration-test-shared-server/00-plan.md):
-// explicit reduced VIEW_DISTANCE/SIMULATION_DISTANCE so ambient chunk
+// agents will share: explicit reduced VIEW_DISTANCE/SIMULATION_DISTANCE so ambient chunk
 // simulation doesn't scale with however many working areas are in use.
 // Note: as of this writing StartServer already defaults to these same
 // values (VIEW_DISTANCE=6/SIMULATION_DISTANCE=4) when ExtraEnv doesn't set

@@ -18,25 +18,24 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// InventoryFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// InventoryFlatSuite is a
 // version-parameterized suite for the raw slot-click inventory-move test:
 // one server per version, shared by every test method below, instead of
 // the previous per-test-function StartServer/StopServer pattern. WorldGen =
 // WorldGenFlat, a deliberate deviation from the pre-conversion test's own
 // DefaultServerConfig() (WorldGenRandom) - the test only moves an item
 // between the bot's own inventory slots (window ID 0, never a real
-// container GUI - see 00-plan.md's own note on this file), with no terrain
-// dependency of any kind, so nothing is lost preserving Random and nothing
-// is gained keeping it; Flat removes any chance of the WorldGenRandom
-// working-area risk 19-phase1-projectile-conversion.md found the hard way
-// for a genuinely terrain-sensitive cluster. Difficulty is left at
+// container GUI), with no terrain dependency of any kind, so nothing is
+// lost preserving Random and nothing is gained keeping it; Flat removes
+// any chance of the WorldGenRandom working-area risk found the hard way
+// for a genuinely terrain-sensitive cluster (see VersionWorldSuite's own
+// doc comment on SpawnWorkingAreaAgent). Difficulty is left at
 // VersionWorldSuite's own Peaceful default, matching the original.
 //
 // ExtraEnv carries FORCE_GAMEMODE=true forward from the pre-conversion
 // config - also used by container_suite_test.go (the pre-VersionWorldSuite
-// prior art this whole pattern generalized from) - via the new
-// VersionWorldSuite.ExtraEnv field (see
-// docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md).
+// prior art this whole pattern generalized from) - via the
+// VersionWorldSuite.ExtraEnv field.
 type InventoryFlatSuite struct {
 	VersionWorldSuite
 }
@@ -55,7 +54,7 @@ func TestInventoryFlatSuite(t *testing.T) {
 // inventory) round-trips correctly against a real server: give an item,
 // find its slot, find an empty slot, move it, and verify via RCON that the
 // source slot cleared and the target slot received it. Equivalent to the
-// pre-Phase-1 TestInventoryClickIntegration.
+// original TestInventoryClickIntegration.
 func (s *InventoryFlatSuite) TestInventoryClickIntegration() {
 	t := s.T()
 

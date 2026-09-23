@@ -102,17 +102,17 @@ func useItemFacing(managed *ManagedAgent, hand models.Hand, yaw, pitch float64) 
 	return actionHandler.SendUseItem(managed.BotClient().Conn(), hand, 0, yaw, pitch)
 }
 
-// ItemUsageFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ItemUsageFlatSuite is a
 // version-parameterized suite for the item-usage tests below: one server per version, shared by
 // every method, instead of the previous per-test-function setupStandaloneTest* server-per-test
 // pattern. WorldGen = WorldGenFlat + Difficulty = DifficultyEasy, matching setupStandaloneTest's
 // own default.
 //
 // Only 1 of these 4 functions (TestOpenContainerWhileHoldingItem) actually opens a container -
-// the checklist's "uses ScreenMgr." grep hit that flagged this whole file as window-ID-constrained
+// a "uses ScreenMgr." grep hit had flagged this whole file as window-ID-constrained, but that
 // was true only for that one function. TestCollectWater/TestWaterBucketOnLava/TestMilkCow use
 // UseItemOnBlock/UseItemOnEntity, never OpenContainerWithLOS/ScreenMgr - the same
-// substring/grep-vs-actual-usage gap 29/39 already found and corrected for
+// substring/grep-vs-actual-usage gap separately found and corrected for
 // elytra_unequip_test.go/craft_test.go. Converted together anyway since they were already one
 // file and the one genuinely container-bound function needs no special isolation from the other
 // three (confirmed live below).
@@ -130,7 +130,7 @@ func TestItemUsageFlatSuite(t *testing.T) {
 }
 
 // TestCollectWater tests using an empty bucket on a water source block.
-// Equivalent to the pre-Phase-1 TestItemUsage_CollectWater.
+// Equivalent to the original TestItemUsage_CollectWater.
 func (s *ItemUsageFlatSuite) TestCollectWater() {
 	t := s.T()
 
@@ -138,7 +138,7 @@ func (s *ItemUsageFlatSuite) TestCollectWater() {
 	require.NoError(t, err, "spawn agent")
 
 	// A placeholder block placed purely to get a confirmed-loaded reference
-	// position (same PlaceBlockAndWait chunk-load guarantee the pre-Phase-1
+	// position (same PlaceBlockAndWait chunk-load guarantee the original
 	// setupStandaloneTest("light", ...) call relied on) - immediately
 	// overwritten by the water fill below, so its type doesn't matter.
 	refPos := models.V3{X: math.Floor(leader.Origin.X) + 5, Y: math.Floor(leader.Origin.Y), Z: math.Floor(leader.Origin.Z)}
@@ -202,7 +202,7 @@ func (s *ItemUsageFlatSuite) TestCollectWater() {
 
 // TestWaterBucketOnLava tests using a water bucket on a lava source block
 // (the clutch mechanic: lava source + water = obsidian). Equivalent to the
-// pre-Phase-1 TestItemUsage_WaterBucketOnLava.
+// original TestItemUsage_WaterBucketOnLava.
 func (s *ItemUsageFlatSuite) TestWaterBucketOnLava() {
 	t := s.T()
 
@@ -253,7 +253,7 @@ func (s *ItemUsageFlatSuite) TestWaterBucketOnLava() {
 }
 
 // TestMilkCow tests using an empty bucket on a cow entity to collect milk.
-// Equivalent to the pre-Phase-1 TestItemUsage_MilkCow.
+// Equivalent to the original TestItemUsage_MilkCow.
 func (s *ItemUsageFlatSuite) TestMilkCow() {
 	t := s.T()
 
@@ -313,7 +313,7 @@ func (s *ItemUsageFlatSuite) TestMilkCow() {
 
 // TestOpenContainerWhileHoldingItem verifies opening a container works
 // normally while the bot has an unrelated item selected in its hotbar.
-// Equivalent to the pre-Phase-1 TestItemUsage_OpenContainerWhileHoldingItem.
+// Equivalent to the original TestItemUsage_OpenContainerWhileHoldingItem.
 // The only genuinely container-opening function in this file - see the
 // suite's own doc comment.
 func (s *ItemUsageFlatSuite) TestOpenContainerWhileHoldingItem() {

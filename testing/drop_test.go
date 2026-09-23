@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// DropFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// DropFlatSuite is a
 // version-parameterized suite for item-drop action tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern (each via
@@ -19,7 +19,7 @@ import (
 // also matching). Kept as its own suite rather than folded into another
 // Flat/Easy suite (ArmSwingFlatSuite, BlockInteractionsFlatSuite,
 // LookaroundFlatSuite, and EffectsFlatSuite all share this exact
-// Flat/Easy/survival config too) - this session's convention has been one
+// Flat/Easy/survival config too) - the convention across this package has been one
 // suite per source file/feature, not merging every same-config file
 // together; PerceptionFlatSuite's two-file merge was a narrower exception
 // for two files that were near-duplicates of each other, not a general
@@ -38,7 +38,7 @@ func TestDropFlatSuite(t *testing.T) {
 }
 
 // TestDropItem tests the single-item drop action (action ID 4). Equivalent
-// to the pre-Phase-1 TestPlayerAction_DropItem.
+// to the original TestPlayerAction_DropItem.
 func (s *DropFlatSuite) TestDropItem() {
 	t := s.T()
 
@@ -71,7 +71,7 @@ func (s *DropFlatSuite) TestDropItem() {
 }
 
 // TestDropStack tests dropping an entire stack (action ID 3). Equivalent to
-// the pre-Phase-1 TestPlayerAction_DropStack.
+// the original TestPlayerAction_DropStack.
 func (s *DropFlatSuite) TestDropStack() {
 	t := s.T()
 

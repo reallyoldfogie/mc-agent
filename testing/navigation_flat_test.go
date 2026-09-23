@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// NavigationFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// NavigationFlatSuite is a
 // version-parameterized suite for flat-world movement-command tests: one
 // server per version, shared by every test method below, instead of the
 // previous per-test-function StartServer/StopServer pattern. World gen is
@@ -33,16 +33,15 @@ func TestNavigationFlatSuite(t *testing.T) {
 }
 
 // TestSingleAgent tests that a single agent can navigate using basic
-// movement commands on flat terrain. Equivalent to the pre-Phase-1
+// movement commands on flat terrain. Equivalent to the original
 // TestFlatMovementSingleAgent.
 //
-// Marked t.Parallel() (Phase 2 of docs/plans/integration-test-shared-server/00-plan.md):
-// safe because SpawnWorkingAreaAgent gives every test method its own
-// working area, and WorldGenFlat means every working area sits on uniform,
-// deterministic terrain (no shared-Y terrain risk the way WorldGenRandom
-// suites have - see VersionWorldSuite's own doc comment). See
-// docs/plans/integration-test-shared-server/04-phase2-parallelism.md for
-// the concurrency level actually measured safe on this machine.
+// Marked t.Parallel(): safe because SpawnWorkingAreaAgent gives every test
+// method its own working area, and WorldGenFlat means every working area
+// sits on uniform, deterministic terrain (no shared-Y terrain risk the way
+// WorldGenRandom suites have - see VersionWorldSuite's own doc comment).
+// -parallel 2 was the concurrency level actually measured safe on this
+// machine (real RAM measurements, not a guess); raise with care.
 func (s *NavigationFlatSuite) TestSingleAgent() {
 	t := s.T()
 	t.Parallel()
@@ -105,7 +104,7 @@ func (s *NavigationFlatSuite) TestSingleAgent() {
 }
 
 // TestMultipleDestinations tests navigation to multiple waypoints on flat
-// terrain. Equivalent to the pre-Phase-1 TestFlatMovementMultipleDestinations.
+// terrain. Equivalent to the original TestFlatMovementMultipleDestinations.
 // Marked t.Parallel() - see TestSingleAgent's doc comment for why this is safe.
 func (s *NavigationFlatSuite) TestMultipleDestinations() {
 	t := s.T()
@@ -155,7 +154,7 @@ func (s *NavigationFlatSuite) TestMultipleDestinations() {
 }
 
 // TestVerticalMovement tests vertical movement on flat terrain. Equivalent
-// to the pre-Phase-1 TestFlatMovementVertical.
+// to the original TestFlatMovementVertical.
 func (s *NavigationFlatSuite) TestVerticalMovement() {
 	t := s.T()
 	logger := NewTestLogger(t)
@@ -230,7 +229,7 @@ func (s *NavigationFlatSuite) TestVerticalMovement() {
 }
 
 // TestLongLadderClimbAndHold tests climbing a long ladder (25 blocks) and
-// holding position near the top. Equivalent to the pre-Phase-1
+// holding position near the top. Equivalent to the original
 // TestLongLadderClimbAndHold.
 func (s *NavigationFlatSuite) TestLongLadderClimbAndHold() {
 	t := s.T()
@@ -319,7 +318,7 @@ func (s *NavigationFlatSuite) TestLongLadderClimbAndHold() {
 }
 
 // TestForwardCommand tests the moveForward command on flat terrain.
-// Equivalent to the pre-Phase-1 TestFlatMovementForwardCommand.
+// Equivalent to the original TestFlatMovementForwardCommand.
 // Marked t.Parallel() - see TestSingleAgent's doc comment for why this is safe.
 func (s *NavigationFlatSuite) TestForwardCommand() {
 	t := s.T()

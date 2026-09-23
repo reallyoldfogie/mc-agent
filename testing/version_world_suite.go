@@ -11,13 +11,13 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// VersionWorldSuite is the shared base for Phase 1 of
-// docs/plans/integration-test-shared-server/00-plan.md: one server, started
-// once in SetupSuite and stopped once in TearDownSuite, shared by every test
-// method in a concrete suite keyed on (Version, WorldGen). This collapses
-// "boot count = (test functions) x (versions)" down to
-// "boot count = (versions) x (worldgen types actually used)" - see the plan
-// document for the full rationale.
+// VersionWorldSuite is a shared base for version-parameterized integration
+// test suites: one server, started once in SetupSuite and stopped once in
+// TearDownSuite, shared by every test method in a concrete suite keyed on
+// (Version, WorldGen). This collapses "boot count = (test functions) x
+// (versions)" down to "boot count = (versions) x (worldgen types actually
+// used)" - the whole point of this pattern over booting a fresh server per
+// test function.
 //
 // testing/container_suite_test.go's ContainerTestSuite already proved this
 // SetupSuite-starts-the-server-once / per-version-driver-loop pattern works
@@ -30,8 +30,8 @@ import (
 // Embed this in a concrete suite type per (version, worldgen) combination.
 // Each test method that needs its own agent and space should call
 // SpawnWorkingAreaAgent rather than assuming it owns the whole world - that
-// is what makes Phase 2 (t.Parallel() test methods sharing this one server)
-// safe.
+// is what makes it safe for multiple test methods to share this one server
+// under t.Parallel().
 type VersionWorldSuite struct {
 	suite.Suite
 
@@ -40,17 +40,15 @@ type VersionWorldSuite struct {
 	Version string
 	// WorldGen selects the world-gen mode for this suite's server. Every
 	// test method in one suite instance shares this - a test that needs a
-	// different world type belongs in a different suite, not this one (see
-	// the plan's "Gap in both documents" note on WorldGen grouping: a single
-	// SetupSuite-launched server has one fixed world type for its whole
-	// lifetime).
+	// different world type belongs in a different suite, not this one: a
+	// single SetupSuite-launched server has one fixed world type for its
+	// whole lifetime.
 	WorldGen WorldGenType
 
 	// Difficulty overrides SharedServerConfig/SharedFlatWorldServerConfig's
 	// own Peaceful default for this suite's server, when set (zero value
-	// leaves the Peaceful default in place - see buildServerConfig). Added
-	// for docs/plans/integration-test-shared-server/08-phase1-effects-conversion.md:
-	// several pre-conversion test files pin an explicit non-Peaceful
+	// leaves the Peaceful default in place - see buildServerConfig). Several
+	// pre-conversion test files pin an explicit non-Peaceful
 	// difficulty (DifficultyEasy/DifficultyNormal) - some for reasons the
 	// specific assertions don't actually depend on (preserved anyway, to
 	// avoid silently diverging from a previously-passing test's own
@@ -64,8 +62,7 @@ type VersionWorldSuite struct {
 
 	// GameMode overrides SharedServerConfig/SharedFlatWorldServerConfig's
 	// own "survival" default for this suite's server, when set (zero value
-	// leaves the survival default in place - see buildServerConfig). Added
-	// for docs/plans/integration-test-shared-server/15-phase1-flying-conversion.md:
+	// leaves the survival default in place - see buildServerConfig).
 	// flying_ability_test.go/flying_command_test.go/flying_physics_test.go
 	// all need GameModeCreative specifically (a server-granted ability,
 	// not something a bot can toggle on its own in survival). Like
@@ -77,8 +74,7 @@ type VersionWorldSuite struct {
 
 	// ExtraEnv adds to (never replaces) SharedServerConfig/SharedFlatWorldServerConfig's
 	// own ExtraEnv (VIEW_DISTANCE/SIMULATION_DISTANCE/ENABLE_COMMAND_BLOCK) - see
-	// buildServerConfig. Added for
-	// docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md:
+	// buildServerConfig.
 	// inventory_integration_test.go's pre-conversion server config set
 	// FORCE_GAMEMODE=true (also used by container_suite_test.go, the
 	// pre-VersionWorldSuite prior art this whole shared-server pattern
@@ -91,8 +87,7 @@ type VersionWorldSuite struct {
 	Framework *Framework
 	Inst      *TestInstance
 
-	// usedNames guards against a real, live-confirmed trap (see
-	// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md):
+	// usedNames guards against a real, live-confirmed trap:
 	// two test methods sharing this suite's one server that spawn an agent
 	// under the SAME literal name don't each get a fresh spawn - vanilla
 	// Minecraft persists a player's position across reconnects under one
@@ -158,13 +153,11 @@ func (s *VersionWorldSuite) buildServerConfig() ServerConfig {
 // suite.Run defers TearDownSuite immediately after its own test-method loop
 // returns (stretchr/testify/suite/suite.go's Run) - but t.Run returns as
 // soon as a subtest calls t.Parallel(), before that subtest's body actually
-// runs. For a suite with any t.Parallel()-marked test method (Phase 2 of
-// docs/plans/integration-test-shared-server/00-plan.md), a real
+// runs. For a suite with any t.Parallel()-marked test method, a real
 // TearDownSuite would therefore stop the shared server *while parallel test
 // methods are still queued, not yet run* - live-confirmed
-// ("connection refused" dialing the already-stopped server - see
-// docs/plans/integration-test-shared-server/04-phase2-parallelism.md for
-// the exact failure). teardownServer is instead invoked via t.Cleanup() on
+// ("connection refused" dialing the already-stopped server). teardownServer
+// is instead invoked via t.Cleanup() on
 // the *outer* per-version t (see RunVersionWorldSuite), which Go guarantees
 // runs only after every subtest of that t - parallel or not - has finished.
 func (s *VersionWorldSuite) teardownServer() {
@@ -182,7 +175,7 @@ func (s *VersionWorldSuite) teardownServer() {
 
 // WorkingAreaAgent bundles a spawned agent with the settled position it
 // ended up at after being moved to its own working area, so test methods
-// can compute destinations relative to that origin the same way pre-Phase-1
+// can compute destinations relative to that origin the same way original
 // tests computed them relative to GetEntityPos right after spawn.
 type WorkingAreaAgent struct {
 	*ManagedAgent
@@ -190,7 +183,7 @@ type WorkingAreaAgent struct {
 }
 
 // spawnAndReadPosition spawns a per-test agent (with replay recording, as
-// DefaultAgentConfig/SpawnAgent already do for every pre-Phase-1 test),
+// DefaultAgentConfig/SpawnAgent already do for every original test),
 // waits for it to connect, and returns its natural post-spawn position
 // (read via GetEntityPos) - before any working-area placement. Shared by
 // SpawnWorkingAreaAgent (which then claims a brand-new working area) and
@@ -201,11 +194,10 @@ type WorkingAreaAgent struct {
 // callers should keep it short and distinct per test method so replay
 // filenames and RCON target names stay unambiguous.
 //
-// enableCam: added for attribute_modifier_test.go's TestSpeedEffectModifiesTrackedAttribute
-// (see docs/plans/integration-test-shared-server/20-phase1-attribute-modifier-conversion.md),
+// enableCam: added for attribute_modifier_test.go's TestSpeedEffectModifiesTrackedAttribute,
 // which tracks a second agent via NearestPlayerInfo and needs that agent (and
 // the querying agent) to have no Cam companion nearby to be mistaken for the
-// "nearest player" - the same real concern 00-plan.md already flags for
+// "nearest player" - the same real concern applies to
 // perception_nearest_player_test.go.
 //
 // t: defaults to s.T() for every existing caller, but a caller that spawns
@@ -216,7 +208,6 @@ type WorkingAreaAgent struct {
 // body does NOT rebind it - so registering cleanup against s.T() from
 // inside such a subtest ties that cleanup to the *outer* method's
 // lifetime, not the subtest's own. Found live, not hypothetical:
-// docs/plans/integration-test-shared-server/28-phase1-vertical-navigation-conversion.md's
 // VerticalNavigationFlatSuite spawns a new agent inside each of ~27 nested
 // t.Run() sub-cases sharing one TestSmoke method - without this, none of
 // those agents disconnect until TestSmoke itself finishes, and the
@@ -257,12 +248,12 @@ func (s *VersionWorldSuite) spawnAndReadPositionOpts(t *testing.T, name, replayP
 
 	// Disconnect this agent (and its Cam companion, via ManagedAgent.Stop's
 	// own cascade) when THIS test method finishes, not when the whole suite
-	// does. Every pre-Phase-1 test got this for free: each test owned its
+	// does. Every original test got this for free: each test owned its
 	// own server/container, so an agent simply died with it. A shared
 	// server survives across every test method in this suite, so without
 	// this, agents from earlier methods stay connected and accumulate for
 	// the suite's entire run - live-confirmed to matter, not just
-	// theoretical: docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
+	// theoretical: converting the follow tests to this pattern
 	// found TestSingleAgent missing its 1.0-block arrival tolerance by a
 	// hair (1.02) running 3rd in FollowFlatSuite, with ~14 stale
 	// connections still on the server from the two multi-agent tests ahead
@@ -276,7 +267,7 @@ func (s *VersionWorldSuite) spawnAndReadPositionOpts(t *testing.T, name, replayP
 	})
 
 	// Give the agent time to connect and receive its initial spawn position
-	// before reading it - matches every pre-Phase-1 test's own
+	// before reading it - matches every original test's own
 	// time.Sleep(5 * time.Second) after SpawnAgent.
 	time.Sleep(5 * time.Second)
 
@@ -333,19 +324,18 @@ func (s *VersionWorldSuite) teleportAndSettle(agentName string, targetX, targetZ
 // accepted risk shared with mc-rsi-trainer's own working-area design
 // (../mc-rsi-trainer/pkg/parallelenv/parallelenv.go): unlike that repo's
 // rlenv.WalkabilityAgent, this package does not (yet) verify the landing
-// spot is standable/reachable before returning - see
-// docs/plans/integration-test-shared-server/01-phase0-spatial-isolation.md
-// for what was actually observed live and why WorldGenRandom suites are not
-// (yet) marked t.Parallel()-safe in Phase 2 as a result.
+// spot is standable/reachable before returning - a real, live-observed gap
+// that's part of why WorldGenRandom suites are not (yet) marked
+// t.Parallel()-safe as a result.
 //
 // This claims a NEW working area every call - for a multi-agent test (e.g.
 // a leader and one or more followers that need to start near each other,
 // not each independently offset 256+ blocks apart), only the FIRST agent in
 // a test should be spawned this way; every other agent in that same test
 // belongs in the same claimed area and should use SpawnAgentNear against
-// this call's own Origin instead - see SpawnAgentNear's doc comment and
-// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md
-// for why this distinction matters in practice, live-confirmed.
+// this call's own Origin instead - see SpawnAgentNear's doc comment; this
+// distinction was found to matter in practice, live, converting the follow
+// tests to this pattern.
 func (s *VersionWorldSuite) SpawnWorkingAreaAgent(name, replayPrefix string) (*WorkingAreaAgent, error) {
 	return s.spawnWorkingAreaAgentOpts(s.T(), name, replayPrefix, true)
 }
@@ -402,8 +392,7 @@ func (s *VersionWorldSuite) spawnWorkingAreaAgentOpts(t *testing.T, name, replay
 // inside one shared working area rather than each getting their own
 // independent 256-block-separated region (which would defeat the point of
 // a "leader" and "follower" test - see the doc comment on
-// SpawnWorkingAreaAgent and
-// docs/plans/integration-test-shared-server/07-phase1-follow-conversion.md).
+// SpawnWorkingAreaAgent).
 //
 // Y handling mirrors SpawnWorkingAreaAgent: origin.Y for
 // WorldGenFlat/WorldGenControlled (uniform terrain, safe), the newly-spawned
@@ -454,7 +443,7 @@ func (s *VersionWorldSuite) spawnAgentNearOpts(t *testing.T, name, replayPrefix 
 // RunVersionWorldSuite is the top-level driver: builds a fresh instance of
 // the concrete suite type via newSuite for each version in versions,
 // running each as its own t.Run subtest via suite.Run (so SetupSuite starts
-// exactly one server per version, per the plan's Phase 1). newSuite is
+// exactly one server per version). newSuite is
 // called once per version and must return a suite embedding
 // VersionWorldSuite with WorldGen already set - RunVersionWorldSuite sets
 // only Version before running it.

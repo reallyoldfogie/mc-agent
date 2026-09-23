@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// NavigationCourseFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// NavigationCourseFlatSuite is a
 // version-parameterized suite for the NavigationCourse waypoint meta-test:
 // one server per version, shared by every test method below (currently
 // one), instead of the previous per-test-function StartServer/StopServer
@@ -18,17 +18,15 @@ import (
 // matching the pre-conversion test's own
 // setupStandaloneTestWithModeAndBlockPlacement call exactly. Kept as its
 // own new suite rather than folded into an existing Flat/Easy suite
-// (several already share this exact config) - this session's convention
-// has been one suite per source file/feature, not merging on config match
-// alone (see docs/plans/integration-test-shared-server/22-phase1-drop-conversion.md
-// for the same reasoning applied to drop_test.go).
+// (several already share this exact config) - one suite per source
+// file/feature, not merging on config match alone.
 //
 // This test's own NavigationCourse mechanism depends on command blocks -
-// the exact thing docs/plans/integration-test-shared-server/16-phase1-elytra-conversion.md
-// found SharedServerConfig() silently disabled (ENABLE_COMMAND_BLOCK
-// defaults off on itzg/minecraft-server) and fixed. That fix already
-// landed in working_area.go before this conversion, so this suite works
-// correctly on the first try - no rediscovery needed.
+// itzg/minecraft-server defaults ENABLE_COMMAND_BLOCK off, which silently
+// disables them if a shared server's config doesn't turn it back on.
+// SharedServerConfig() already sets ENABLE_COMMAND_BLOCK=true (see
+// working_area.go) from an earlier fix, so this suite works correctly on
+// the first try - no rediscovery needed.
 type NavigationCourseFlatSuite struct {
 	VersionWorldSuite
 }
@@ -47,7 +45,7 @@ func TestNavigationCourseFlatSuite(t *testing.T) {
 // before any other test depends on it, using plain pathfinding-based
 // walking - the simplest, most deterministic movement mode - rather than
 // something timing-sensitive like elytra flight. Equivalent to the
-// pre-Phase-1 TestNavigationCourse_MoveToVisitsWaypointsInOrder.
+// original TestNavigationCourse_MoveToVisitsWaypointsInOrder.
 func (s *NavigationCourseFlatSuite) TestMoveToVisitsWaypointsInOrder() {
 	t := s.T()
 

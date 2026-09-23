@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerIntegrationRandomSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerIntegrationRandomSuite is a
 // version-parameterized suite for the chest-interaction tests below: one server per version,
 // shared by both methods, instead of the previous per-test-function StartServer/StopServer
 // pattern. WorldGen = WorldGenRandom + GameMode = survival (with FORCE_GAMEMODE via ExtraEnv),
@@ -35,7 +35,7 @@ func TestContainerIntegrationRandomSuite(t *testing.T) {
 
 // TestChestInteraction verifies opening and closing an empty chest leaves
 // both the chest and the player's inventory untouched. Equivalent to the
-// pre-Phase-1 TestChestInteraction.
+// original TestChestInteraction.
 func (s *ContainerIntegrationRandomSuite) TestChestInteraction() {
 	t := s.T()
 
@@ -126,7 +126,7 @@ func (s *ContainerIntegrationRandomSuite) TestChestInteraction() {
 
 // TestChestWithItems verifies a chest placed with NBT-seeded items shows
 // those items to the client on open, and that they survive a close
-// untouched. Equivalent to the pre-Phase-1 TestChestWithItems.
+// untouched. Equivalent to the original TestChestWithItems.
 func (s *ContainerIntegrationRandomSuite) TestChestWithItems() {
 	t := s.T()
 

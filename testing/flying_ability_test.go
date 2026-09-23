@@ -17,9 +17,8 @@ import (
 // tracked, and SetFlying respects the server-granted AllowFlying
 // permission - here, that survival mode does NOT grant it. The equivalent
 // creative-mode scenario (this function's own former "creative mode grants
-// AllowFlying" subtest) moved to FlyingCreativeSuite
-// (testing/flying_test.go) as part of docs/plans/integration-test-shared-server/15-phase1-flying-conversion.md
-// - left here on the pre-Phase-1 per-test-server pattern since it needs
+// AllowFlying" subtest) moved to FlyingCreativeSuite (testing/flying_test.go)
+// - left here on the original per-test-server pattern since it needs
 // GameModeSurvival, a different game mode than that suite's shared
 // GameModeCreative server.
 func TestPlayerAbilities_SurvivalDeniesFlying(t *testing.T) {

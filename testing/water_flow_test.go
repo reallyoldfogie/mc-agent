@@ -11,19 +11,18 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// WaterFlowFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// WaterFlowFlatSuite is a
 // version-parameterized suite for water-current tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern. WorldGen = WorldGenFlat
 // and GameMode = survival, matching every pre-conversion function's own
-// explicit choice exactly (no deviation needed here, unlike several earlier
-// conversions this session - these tests already picked Flat deliberately).
+// explicit choice exactly (no deviation needed here, unlike some other
+// conversions in this package - these tests already picked Flat deliberately).
 // Difficulty is left at VersionWorldSuite's own Peaceful default, matching
 // the original (never set explicitly).
 //
 // ExtraEnv carries FORCE_GAMEMODE=true forward via VersionWorldSuite's
-// ExtraEnv field (added for inventory_integration_test.go's conversion,
-// see docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md) -
+// ExtraEnv field (added for inventory_integration_test.go's conversion) -
 // the same knob these tests' own pre-conversion config set.
 //
 // None of the four pre-conversion functions enabled a Cam companion
@@ -51,7 +50,7 @@ func TestWaterFlowFlatSuite(t *testing.T) {
 
 // TestLinearFlow verifies an agent placed in a directional water current
 // (flowing +Z, walled on both sides to keep it directional) gets pushed
-// south. Equivalent to the pre-Phase-1 TestWaterFlow_LinearFlow.
+// south. Equivalent to the original TestWaterFlow_LinearFlow.
 func (s *WaterFlowFlatSuite) TestLinearFlow() {
 	t := s.T()
 
@@ -112,7 +111,7 @@ func (s *WaterFlowFlatSuite) TestLinearFlow() {
 // TestSourceSurroundedByLevel1 verifies an agent standing in a water source
 // block, surrounded on all 4 sides by the resulting level-1 flowing water,
 // doesn't get pushed anywhere (no net flow direction). Equivalent to the
-// pre-Phase-1 TestWaterFlow_SourceSurroundedByLevel1.
+// original TestWaterFlow_SourceSurroundedByLevel1.
 func (s *WaterFlowFlatSuite) TestSourceSurroundedByLevel1() {
 	t := s.T()
 
@@ -168,7 +167,7 @@ func (s *WaterFlowFlatSuite) TestSourceSurroundedByLevel1() {
 // TestMixedLevels verifies an agent straddling two vertically-stacked water
 // currents (feet in one level, head in another, both flowing the same
 // direction) still gets pushed by the combined flow. Equivalent to the
-// pre-Phase-1 TestWaterFlow_MixedLevels.
+// original TestWaterFlow_MixedLevels.
 func (s *WaterFlowFlatSuite) TestMixedLevels() {
 	t := s.T()
 
@@ -234,7 +233,7 @@ func (s *WaterFlowFlatSuite) TestMixedLevels() {
 
 // TestDiagonalFlow verifies an agent placed in a two-walled corner of
 // flowing water (barriers on -X and -Z only) gets pushed diagonally, in
-// both +X and +Z. Equivalent to the pre-Phase-1 TestWaterFlow_DiagonalFlow.
+// both +X and +Z. Equivalent to the original TestWaterFlow_DiagonalFlow.
 func (s *WaterFlowFlatSuite) TestDiagonalFlow() {
 	t := s.T()
 

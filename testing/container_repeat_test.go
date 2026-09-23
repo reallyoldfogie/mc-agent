@@ -12,20 +12,18 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerRepeatCreativeSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerRepeatCreativeSuite is a
 // version-parameterized suite for TestRepeatedContainerOpen below: one server per version instead
 // of the previous per-test-function StartServer/StopServer pattern. GameMode = creative, matching
 // the pre-conversion function's own inline DefaultServerConfig() override exactly.
 //
 // This diagnostic (repeatedly opening/closing the same chest to see where the server stops
 // accepting opens) is now largely superseded by TestWindowIDLimitProbe
-// (container_window_id_probe_test.go, added for
-// docs/plans/integration-test-shared-server/31-window-id-limit-remeasurement.md), which does the
-// same thing but with real assertions (require.NoError per cycle) and more iterations (25 vs 15);
-// this file's own loop only logs a failure and breaks, never actually failing the test regardless
-// of how many attempts succeeded. Converted anyway per this plan's own file-by-file checklist
-// rather than unilaterally deleted - that's a judgment call for whoever owns this test suite, not
-// something to fold into a mechanical port.
+// (container_window_id_probe_test.go), which does the same thing but with real assertions
+// (require.NoError per cycle) and more iterations (25 vs 15); this file's own loop only logs a
+// failure and breaks, never actually failing the test regardless of how many attempts succeeded.
+// Converted anyway rather than unilaterally deleted - that's a judgment call for whoever owns
+// this test suite, not something to fold into a mechanical conversion.
 type ContainerRepeatCreativeSuite struct {
 	VersionWorldSuite
 }
@@ -45,7 +43,7 @@ func TestContainerRepeatCreativeSuite(t *testing.T) {
 // - Moving between positions
 // - Server-side window ID exhaustion
 //
-// Equivalent to the pre-Phase-1 TestRepeatedContainerOpen.
+// Equivalent to the original TestRepeatedContainerOpen.
 func (s *ContainerRepeatCreativeSuite) TestRepeatedContainerOpen() {
 	t := s.T()
 

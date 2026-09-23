@@ -69,7 +69,7 @@ func rlTrainSettings(epochs int) config.Settings {
 	}
 }
 
-// RLTrainFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// RLTrainFlatSuite is a
 // version-parameterized suite for this file's four always-run (not
 // MCAGENT_LONG_RL_TRAIN_TEST-gated) tests: one server, shared by every
 // method below, instead of the previous per-test-function
@@ -87,9 +87,7 @@ func rlTrainSettings(epochs int) config.Settings {
 // MCAGENT_LONG_RL_TRAIN_TEST=1 - 8 explicit "LongRun" diagnostics needing
 // 25-27+ minutes *each* per their own doc comments, plus 3 shorter-named
 // root-cause investigations under the same gate) are deliberately NOT
-// converted - see
-// docs/plans/integration-test-shared-server/30-phase1-rl-train-conversion.md
-// for why: amortizing this pattern's ~10-30s boot-time saving is
+// converted: amortizing this pattern's ~10-30s boot-time saving is
 // meaningless against methods that individually run for tens of minutes,
 // and running 15 such methods sequentially on one shared server would
 // require extending VersionWorldSuite's 45-minute suite context to several
@@ -114,7 +112,7 @@ func TestRLTrainFlatSuite(t *testing.T) {
 // trainer via reinforce.NewWithPersistentEnv exactly the way cmd/rl-train
 // does, run a couple of real epochs, and confirm a saved checkpoint
 // reloads cleanly. No mine/craft task - just the base
-// GoToTarget/ReturnHome/Wait vocabulary. Equivalent to the pre-Phase-1
+// GoToTarget/ReturnHome/Wait vocabulary. Equivalent to the original
 // TestRLTrainingLoop_BasicTaskTrainsAndCheckpointRoundTrips.
 func (s *RLTrainFlatSuite) TestBasicTaskTrainsAndCheckpointRoundTrips() {
 	t := s.T()
@@ -172,7 +170,7 @@ func (s *RLTrainFlatSuite) TestBasicTaskTrainsAndCheckpointRoundTrips() {
 // policy) so the assertions are deterministic: force ActionMine and check
 // the seeded block actually gets mined and rewarded, rather than hoping a
 // random policy happens to choose it within a short episode. Equivalent
-// to the pre-Phase-1 TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode.
+// to the original TestRLTrainingLoop_MineTaskSeedingEarnsRewardAndEndsEpisode.
 func (s *RLTrainFlatSuite) TestMineTaskSeedingEarnsRewardAndEndsEpisode() {
 	t := s.T()
 
@@ -225,7 +223,7 @@ func (s *RLTrainFlatSuite) TestMineTaskSeedingEarnsRewardAndEndsEpisode() {
 // previously verified only by code-reading parity with SeedNearbyBlock's
 // proven fix, not by a live run of its own) actually works end to end:
 // RCON give → craftReady observation → ActionCraft dispatch →
-// craftRewardBonus. Equivalent to the pre-Phase-1
+// craftRewardBonus. Equivalent to the original
 // TestRLTrainingLoop_CraftTaskSeedingEarnsRewardAndEndsEpisode.
 func (s *RLTrainFlatSuite) TestCraftTaskSeedingEarnsRewardAndEndsEpisode() {
 	t := s.T()
@@ -292,7 +290,7 @@ func (s *RLTrainFlatSuite) TestCraftTaskSeedingEarnsRewardAndEndsEpisode() {
 // ActionMine or ActionCraft, deterministically, not just "rarely": a
 // correctly implemented mask makes an illegal action's post-mask
 // probability exactly zero, not merely small. Equivalent to the
-// pre-Phase-1 TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive.
+// original TestRLTrainingLoop_ActionMaskExcludesUnconfiguredTasksLive.
 func (s *RLTrainFlatSuite) TestActionMaskExcludesUnconfiguredTasksLive() {
 	t := s.T()
 

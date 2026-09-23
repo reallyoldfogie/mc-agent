@@ -43,15 +43,15 @@ func waitForVisibleCraftingTable(ctx context.Context, agent models.Agent, maxDis
 	}
 }
 
-// CraftPipelineFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// CraftPipelineFlatSuite is a
 // version-parameterized suite for TestFullPipelineLogsToWoodenPickaxe below: one server per
 // version instead of the previous per-test-function setupStandaloneTestForEntity server-per-test
 // pattern. WorldGen = WorldGenFlat + Difficulty = DifficultyEasy, matching
 // setupStandaloneTestForEntity's own default exactly. Single-function file (nets zero boot-count
-// reduction alone, the same caveat every other single-function conversion in this plan carries -
-// see 08-phase1-effects-conversion.md), converted for checklist consistency; genuinely
-// window-ID-constrained (opens a real crafting-table 3x3 grid via CraftItem's table path), unlike
-// craft_test.go (39-phase1-craft-item-conversion.md), which was mislabeled as such.
+// reduction alone, the same caveat every other single-function conversion in this package
+// carries), converted anyway for consistency; genuinely uses a real container (opens a
+// crafting-table 3x3 grid via CraftItem's table path), unlike craft_test.go, whose two functions
+// only ever touch the player's own 2x2 grid.
 type CraftPipelineFlatSuite struct {
 	VersionWorldSuite
 }
@@ -86,7 +86,7 @@ func TestCraftPipelineFlatSuite(t *testing.T) {
 // UseItemOnBlock actually places a block server-side without
 // agent/clutch.go's split-second time pressure).
 //
-// Equivalent to the pre-Phase-1 TestCraftItem_FullPipeline_LogsToWoodenPickaxe.
+// Equivalent to the original TestCraftItem_FullPipeline_LogsToWoodenPickaxe.
 func (s *CraftPipelineFlatSuite) TestFullPipelineLogsToWoodenPickaxe() {
 	t := s.T()
 

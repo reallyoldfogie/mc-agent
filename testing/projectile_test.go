@@ -19,10 +19,7 @@ import (
 // ProjectileFlatSuite covers every live-server bow/projectile-throwing test
 // (previously spread across bow_firing_test.go, bow_comprehensive_test.go,
 // bow_power_comparison_test.go, arrow_physics_calibration_test.go, and
-// projectile_throwing_test.go's own live-server functions - the
-// highest-priority item in
-// docs/plans/integration-test-shared-server/README.md's checklist, since it
-// was the last cluster not yet checked for container usage). None of these
+// projectile_throwing_test.go's own live-server functions). None of these
 // tests touch ScreenMgr or any container GUI, so nothing here is
 // window-ID-constrained.
 //
@@ -67,7 +64,7 @@ func TestProjectileFlatSuite(t *testing.T) {
 // bow_comprehensive_test.go/projectile_throwing_test.go - every one of these
 // already took *TestInstance/*ManagedAgent parameters rather than
 // *StandaloneTestEnv, so no generalization was needed to call them from
-// suite methods, unlike most of this session's other conversions.) ---
+// suite methods, unlike most other conversions in this package.) ---
 
 // analyzeArrowTrajectory parses arrow trajectory from agent logs and compares with predictions
 func analyzeArrowTrajectory(t *testing.T, inst *TestInstance, agent *ManagedAgent,
@@ -622,7 +619,7 @@ func throwEnderPearl(t *testing.T, inst *TestInstance, agent *ManagedAgent, ctx 
 // --- Suite methods (bow_firing_test.go's 2 functions) ---
 
 // TestFireBowAt verifies FireBowAt hits a target block that triggers a
-// piston. Equivalent to the pre-Phase-1 TestBowFiring_FireBowAt.
+// piston. Equivalent to the original TestBowFiring_FireBowAt.
 func (s *ProjectileFlatSuite) TestFireBowAt() {
 	t := s.T()
 
@@ -651,7 +648,7 @@ func (s *ProjectileFlatSuite) TestFireBowAt() {
 }
 
 // TestMultipleDistances hits targets at multiple ranges. Equivalent to the
-// pre-Phase-1 TestBowFiring_MultipleDistances.
+// original TestBowFiring_MultipleDistances.
 func (s *ProjectileFlatSuite) TestMultipleDistances() {
 	t := s.T()
 
@@ -684,7 +681,7 @@ func (s *ProjectileFlatSuite) TestMultipleDistances() {
 // --- Suite methods (bow_comprehensive_test.go's 5 functions) ---
 
 // TestLevelTarget fires at a target at the same height as the bot. Equivalent
-// to the pre-Phase-1 TestBowFiring_LevelTarget.
+// to the original TestBowFiring_LevelTarget.
 func (s *ProjectileFlatSuite) TestLevelTarget() {
 	t := s.T()
 
@@ -700,7 +697,7 @@ func (s *ProjectileFlatSuite) TestLevelTarget() {
 }
 
 // TestBelowTarget fires at a target below the bot. Equivalent to the
-// pre-Phase-1 TestBowFiring_BelowTarget.
+// original TestBowFiring_BelowTarget.
 func (s *ProjectileFlatSuite) TestBelowTarget() {
 	t := s.T()
 
@@ -716,7 +713,7 @@ func (s *ProjectileFlatSuite) TestBelowTarget() {
 }
 
 // TestAboveTarget fires at a target above the bot - requires a high-angle
-// shot. Equivalent to the pre-Phase-1 TestBowFiring_AboveTarget.
+// shot. Equivalent to the original TestBowFiring_AboveTarget.
 func (s *ProjectileFlatSuite) TestAboveTarget() {
 	t := s.T()
 
@@ -732,7 +729,7 @@ func (s *ProjectileFlatSuite) TestAboveTarget() {
 }
 
 // TestShelfTarget fires at a target on a high shelf: the arrow must hit on
-// the way down, not the way up. Equivalent to the pre-Phase-1
+// the way down, not the way up. Equivalent to the original
 // TestBowFiring_ShelfTarget.
 func (s *ProjectileFlatSuite) TestShelfTarget() {
 	t := s.T()
@@ -749,7 +746,7 @@ func (s *ProjectileFlatSuite) TestShelfTarget() {
 }
 
 // TestVariousElevations tests hitting targets at multiple elevations in one
-// test. Equivalent to the pre-Phase-1 TestBowFiring_VariousElevations.
+// test. Equivalent to the original TestBowFiring_VariousElevations.
 func (s *ProjectileFlatSuite) TestVariousElevations() {
 	t := s.T()
 
@@ -816,7 +813,7 @@ func teleportToElevatedPlatform(s *ProjectileFlatSuite, leader *WorkingAreaAgent
 
 // TestPowerComparison compares actual arrow behavior from FireBowAt across
 // several distances, cross-checked against the agent's own trajectory log.
-// Equivalent to the pre-Phase-1 TestBowPowerComparison.
+// Equivalent to the original TestBowPowerComparison.
 func (s *ProjectileFlatSuite) TestPowerComparison() {
 	t := s.T()
 
@@ -901,7 +898,7 @@ func (s *ProjectileFlatSuite) TestPowerComparison() {
 // TestArrowPhysicsCalibration fires arrows at several pitches from a fixed
 // elevated platform and back-calculates gravity/drag from the observed
 // trajectory, comparing against physics/projectile.go's own predictions.
-// Equivalent to the pre-Phase-1 TestArrowPhysicsCalibration
+// Equivalent to the original TestArrowPhysicsCalibration
 // (arrow_physics_calibration_test.go, which now keeps only the
 // calibrateArrowPhysics/analyzePhysicsFromTrajectory helpers this method
 // calls).
@@ -987,7 +984,7 @@ func (s *ProjectileFlatSuite) TestArrowPhysicsCalibration() {
 // its 3 physics-only unit tests stay in that file, unchanged) ---
 
 // TestEnderPearlRange verifies that ender pearls can reach various distances
-// (including 30+ blocks). Equivalent to the pre-Phase-1 Test_EnderPearlRange.
+// (including 30+ blocks). Equivalent to the original Test_EnderPearlRange.
 func (s *ProjectileFlatSuite) TestEnderPearlRange() {
 	t := s.T()
 
@@ -1029,7 +1026,7 @@ func (s *ProjectileFlatSuite) TestEnderPearlRange() {
 }
 
 // TestSnowballRange verifies snowball throwing at various distances.
-// Equivalent to the pre-Phase-1 Test_SnowballRange.
+// Equivalent to the original Test_SnowballRange.
 func (s *ProjectileFlatSuite) TestSnowballRange() {
 	t := s.T()
 
@@ -1072,7 +1069,7 @@ func (s *ProjectileFlatSuite) TestSnowballRange() {
 }
 
 // TestArrowRange verifies arrow firing with a bow at various distances.
-// Equivalent to the pre-Phase-1 Test_ArrowRange.
+// Equivalent to the original Test_ArrowRange.
 func (s *ProjectileFlatSuite) TestArrowRange() {
 	t := s.T()
 
@@ -1121,7 +1118,7 @@ func (s *ProjectileFlatSuite) TestArrowRange() {
 
 // TestProjectileHitCallback verifies that projectile hit callbacks fire
 // correctly - the queue-based pending callback implementation, for multiple
-// callbacks in a row. Equivalent to the pre-Phase-1
+// callbacks in a row. Equivalent to the original
 // Test_ProjectileHitCallback.
 func (s *ProjectileFlatSuite) TestProjectileHitCallback() {
 	t := s.T()
@@ -1211,7 +1208,7 @@ func (s *ProjectileFlatSuite) TestProjectileHitCallback() {
 
 // TestWindChargeRange verifies wind charges can be thrown at various
 // distances. Wind charges are available in Minecraft 1.21+ and have unique
-// physics (constant velocity, no gravity). Equivalent to the pre-Phase-1
+// physics (constant velocity, no gravity). Equivalent to the original
 // Test_WindChargeRange.
 //
 // IMPORTANT: Projectile Randomness Considerations

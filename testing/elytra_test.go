@@ -23,7 +23,7 @@ import (
 // actually *wired*, not just that the underlying capability works. Takes
 // an RCONHelper directly (not *StandaloneTestEnv) so shared-server suite
 // methods (VersionWorldSuite's s.Inst.RCON) can call it too, not just the
-// pre-Phase-1 per-test-server pattern's env.Inst.RCON.
+// original per-test-server pattern's env.Inst.RCON.
 func sayCommand(t *testing.T, ctx context.Context, rcon testenv.RCONHelper, botName, command string) {
 	t.Helper()
 	_, err := rcon.Exec(ctx, fmt.Sprintf("say >>>%s<<< %s", botName, command))
@@ -85,7 +85,7 @@ func ensureFireworkBoost(t *testing.T, agent models.Agent) {
 	}
 }
 
-// ElytraFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ElytraFlatSuite is a
 // version-parameterized suite consolidating every elytra test (previously
 // split across elytra_test.go, elytra_commands_test.go,
 // elytra_flare_landing_test.go, elytra_navigation_test.go, and
@@ -152,7 +152,7 @@ func giveFireworkRockets(t *testing.T, s *ElytraFlatSuite, leader *WorkingAreaAg
 // falling never produces, since there's no WASD thrust in the air) — see
 // physics/elytra.go's GlidingVelocity and physics/state_elytra_test.go for
 // the formula-level and state-level coverage this builds on. Equivalent to
-// the pre-Phase-1 TestElytraGlideSlowsDescentAndAddsForwardMotion.
+// the original TestElytraGlideSlowsDescentAndAddsForwardMotion.
 func (s *ElytraFlatSuite) TestGlideSlowsDescentAndAddsForwardMotion() {
 	t := s.T()
 
@@ -224,7 +224,7 @@ func (s *ElytraFlatSuite) TestGlideSlowsDescentAndAddsForwardMotion() {
 // uses the full 3D look vector (not just its horizontal component the way
 // GlidingVelocity's own ease term does), so pointing it mostly along +Y
 // turns the same formula into a near-vertical thrust instead - matching how
-// real players launch almost straight up. Equivalent to the pre-Phase-1
+// real players launch almost straight up. Equivalent to the original
 // TestElytraDoubleJumpFireworkRocketTakeoff.
 func (s *ElytraFlatSuite) TestDoubleJumpFireworkRocketTakeoff() {
 	t := s.T()
@@ -319,7 +319,7 @@ func (s *ElytraFlatSuite) TestDoubleJumpFireworkRocketTakeoff() {
 // shift-click), "equip firework_rocket" selects it into the hand (the
 // "select rockets" step), and "useItem" - sent as a real chat message, not
 // called directly - fires the currently held firework while gliding and
-// produces a real, measurable velocity boost. Equivalent to the pre-Phase-1
+// produces a real, measurable velocity boost. Equivalent to the original
 // TestChatCommand_EquipAndUseItem.
 func (s *ElytraFlatSuite) TestEquipAndUseItem() {
 	t := s.T()
@@ -397,7 +397,7 @@ func (s *ElytraFlatSuite) TestEquipAndUseItem() {
 // validated by TestGlideSlowsDescentAndAddsForwardMotion and
 // TestFlightNavigatesWaypointsAndLands above/below, now driven entirely
 // through the real chat command pipeline rather than direct Go calls.
-// Equivalent to the pre-Phase-1 TestChatCommand_FlyTo.
+// Equivalent to the original TestChatCommand_FlyTo.
 func (s *ElytraFlatSuite) TestFlyTo() {
 	t := s.T()
 
@@ -472,7 +472,7 @@ func (s *ElytraFlatSuite) TestFlyTo() {
 // client-side fallDistance here is only used for pathfinding drop-cost
 // estimation, not damage) - checked via a real RCON health read before and
 // after, not inferred from anything client-side. Equivalent to the
-// pre-Phase-1 TestElytraFlareLanding.
+// original TestElytraFlareLanding.
 func (s *ElytraFlatSuite) TestFlareLanding() {
 	t := s.T()
 
@@ -827,7 +827,7 @@ func (s *ElytraFlatSuite) TestFlareLanding() {
 // tolerate real elytra altitude drift over the course - the client-side
 // check is deliberately horizontal-only (Y is "informational only," never
 // steered toward), but the course's marker entities sit at a fixed Y, and
-// vanilla's distance selector is full 3D. Equivalent to the pre-Phase-1
+// vanilla's distance selector is full 3D. Equivalent to the original
 // TestElytraFlightNavigatesWaypointsAndLands.
 func (s *ElytraFlatSuite) TestFlightNavigatesWaypointsAndLands() {
 	t := s.T()
@@ -1016,7 +1016,7 @@ func (s *ElytraFlatSuite) TestFlightNavigatesWaypointsAndLands() {
 // movement/physics_executor.go's syncEquipment reads it back from the
 // ClientboundSetSlot the server sends in response to the click - this test
 // also confirms that path doesn't lag long enough to matter, not just that
-// the flag flips in principle. Equivalent to the pre-Phase-1
+// the flag flips in principle. Equivalent to the original
 // TestElytraUnequippingStopsGliding.
 func (s *ElytraFlatSuite) TestUnequippingStopsGliding() {
 	t := s.T()

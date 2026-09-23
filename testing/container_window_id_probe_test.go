@@ -11,9 +11,7 @@ import (
 
 // TestWindowIDLimitProbe empirically re-measures the "~6-7 container
 // window-ID limit per connection" constraint documented in
-// container_standalone_test.go and in
-// docs/plans/integration-test-shared-server/README.md's open question
-// (2026-09-18). That number was never re-measured after two directly
+// container_standalone_test.go. That number was never re-measured after two directly
 // relevant container-lifecycle fixes landed in agent/ (7f26b84 "Fix
 // TestAnvil panic: prevent double-closing containers" and 4873559 "fix
 // entity container race conditions") - either could mean containers now

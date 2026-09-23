@@ -289,28 +289,23 @@ type ServerConfig struct {
 // convention (testing/require_integration_env.go).
 const defaultTestSeedEnvVar = "MC_AGENT_TEST_SEED"
 
-// defaultTestSeedValue is "Seed A" from
-// docs/plans/integration-test-shared-server/05-navigation-random-suite-seed-investigation.md
-// - not an arbitrary choice. That investigation live-confirmed it 6/6 times
-// (3 runs of the original pre-conversion TestNavigationSingleAgent, 3 runs
-// of the converted NavigationRandomSuite code path, including two runs that
-// exercised a real 256/512-block working-area teleport onto this exact
-// terrain) as a seed TestSingleAgent's fixed +10-block-east moveTo reliably
-// completes within its 30s floor.
+// defaultTestSeedValue is not an arbitrary choice: it was live-confirmed
+// 6/6 times (3 runs of the original per-test-server TestNavigationSingleAgent,
+// 3 runs of the converted NavigationRandomSuite code path, including two
+// runs that exercised a real 256/512-block working-area teleport onto this
+// exact terrain) as a seed TestSingleAgent's fixed +10-block-east moveTo
+// reliably completes within its 30s floor.
 const defaultTestSeedValue = "12345"
 
 // defaultTestSeed returns the world SEED to use for a non-flat-terrain test
 // server, overridable via MC_AGENT_TEST_SEED. Pinning a default (rather than
 // leaving SEED unset, which asks the itzg image to pick a new random one
-// every boot) is what
-// docs/plans/integration-test-shared-server/06-pinned-default-seed.md is
-// for: WorldGenRandom's terrain otherwise differs every run, which
-// 05-navigation-random-suite-seed-investigation.md traced as the actual
-// cause of NavigationRandomSuite's live flakiness (a fixed test target can
-// land somewhere a given seed's terrain makes slow or unreachable within a
-// test's timeout - not a bug in the shared-server conversion itself, but a
-// property of "fixed offset + random terrain" that a fixed, known-good seed
-// sidesteps).
+// every boot) exists because WorldGenRandom's terrain otherwise differs
+// every run, which was traced as the actual cause of NavigationRandomSuite's
+// live flakiness (a fixed test target can land somewhere a given seed's
+// terrain makes slow or unreachable within a test's timeout - not a bug in
+// the shared-server conversion itself, but a property of "fixed offset +
+// random terrain" that a fixed, known-good seed sidesteps).
 func defaultTestSeed() string {
 	if v := os.Getenv(defaultTestSeedEnvVar); v != "" {
 		return v
@@ -439,7 +434,7 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		}`
 	}
 
-	// Pin a default world SEED for non-flat terrain (docs/plans/integration-test-shared-server/06-pinned-default-seed.md),
+	// Pin a default world SEED for non-flat terrain,
 	// overridable via MC_AGENT_TEST_SEED - see defaultTestSeed's own doc
 	// comment. Scoped to "not flat and not controlled" rather than
 	// "== WorldGenRandom": despite its name, WorldGenControlled uses the

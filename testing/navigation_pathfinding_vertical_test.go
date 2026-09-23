@@ -13,15 +13,14 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// PathfindingVerticalFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// PathfindingVerticalFlatSuite is a
 // version-parameterized suite for the staircase-pathfinding vertical
 // movement test: one server per version, shared by every test method below
 // (currently one), instead of the previous per-test-function
 // StartServer/StopServer pattern. WorldGen = WorldGenFlat, matching the
 // pre-conversion test's own FlatWorldServerConfig(). Kept as its own new
 // suite rather than folded into NavigationFlatSuite: this test's own
-// VIEW_DISTANCE=12 override (carried forward via VersionWorldSuite.ExtraEnv,
-// added for docs/plans/integration-test-shared-server/23-phase1-inventory-conversion.md)
+// VIEW_DISTANCE=12 override (carried forward via VersionWorldSuite.ExtraEnv)
 // is suite-wide, not per-method - folding it into NavigationFlatSuite would
 // silently change every one of that suite's already-passing methods' own
 // VIEW_DISTANCE (6, via SharedFlatWorldServerConfig) with no evidence
@@ -49,16 +48,16 @@ func block2Chunk(blockX, blockZ int64) (chunkX, chunkZ int64) {
 // TestPathfindingVerticalMovement tests navigation with elevation changes
 // using pathfinding: a gradual staircase is built from the agent's own
 // working area toward a destination 70 blocks over and 17-ish blocks up,
-// and the agent is commanded to MoveTo it. Equivalent to the pre-Phase-1
+// and the agent is commanded to MoveTo it. Equivalent to the original
 // TestPathfindingVerticalMovement (navigation_pathfinding_test.go).
 //
 // The pre-conversion test teleported to a fixed, literal (-8.50, 0.00, 5.50)
 // before reading its own "start" position - a magic constant near world
-// origin that made sense when this test owned the whole server (and,
-// post-conversion, would sit dangerously close to the world's own fixed
-// spawn point - see
-// docs/plans/integration-test-shared-server/25-never-assign-spawn-point-as-working-area.md
-// for why nothing should ever target that deliberately). Flat-world terrain
+// origin that made sense when this test owned the whole server (and, on a
+// shared server, would sit dangerously close to the world's own fixed
+// spawn point at (0, 0), which every agent lands at first before its own
+// working-area teleport - see NextWorkingAreaOffset's own doc comment for
+// why nothing should ever target that deliberately). Flat-world terrain
 // is uniform everywhere, so nothing about the test's own logic actually
 // depends on that specific X/Z - this uses leader.Origin (this test's own
 // working area) as "start" instead, dropping the fixed teleport entirely.

@@ -34,7 +34,7 @@ func waitForVisibleItem(ctx context.Context, agent models.CommandAgent, maxDista
 // appears anywhere in the bot's inventory or timeout elapses. Takes an
 // RCONHelper/botName directly (not *StandaloneTestEnv) so shared-server
 // suite methods (VersionWorldSuite's s.Inst.RCON) can call it too, not
-// just the pre-Phase-1 per-test-server pattern's env.Inst.RCON.
+// just the original per-test-server pattern's env.Inst.RCON.
 func waitForInventoryItem(ctx context.Context, rcon testenv.RCONHelper, botName, itemID string, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -54,7 +54,7 @@ func waitForInventoryItem(ctx context.Context, rcon testenv.RCONHelper, botName,
 	}
 }
 
-// LookaroundFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// LookaroundFlatSuite is a
 // version-parameterized suite for perception/pickup tests: one server per
 // version, shared by every test method below, instead of the previous
 // per-test-function StartServer/StopServer pattern (each via
@@ -77,7 +77,7 @@ func TestLookaroundFlatSuite(t *testing.T) {
 // TestListsNearbyEntities tests FindAllVisibleEntitiesInSphere: summon a
 // dropped item near the bot and verify it shows up in the visible entity
 // list with the expected (namespace-stripped, see models.VisibleEntityInfo)
-// type name. Equivalent to the pre-Phase-1 TestLookAround_ListsNearbyEntities.
+// type name. Equivalent to the original TestLookAround_ListsNearbyEntities.
 func (s *LookaroundFlatSuite) TestListsNearbyEntities() {
 	t := s.T()
 
@@ -125,7 +125,7 @@ func (s *LookaroundFlatSuite) TestListsNearbyEntities() {
 // (see actions/commands.go's PickUpNearbyItem): summon a dropped item within
 // range, locate it, walk to it, and verify vanilla's automatic pickup-on-
 // approach actually put it in the bot's inventory. Equivalent to the
-// pre-Phase-1 TestPickUpNearbyItem_WalksToAndCollects.
+// original TestPickUpNearbyItem_WalksToAndCollects.
 func (s *LookaroundFlatSuite) TestPickUpNearbyItemWalksToAndCollects() {
 	t := s.T()
 

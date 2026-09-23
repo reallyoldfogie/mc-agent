@@ -18,7 +18,7 @@ type entityAttributeGetter interface {
 	GetEntityAttribute(entityID int32, attributeName string) (float64, bool)
 }
 
-// PerceptionFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// PerceptionFlatSuite is a
 // version-parameterized suite for tests where one agent queries another
 // agent's tracked entity state (attributes, nearest-player resolution) - one
 // server per version, shared by every test method below, instead of the
@@ -28,9 +28,7 @@ type entityAttributeGetter interface {
 // perception_nearest_player_test.go's own doc comment referencing it) -
 // started as attribute_modifier_test.go's own single-method
 // AttributeModifierFlatSuite, renamed once perception_nearest_player_test.go
-// turned out to need the exact same config and two-agent NoCam pattern (see
-// docs/plans/integration-test-shared-server/20-phase1-attribute-modifier-conversion.md
-// and 21-phase1-perception-conversion.md).
+// turned out to need the exact same config and two-agent NoCam pattern.
 //
 // WorldGen and Difficulty are both left at VersionWorldSuite's own
 // zero-value defaults (Flat/Peaceful), matching both pre-conversion
@@ -133,7 +131,7 @@ func (s *PerceptionFlatSuite) TestSpeedEffectModifiesTrackedAttribute() {
 // outcome via outgoing chat messages, and no chat-capture test utility
 // exists in this package, so asserting on the exposed method (the exact
 // thing every real caller invokes) gives equivalent coverage without
-// needing to build one. Equivalent to the pre-Phase-1
+// needing to build one. Equivalent to the original
 // TestNearestPlayerInfoHonorsBlindness (perception_nearest_player_test.go).
 //
 // Both agents spawned NoCam, same rationale as
@@ -144,8 +142,7 @@ func (s *PerceptionFlatSuite) TestSpeedEffectModifiesTrackedAttribute() {
 // condition, since a working area's origin IS this suite's agents' own
 // natural spawn point (see SpawnWorkingAreaAgent's doc comment).
 //
-// docs/plans/integration-test-shared-server/00-plan.md's own risk note for
-// this file: a test assuming "the nearest player" needs its working-area
+// A real risk for this file: a test assuming "the nearest player" needs its working-area
 // separation to exceed the server's reduced view distance, or a
 // neighboring working area's agent could become visible and corrupt the
 // assertion. The 20-block distance used here (chosen to clear Blindness's

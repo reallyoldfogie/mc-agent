@@ -13,14 +13,14 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerFinderRandomSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerFinderRandomSuite is a
 // version-parameterized suite for the container-finder tests below: one server per version,
 // shared by every method, instead of the previous per-test-function StartServer/StopServer
 // pattern. WorldGen = WorldGenRandom + Difficulty = DifficultyPeaceful, matching both
-// pre-conversion functions' own DefaultServerConfig() default exactly (unlike every other
-// container-bound conversion so far - see 32/33/34-phase1-container-*-conversion.md - this file's
-// originals never called setupStandaloneTest* and built their own random-terrain server inline).
-// WorldGenRandom uses the pinned default SEED (06-pinned-default-seed.md), so terrain at each
+// pre-conversion functions' own DefaultServerConfig() default exactly (unlike other
+// container-bound conversions in this package, this file's originals never called
+// setupStandaloneTest* and built their own random-terrain server inline).
+// WorldGenRandom uses a pinned default world SEED (see StartServer), so terrain at each
 // method's own SpawnWorkingAreaAgent offset is deterministic, not fresh-random per run.
 type ContainerFinderRandomSuite struct {
 	VersionWorldSuite
@@ -36,7 +36,7 @@ func TestContainerFinderRandomSuite(t *testing.T) {
 }
 
 // TestFindContainersNearby verifies items.ContainerFinder locates multiple
-// nearby containers by radius and by type. Equivalent to the pre-Phase-1
+// nearby containers by radius and by type. Equivalent to the original
 // TestFindContainersNearby.
 func (s *ContainerFinderRandomSuite) TestFindContainersNearby() {
 	t := s.T()
@@ -112,7 +112,7 @@ func (s *ContainerFinderRandomSuite) TestFindContainersNearby() {
 // TestFindAndOpenContainer verifies items.ContainerFinder locates a
 // specific chest, that it can then be opened, and that an item seeded into
 // it can be taken into the player's inventory. Equivalent to the
-// pre-Phase-1 TestFindAndOpenContainer.
+// original TestFindAndOpenContainer.
 func (s *ContainerFinderRandomSuite) TestFindAndOpenContainer() {
 	t := s.T()
 
@@ -121,7 +121,7 @@ func (s *ContainerFinderRandomSuite) TestFindAndOpenContainer() {
 
 	playerPos := leader.Origin
 
-	// Preserved verbatim from the pre-Phase-1 original: an unformatted RCON
+	// Preserved verbatim from the original test: an unformatted RCON
 	// command (literal "%d" placeholders, no args) that no-ops rather than
 	// clearing anything - harmless since the real clear immediately below
 	// does the actual work, but not "fixed" here since this conversion is a

@@ -33,9 +33,8 @@ func debugEntityTracking(t *testing.T, agent *ManagedAgent, entityType int32, bo
 // methods need DifficultyNormal instead (see EntityInteractionCombatSuite
 // below) - no evidence found that either difficulty choice is
 // interchangeable with the other, so kept as two suites rather than
-// unified into one and assumed safe (same discipline as
-// 10-phase1-swimming-pathfinding-conversion.md's DifficultyPeaceful/
-// DifficultyNormal split).
+// unified into one and assumed safe (the same discipline applied to
+// swimming_test.go's DifficultyPeaceful/DifficultyNormal split).
 type EntityInteractionSuite struct {
 	VersionWorldSuite
 }

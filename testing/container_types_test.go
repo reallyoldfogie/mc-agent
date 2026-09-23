@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerTypesRandomSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// ContainerTypesRandomSuite is a
 // version-parameterized suite for the container-type slot-count checks below (furnace, hopper):
 // one server per version, shared by both methods, instead of the previous per-test-function
 // StartServer/StopServer pattern. WorldGen = WorldGenRandom + GameMode = survival (with
@@ -37,7 +37,7 @@ func TestContainerTypesRandomSuite(t *testing.T) {
 
 // TestFurnaceInteraction verifies opening a furnace container reports the
 // correct GenericContainer type and slot counts. Equivalent to the
-// pre-Phase-1 TestFurnaceInteraction.
+// original TestFurnaceInteraction.
 func (s *ContainerTypesRandomSuite) TestFurnaceInteraction() {
 	t := s.T()
 
@@ -105,7 +105,7 @@ func (s *ContainerTypesRandomSuite) TestFurnaceInteraction() {
 
 // TestHopperInteraction verifies opening a hopper container reports the
 // correct GenericContainer type and slot counts. Equivalent to the
-// pre-Phase-1 TestHopperInteraction.
+// original TestHopperInteraction.
 func (s *ContainerTypesRandomSuite) TestHopperInteraction() {
 	t := s.T()
 

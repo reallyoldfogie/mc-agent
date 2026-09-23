@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// CamFollowFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// CamFollowFlatSuite is a
 // version-parameterized suite for the cam-follow test: one server per
 // version, shared by every test method below (currently one), instead of
 // the previous per-test-function StartServer/StopServer pattern. WorldGen
@@ -45,7 +45,7 @@ func TestCamFollowFlatSuite(t *testing.T) {
 // then continuously teleports (also via RCON) to stay within maxDistance
 // blocks of the main agent, including snapping instantly when the main
 // agent is itself teleported a long distance rather than walking there.
-// Equivalent to the pre-Phase-1 TestCamFollow.
+// Equivalent to the original TestCamFollow.
 //
 // Called directly on the already-spawned Cam agent (leader.Cam) rather
 // than via AgentConfig.EnableCamFollow, so no VersionWorldSuite change is
