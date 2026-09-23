@@ -1,11 +1,13 @@
 package testing
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,21 +17,29 @@ import (
 // The registry arrives during the configuration phase, so a lookup issued too
 // early legitimately misses. Failing immediately turned that into a flaky
 // "entity type should be in registry" assertion.
-func waitForEntityTypeID(t *testing.T, env *StandaloneTestEnv, entityTypeName string, timeout time.Duration) int32 {
+func waitForEntityTypeID(t *testing.T, agent models.Agent, entityTypeName string, timeout time.Duration) int32 {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
 	for {
-		if typeID, ok := env.Agent.Agent.GetEntityTypeID(entityTypeName); ok {
+		if typeID, ok := agent.GetEntityTypeID(entityTypeName); ok {
 			return typeID
 		}
 		if time.Now().After(deadline) {
-			env.Agent.Agent.DumpRegistry("minecraft:entity_type")
+			agent.DumpRegistry("minecraft:entity_type")
 			require.FailNowf(t, "entity type never appeared in registry",
 				"%s not found after %v", entityTypeName, timeout)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// entityFinder is satisfied by both *ManagedAgent and *WorkingAreaAgent
+// (which embeds *ManagedAgent and so promotes this method), letting
+// waitForNearestEntityByType/pollForNearestEntityByType work from either a
+// standalone-test env's agent or a shared-suite working-area agent.
+type entityFinder interface {
+	FindNearestEntityByType(entityType int32, x, y, z float64, honorPerceptionEffects bool) (int32, float64, bool)
 }
 
 // waitForNearestEntityByType polls until an entity of the given type is tracked
@@ -60,11 +70,11 @@ const maxEntitySearchDistance = 15.0
 // still fails, just after two windows instead of one.
 const entityTrackingAttempts = 2
 
-func waitForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityTypeID int32, x, y, z float64, timeout time.Duration) int32 {
+func waitForNearestEntityByType(t *testing.T, finder entityFinder, entityTypeID int32, x, y, z float64, timeout time.Duration) int32 {
 	t.Helper()
 
 	for attempt := 1; attempt <= entityTrackingAttempts; attempt++ {
-		if entityID, found := pollForNearestEntityByType(t, env, entityTypeID, x, y, z, timeout); found {
+		if entityID, found := pollForNearestEntityByType(t, finder, entityTypeID, x, y, z, timeout); found {
 			return entityID
 		}
 		if attempt < entityTrackingAttempts {
@@ -81,12 +91,12 @@ func waitForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityType
 
 // pollForNearestEntityByType polls once for up to timeout, returning
 // (0, false) instead of failing the test if nothing turns up.
-func pollForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityTypeID int32, x, y, z float64, timeout time.Duration) (int32, bool) {
+func pollForNearestEntityByType(t *testing.T, finder entityFinder, entityTypeID int32, x, y, z float64, timeout time.Duration) (int32, bool) {
 	t.Helper()
 
 	deadline := time.Now().Add(timeout)
 	for {
-		entityID, distance, found := env.Agent.FindNearestEntityByType(entityTypeID, x, y, z, false)
+		entityID, distance, found := finder.FindNearestEntityByType(entityTypeID, x, y, z, false)
 		if found && distance <= maxEntitySearchDistance {
 			t.Logf("Found entity type %d as ID %d at distance %.2f blocks", entityTypeID, entityID, distance)
 			return entityID, true
@@ -109,11 +119,11 @@ func pollForNearestEntityByType(t *testing.T, env *StandaloneTestEnv, entityType
 //
 // entitySelector is a target selector such as
 // `@e[type=minecraft:oak_chest_boat,limit=1,sort=nearest]`.
-func seedEntityContainerSlot(t *testing.T, env *StandaloneTestEnv, entitySelector string, slot int, itemID string, count int) {
+func seedEntityContainerSlot(t *testing.T, ctx context.Context, rcon testenv.RCONHelper, entitySelector string, slot int, itemID string, count int) {
 	t.Helper()
 
 	cmd := fmt.Sprintf("item replace entity %s container.%d with %s %d", entitySelector, slot, itemID, count)
-	resp, err := env.Inst.RCON.Exec(env.Ctx, cmd)
+	resp, err := rcon.Exec(ctx, cmd)
 	require.NoError(t, err, "seed entity container slot")
 	t.Logf("%s => %s", cmd, resp)
 	time.Sleep(300 * time.Millisecond)
