@@ -11,6 +11,7 @@ import (
 	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
 
 // findHotbarItem returns the item ID in the given hotbar slot (0-8), or "" if empty.
@@ -66,8 +67,8 @@ func waitForBotNear(agent models.Position, target models.V3, tolerance float64, 
 // interaction nowhere even though the packet sends without error. Found
 // live while building this test; see
 // docs/plans/VERSION_SPECIFIC_NETWORK_REFACTOR_PT2.md.
-func faceBlock(env *StandaloneTestEnv, pos models.V3) (yaw, pitch float64, err error) {
-	botPos, ok := env.Agent.Agent.GetPositionSimple()
+func faceBlock(managed *ManagedAgent, pos models.V3) (yaw, pitch float64, err error) {
+	botPos, ok := managed.Agent.GetPositionSimple()
 	if !ok {
 		return 0, 0, fmt.Errorf("bot position not initialized")
 	}
@@ -78,10 +79,10 @@ func faceBlock(env *StandaloneTestEnv, pos models.V3) (yaw, pitch float64, err e
 	horizontalDist := math.Sqrt(dx*dx + dz*dz)
 	pitch = math.Atan2(-dy, horizontalDist) * 180 / math.Pi
 
-	if env.Agent.Config.VersionHandler == nil {
+	if managed.Config.VersionHandler == nil {
 		return 0, 0, fmt.Errorf("version handler not available")
 	}
-	if err := env.Agent.Config.VersionHandler.Play().Movement().SendRotation(env.Agent.BotClient().Conn(), yaw, pitch, true); err != nil {
+	if err := managed.Config.VersionHandler.Play().Movement().SendRotation(managed.BotClient().Conn(), yaw, pitch, true); err != nil {
 		return 0, 0, err
 	}
 	return yaw, pitch, nil
@@ -90,234 +91,266 @@ func faceBlock(env *StandaloneTestEnv, pos models.V3) (yaw, pitch float64, err e
 // useItemFacing sends a ServerboundUseItem packet with explicit yaw/pitch
 // (from faceBlock), instead of agent.UseItem's stale agent.GetPosition()
 // values — see faceBlock's doc comment for why.
-func useItemFacing(env *StandaloneTestEnv, hand models.Hand, yaw, pitch float64) error {
-	if env.Agent.Config.VersionHandler == nil {
+func useItemFacing(managed *ManagedAgent, hand models.Hand, yaw, pitch float64) error {
+	if managed.Config.VersionHandler == nil {
 		return fmt.Errorf("version handler not available")
 	}
-	actionHandler := env.Agent.Config.VersionHandler.Play().Actions()
+	actionHandler := managed.Config.VersionHandler.Play().Actions()
 	if actionHandler == nil {
 		return fmt.Errorf("action handler not available")
 	}
-	return actionHandler.SendUseItem(env.Agent.BotClient().Conn(), hand, 0, yaw, pitch)
+	return actionHandler.SendUseItem(managed.BotClient().Conn(), hand, 0, yaw, pitch)
 }
 
-// TestItemUsage_CollectWater tests using an empty bucket on a water source block.
-func TestItemUsage_CollectWater(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "light", tt.MCVersion)
-			defer env.Cancel()
+// ItemUsageFlatSuite is Phase 1's (docs/plans/integration-test-shared-server/00-plan.md)
+// version-parameterized suite for the item-usage tests below: one server per version, shared by
+// every method, instead of the previous per-test-function setupStandaloneTest* server-per-test
+// pattern. WorldGen = WorldGenFlat + Difficulty = DifficultyEasy, matching setupStandaloneTest's
+// own default.
+//
+// Only 1 of these 4 functions (TestOpenContainerWhileHoldingItem) actually opens a container -
+// the checklist's "uses ScreenMgr." grep hit that flagged this whole file as window-ID-constrained
+// was true only for that one function. TestCollectWater/TestWaterBucketOnLava/TestMilkCow use
+// UseItemOnBlock/UseItemOnEntity, never OpenContainerWithLOS/ScreenMgr - the same
+// substring/grep-vs-actual-usage gap 29/39 already found and corrected for
+// elytra_unequip_test.go/craft_test.go. Converted together anyway since they were already one
+// file and the one genuinely container-bound function needs no special isolation from the other
+// three (confirmed live below).
+type ItemUsageFlatSuite struct {
+	VersionWorldSuite
+}
 
-			// Fill a small pool of water SOURCE blocks in the ground rather than
-			// placing a single water block against open air: a lone water block
-			// starts flowing outward and pushes the bot away before it can pick
-			// the water up (and re-teleporting the bot back only races the same
-			// flow again) — found live while building this test. A multi-block
-			// source pool stays put.
-			cmdFillWater := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water replace",
-				int64(env.ContainerPos.X-1), int64(env.ContainerPos.Y-1), int64(env.ContainerPos.Z-1),
-				int64(env.ContainerPos.X+1), int64(env.ContainerPos.Y-1), int64(env.ContainerPos.Z+1),
-			)
+func TestItemUsageFlatSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &ItemUsageFlatSuite{}
+		s.WorldGen = WorldGenFlat
+		s.Difficulty = DifficultyEasy
+		return s
+	})
+}
 
-			resp, err := env.Inst.RCON.Exec(env.Ctx, cmdFillWater)
-			require.NoError(t, err, "fill water source blocks")
-			t.Logf("%q %q", cmdFillWater, resp)
+// TestCollectWater tests using an empty bucket on a water source block.
+// Equivalent to the pre-Phase-1 TestItemUsage_CollectWater.
+func (s *ItemUsageFlatSuite) TestCollectWater() {
+	t := s.T()
 
-			time.Sleep(500 * time.Millisecond)
+	leader, err := s.SpawnWorkingAreaAgent("CollectWaterBot", "item_usage_collect_water")
+	require.NoError(t, err, "spawn agent")
 
-			// Teleport near the water source
-			tpTarget := models.V3{X: env.ContainerPos.X, Y: env.ContainerPos.Y, Z: env.ContainerPos.Z}
-			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
-			_, err = env.Inst.RCON.Exec(env.Ctx, cmd)
-			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env.Agent.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+	// A placeholder block placed purely to get a confirmed-loaded reference
+	// position (same PlaceBlockAndWait chunk-load guarantee the pre-Phase-1
+	// setupStandaloneTest("light", ...) call relied on) - immediately
+	// overwritten by the water fill below, so its type doesn't matter.
+	refPos := models.V3{X: math.Floor(leader.Origin.X) + 5, Y: math.Floor(leader.Origin.Y), Z: math.Floor(leader.Origin.Z)}
+	_, err = PlaceBlockAndWait(s.Ctx, s.Inst.RCON, leader.ManagedAgent, refPos, "minecraft:light", "light", 30*time.Second)
+	require.NoError(t, err, "place reference block")
 
-			// Give the bot an empty bucket in hotbar slot 0
-			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", env.BotName)
-			_, err = env.Inst.RCON.Exec(env.Ctx, giveCmd)
-			require.NoError(t, err, "give bucket")
-			time.Sleep(500 * time.Millisecond)
+	// Fill a small pool of water SOURCE blocks in the ground rather than
+	// placing a single water block against open air: a lone water block
+	// starts flowing outward and pushes the bot away before it can pick the
+	// water up (and re-teleporting the bot back only races the same flow
+	// again) — found live while building this test. A multi-block source
+	// pool stays put.
+	cmdFillWater := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:water replace",
+		int64(refPos.X-1), int64(refPos.Y-1), int64(refPos.Z-1),
+		int64(refPos.X+1), int64(refPos.Y-1), int64(refPos.Z+1),
+	)
+	resp, err := s.Inst.RCON.Exec(s.Ctx, cmdFillWater)
+	require.NoError(t, err, "fill water source blocks")
+	t.Logf("%q %q", cmdFillWater, resp)
 
-			ctx := context.Background()
-			require.NoError(t, env.Agent.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
+	time.Sleep(500 * time.Millisecond)
 
-			// Look at the water block, then send a plain "use item" interaction —
-			// NOT UseItemOnBlock. Vanilla's BucketItem (both filling and emptying)
-			// is driven entirely by Item.use()/ServerboundUseItemPacket: the item
-			// does its own internal raytrace for a nearby fluid along the player's
-			// facing direction. A ServerboundUseItemOnPacket targeting the water
-			// block instead routes into the *block's* own (no-op) right-click
-			// handling, so the packet sends cleanly but the bucket never fills —
-			// found live while building this test, see
-			// docs/plans/VERSION_SPECIFIC_NETWORK_REFACTOR_PT2.md.
-			lookAtBlock := models.V3{X: env.ContainerPos.X, Y: env.ContainerPos.Y - 1, Z: env.ContainerPos.Z}
-			yaw, pitch, err := faceBlock(env, lookAtBlock)
-			require.NoError(t, err, "look at water block")
-			time.Sleep(500 * time.Millisecond)
+	tpTarget := refPos
+	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpTarget.X, tpTarget.Y, tpTarget.Z)
+	_, err = s.Inst.RCON.Exec(s.Ctx, cmd)
+	require.NoError(t, err)
+	require.NoError(t, waitForBotNear(leader.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
 
-			err = useItemFacing(env, models.MainHand, yaw, pitch)
-			require.NoError(t, err, "use bucket on water")
-			time.Sleep(5 * time.Second)
+	giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", leader.Name)
+	_, err = s.Inst.RCON.Exec(s.Ctx, giveCmd)
+	require.NoError(t, err, "give bucket")
+	time.Sleep(500 * time.Millisecond)
 
-			items, err := GetInventoryItems(env.Ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get inventory")
-			assert.Equal(t, "minecraft:water_bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold a water bucket")
+	ctx := context.Background()
+	require.NoError(t, leader.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
 
-			t.Log("✓ Collect water test passed")
-		})
+	// Look at the water block, then send a plain "use item" interaction —
+	// NOT UseItemOnBlock. Vanilla's BucketItem (both filling and emptying)
+	// is driven entirely by Item.use()/ServerboundUseItemPacket: the item
+	// does its own internal raytrace for a nearby fluid along the player's
+	// facing direction. A ServerboundUseItemOnPacket targeting the water
+	// block instead routes into the *block's* own (no-op) right-click
+	// handling, so the packet sends cleanly but the bucket never fills —
+	// found live while building this test, see
+	// docs/plans/VERSION_SPECIFIC_NETWORK_REFACTOR_PT2.md.
+	lookAtBlock := models.V3{X: refPos.X, Y: refPos.Y - 1, Z: refPos.Z}
+	yaw, pitch, err := faceBlock(leader.ManagedAgent, lookAtBlock)
+	require.NoError(t, err, "look at water block")
+	time.Sleep(500 * time.Millisecond)
+
+	err = useItemFacing(leader.ManagedAgent, models.MainHand, yaw, pitch)
+	require.NoError(t, err, "use bucket on water")
+	time.Sleep(5 * time.Second)
+
+	items, err := GetInventoryItems(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get inventory")
+	assert.Equal(t, "minecraft:water_bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold a water bucket")
+
+	t.Log("✓ Collect water test passed")
+}
+
+// TestWaterBucketOnLava tests using a water bucket on a lava source block
+// (the clutch mechanic: lava source + water = obsidian). Equivalent to the
+// pre-Phase-1 TestItemUsage_WaterBucketOnLava.
+func (s *ItemUsageFlatSuite) TestWaterBucketOnLava() {
+	t := s.T()
+
+	leader, err := s.SpawnWorkingAreaAgent("WaterOnLavaBot", "item_usage_water_on_lava")
+	require.NoError(t, err, "spawn agent")
+
+	lavaPos := models.V3{X: math.Floor(leader.Origin.X) + 5, Y: math.Floor(leader.Origin.Y), Z: math.Floor(leader.Origin.Z)}
+	_, err = PlaceBlockAndWait(s.Ctx, s.Inst.RCON, leader.ManagedAgent, lavaPos, "minecraft:lava", "lava", 30*time.Second)
+	require.NoError(t, err, "place lava source block")
+
+	tpTarget := models.V3{X: lavaPos.X - 2, Y: lavaPos.Y, Z: lavaPos.Z}
+	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, tpTarget.X, tpTarget.Y, tpTarget.Z)
+	_, err = s.Inst.RCON.Exec(s.Ctx, cmd)
+	require.NoError(t, err)
+	require.NoError(t, waitForBotNear(leader.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
+
+	giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with water_bucket 1", leader.Name)
+	_, err = s.Inst.RCON.Exec(s.Ctx, giveCmd)
+	require.NoError(t, err, "give water bucket")
+	time.Sleep(500 * time.Millisecond)
+
+	ctx := context.Background()
+	require.NoError(t, leader.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
+
+	// Look at the lava block, then send a plain "use item" interaction — see
+	// the matching comment in TestCollectWater for why not UseItemOnBlock.
+	yaw, pitch, err := faceBlock(leader.ManagedAgent, lavaPos)
+	require.NoError(t, err, "look at lava block")
+	time.Sleep(500 * time.Millisecond)
+
+	err = useItemFacing(leader.ManagedAgent, models.MainHand, yaw, pitch)
+	require.NoError(t, err, "use water bucket on lava")
+	time.Sleep(1 * time.Second)
+
+	// Not verifying the block became obsidian here: GetBlockAt's fallback
+	// path (an "execute store result score @s ... run data get block" RCON
+	// command) requires an executing entity context RCON doesn't provide,
+	// and fails with "No entity was found" for any plain block with no
+	// block-entity data (like obsidian) — a pre-existing
+	// testing/rcon_helpers.go limitation, found while building this test.
+	// The bucket-emptying check below is a reliable enough signal that the
+	// water-on-lava interaction actually happened server-side.
+	items, err := GetInventoryItems(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get inventory")
+	require.Equal(t, "minecraft:bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold an empty bucket")
+
+	t.Log("✓ Water bucket on lava test passed")
+}
+
+// TestMilkCow tests using an empty bucket on a cow entity to collect milk.
+// Equivalent to the pre-Phase-1 TestItemUsage_MilkCow.
+func (s *ItemUsageFlatSuite) TestMilkCow() {
+	t := s.T()
+
+	leader, err := s.SpawnWorkingAreaAgent("MilkCowBot", "item_usage_milk_cow")
+	require.NoError(t, err, "spawn agent")
+
+	ctx := context.Background()
+
+	platformY := int(math.Floor(leader.Origin.Y)) - 1
+	platformX := int(math.Floor(leader.Origin.X)) - 10
+	platformZ := int(math.Floor(leader.Origin.Z)) - 10
+	BuildPlatform(ctx, s.Inst.RCON, platformX, platformY, platformZ, 20, 20, "minecraft:grass_block")
+	if err := ClearArea(ctx, s.Inst.RCON,
+		platformX, platformY+1, platformZ,
+		platformX+20, platformY+5, platformZ+20); err != nil {
+		t.Logf("warning: failed to clear area: %v", err)
 	}
+
+	giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", leader.Name)
+	_, err = s.Inst.RCON.Exec(s.Ctx, giveCmd)
+	require.NoError(t, err, "give bucket")
+	time.Sleep(500 * time.Millisecond)
+
+	require.NoError(t, leader.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
+
+	spawnX := leader.Origin.X + 3
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	spawnCmd := fmt.Sprintf("summon minecraft:cow %.1f %.1f %.1f", spawnX, spawnY, spawnZ)
+	_, err = s.Inst.RCON.Exec(s.Ctx, spawnCmd)
+	require.NoError(t, err, "spawn cow")
+	time.Sleep(3 * time.Second)
+
+	botPos, ok := leader.Agent.GetPositionSimple()
+	require.True(t, ok, "bot position initialized")
+
+	cowType, ok := leader.Agent.GetEntityTypeID("minecraft:cow")
+	require.True(t, ok, "cow entity type should be in registry")
+
+	cowID, dist, found := leader.FindNearestEntityByType(cowType, botPos.X, botPos.Y, botPos.Z, false)
+	require.True(t, found, "should find cow entity")
+	require.Less(t, dist, 20.0, "cow should be within 20 blocks")
+
+	require.NoError(t, leader.FaceEntity(cowID), "face cow")
+	time.Sleep(100 * time.Millisecond)
+
+	err = leader.Agent.UseItemOnEntity(ctx, cowID, models.MainHand, false)
+	require.NoError(t, err, "milk cow")
+	time.Sleep(1 * time.Second)
+
+	items, err := GetInventoryItems(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(t, err, "get inventory")
+	require.Equal(t, "minecraft:milk_bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold a milk bucket")
+
+	t.Log("✓ Milk cow test passed")
 }
 
-// TestItemUsage_WaterBucketOnLava tests using a water bucket on a lava source block
-// (the clutch mechanic: lava source + water = obsidian).
-func TestItemUsage_WaterBucketOnLava(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "lava", tt.MCVersion)
-			defer env.Cancel()
-
-			// Teleport near the lava source
-			tpTarget := models.V3{X: env.ContainerPos.X - 2, Y: env.ContainerPos.Y, Z: env.ContainerPos.Z}
-			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, tpTarget.X, tpTarget.Y, tpTarget.Z)
-			_, err := env.Inst.RCON.Exec(env.Ctx, cmd)
-			require.NoError(t, err)
-			require.NoError(t, waitForBotNear(env.Agent.Agent, tpTarget, 1.0, 5*time.Second), "bot position sync after teleport")
-
-			// Give the bot a water bucket in hotbar slot 0
-			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with water_bucket 1", env.BotName)
-			_, err = env.Inst.RCON.Exec(env.Ctx, giveCmd)
-			require.NoError(t, err, "give water bucket")
-			time.Sleep(500 * time.Millisecond)
-
-			ctx := context.Background()
-			require.NoError(t, env.Agent.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
-
-			// Look at the lava block, then send a plain "use item" interaction —
-			// see the matching comment in TestItemUsage_CollectWater for why not
-			// UseItemOnBlock.
-			yaw, pitch, err := faceBlock(env, env.ContainerPos)
-			require.NoError(t, err, "look at lava block")
-			time.Sleep(500 * time.Millisecond)
-
-			err = useItemFacing(env, models.MainHand, yaw, pitch)
-			require.NoError(t, err, "use water bucket on lava")
-			time.Sleep(1 * time.Second)
-
-			// Not verifying the block became obsidian here: GetBlockAt's fallback path
-			// (an "execute store result score @s ... run data get block" RCON command)
-			// requires an executing entity context RCON doesn't provide, and fails with
-			// "No entity was found" for any plain block with no block-entity data (like
-			// obsidian) — a pre-existing testing/rcon_helpers.go limitation, found while
-			// building this test. The bucket-emptying check below is a reliable enough
-			// signal that the water-on-lava interaction actually happened server-side.
-			items, err := GetInventoryItems(env.Ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get inventory")
-			require.Equal(t, "minecraft:bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold an empty bucket")
-
-			t.Log("✓ Water bucket on lava test passed")
-		})
-	}
-}
-
-// TestItemUsage_MilkCow tests using an empty bucket on a cow entity to collect milk.
-func TestItemUsage_MilkCow(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTestWithModeAndBlockPlacement(t, "milk_cow", "survival", false, tt.MCVersion, DifficultyEasy, false)
-			defer env.Cancel()
-
-			ctx := context.Background()
-
-			platformY := int(env.ContainerPos.Y) - 1
-			platformX := int(env.ContainerPos.X) - 10
-			platformZ := int(env.ContainerPos.Z) - 10
-			BuildPlatform(ctx, env.Inst.RCON, platformX, platformY, platformZ, 20, 20, "minecraft:grass_block")
-			if err := ClearArea(ctx, env.Inst.RCON,
-				platformX, platformY+1, platformZ,
-				platformX+20, platformY+5, platformZ+20); err != nil {
-				t.Logf("warning: failed to clear area: %v", err)
-			}
-
-			// Give the bot an empty bucket in hotbar slot 0
-			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", env.BotName)
-			_, err := env.Inst.RCON.Exec(env.Ctx, giveCmd)
-			require.NoError(t, err, "give bucket")
-			time.Sleep(500 * time.Millisecond)
-
-			require.NoError(t, env.Agent.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
-
-			// Spawn a cow near the bot
-			spawnX := env.ContainerPos.X + 3
-			spawnY := env.ContainerPos.Y
-			spawnZ := env.ContainerPos.Z
-			spawnCmd := fmt.Sprintf("summon minecraft:cow %.1f %.1f %.1f", spawnX, spawnY, spawnZ)
-			_, err = env.Inst.RCON.Exec(env.Ctx, spawnCmd)
-			require.NoError(t, err, "spawn cow")
-			time.Sleep(3 * time.Second)
-
-			botPos, ok := env.Agent.Agent.GetPositionSimple()
-			require.True(t, ok, "bot position initialized")
-
-			cowType, ok := env.Agent.Agent.GetEntityTypeID("minecraft:cow")
-			require.True(t, ok, "cow entity type should be in registry")
-
-			cowID, dist, found := env.Agent.FindNearestEntityByType(cowType, botPos.X, botPos.Y, botPos.Z, false)
-			require.True(t, found, "should find cow entity")
-			require.Less(t, dist, 20.0, "cow should be within 20 blocks")
-
-			require.NoError(t, env.Agent.FaceEntity(cowID), "face cow")
-			time.Sleep(100 * time.Millisecond)
-
-			err = env.Agent.Agent.UseItemOnEntity(ctx, cowID, models.MainHand, false)
-			require.NoError(t, err, "milk cow")
-			time.Sleep(1 * time.Second)
-
-			items, err := GetInventoryItems(env.Ctx, env.Inst.RCON, env.BotName)
-			require.NoError(t, err, "get inventory")
-			require.Equal(t, "minecraft:milk_bucket", findHotbarItem(items, 0), "hotbar slot 0 should hold a milk bucket")
-
-			t.Log("✓ Milk cow test passed")
-		})
-	}
-}
-
-// TestItemUsage_OpenContainerWhileHoldingItem verifies opening a container works
+// TestOpenContainerWhileHoldingItem verifies opening a container works
 // normally while the bot has an unrelated item selected in its hotbar.
-func TestItemUsage_OpenContainerWhileHoldingItem(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			env := setupStandaloneTest(t, "chest", tt.MCVersion)
-			defer env.Cancel()
+// Equivalent to the pre-Phase-1 TestItemUsage_OpenContainerWhileHoldingItem.
+// The only genuinely container-opening function in this file - see the
+// suite's own doc comment.
+func (s *ItemUsageFlatSuite) TestOpenContainerWhileHoldingItem() {
+	t := s.T()
 
-			// Give the bot a bucket and select it before interacting with the chest
-			giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", env.BotName)
-			_, err := env.Inst.RCON.Exec(env.Ctx, giveCmd)
-			require.NoError(t, err, "give bucket")
-			time.Sleep(500 * time.Millisecond)
+	leader, err := s.SpawnWorkingAreaAgent("HoldingItemBot", "item_usage_open_while_holding")
+	require.NoError(t, err, "spawn agent")
 
-			ctx := context.Background()
-			require.NoError(t, env.Agent.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
+	chestPos := models.V3{X: math.Floor(leader.Origin.X) + 5, Y: math.Floor(leader.Origin.Y), Z: math.Floor(leader.Origin.Z)}
+	_, err = PlaceBlockAndWait(s.Ctx, s.Inst.RCON, leader.ManagedAgent, chestPos, "minecraft:chest", "chest", 30*time.Second)
+	require.NoError(t, err, "place chest")
 
-			// Teleport near chest
-			cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", env.BotName, env.ContainerPos.X-2, env.ContainerPos.Y, env.ContainerPos.Z)
-			_, err = env.Inst.RCON.Exec(env.Ctx, cmd)
-			require.NoError(t, err)
-			time.Sleep(500 * time.Millisecond)
+	giveCmd := fmt.Sprintf("item replace entity %s hotbar.0 with bucket 1", leader.Name)
+	_, err = s.Inst.RCON.Exec(s.Ctx, giveCmd)
+	require.NoError(t, err, "give bucket")
+	time.Sleep(500 * time.Millisecond)
 
-			windowID, err := OpenContainerWithLOS(env.Ctx, env.Agent.Agent, env.ContainerPos, models.FaceEast, 5*time.Second)
-			require.NoError(t, err, "open chest while holding bucket")
-			t.Logf("chest opened with window ID: %d", windowID)
+	ctx := context.Background()
+	require.NoError(t, leader.Agent.SelectHotbarSlot(ctx, 0), "select hotbar slot 0")
 
-			screen, ok := env.ScreenMgr.Screens()[int(windowID)]
-			require.True(t, ok, "chest window should exist")
+	cmd := fmt.Sprintf("tp %s %.1f %.1f %.1f", leader.Name, chestPos.X-2, chestPos.Y, chestPos.Z)
+	_, err = s.Inst.RCON.Exec(s.Ctx, cmd)
+	require.NoError(t, err)
+	time.Sleep(500 * time.Millisecond)
 
-			chest, ok := screen.(*mcscreen.Chest)
-			require.True(t, ok, "screen should be a Chest")
-			require.Equal(t, 3, chest.Rows, "should be single chest (3 rows)")
+	windowID, err := OpenContainerWithLOS(s.Ctx, leader.Agent, chestPos, models.FaceEast, 5*time.Second)
+	require.NoError(t, err, "open chest while holding bucket")
+	t.Logf("chest opened with window ID: %d", windowID)
 
-			require.NoError(t, env.Agent.Agent.CloseContainer(), "close chest")
+	screen, ok := leader.ScreenManager().Screens()[int(windowID)]
+	require.True(t, ok, "chest window should exist")
 
-			t.Log("✓ Open container while holding item test passed")
-		})
-	}
+	chest, ok := screen.(*mcscreen.Chest)
+	require.True(t, ok, "screen should be a Chest")
+	require.Equal(t, 3, chest.Rows, "should be single chest (3 rows)")
+
+	require.NoError(t, leader.Agent.CloseContainer(), "close chest")
+
+	t.Log("✓ Open container while holding item test passed")
 }
