@@ -103,8 +103,23 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 		return 0, fmt.Errorf("look at container: %w", err)
 	}
 
-	// Small delay to ensure rotation packet is processed
-	time.Sleep(2 * time.Second)
+	// Small delay to ensure rotation packet is processed - 100ms, matching
+	// MineBlockAt's own identical-purpose wait (agent/actions.go: "Small
+	// delay so the server processes the rotation" before mining, the same
+	// LookAt-then-interact sequence as here) rather than this call site's
+	// own former 2s, an unexplained 20x-larger value with no documented
+	// justification (git blame: introduced in a broad, unrelated
+	// architecture-refactor commit, 57d38ff8, not a specific found-live
+	// race). Confirmed too expensive in practice, not just theoretically:
+	// every single table-based craft attempt (chest, bowl - anything not
+	// fitting the 2x2 inventory grid) opens a fresh container each time
+	// (CraftItem closes it after every attempt), so this alone cost 2 of
+	// the roughly 4 real seconds cmd/rsi-train's own -parallel-envs x
+	// tick-rate scaling investigation (2026-09-23) measured between
+	// consecutive craft attempts for the same agent - a cost paid on
+	// every attempt, successful or not, and entirely unaffected by
+	// server tick rate (a plain wall-clock sleep, not tick-based).
+	time.Sleep(100 * time.Millisecond)
 
 	// Open the container using helper
 	a.logf("[Agent %s] Opening container at (%.1f, %.1f, %.1f) face=%d", a.cfg.Name, pos.X, pos.Y, pos.Z, face)
@@ -113,8 +128,16 @@ func (a *agent) OpenContainer(pos models.V3, face models.BlockFace, timeout time
 		return 0, fmt.Errorf("open container: %w", err)
 	}
 
+	// No further wait needed here: ch.OpenContainer (items/container_helper.go)
+	// already polls waitForOpenScreen until the server confirms the new
+	// window actually exists (screensNow >= screensBefore, matched by
+	// findNewScreenID) before returning a windowID at all - a second
+	// blind 2s sleep here, previously unconditional and undocumented (no
+	// comment explaining what it was still waiting for), was purely
+	// re-waiting on an already-confirmed fact. Found live in the same
+	// 2026-09-23 investigation as the sleep above: pure waste, on every
+	// single container open.
 	a.logf("[Agent %s] Container opened successfully with window ID %d", a.cfg.Name, windowID)
-	time.Sleep(2 * time.Second)
 	return windowID, nil
 }
 
