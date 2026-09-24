@@ -3,7 +3,9 @@ package rlenv
 import (
 	"context"
 	"fmt"
+	"log"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
@@ -30,6 +32,11 @@ type Environment struct {
 	prevHealth                float32
 	prevHealthKnown           bool
 	episodeStarted            bool
+
+	// minedBlocks are the blocks this environment's mined-target detection
+	// has seen broken since the last Reset, restored at the start of the
+	// next one (see BlockRestorer).
+	minedBlocks []minedBlock
 
 	// mineX/Y/Z/mineVisible cache the last-resolved nearest visible
 	// Config.MineTargetBlock instance (see resolveMineTarget), the same
@@ -166,6 +173,8 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 // hypothetical one. episodeIndex is Reset's own captured episode counter
 // (see its doc comment), passed through unchanged for Config.TaskSelector.
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
+	e.restoreMinedBlocks(ctx)
+
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
 		return rl.Observation{}, errPositionUnknown
@@ -506,6 +515,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if mined {
 		reward += mineRewardBonus
 		done = true
+		if restorableBlockName(prevMineBlockName) {
+			e.minedBlocks = append(e.minedBlocks, minedBlock{int(prevMineX), int(prevMineY), int(prevMineZ), prevMineBlockName})
+		}
 	}
 	if craftedThisStep {
 		reward += craftRewardBonus
@@ -630,4 +642,34 @@ func (e *Environment) awaitStep(ctx context.Context, completion models.Completio
 		return ctx.Err()
 	}
 	return nil
+}
+
+// minedBlock is a block a mine episode broke, and what it was.
+type minedBlock struct {
+	x, y, z int
+	name    string
+}
+
+// restorableBlockName reports whether name is a real block worth putting
+// back - not air and not one of BlockNameAt's "couldn't tell" placeholders.
+func restorableBlockName(name string) bool {
+	return name != "" && name != "minecraft:air" && name != "unknown" && !strings.HasPrefix(name, "<")
+}
+
+// restoreMinedBlocks puts back every block broken since the last Reset (see
+// BlockRestorer), before the bot is moved so nothing is restored under it
+// after it has walked into the hole. Best effort: a failed restore is
+// logged and skipped, never fails the Reset.
+func (e *Environment) restoreMinedBlocks(ctx context.Context) {
+	blocks := e.minedBlocks
+	e.minedBlocks = nil
+	restorer, ok := e.agent.(BlockRestorer)
+	if !ok {
+		return
+	}
+	for _, b := range blocks {
+		if err := restorer.RestoreBlock(ctx, b.x, b.y, b.z, b.name); err != nil {
+			log.Printf("rlenv: restoring mined %s at (%d,%d,%d): %v", b.name, b.x, b.y, b.z, err)
+		}
+	}
 }

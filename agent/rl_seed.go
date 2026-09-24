@@ -138,6 +138,19 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 	}
 }
 
+// RestoreBlock puts blockName back at (x, y, z) via RCON, undoing a mining
+// episode - see rlenv.BlockRestorer. Training convenience only, same scope
+// note as SeedNearbyBlock; requires RCON.
+func (a *agent) RestoreBlock(ctx context.Context, x, y, z int, blockName string) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("restore block: RCON not configured for this agent")
+	}
+	if _, err := a.cfg.RCON.SetBlock(ctx, int64(x), int64(y), int64(z), normalizeItemName(blockName), "replace").Exec(ctx); err != nil {
+		return fmt.Errorf("setblock via RCON: %w", err)
+	}
+	return nil
+}
+
 // SeedCraftIngredients gives the bot, via its player command connection (with
 // an RCON fallback), one stack
 // of each distinct ingredient itemName's recipe needs — the first

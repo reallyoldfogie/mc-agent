@@ -1,6 +1,11 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/rlenv"
+)
 
 func TestSeedBlockCoords_FloorsNegativeCoordinates(t *testing.T) {
 	for _, tc := range []struct {
@@ -19,5 +24,20 @@ func TestSeedBlockCoords_FloorsNegativeCoordinates(t *testing.T) {
 				t.Fatalf("seedBlockCoords(%v,%v,%v) = (%d,%d,%d), want (%d,%d,%d)", tc.x, tc.y, tc.z, x, y, z, tc.wx, tc.wy, tc.wz)
 			}
 		})
+	}
+}
+
+// Reset finds these by runtime type assertion, so a signature drift would
+// silently disable them; pin that the real agent satisfies each.
+func TestAgentSatisfiesRLResetCapabilities(t *testing.T) {
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := agentInt.(rlenv.BlockRestorer); !ok {
+		t.Error("agent must satisfy rlenv.BlockRestorer")
+	}
+	if _, ok := agentInt.(rlenv.ResetAgent); !ok {
+		t.Error("agent must satisfy rlenv.ResetAgent")
 	}
 }
