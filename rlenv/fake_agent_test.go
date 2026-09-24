@@ -30,6 +30,7 @@ type fakeAgent struct {
 	healthKnown         bool
 	moveToWithChatErr   error
 	moveToWithChatDelay time.Duration // if set, MoveToWithChat sleeps this long before returning
+	moveToCanceled      bool          // set when a delayed MoveTo observed its context being canceled
 	moveToWithChatCalls int
 
 	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
@@ -226,7 +227,7 @@ func (f *fakeAgent) FollowStatus(context.Context) string                     { r
 // see rlenv/action.go's ActionGoToTarget, which dispatches through the
 // quiet path (actions.MoveToQuiet) exactly like production rlenv training
 // does.
-func (f *fakeAgent) MoveTo(_ context.Context, x, y, z float64, _ bool) error {
+func (f *fakeAgent) MoveTo(ctx context.Context, x, y, z float64, _ bool) error {
 	f.mu.Lock()
 	f.moveToWithChatCalls++
 	err := f.moveToWithChatErr
@@ -234,7 +235,14 @@ func (f *fakeAgent) MoveTo(_ context.Context, x, y, z float64, _ bool) error {
 	f.mu.Unlock()
 
 	if delay > 0 {
-		time.Sleep(delay)
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			f.mu.Lock()
+			f.moveToCanceled = true
+			f.mu.Unlock()
+			return ctx.Err()
+		}
 	}
 
 	if err == nil {

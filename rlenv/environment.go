@@ -38,6 +38,10 @@ type Environment struct {
 	// next one (see BlockRestorer).
 	minedBlocks []minedBlock
 
+	// inflight is the last dispatched action while it may still be running
+	// (a step that timed out leaves it going); see cancelInflight.
+	inflight *inflightAction
+
 	// mineX/Y/Z/mineVisible cache the last-resolved nearest visible
 	// Config.MineTargetBlock instance (see resolveMineTarget), the same
 	// way prevDistance/prevHealth cache the last-known state of their own
@@ -173,6 +177,7 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 // hypothetical one. episodeIndex is Reset's own captured episode counter
 // (see its doc comment), passed through unchanged for Config.TaskSelector.
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
+	e.cancelInflight()
 	e.restoreMinedBlocks(ctx)
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
@@ -464,12 +469,22 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	prevCraftCount := e.craftCount
 
 	if shouldDispatch {
-		completion, err := e.registry.Execute(ctx, dispatch.name, e.agent, dispatch.args)
+		e.cancelInflight()
+		actionCtx, cancelAction := context.WithCancel(ctx)
+		completion, err := e.registry.Execute(actionCtx, dispatch.name, e.agent, dispatch.args)
 		if err != nil {
+			cancelAction()
 			return rl.StepResult{}, fmt.Errorf("rlenv: dispatching %s: %w", dispatch.name, err)
 		}
-		if err := e.awaitStep(ctx, completion); err != nil {
+		resolved, err := e.awaitStep(ctx, completion)
+		if err != nil {
+			cancelAction()
 			return rl.StepResult{}, err
+		}
+		if resolved {
+			cancelAction()
+		} else {
+			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
 		}
 	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
@@ -635,13 +650,46 @@ func observationsEqual(a, b []float32) bool {
 //   - ctx is canceled by the caller: propagated as a real error, since
 //     that's a caller-initiated abort, distinguished from our own
 //     StepTimeout by checking ctx's own error after the wait.
-func (e *Environment) awaitStep(ctx context.Context, completion models.Completion) error {
+//
+// resolved reports whether the action finished within the timeout; false
+// means it is still running and the caller must track it (see inflight).
+func (e *Environment) awaitStep(ctx context.Context, completion models.Completion) (resolved bool, err error) {
 	stepCtx, cancel := context.WithTimeout(ctx, e.cfg.StepTimeout)
 	defer cancel()
 	if err := completion.Wait(stepCtx); err != nil && ctx.Err() != nil {
-		return ctx.Err()
+		return false, ctx.Err()
 	}
-	return nil
+	return stepCtx.Err() == nil, nil
+}
+
+// inflightAction is a dispatched action that outlived its step.
+type inflightAction struct {
+	cancel     context.CancelFunc
+	completion models.Completion
+}
+
+// inflightCancelTimeout bounds how long cancelInflight waits for a canceled
+// action to unwind before moving on.
+const inflightCancelTimeout = 5 * time.Second
+
+// cancelInflight cancels an action a timed-out step left running and waits
+// (bounded) for it to unwind. Actions run in goroutines on the caller's
+// context, so without this a craft started in one episode kept going across
+// the next Reset and spent the new episode's freshly seeded ingredients
+// (found live: a leftover bowl craft took 3 of a chest episode's 9 planks,
+// leaving 6 of the 8 needed, and the unwinnable episode retried its craft
+// for the whole step budget); two actions could also run at once within an
+// episode, clicking the same inventory concurrently.
+func (e *Environment) cancelInflight() {
+	inflight := e.inflight
+	e.inflight = nil
+	if inflight == nil {
+		return
+	}
+	inflight.cancel()
+	waitCtx, cancel := context.WithTimeout(context.Background(), inflightCancelTimeout)
+	defer cancel()
+	_ = inflight.completion.Wait(waitCtx)
 }
 
 // minedBlock is a block a mine episode broke, and what it was.

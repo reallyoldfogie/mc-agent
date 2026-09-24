@@ -266,6 +266,39 @@ func TestStepTimesOutWhileActionStillRunning(t *testing.T) {
 	}
 }
 
+// TestResetCancelsAndWaitsForAnActionLeftRunningByATimedOutStep: an action
+// that outlives its step must not survive into the next episode, where it
+// would act on the new episode's freshly seeded state (found live: a
+// leftover bowl craft spent a chest episode's planks).
+func TestResetCancelsAndWaitsForAnActionLeftRunningByATimedOutStep(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.moveToWithChatDelay = 5 * time.Second
+	cfg := testConfig()
+	cfg.StepTimeout = 20 * time.Millisecond
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	start := time.Now()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("second Reset: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Reset took %v: it should cancel the running action, not wait out its 5s delay", elapsed)
+	}
+	agent.mu.Lock()
+	canceled := agent.moveToCanceled
+	agent.mu.Unlock()
+	if !canceled {
+		t.Fatal("the in-flight action never saw its context canceled by Reset")
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes
