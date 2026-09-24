@@ -112,3 +112,44 @@ func TestFindInteractPosition_SkipsBlockedLineOfSight(t *testing.T) {
 		t.Fatalf("expected the blocked-LOS candidate %+v to be skipped, but it was returned", nearest)
 	}
 }
+
+// TestFindInteractPositions_FloatingTargetOffersGroundLevelFallback covers a
+// block floating above the ground (found live: a seeded crafting table two
+// cells above the floor). The spot standing on top of it is the closest
+// candidate but unreachable from the floor, so callers need the ground-level
+// spots beside it as fallbacks.
+func TestFindInteractPositions_FloatingTargetOffersGroundLevelFallback(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(-5, -5, 5, 5, -1, grassStateID).
+		SetBlockDirect(0, 1, 0, grassStateID). // target, one cell of air beneath it
+		Build()
+
+	agent := &fakeInteractAgent{world: world, shapeMgr: mctesting.NewMockShapeManager()}
+	target := models.V3{X: 0, Y: 1, Z: 0}
+
+	positions, err := models.FindInteractPositions(context.Background(), agent, target, 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(positions) < 2 {
+		t.Fatalf("expected several candidates, got %v", positions)
+	}
+	if positions[0] != (models.V3{X: 0, Y: 2, Z: 0}) {
+		t.Errorf("expected the on-top spot to rank first (closest), got %+v", positions[0])
+	}
+	groundLevel := false
+	for _, p := range positions[1:] {
+		if p.Y == 0 {
+			groundLevel = true
+		}
+	}
+	if !groundLevel {
+		t.Errorf("expected a ground-level fallback among %v", positions)
+	}
+
+	single, ok, err := models.FindInteractPosition(context.Background(), agent, target)
+	if err != nil || !ok || single != positions[0] {
+		t.Errorf("FindInteractPosition must return the first of FindInteractPositions, got %+v ok=%v err=%v", single, ok, err)
+	}
+}

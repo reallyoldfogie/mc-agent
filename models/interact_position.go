@@ -42,10 +42,24 @@ type InteractPositionAgent interface {
 // that ran to its step limit every time, because the goal was
 // unsatisfiable by construction).
 func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, target V3) (V3, bool, error) {
+	positions, err := FindInteractPositions(ctx, agent, target, 1)
+	if err != nil || len(positions) == 0 {
+		return V3{}, false, err
+	}
+	return positions[0], true, nil
+}
+
+// FindInteractPositions is FindInteractPosition returning up to limit
+// qualifying positions, best (closest) first. Qualifying only means
+// walkable and in line of sight - not that a path there exists (e.g. the
+// spot on top of a block floating two cells above the ground is the closest
+// candidate, yet unreachable), so a caller about to walk there should be
+// ready to fall back to the next entry when pathfinding fails.
+func FindInteractPositions(ctx context.Context, agent InteractPositionAgent, target V3, limit int) ([]V3, error) {
 	world := agent.GetWorld()
 	shapeMgr := agent.BlockShapeManager()
-	if world == nil || shapeMgr == nil {
-		return V3{}, false, nil
+	if world == nil || shapeMgr == nil || limit <= 0 {
+		return nil, nil
 	}
 
 	type candidate struct {
@@ -69,11 +83,12 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 			}
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
 
+	var found []V3
 	for _, c := range candidates {
 		if ctx.Err() != nil {
-			return V3{}, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 		if !IsWalkablePosition(world, shapeMgr, c.pos) {
 			continue
@@ -82,9 +97,12 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 		if err != nil || !visible {
 			continue
 		}
-		return c.pos, true, nil
+		found = append(found, c.pos)
+		if len(found) == limit {
+			break
+		}
 	}
-	return V3{}, false, nil
+	return found, nil
 }
 
 // IsWalkablePosition reports whether a bot could stand at pos: passable

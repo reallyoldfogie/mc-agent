@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -74,6 +75,16 @@ const (
 	chunkSyncPollInterval = 100 * time.Millisecond
 )
 
+// seedBlockCoords is where SeedNearbyBlock places its block for a bot at
+// (x, y, z): seedBlockOffset cells along +X, in the cell containing the
+// bot's feet. Floor, not int64() truncation: truncation rounds negative
+// coordinates toward zero, so a bot at y=-59.5 (mid-fall after a teleport,
+// in a superflat world whose ground is negative) got the block placed one
+// cell too high - floating two above the floor and unreachable.
+func seedBlockCoords(x, y, z float64) (int64, int64, int64) {
+	return int64(math.Floor(x)) + seedBlockOffset, int64(math.Floor(y)), int64(math.Floor(z))
+}
+
 // SeedNearbyBlock ensures a block named blockName exists within radius
 // blocks of the bot's current position, via RCON — training convenience
 // only (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4's minimum-viable
@@ -106,7 +117,7 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 	if !ok {
 		return fmt.Errorf("seed nearby block: position not yet known")
 	}
-	x, y, z := int64(pos.X)+seedBlockOffset, int64(pos.Y), int64(pos.Z)
+	x, y, z := seedBlockCoords(pos.X, pos.Y, pos.Z)
 	if _, err := a.cfg.RCON.SetBlock(ctx, x, y, z, normalizeItemName(blockName), "replace").Exec(ctx); err != nil {
 		return fmt.Errorf("setblock via RCON: %w", err)
 	}

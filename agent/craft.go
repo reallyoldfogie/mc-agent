@@ -565,6 +565,10 @@ const craftTableSearchRadius = 32
 // testing/container_suite_test.go's openContainer helper).
 const craftTableOpenTimeout = 5 * time.Second
 
+// interactPositionAttempts bounds how many candidate standing spots
+// openCraftingTable tries walking to before reporting the table unreachable.
+const interactPositionAttempts = 5
+
 // openCraftingTable finds the nearest visible crafting table, walks to it
 // if needed, opens it, and returns the craftWindowLayout for its 3x3 grid.
 // Callers are responsible for CloseContainer once done (success or
@@ -599,12 +603,25 @@ func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error
 	// close the table actually was. FindInteractPosition finds a walkable,
 	// line-of-sight-verified position near the table instead.
 	target := models.V3{X: x, Y: y, Z: z}
-	moveTarget := target
-	if pos, ok, err := models.FindInteractPosition(ctx, a, target); err == nil && ok {
-		moveTarget = pos
+	// Walkable + line-of-sight doesn't imply reachable: the closest spot to
+	// a table floating two cells above the floor is standing on top of it,
+	// which A* correctly refuses to path to (found live: 100 identical
+	// failed attempts in a row). Try the next-closest spots before giving up.
+	moveTargets, _ := models.FindInteractPositions(ctx, a, target, interactPositionAttempts)
+	if len(moveTargets) == 0 {
+		moveTargets = []models.V3{target}
 	}
-	if err := a.MoveToWithChat(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z); err != nil {
-		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", err)
+	var moveErr error
+	for _, moveTarget := range moveTargets {
+		if moveErr = a.MoveToWithChat(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z); moveErr == nil {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	if moveErr != nil {
+		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", moveErr)
 	}
 
 	windowID, err := a.OpenContainerAt(ctx, x, y, z, models.FaceUp, craftTableOpenTimeout)
