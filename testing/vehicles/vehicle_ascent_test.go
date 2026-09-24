@@ -8,8 +8,26 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
+	testingpkg "github.com/reallyoldfogie/mc-agent/testing"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 )
+
+// VehicleAscentSuite is a version-parameterized suite: one shared flat-world server per
+// version instead of one server per test function. Each method spawns its own
+// uniquely-named agent in its own working area.
+type VehicleAscentSuite struct {
+	testingpkg.VersionWorldSuite
+}
+
+func TestVehicleAscentSuite(t *testing.T) {
+	testingpkg.RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &VehicleAscentSuite{}
+		s.WorldGen = testingpkg.WorldGenFlat
+		s.ExtraEnv = map[string]string{"FORCE_GAMEMODE": "true"}
+		return s
+	})
+}
 
 // ascendingSlopeSteps is the number of 1-block-high steps a mount must climb in
 // the staircase built by buildAscendingStaircase. Each step rises one block, so
@@ -26,7 +44,7 @@ const ascendingSlopeSteps = 6
 // top so the mount settles instead of walking straight off the last step.
 func buildAscendingStaircase(t *testing.T, helper *VehicleTestHelper, ctx context.Context, baseX, baseY, baseZ float64) {
 	t.Helper()
-	cx, cy, cz := int(baseX), int(baseY), int(baseZ)
+	cx, cy, cz := blockCoord(baseX), blockCoord(baseY), blockCoord(baseZ)
 
 	execFill := func(desc, cmd string) {
 		resp, err := helper.Instance.RCON.Exec(ctx, cmd)
@@ -122,46 +140,45 @@ func climbAscendingSlope(t *testing.T, helper *VehicleTestHelper, label string, 
 // TestHorseAscendingSlope verifies that a ridden horse can climb a sustained
 // staircase (repeated 1-block step-ups) while staying grounded — the ascent
 // counterpart to TestHorseGravityOffCliff.
-func TestHorseAscendingSlope(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "HorseAscendBot")
-			defer cleanup()
+func (s *VehicleAscentSuite) TestHorseAscendingSlope() {
+	t := s.T()
+	leader, spawnErr := s.SpawnWorkingAreaAgent("HorseAscendBot", "horse_ascending_slope")
+	require.NoError(t, spawnErr, "spawn agent")
+	helper := NewVehicleTestHelperForSuite(&s.VersionWorldSuite, leader)
+	ctx := s.Ctx
 
-			agentPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-			baseX, baseY, baseZ := agentPos.X, agentPos.Y, agentPos.Z
+	agentPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+	baseX, baseY, baseZ := agentPos.X, agentPos.Y, agentPos.Z
 
-			log.Printf("[TestHorseAscendingSlope] Building staircase...")
-			buildAscendingStaircase(t, helper, ctx, baseX, baseY, baseZ)
-			time.Sleep(1 * time.Second)
+	log.Printf("[TestHorseAscendingSlope] Building staircase...")
+	buildAscendingStaircase(t, helper, ctx, baseX, baseY, baseZ)
+	time.Sleep(1 * time.Second)
 
-			horseID, err := helper.SummonHorse(ctx, baseX, baseY, baseZ, 240)
-			require.NoError(t, err, "spawn horse")
-			time.Sleep(500 * time.Millisecond)
+	horseID, err := helper.SummonHorse(ctx, baseX, baseY, baseZ, 240)
+	require.NoError(t, err, "spawn horse")
+	time.Sleep(500 * time.Millisecond)
 
-			err = helper.MountEntity(ctx, horseID)
-			require.NoError(t, err, "mount horse")
-			err = helper.WaitForMounted(ctx, 5*time.Second)
-			require.NoError(t, err, "agent should be mounted")
+	err = helper.MountEntity(ctx, horseID)
+	require.NoError(t, err, "mount horse")
+	err = helper.WaitForMounted(ctx, 5*time.Second)
+	require.NoError(t, err, "agent should be mounted")
 
-			// Turn the agent's BODY to face up the staircase (+Z) AFTER mounting.
-			// The mounted movement direction is the body (physics-state) yaw the
-			// riding handler reads; LookAt only turns the head and would leave the
-			// mount pointed wherever it wandered before we mounted, so forward
-			// throttle would drive the wrong way. TurnTowards sets that yaw.
-			err = helper.ManagedAgent.Agent.TurnTowards(ctx, baseX, baseY, baseZ+float64(ascendingSlopeSteps)+5)
-			require.NoError(t, err, "face up the slope")
-			time.Sleep(500 * time.Millisecond)
+	// Turn the agent's BODY to face up the staircase (+Z) AFTER mounting.
+	// The mounted movement direction is the body (physics-state) yaw the
+	// riding handler reads; LookAt only turns the head and would leave the
+	// mount pointed wherever it wandered before we mounted, so forward
+	// throttle would drive the wrong way. TurnTowards sets that yaw.
+	err = helper.ManagedAgent.Agent.TurnTowards(ctx, baseX, baseY, baseZ+float64(ascendingSlopeSteps)+5)
+	require.NoError(t, err, "face up the slope")
+	time.Sleep(500 * time.Millisecond)
 
-			err = helper.EnterManualMode()
-			require.NoError(t, err, "enter manual mode")
-			defer func() {
-				_ = helper.ExitManualMode()
-			}()
+	err = helper.EnterManualMode()
+	require.NoError(t, err, "enter manual mode")
+	defer func() {
+		_ = helper.ExitManualMode()
+	}()
 
-			climbAscendingSlope(t, helper, "TestHorseAscendingSlope", baseY, ctx)
-		})
-	}
+	climbAscendingSlope(t, helper, "TestHorseAscendingSlope", baseY, ctx)
 }
 
 // TestCamelAscendingSlope verifies that a ridden camel can climb a sustained
@@ -169,60 +186,59 @@ func TestHorseAscendingSlope(t *testing.T) {
 // (its vanilla 0.09 is too slow to climb reliably within the window), matching
 // TestCamelGravityOffCliff. This exercises the wide (1.7-block) camel hitbox on
 // a multi-step ascent.
-func TestCamelAscendingSlope(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			helper, ctx, cleanup := NewVehicleTestHelper(t, tt.MCVersion, "CamelAscendBot")
-			defer cleanup()
+func (s *VehicleAscentSuite) TestCamelAscendingSlope() {
+	t := s.T()
+	leader, spawnErr := s.SpawnWorkingAreaAgent("CamelAscendBot", "camel_ascending_slope")
+	require.NoError(t, spawnErr, "spawn agent")
+	helper := NewVehicleTestHelperForSuite(&s.VersionWorldSuite, leader)
+	ctx := s.Ctx
 
-			agentPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
-			baseX, baseY, baseZ := agentPos.X, agentPos.Y, agentPos.Z
+	agentPos, _ := helper.ManagedAgent.Agent.GetPositionSimple()
+	baseX, baseY, baseZ := agentPos.X, agentPos.Y, agentPos.Z
 
-			log.Printf("[TestCamelAscendingSlope] Building staircase...")
-			buildAscendingStaircase(t, helper, ctx, baseX, baseY, baseZ)
-			time.Sleep(1 * time.Second)
+	log.Printf("[TestCamelAscendingSlope] Building staircase...")
+	buildAscendingStaircase(t, helper, ctx, baseX, baseY, baseZ)
+	time.Sleep(1 * time.Second)
 
-			// Summon without AI so the camel cannot wander out of interact
-			// range (or up the staircase) before we mount; AI is restored
-			// after mounting so the server runs rider-steered travel again.
-			camelID, err := helper.SummonCamel(ctx, baseX, baseY, baseZ, 180, WithNoAI())
-			require.NoError(t, err, "spawn camel")
-			time.Sleep(500 * time.Millisecond)
+	// Summon without AI so the camel cannot wander out of interact
+	// range (or up the staircase) before we mount; AI is restored
+	// after mounting so the server runs rider-steered travel again.
+	camelID, err := helper.SummonCamel(ctx, baseX, baseY, baseZ, 180, WithNoAI())
+	require.NoError(t, err, "spawn camel")
+	time.Sleep(500 * time.Millisecond)
 
-			// Boost movement speed so the slow vanilla camel (0.09) climbs
-			// decisively within the sampling window; the agent reads this from
-			// the entity attribute.
-			speedResp, err := helper.Instance.RCON.Exec(ctx, "attribute @e[type=minecraft:camel,limit=1] minecraft:movement_speed base set 0.3")
-			require.NoError(t, err, "set camel movement speed")
-			require.NoError(t, rconResponseError("set camel movement speed", speedResp), "set camel movement speed")
-			time.Sleep(500 * time.Millisecond)
+	// Boost movement speed so the slow vanilla camel (0.09) climbs
+	// decisively within the sampling window; the agent reads this from
+	// the entity attribute.
+	speedResp, err := helper.Instance.RCON.Exec(ctx, "attribute @e[type=minecraft:camel,limit=1] minecraft:movement_speed base set 0.3")
+	require.NoError(t, err, "set camel movement speed")
+	require.NoError(t, rconResponseError("set camel movement speed", speedResp), "set camel movement speed")
+	time.Sleep(500 * time.Millisecond)
 
-			err = helper.MountEntity(ctx, camelID)
-			require.NoError(t, err, "mount camel")
-			err = helper.WaitForMounted(ctx, 5*time.Second)
-			require.NoError(t, err, "agent should be mounted")
+	err = helper.MountEntity(ctx, camelID)
+	require.NoError(t, err, "mount camel")
+	err = helper.WaitForMounted(ctx, 5*time.Second)
+	require.NoError(t, err, "agent should be mounted")
 
-			// Restore AI now that we're aboard: a NoAI camel ignores rider
-			// steering, so the server would never move it.
-			err = helper.EnableEntityAI(ctx, "minecraft:camel")
-			require.NoError(t, err, "re-enable camel AI")
+	// Restore AI now that we're aboard: a NoAI camel ignores rider
+	// steering, so the server would never move it.
+	err = helper.EnableEntityAI(ctx, "minecraft:camel")
+	require.NoError(t, err, "re-enable camel AI")
 
-			err = helper.EnterManualMode()
-			require.NoError(t, err, "enter manual mode")
-			defer func() {
-				_ = helper.ExitManualMode()
-			}()
+	err = helper.EnterManualMode()
+	require.NoError(t, err, "enter manual mode")
+	defer func() {
+		_ = helper.ExitManualMode()
+	}()
 
-			// Turn the agent's BODY to face up the staircase (+Z) AFTER mounting.
-			// The mounted movement direction is the body (physics-state) yaw the
-			// riding handler reads; LookAt only turns the head and would leave the
-			// mount pointed wherever it wandered before we mounted, so forward
-			// throttle would drive the wrong way. TurnTowards sets that yaw.
-			err = helper.ManagedAgent.Agent.TurnTowards(ctx, baseX, baseY, baseZ+float64(ascendingSlopeSteps)+5)
-			require.NoError(t, err, "face up the slope")
-			time.Sleep(500 * time.Millisecond)
+	// Turn the agent's BODY to face up the staircase (+Z) AFTER mounting.
+	// The mounted movement direction is the body (physics-state) yaw the
+	// riding handler reads; LookAt only turns the head and would leave the
+	// mount pointed wherever it wandered before we mounted, so forward
+	// throttle would drive the wrong way. TurnTowards sets that yaw.
+	err = helper.ManagedAgent.Agent.TurnTowards(ctx, baseX, baseY, baseZ+float64(ascendingSlopeSteps)+5)
+	require.NoError(t, err, "face up the slope")
+	time.Sleep(500 * time.Millisecond)
 
-			climbAscendingSlope(t, helper, "TestCamelAscendingSlope", baseY, ctx)
-		})
-	}
+	climbAscendingSlope(t, helper, "TestCamelAscendingSlope", baseY, ctx)
 }
