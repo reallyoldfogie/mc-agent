@@ -2498,6 +2498,10 @@ func (a *agent) onSetTickingState(p pk.Packet) error {
 	}
 	a.logf("[Agent %s] Server tick rate changed: %.1f TPS (frozen=%v)", a.cfg.Name, tickRate, isFrozen)
 
+	if tickRate > 0 {
+		a.serverTickRateBits.Store(math.Float32bits(tickRate))
+	}
+
 	if setter, ok := a.moveExec.(tickRateSetter); ok {
 		setter.SetTickRate(tickRate)
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	pk "github.com/Tnze/go-mc/net/packet"
@@ -379,6 +380,12 @@ type agent struct {
 	craftingRecipesOnce     sync.Once
 	craftingRecipesCache    map[string]craftingRecipe
 	craftingRecipesCacheErr error
+
+	// serverTickRateBits holds math.Float32bits of the server's current
+	// target tick rate (see onSetTickingState); 0 means "never reported",
+	// treated as vanilla's 20 TPS. Atomic because the packet handler
+	// writes it while MineBlockAt reads it from another goroutine.
+	serverTickRateBits atomic.Uint32
 }
 
 // New constructs an agent with the provided configuration.
