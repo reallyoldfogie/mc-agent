@@ -230,6 +230,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			F:        a.onUpdateTime,
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetTickingState"),
+			Name:     "ClientboundSetTickingState",
+			Priority: 0,
+			F:        a.onSetTickingState,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundCustomPayload"),
 			Name:     "ClientboundCustomPayload",
 			Priority: 0,
@@ -450,8 +456,13 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 		return err
 	}
 
-	a.logf("[onMoveEntityPosRot][%s] Received pos/rot update for entity %d: delta=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
-		a.cfg.Name, entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), yaw, pitch)
+	// This whole handler logs at Debug, not Info: every one of its calls
+	// below fires once per packet (or per matching entity-state branch)
+	// for what's fundamentally routine per-tick entity tracking, not an
+	// error condition - see onUpdateTime's own doc comment (2026-09-23)
+	// for the same tick-rate/agent-count volume scaling this shares.
+	a.log().Debug("Received pos/rot update", "agent", a.cfg.Name, "entityID", entityID,
+		"deltaX", float64(dx)/(128*32), "deltaY", float64(dy)/(128*32), "deltaZ", float64(dz)/(128*32), "yaw", yaw, "pitch", pitch)
 
 	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
@@ -486,11 +497,14 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	// All remaining work OUTSIDE the lock
 
 	if callbackPos == nil {
-		a.logf("[onMoveEntityPosRot] Entity %d NOT found in map!", entityID)
+		a.log().Debug("[onMoveEntityPosRot] Entity not found in map", "entityID", entityID)
 		return nil
 	}
 
-	a.logf("[onMoveEntityPosRot] Entity %d found in map: oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)", entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
+	a.log().Debug("[onMoveEntityPosRot] Entity found in map", "entityID", entityID,
+		"oldX", oldX, "oldY", oldY, "oldZ", oldZ,
+		"deltaX", float64(dx)/(128*32), "deltaY", float64(dy)/(128*32), "deltaZ", float64(dz)/(128*32),
+		"newX", newX, "newY", newY, "newZ", newZ)
 
 	// Update active projectiles (separate lock, no entity lock held)
 	if dx != 0 || dy != 0 || dz != 0 {
@@ -501,15 +515,17 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
 			projInfo.currentServerTime = now
 			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-			a.logf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f), yaw=%d, pitch=%d",
-				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ, yaw, pitch)
+			a.log().Debug("[onMoveEntityPosRot] PROJECTILE", "entityID", entityID,
+				"oldX", oldX, "oldY", oldY, "oldZ", oldZ,
+				"deltaX", float64(dx)/(128*32), "deltaY", float64(dy)/(128*32), "deltaZ", float64(dz)/(128*32),
+				"newX", newX, "newY", newY, "newZ", newZ, "yaw", yaw, "pitch", pitch)
 		}
 		a.activeProjectilesMu.Unlock()
 	} else {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
 			projInfo.currentServerTime = now
-			a.logf("[onMoveEntityPosRot] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+			a.log().Debug("[onMoveEntityPosRot] PROJECTILE: no position delta, updated time", "entityID", entityID)
 		}
 		a.activeProjectilesMu.Unlock()
 	}
@@ -521,8 +537,10 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 				deltaX := float64(dx) / (128 * 32)
 				deltaY := float64(dy) / (128 * 32)
 				deltaZ := float64(dz) / (128 * 32)
-				a.logf("[onMoveEntityPosRot] %s: entityID=%d, oldPos=(%.2f, %.2f, %.2f), delta=(%.4f, %.4f, %.4f), newPos=(%.2f, %.2f, %.2f), vel/tick=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d",
-					name, entityID, oldX, oldY, oldZ, deltaX, deltaY, deltaZ, newX, newY, newZ, deltaX, deltaY, deltaZ, yaw, pitch)
+				a.log().Debug("[onMoveEntityPosRot]", "entityType", name, "entityID", entityID,
+					"oldX", oldX, "oldY", oldY, "oldZ", oldZ,
+					"deltaX", deltaX, "deltaY", deltaY, "deltaZ", deltaZ,
+					"newX", newX, "newY", newY, "newZ", newZ, "yaw", yaw, "pitch", pitch)
 			}
 		}
 	}
@@ -547,7 +565,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 						SyncMountedPosition(float64, float64, float64)
 					}); ok {
 						syncer.SyncMountedPosition(newX, newY, newZ)
-						a.logf("[onMoveEntityPosRot] Mounted minecart/boat %d position synced (rotation independent): (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
+						a.log().Debug("[onMoveEntityPosRot] Mounted minecart/boat position synced (rotation independent)", "entityID", entityID, "newX", newX, "newY", newY, "newZ", newZ)
 					}
 				} else {
 					if syncer, ok := moveExec.(interface {
@@ -556,7 +574,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 						yawDegrees := float64(yaw) * 360.0 / 256.0
 						pitchDegrees := float64(pitch) * 360.0 / 256.0
 						syncer.SyncMountedPositionWithRotation(newX, newY, newZ, yawDegrees, pitchDegrees)
-						a.logf("[onMoveEntityPosRot] Mounted entity %d position synced: (%.2f, %.2f, %.2f) yaw=%.1f° pitch=%.1f°", entityID, newX, newY, newZ, yawDegrees, pitchDegrees)
+						a.log().Debug("[onMoveEntityPosRot] Mounted entity position synced", "entityID", entityID, "newX", newX, "newY", newY, "newZ", newZ, "yawDegrees", yawDegrees, "pitchDegrees", pitchDegrees)
 					}
 				}
 			}
@@ -564,7 +582,7 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 	}
 
 	// Call position update callbacks (outside all locks)
-	a.logf("[onMoveEntityPosRot] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.log().Debug("[onMoveEntityPosRot] Calling position callbacks", "entityID", entityID, "x", callbackPos.X, "y", callbackPos.Y, "z", callbackPos.Z)
 	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
@@ -617,15 +635,17 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 			projInfo.currentServerPos = models.V3{X: newX, Y: newY, Z: newZ}
 			projInfo.currentServerTime = now
 			projInfo.positionHistory = append(projInfo.positionHistory, projInfo.currentServerPos)
-			a.logf("[onMoveEntityPos] PROJECTILE: entityID=%d, oldPos=(%.2f,%.2f,%.2f), delta=(%.4f,%.4f,%.4f), newPos=(%.2f,%.2f,%.2f)",
-				entityID, oldX, oldY, oldZ, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32), newX, newY, newZ)
+			a.log().Debug("[onMoveEntityPos] PROJECTILE", "entityID", entityID,
+				"oldX", oldX, "oldY", oldY, "oldZ", oldZ,
+				"deltaX", float64(dx)/(128*32), "deltaY", float64(dy)/(128*32), "deltaZ", float64(dz)/(128*32),
+				"newX", newX, "newY", newY, "newZ", newZ)
 		}
 		a.activeProjectilesMu.Unlock()
 	} else {
 		a.activeProjectilesMu.Lock()
 		if projInfo, exists := a.activeProjectiles[entityID]; exists {
 			projInfo.currentServerTime = now
-			a.logf("[onMoveEntityPos] PROJECTILE: entityID=%d, no position delta, updated time", entityID)
+			a.log().Debug("[onMoveEntityPos] PROJECTILE: no position delta, updated time", "entityID", entityID)
 		}
 		a.activeProjectilesMu.Unlock()
 	}
@@ -634,8 +654,8 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 	if callbackPos == nil {
 		a.activeProjectilesMu.Lock()
 		if _, exists := a.activeProjectiles[entityID]; exists {
-			a.logf("[onMoveEntityPos] PROJECTILE entityID=%d not in entities map yet! delta=(%.4f,%.4f,%.4f)",
-				entityID, float64(dx)/(128*32), float64(dy)/(128*32), float64(dz)/(128*32))
+			a.log().Debug("[onMoveEntityPos] PROJECTILE not in entities map yet", "entityID", entityID,
+				"deltaX", float64(dx)/(128*32), "deltaY", float64(dy)/(128*32), "deltaZ", float64(dz)/(128*32))
 		}
 		a.activeProjectilesMu.Unlock()
 		return nil
@@ -652,14 +672,14 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 					SyncMountedPosition(float64, float64, float64)
 				}); ok {
 					syncer.SyncMountedPosition(newX, newY, newZ)
-					a.logf("[onMoveEntityPos] Mounted entity %d position synced: (%.2f, %.2f, %.2f)", entityID, newX, newY, newZ)
+					a.log().Debug("[onMoveEntityPos] Mounted entity position synced", "entityID", entityID, "newX", newX, "newY", newY, "newZ", newZ)
 				}
 			}
 		}
 	}
 
 	// Call position update callbacks (outside all locks)
-	a.logf("[onMoveEntityPos] Calling position callbacks for entity %d at (%.2f, %.2f, %.2f)", entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
+	a.log().Debug("[onMoveEntityPos] Calling position callbacks", "entityID", entityID, "x", callbackPos.X, "y", callbackPos.Y, "z", callbackPos.Z)
 	a.callEntityPositionCallbacks(entityID, callbackPos.X, callbackPos.Y, callbackPos.Z)
 	return nil
 }
@@ -676,8 +696,10 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 		return err
 	}
 
-	a.logf("[onSyncEntityPosition][%s] Received sync for entity %d: pos=(%.2f, %.2f, %.2f), vel=(%.4f, %.4f, %.4f), yaw=%d, pitch=%d, onGround=%v",
-		a.cfg.Name, entityID, x, y, z, dx, dy, dz, yaw, pitch, onGround)
+	// Debug, not Info - see onUpdateTime's own doc comment for why
+	// (2026-09-23 tick-rate/agent-count log-volume investigation).
+	a.log().Debug("Received entity position sync", "agent", a.cfg.Name, "entityID", entityID,
+		"x", x, "y", y, "z", z, "velX", dx, "velY", dy, "velZ", dz, "yaw", yaw, "pitch", pitch, "onGround", onGround)
 
 	// Snapshot entity data (MINIMAL LOCK SCOPE)
 	now := time.Now()
@@ -1885,7 +1907,7 @@ func (a *agent) onEntityHeadRotation(p pk.Packet) error {
 	}
 	a.entitiesMu.Unlock()
 
-	a.logf("[onEntityHeadRotation] Entity %d head yaw: %d", entityID, headYaw)
+	a.log().Debug("[onEntityHeadRotation]", "entityID", entityID, "headYaw", headYaw)
 	return nil
 }
 
@@ -2416,11 +2438,72 @@ func (a *agent) onUpdateTime(p pk.Packet) error {
 		return nil // Non-fatal: just log and continue
 	}
 
-	// Update world manager with server's world age and time of day
+	// Update world manager with server's world age and time of day.
+	// Logged at Debug, not Info: this fires once per ClientboundUpdateTime
+	// packet - i.e. every server tick a world-time change is sent - so its
+	// volume scales directly with tick rate and, in -parallel-envs mode,
+	// with agent count too. Found responsible for a large share of one
+	// run's entire log volume (210k of 948k lines) during cmd/rsi-train's
+	// -parallel-envs x tick-rate scaling investigation (2026-09-23) -
+	// structured fields, not a pre-formatted a.logf string, so Debug being
+	// disabled (the default) also skips the formatting cost, not just the
+	// write.
 	if a.mcAgentWorld != nil {
 		a.mcAgentWorld.SetWorldTime(worldAge, timeOfDay)
-		a.logf("[Agent %s] Updated world time: age=%d ticks (%.1f days), timeOfDay=%d",
-			a.cfg.Name, worldAge, float64(worldAge)/24000.0, timeOfDay)
+		a.log().Debug("Updated world time", "agent", a.cfg.Name, "ageTicks", worldAge, "days", float64(worldAge)/24000.0, "timeOfDay", timeOfDay)
+	}
+
+	return nil
+}
+
+// tickRateSetter is the optional capability onSetTickingState uses, if
+// a.moveExec implements it, to keep this agent's own physics simulation
+// in sync with the server's actual pacing — see
+// movement.PhysicsMovementExecutor.SetTickRate's own doc comment for
+// why. Optional and type-asserted (matching this file's own
+// SetStuckRecoveryCallback wiring in agent.go) so a moveExec that
+// doesn't implement it — a test fake, or a future alternate executor —
+// degrades gracefully rather than requiring every models.MovementExecutor
+// implementation to grow a method most of them have no use for.
+type tickRateSetter interface {
+	SetTickRate(ticksPerSecond float32)
+}
+
+// onSetTickingState handles the ClientboundSetTickingState packet — sent
+// whenever the server's tick rate changes, via the vanilla /tick command
+// (added 1.20.5: /tick rate|freeze|unfreeze|sprint), and once on join
+// reflecting whatever's already in effect. Without this, this agent's
+// own physics executor kept simulating at a hardcoded 20 TPS regardless
+// of what the server was actually doing — harmless at the server's
+// default rate, but a real source of drift (this executor's local
+// movement/gravity prediction running at a different cadence than the
+// server's authoritative one) once an operator changes it, confirmed
+// live via cmd/rsi-train's own -tick-rate experiments (see that repo's
+// history around 2026-09-23): a 2x-4x server speedup ran without any
+// disconnect or protocol error even before this handler existed, but
+// with a mild, rate-proportional increase in the physics executor's own
+// stuck-detector firing spuriously (successfully self-recovering every
+// time, per PhysicsMovementExecutor's own zero-step-path fix, just more
+// often than the true baseline) — the signature of exactly this
+// client/server pacing mismatch, not a correctness bug on either side.
+func (a *agent) onSetTickingState(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return nil
+	}
+
+	tickRate, isFrozen, err := a.versionHandler.Play().World().ParseSetTickingState(p)
+	if err != nil {
+		a.logf("[Agent %s] Failed to parse SetTickingState packet: %v", a.cfg.Name, err)
+		return nil
+	}
+	a.logf("[Agent %s] Server tick rate changed: %.1f TPS (frozen=%v)", a.cfg.Name, tickRate, isFrozen)
+
+	if tickRate > 0 {
+		a.serverTickRateBits.Store(math.Float32bits(tickRate))
+	}
+
+	if setter, ok := a.moveExec.(tickRateSetter); ok {
+		setter.SetTickRate(tickRate)
 	}
 
 	return nil

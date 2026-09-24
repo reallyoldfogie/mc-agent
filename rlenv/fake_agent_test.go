@@ -40,6 +40,7 @@ type fakeAgent struct {
 	// Step) sees a real change, the same way MoveToWithChat's fake actually
 	// moves the tracked position rather than just recording the call.
 	mineBlockName                      string
+	restoredBlocks                     []restoredBlock
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
@@ -412,5 +413,23 @@ func (f *fakeAgent) TeleportTo(_ context.Context, x, y, z float64) error {
 	}
 	f.x, f.y, f.z = x, y, z
 	f.posKnown = true
+	return nil
+}
+
+// SendCommand satisfies models.CommandAgent (which rlenv's ResetAgent/
+// seeding paths now require); the fake never needs to observe commands.
+func (f *fakeAgent) SendCommand(string) error { return nil }
+
+// restoredBlock records one RestoreBlock call.
+type restoredBlock struct {
+	x, y, z int
+	name    string
+}
+
+// RestoreBlock satisfies rlenv.BlockRestorer, recording each call.
+func (f *fakeAgent) RestoreBlock(_ context.Context, x, y, z int, blockName string) error {
+	f.mu.Lock()
+	f.restoredBlocks = append(f.restoredBlocks, restoredBlock{x, y, z, blockName})
+	f.mu.Unlock()
 	return nil
 }

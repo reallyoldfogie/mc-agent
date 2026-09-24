@@ -87,6 +87,28 @@ func TestComputeRewardDeathAppliesPenaltyAndEndsEpisode(t *testing.T) {
 	}
 }
 
+// TestComputeRewardDeathIgnoresRespawnTeleportDistance: dying respawns the
+// bot at world spawn, so the "distance change" on the death step is a
+// teleport artifact (here 5000 blocks), not progress, and must not swamp
+// the death penalty.
+func TestComputeRewardDeathIgnoresRespawnTeleportDistance(t *testing.T) {
+	reward, died := computeReward(stepOutcome{
+		prevDistance:      3,
+		newDistance:       5000,
+		prevHealth:        1,
+		newHealth:         0,
+		healthKnownBefore: true,
+		healthKnownAfter:  true,
+	})
+	if !died {
+		t.Fatalf("died = false, want true")
+	}
+	want := -timePenalty - damagePenaltyScale*1 + deathPenalty
+	if reward != want {
+		t.Fatalf("reward = %v, want %v (distance change on the death step must be ignored)", reward, want)
+	}
+}
+
 func TestResolveDispatchMapsActionsToTheRightTargetsAndArgs(t *testing.T) {
 	e := &Environment{
 		targetX: 10, targetY: 20, targetZ: 30,

@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"errors"
 	"sort"
 )
 
@@ -42,10 +43,41 @@ type InteractPositionAgent interface {
 // that ran to its step limit every time, because the goal was
 // unsatisfiable by construction).
 func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, target V3) (V3, bool, error) {
+	var found V3
+	err := TryInteractPositions(ctx, agent, target, func(pos V3) error {
+		found = pos
+		return nil
+	})
+	if errors.Is(err, ErrNoInteractPosition) {
+		return V3{}, false, nil
+	}
+	if err != nil {
+		return V3{}, false, err
+	}
+	return found, true, nil
+}
+
+// ErrNoInteractPosition is returned by TryInteractPositions when no cell
+// within InteractReachDistance is both walkable and in line of sight of the
+// target (e.g. the block is fully enclosed).
+var ErrNoInteractPosition = errors.New("no walkable interact position with line of sight to target")
+
+// TryInteractPositions calls try with every qualifying standing position
+// (walkable and in line of sight, within InteractReachDistance), closest to
+// the target first, until one returns nil, then returns nil. Qualifying
+// doesn't mean reachable - the closest spot to a block floating two cells
+// above the floor is standing on top of it - so try is where the caller
+// attempts the real work (typically walking there) and reports failure,
+// and the next-closest position is then offered. Candidates are checked
+// lazily, so the common case where the first one works costs no more than
+// FindInteractPosition. Returns ErrNoInteractPosition if nothing qualifies,
+// the last error from try if every candidate failed, or ctx's error if
+// canceled.
+func TryInteractPositions(ctx context.Context, agent InteractPositionAgent, target V3, try func(pos V3) error) error {
 	world := agent.GetWorld()
 	shapeMgr := agent.BlockShapeManager()
 	if world == nil || shapeMgr == nil {
-		return V3{}, false, nil
+		return ErrNoInteractPosition
 	}
 
 	type candidate struct {
@@ -69,11 +101,12 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 			}
 		}
 	}
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].dist < candidates[j].dist })
 
+	var lastErr error
 	for _, c := range candidates {
 		if ctx.Err() != nil {
-			return V3{}, false, ctx.Err()
+			return ctx.Err()
 		}
 		if !IsWalkablePosition(world, shapeMgr, c.pos) {
 			continue
@@ -82,9 +115,17 @@ func FindInteractPosition(ctx context.Context, agent InteractPositionAgent, targ
 		if err != nil || !visible {
 			continue
 		}
-		return c.pos, true, nil
+		if lastErr = try(c.pos); lastErr == nil {
+			return nil
+		}
 	}
-	return V3{}, false, nil
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return ErrNoInteractPosition
 }
 
 // IsWalkablePosition reports whether a bot could stand at pos: passable

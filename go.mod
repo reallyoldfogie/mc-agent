@@ -23,7 +23,7 @@ require (
 	github.com/ollama/ollama v0.20.7
 	github.com/pkg/errors v0.9.1
 	github.com/reallyoldfogie/cRL-go v0.11.0
-	github.com/reallyoldfogie/mc-bot-go v0.2.4
+	github.com/reallyoldfogie/mc-bot-go v0.2.5
 	github.com/reallyoldfogie/mc-client-test-go v0.1.3
 	github.com/reallyoldfogie/mc-data-gen/loader v0.0.4
 	github.com/reallyoldfogie/mc-protocol-go v0.1.0

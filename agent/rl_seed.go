@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -17,13 +18,23 @@ const seedBlockOffset = 2
 // ingredient, so a training episode doesn't run out mid-attempt.
 const seedGiveCount = 9
 
+// craftTableSeedRadius bounds how far SeedCraftIngredients looks for (and,
+// via SeedNearbyBlock, places) a crafting table when the target recipe
+// doesn't fit the player's own 2x2 inventory grid — see
+// craftingRecipe.fitsInventoryGrid (craft.go) for that check and
+// craftTableSearchRadius (craft.go) for the larger radius CraftItem's own
+// openCraftingTable later searches within during the real craft attempt;
+// keeping this well inside that radius means a table SeedNearbyBlock just
+// placed is never at risk of falling outside CraftItem's own later search.
+const craftTableSeedRadius = 8
+
 // seedSyncTimeout/seedSyncPollInterval bound how long SeedNearbyBlock/
 // SeedCraftIngredients wait for this bot's own client-tracked state to
 // catch up with an RCON write it just made — see their doc comments for
 // why this polling exists at all (found live, not anticipated: a real
 // race, not a hypothetical one — testing/rl_train_test.go).
 const (
-	seedSyncTimeout      = 2 * time.Second
+	seedSyncTimeout      = 10 * time.Second
 	seedSyncPollInterval = 100 * time.Millisecond
 )
 
@@ -64,6 +75,16 @@ const (
 	chunkSyncPollInterval = 100 * time.Millisecond
 )
 
+// seedBlockCoords is where SeedNearbyBlock places its block for a bot at
+// (x, y, z): seedBlockOffset cells along +X, in the cell containing the
+// bot's feet. Floor, not int64() truncation: truncation rounds negative
+// coordinates toward zero, so a bot at y=-59.5 (mid-fall after a teleport,
+// in a superflat world whose ground is negative) got the block placed one
+// cell too high - floating two above the floor and unreachable.
+func seedBlockCoords(x, y, z float64) (int64, int64, int64) {
+	return int64(math.Floor(x)) + seedBlockOffset, int64(math.Floor(y)), int64(math.Floor(z))
+}
+
 // SeedNearbyBlock ensures a block named blockName exists within radius
 // blocks of the bot's current position, via RCON — training convenience
 // only (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4's minimum-viable
@@ -96,7 +117,7 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 	if !ok {
 		return fmt.Errorf("seed nearby block: position not yet known")
 	}
-	x, y, z := int64(pos.X)+seedBlockOffset, int64(pos.Y), int64(pos.Z)
+	x, y, z := seedBlockCoords(pos.X, pos.Y, pos.Z)
 	if _, err := a.cfg.RCON.SetBlock(ctx, x, y, z, normalizeItemName(blockName), "replace").Exec(ctx); err != nil {
 		return fmt.Errorf("setblock via RCON: %w", err)
 	}
@@ -117,17 +138,31 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 	}
 }
 
-// SeedCraftIngredients gives the bot, via RCON's "give" command, one stack
+// RestoreBlock puts blockName back at (x, y, z) via RCON, undoing a mining
+// episode - see rlenv.BlockRestorer. Training convenience only, same scope
+// note as SeedNearbyBlock; requires RCON.
+func (a *agent) RestoreBlock(ctx context.Context, x, y, z int, blockName string) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("restore block: RCON not configured for this agent")
+	}
+	if _, err := a.cfg.RCON.SetBlock(ctx, int64(x), int64(y), int64(z), normalizeItemName(blockName), "replace").Exec(ctx); err != nil {
+		return fmt.Errorf("setblock via RCON: %w", err)
+	}
+	return nil
+}
+
+// SeedCraftIngredients gives the bot, via its player command connection (with
+// an RCON fallback), one stack
 // of each distinct ingredient itemName's recipe needs — the first
 // candidate per grid cell for a tag-gated ingredient (e.g. "any plank
 // variant"), not an attempt to grant exactly the minimum needed. Training
-// convenience only, same scope note as SeedNearbyBlock. Requires RCON to
-// be configured and itemName to have a known recipe (see
+// convenience only, same scope note as SeedNearbyBlock. Requires RCON for
+// inventory cleanup and a live player connection or RCON fallback for giving,
+// and itemName to have a known recipe (see
 // loadCraftingRecipes) — errors otherwise, since a seeding request that
 // silently does nothing would be more confusing than a clear failure.
 //
-// Clears (via RCON's "clear" command) each ingredient candidate and
-// itemName itself from the bot's inventory before giving a fresh
+// Clears the bot's entire inventory (via RCON's "clear" command) before giving a fresh
 // seedGiveCount of each ingredient — without this, a repeated-episode
 // caller (rlenv.Environment.Reset, called once per episode with no other
 // mechanism to consume the crafted item or the ingredient surplus a
@@ -147,6 +182,11 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 // documented in RL_TRAINING_LOOP_PLAN.md rather than that file since it's
 // Craft-specific, not a Mine-task recurrence).
 //
+// The player-command path avoids RCON's shared response buffer and executes
+// the command as this bot, so the server sends the resulting inventory update
+// on the same connection we are already observing. RCON remains a fallback
+// for callers without a live command-capable connection.
+//
 // Waits (bounded by seedSyncTimeout) for every given item to actually
 // appear in this bot's own tracked inventory (InventoryCount) before
 // returning — the same client-sync race SeedNearbyBlock's doc comment
@@ -157,7 +197,7 @@ func (a *agent) SeedNearbyBlock(ctx context.Context, blockName string, radius in
 // before this function existed).
 func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error {
 	if a.cfg.RCON == nil {
-		return fmt.Errorf("seed craft ingredients: RCON not configured for this agent")
+		return fmt.Errorf("seed craft ingredients: RCON not configured for inventory cleanup")
 	}
 	recipes, err := a.loadCraftingRecipes()
 	if err != nil {
@@ -168,8 +208,28 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 		return fmt.Errorf("no known crafting recipe for %s", itemName)
 	}
 
-	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", a.cfg.Name, itemName)); err != nil {
-		return fmt.Errorf("clear %s via RCON: %w", itemName, err)
+	// A recipe that doesn't fit the player's own 2x2 inventory grid needs
+	// a real crafting table's 3x3 grid instead (see
+	// craftingRecipe.fitsInventoryGrid, CraftItem's own openCraftingTable)
+	// — ensure one exists in range before giving ingredients, the same way
+	// SeedNearbyBlock already guarantees a Mine task's target block exists.
+	// Without this, every episode for such an item fails outright (found
+	// live: "no crafting table found within 32 blocks" on 100% of attempts
+	// for minecraft:chest/minecraft:bowl against a fresh, tableless world),
+	// since nothing else in episode seeding ever places one.
+	if !recipe.fitsInventoryGrid() {
+		if err := a.SeedNearbyBlock(ctx, "minecraft:crafting_table", craftTableSeedRadius); err != nil {
+			return fmt.Errorf("seed craft ingredients: ensuring a crafting table for %s: %w", itemName, err)
+		}
+	}
+
+	// Clear the complete inventory, not just the items we are about to give.
+	// The inventory can contain unrelated crafted output and surplus materials
+	// from earlier episodes. If every slot is occupied, /give succeeds but
+	// drops the item into the world instead of producing an inventory update
+	// for this bot, which makes the synchronization wait fail.
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s", a.cfg.Name)); err != nil {
+		return fmt.Errorf("clear inventory via RCON: %w", err)
 	}
 
 	given := make(map[string]bool)
@@ -182,12 +242,15 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 			continue
 		}
 		given[candidate] = true
-		if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", a.cfg.Name, candidate)); err != nil {
-			return fmt.Errorf("clear %s via RCON: %w", candidate, err)
-		}
-		cmd := fmt.Sprintf("give %s %s %d", a.cfg.Name, candidate, seedGiveCount)
-		if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
-			return fmt.Errorf("give %s via RCON: %w", candidate, err)
+		cmd := fmt.Sprintf("give @s %s %d", candidate, seedGiveCount)
+		if err := a.SendCommand(cmd); err != nil {
+			a.logf("SeedCraftIngredients: player command %q failed, falling back to RCON: %v", cmd, err)
+			if a.cfg.RCON == nil {
+				return fmt.Errorf("give %s via player command: %w", candidate, err)
+			}
+			if _, rconErr := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s %d", a.cfg.Name, candidate, seedGiveCount)); rconErr != nil {
+				return fmt.Errorf("give %s via player command (%v) or RCON: %w", candidate, err, rconErr)
+			}
 		}
 	}
 

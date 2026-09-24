@@ -68,7 +68,18 @@ type stepOutcome struct {
 // part of stepOutcome) — Environment.Step adds arrivalBonus and sets
 // done=true on arrival itself, after calling this.
 func computeReward(o stepOutcome) (reward float32, diedThisStep bool) {
-	reward = distanceRewardScale*float32(o.prevDistance-o.newDistance) - timePenalty
+	diedThisStep = o.healthKnownAfter && o.newHealth <= 0
+
+	// A death step's position is the respawn point, not somewhere the
+	// action moved the bot to: with a target thousands of blocks from world
+	// spawn (shared-server working areas), the "progress" of respawning is
+	// thousands of reward points of pure teleport artifact - found live as
+	// an epoch average return of -360 against a normal ~11. Death is
+	// already scored by deathPenalty and the damage term.
+	if !diedThisStep {
+		reward = distanceRewardScale * float32(o.prevDistance-o.newDistance)
+	}
+	reward -= timePenalty
 
 	if o.healthKnownBefore && o.healthKnownAfter {
 		if damage := o.prevHealth - o.newHealth; damage > 0 {
@@ -76,9 +87,8 @@ func computeReward(o stepOutcome) (reward float32, diedThisStep bool) {
 		}
 	}
 
-	if o.healthKnownAfter && o.newHealth <= 0 {
+	if diedThisStep {
 		reward += deathPenalty
-		diedThisStep = true
 	}
 
 	return reward, diedThisStep

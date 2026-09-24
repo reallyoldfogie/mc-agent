@@ -349,6 +349,56 @@ func TestLoadCraftingRecipes_AgainstRealCache(t *testing.T) {
 	}
 }
 
+// TestLoadCraftingRecipes_CachesResultAcrossCalls covers the caching
+// added 2026-09-23 after loadCraftingRecipes' original "reload from disk
+// on every call" behavior turned out to mean re-reading 1,373 files per
+// call once curriculum-driven training called it repeatedly across
+// several concurrently-running agents (see that function's own doc
+// comment). Mirrors TestResolveTag_CachesAcrossCalls' own delete-then-
+// recall pattern: a second call, after the on-disk recipe directory the
+// first call actually read from is renamed away, must still return the
+// identical result - proof it served the cached result rather than
+// re-reading disk (a fresh read at that point would return an empty map,
+// not the same populated one).
+func TestLoadCraftingRecipes_CachesResultAcrossCalls(t *testing.T) {
+	baseCacheDir, err := findAnyCachedVersionDataDir(t)
+	if err != nil {
+		t.Skipf("no cached data_generator output found on disk: %v", err)
+	}
+
+	a := &agent{cfg: models.AgentConfig{Version: baseCacheDir.version}}
+	first, err := a.loadCraftingRecipes()
+	if err != nil {
+		t.Fatalf("loadCraftingRecipes (first call): %v", err)
+	}
+	if len(first) == 0 {
+		t.Fatalf("loadCraftingRecipes: got no recipes from a real cache — expected at least a few 2x2-fitting ones")
+	}
+
+	repoRoot, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	recipeDir := filepath.Join(repoRoot, "..", ".agent", "cache", "downloads", baseCacheDir.version, "data_generator", "data", "minecraft", "recipe")
+	movedAway := recipeDir + ".moved-for-test"
+	if err := os.Rename(recipeDir, movedAway); err != nil {
+		t.Fatalf("rename recipe dir away: %v", err)
+	}
+	defer func() {
+		if err := os.Rename(movedAway, recipeDir); err != nil {
+			t.Errorf("restore recipe dir: %v", err)
+		}
+	}()
+
+	second, err := a.loadCraftingRecipes()
+	if err != nil {
+		t.Fatalf("loadCraftingRecipes (cached call, source dir gone): %v", err)
+	}
+	if len(second) != len(first) {
+		t.Fatalf("cached call returned %d recipes, want %d (same as the first call) — source dir being gone should not have mattered", len(second), len(first))
+	}
+}
+
 type cachedVersionDir struct {
 	version string
 }

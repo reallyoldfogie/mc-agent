@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,22 +169,54 @@ type rawRecipeJSON struct {
 	} `json:"result"`
 }
 
-// ingredientRef is one recipe ingredient descriptor, decoded from either of
-// two on-disk schema variants observed across this codebase's own cached
-// recipe JSON for otherwise-identical recipes: a flat string
+// ingredientListPrefix/ingredientListSeparator encode a recipe
+// ingredient's third on-disk schema variant - a raw JSON array of
+// concrete item alternatives (e.g. torch.json's own
+// "X": ["minecraft:coal", "minecraft:charcoal"], vanilla's "any of these
+// items" ingredient form, distinct from both a single item id and a
+// "#namespace:tag" tag reference) - into one ingredientRef string, so the
+// rest of this file's single-descriptor-per-grid-cell pipeline
+// (rawRecipeJSON.Key/Ingredients -> resolveIngredient) doesn't need a
+// parallel []string case threaded through it. resolveIngredient splits
+// a descriptor with this prefix back apart on the separator rather than
+// treating the joined string as one (unresolvable) item id or (malformed)
+// tag reference. Neither character can appear in a real item id or tag
+// reference (both are restricted to [a-z0-9_.-] plus ':' and a leading
+// '#'), so there's no collision risk with a genuine descriptor.
+//
+// Found live: ingredientRef.UnmarshalJSON only handled the flat-string and
+// {item,tag}-object variants, so torch.json's array-form "X" key failed
+// json.Unmarshal(raw, &rj) outright - loadCraftingRecipes' per-file
+// best-effort `continue` on that error then silently dropped the entire
+// recipe, not just that one ingredient, surfacing as "no known crafting
+// recipe for minecraft:torch" despite the file being valid and present.
+const (
+	ingredientListPrefix    = "$"
+	ingredientListSeparator = "\x1f"
+)
+
+// ingredientRef is one recipe ingredient descriptor, decoded from any of
+// three on-disk schema variants observed across this codebase's own cached
+// recipe JSON for otherwise-identical or sibling recipes: a flat string
 // ("minecraft:iron_ingot", or the tag-reference form "#minecraft:planks") -
-// used from version 1.21.2 onward - or an older object form
+// used from version 1.21.2 onward - an older object form
 // ({"item": "minecraft:iron_ingot"} or {"tag": "minecraft:planks"}) - the
-// only form seen in 1.21.1's cache. Confirmed by direct comparison of the
-// same recipe (e.g. stick.json) across versions, not assumed. Normalizes to
-// the same flat-string shape resolveIngredient already expects either way,
-// so the rest of this file doesn't need to know which variant it came from.
+// only form seen in 1.21.1's cache - or a raw array of alternative item ids
+// (see ingredientListPrefix). Confirmed by direct comparison of the same
+// recipe (e.g. stick.json) across versions, not assumed. Normalizes to the
+// same flat-string shape resolveIngredient already expects either way, so
+// the rest of this file doesn't need to know which variant it came from.
 type ingredientRef string
 
 func (r *ingredientRef) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
 		*r = ingredientRef(s)
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(data, &list); err == nil {
+		*r = ingredientRef(ingredientListPrefix + strings.Join(list, ingredientListSeparator))
 		return nil
 	}
 	var obj struct {
@@ -223,23 +256,44 @@ func (a *agent) craftingRecipeDataDir() (string, error) {
 	return filepath.Join(baseCacheDir, "downloads", a.cfg.Version, "data_generator", "data"), nil
 }
 
-// loadCraftingRecipes reads every cached recipe JSON file for the connected
-// version and returns an index of craftable recipes (2x2 inventory grid or
-// 3x3 crafting table - see fitsInventoryGrid) keyed by normalized result
-// item name.
+// loadCraftingRecipes returns an index of craftable recipes (2x2
+// inventory grid or 3x3 crafting table - see fitsInventoryGrid) keyed by
+// normalized result item name, loading and parsing every cached recipe
+// JSON file for the connected version on the *first* call and reusing
+// that result (via craftingRecipesOnce) for every call after - the
+// underlying files never change during one connected session, so this is
+// a pure, behavior-preserving cache, not a semantic change.
 //
-// Known simplification, not solved here (docs/plans/RL_ACTION_SPACE_EXPANSION.md
-// Phase 3's MVP framing): reloaded from disk and re-parsed on every
-// CraftItem call rather than cached on the agent - a few hundred small JSON
-// files, acceptable for a command that isn't called in a tight loop; revisit
-// if that changes. Only minecraft:crafting_shaped/crafting_shapeless
-// recipes that fit within a 3x3 grid are indexed - smelting/stonecutting/
-// smithing/etc., and dynamic crafting_special_* recipes (armor dye, book
-// cloning, ...), are out of scope entirely (see
-// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes). If multiple
-// recipes produce the same result item, only the first one encountered
-// (directory iteration order, not otherwise meaningful) is kept.
+// Was previously reloaded from disk and re-parsed on every single
+// CraftItem/SeedCraftIngredients call ("a few hundred small JSON files,
+// acceptable for a command that isn't called in a tight loop" per this
+// function's own earlier doc comment) - found live (2026-09-23,
+// cmd/rsi-train's -parallel-envs x tick-rate scaling investigation) to
+// actually be 1,373 files for 1.21.5's cached data_generator output, and
+// very much in a tight loop once curriculum-driven training calls this
+// repeatedly across several concurrently-running agents - real, avoidable
+// I/O contention that plausibly contributed to a separate finding from
+// the same investigation (bursty, multi-agent-synchronized pathfinding
+// failures, consistent with system-wide I/O/scheduler pressure during a
+// craft-heavy burst).
 func (a *agent) loadCraftingRecipes() (map[string]craftingRecipe, error) {
+	a.craftingRecipesOnce.Do(func() {
+		a.craftingRecipesCache, a.craftingRecipesCacheErr = a.loadCraftingRecipesUncached()
+	})
+	return a.craftingRecipesCache, a.craftingRecipesCacheErr
+}
+
+// loadCraftingRecipesUncached does the actual disk read/parse work
+// loadCraftingRecipes now only performs once per agent - see that
+// function's own doc comment. Only minecraft:crafting_shaped/
+// crafting_shapeless recipes that fit within a 3x3 grid are indexed -
+// smelting/stonecutting/smithing/etc., and dynamic crafting_special_*
+// recipes (armor dye, book cloning, ...), are out of scope entirely (see
+// docs/plans/CRAFTING_TABLE_3X3_PLAN.md's cross-cutting notes). If
+// multiple recipes produce the same result item, only the first one
+// encountered (directory iteration order, not otherwise meaningful) is
+// kept.
+func (a *agent) loadCraftingRecipesUncached() (map[string]craftingRecipe, error) {
 	dataDir, err := a.craftingRecipeDataDir()
 	if err != nil {
 		return nil, err
@@ -336,10 +390,23 @@ func recipeGrid(dataDir string, rj rawRecipeJSON, tagCache map[string][]string) 
 }
 
 // resolveIngredient turns one recipe ingredient descriptor - a concrete
-// item id ("minecraft:iron_ingot") or a tag reference
-// ("#minecraft:planks") - into the list of concrete item names that would
-// satisfy it.
+// item id ("minecraft:iron_ingot"), a tag reference ("#minecraft:planks"),
+// or an inline list of item alternatives (see ingredientListPrefix) - into
+// the list of concrete item names that would satisfy it.
 func resolveIngredient(dataDir, descriptor string, tagCache map[string][]string) ([]string, error) {
+	if strings.HasPrefix(descriptor, ingredientListPrefix) {
+		items := strings.Split(strings.TrimPrefix(descriptor, ingredientListPrefix), ingredientListSeparator)
+		var resolved []string
+		for _, item := range items {
+			if n := normalizeItemName(item); n != "" {
+				resolved = append(resolved, n)
+			}
+		}
+		if len(resolved) == 0 {
+			return nil, fmt.Errorf("empty ingredient list")
+		}
+		return resolved, nil
+	}
 	if !strings.HasPrefix(descriptor, "#") {
 		normalized := normalizeItemName(descriptor)
 		if normalized == "" {
@@ -533,12 +600,25 @@ func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error
 	// close the table actually was. FindInteractPosition finds a walkable,
 	// line-of-sight-verified position near the table instead.
 	target := models.V3{X: x, Y: y, Z: z}
-	moveTarget := target
-	if pos, ok, err := models.FindInteractPosition(ctx, a, target); err == nil && ok {
-		moveTarget = pos
+	// Walkable + line-of-sight doesn't imply reachable: the closest spot to
+	// a table floating two cells above the floor is standing on top of it,
+	// which A* correctly refuses to path to (found live: 100 identical
+	// failed attempts in a row). Try every qualifying spot, closest first,
+	// and only fail once all of them have. Chat-announce only the first
+	// attempt so a run of fallbacks can't trip the server's chat-spam kick.
+	announce := true
+	moveErr := models.TryInteractPositions(ctx, a, target, func(pos models.V3) error {
+		notify := announce
+		announce = false
+		return a.MoveTo(ctx, pos.X, pos.Y, pos.Z, notify)
+	})
+	if errors.Is(moveErr, models.ErrNoInteractPosition) {
+		// Nothing standable with line of sight was found (or the world isn't
+		// available): fall back to walking at the table itself, as before.
+		moveErr = a.MoveToWithChat(ctx, target.X, target.Y, target.Z)
 	}
-	if err := a.MoveToWithChat(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z); err != nil {
-		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", err)
+	if moveErr != nil {
+		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", moveErr)
 	}
 
 	windowID, err := a.OpenContainerAt(ctx, x, y, z, models.FaceUp, craftTableOpenTimeout)
@@ -679,38 +759,77 @@ func (a *agent) executeCraft(ctx context.Context, itemName string, recipe crafti
 	return nil
 }
 
+// ingredientSearchTimeout/ingredientSearchPollInterval bound how long
+// placeCraftIngredient retries its inventory scan before giving up -
+// mirrors awaitInventoryIncrease/SeedNearbyBlock's own poll-until-synced
+// idiom. Needed because opening a crafting table's window
+// (agent.OpenContainer) only waits a blind, fixed 2s for the server's
+// resulting slot data to arrive before returning - not an event-driven
+// wait keyed on that data actually landing - so a single, immediate scan
+// can lose the race against the container's ClientboundContainerSetContent
+// under load (multiple concurrent bots sharing one server) and see an
+// empty/stale container (or, per findIngredientSlot -> craftWindowSlots,
+// a window not yet registered as open) even though the ingredient really
+// is there. Found live: hundreds of "missing ingredient"/"window N not
+// open" failures against real-crafting-table recipes (chest/bowl) that
+// never happened against the 2x2 inventory-only path (window 0, no
+// container-open race to lose).
+const (
+	ingredientSearchTimeout      = 2 * time.Second
+	ingredientSearchPollInterval = 100 * time.Millisecond
+)
+
 // placeCraftIngredient finds the first inventory item matching one of
 // candidates (searching layout's window from layout.inventoryStart onward -
 // see findIngredientSlot) and moves a single unit of it into gridSlot
-// (also in layout's window - see craftWindowSlots).
+// (also in layout's window - see craftWindowSlots). Retries the whole scan
+// (bounded by ingredientSearchTimeout) rather than searching once - see
+// that constant's own doc comment for why a single immediate scan isn't
+// reliable here, unlike a plain 2x2-grid craft against window 0.
 func (a *agent) placeCraftIngredient(ctx context.Context, gridSlot int16, layout craftWindowLayout, candidates []string) error {
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		srcSlot, found, err := a.findIngredientSlot(candidate, layout)
-		if err != nil {
-			return fmt.Errorf("search inventory for %s: %w", candidate, err)
-		}
-		if !found {
-			continue
-		}
+	deadline := time.Now().Add(ingredientSearchTimeout)
+	var lastErr error
+	for {
+		for _, candidate := range candidates {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			srcSlot, found, err := a.findIngredientSlot(candidate, layout)
+			if err != nil {
+				lastErr = fmt.Errorf("search inventory for %s: %w", candidate, err)
+				continue
+			}
+			if !found {
+				continue
+			}
 
-		slots, err := a.craftWindowSlots(layout)
-		if err != nil {
-			return err
+			slots, err := a.craftWindowSlots(layout)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			if srcSlot < 0 || srcSlot >= len(slots) || int(gridSlot) >= len(slots) {
+				return fmt.Errorf("invalid slot index")
+			}
+			srcItem := itemStackFromScreenSlot(slots[srcSlot])
+			destItem := itemStackFromScreenSlot(slots[gridSlot])
+			if err := a.MoveSingle(int16(srcSlot), gridSlot, srcItem, destItem); err != nil {
+				return fmt.Errorf("place %s: %w", candidate, err)
+			}
+			return nil
 		}
-		if srcSlot < 0 || srcSlot >= len(slots) || int(gridSlot) >= len(slots) {
-			return fmt.Errorf("invalid slot index")
+		if !time.Now().Before(deadline) {
+			if lastErr != nil {
+				return lastErr
+			}
+			return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 		}
-		srcItem := itemStackFromScreenSlot(slots[srcSlot])
-		destItem := itemStackFromScreenSlot(slots[gridSlot])
-		if err := a.MoveSingle(int16(srcSlot), gridSlot, srcItem, destItem); err != nil {
-			return fmt.Errorf("place %s: %w", candidate, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(ingredientSearchPollInterval):
 		}
-		return nil
 	}
-	return fmt.Errorf("missing ingredient (need one of: %s)", strings.Join(candidates, ", "))
 }
 
 // waitForCraftOutput polls layout's output slot (in layout's window - see

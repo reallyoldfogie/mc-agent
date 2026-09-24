@@ -96,6 +96,31 @@ func getSlotFromContainer(logger *slog.Logger, container mcscreen.Container, slo
 		slot := slots[slotIndex]
 		return int32(slot.ID), int(slot.Count), true
 
+	case *mcscreen.GenericContainer:
+		// GenericContainer (furnace, hopper, crafting table, ...) doesn't
+		// satisfy mcscreen.Inventory - it's missing CraftingOutput/
+		// CraftingInput/Armor/Offhand, which only the player's own
+		// inventory type needs - so it falls through to this case's own
+		// GetSlots() rather than the mcscreen.Inventory one above, even
+		// though the two have identical (container slots then, if
+		// IncludesPlayer, the full player inventory) semantics. Without
+		// this case, every slot in any open GenericContainer window -
+		// including the player's own inventory slots embedded in it while
+		// the window is open, since the protocol addresses them by this
+		// same windowID for as long as it's open - silently failed to
+		// resolve: found live via cmd/rsi-train's craft-task curriculum,
+		// where opening a real crafting table (rl_seed.go's
+		// SeedCraftIngredients now seeding one for recipes needing it)
+		// made InventoryCount stop seeing the crafted item land, and
+		// CraftItem's own awaitInventoryIncrease time out on every attempt
+		// that didn't win the race against the window closing again.
+		slots := c.GetSlots()
+		if slotIndex >= int16(len(slots)) {
+			return 0, 0, false
+		}
+		slot := slots[slotIndex]
+		return int32(slot.ID), int(slot.Count), true
+
 	default:
 		// For unknown container types, we can't resolve slots safely
 		// Log a warning for debugging purposes

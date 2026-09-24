@@ -537,6 +537,96 @@ func TestPhysicsExecutor_MoveTowards_NotSupported(t *testing.T) {
 	}
 }
 
+// TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess
+// covers the live-found bug where a stuck-recovery callback returning
+// Found=true with zero Steps (pathfinding.FindPath's own short-circuit for
+// "start already within goalRadius of goal" - see
+// pathfinding/a_star.go:166) was treated identically to a genuine !Found
+// failure here, so a bot whose stuck-detector fired while it was already
+// basically at its goal could never clear that state: every recovery
+// "failed" by definition, forever (agent/agent.go's own stuck-recovery
+// callback has the matching fix and doc comment). A zero-step Found path
+// must be accepted as the new current path, not rejected - see
+// generateNavigationInputs's own currentStep >= len(Steps) guard for why
+// that's already safe (it's the same "path complete" handling a normal
+// arrival uses).
+func TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	emptyFoundPath := &pathfinding.Path{Found: true, Steps: []pathfinding.PathStep{}}
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+		return emptyFoundPath
+	})
+
+	pos := models.V3{X: 9, Y: -59, Z: -1}
+	exec.attemptRepathRecovery(pos, pos)
+
+	exec.pathMu.RLock()
+	defer exec.pathMu.RUnlock()
+	if exec.currentPath != emptyFoundPath {
+		t.Error("attemptRepathRecovery must accept a Found=true, zero-step path (already at goal) as a successful recovery, not silently discard it as a failure")
+	}
+}
+
+// TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound covers
+// the other side of the same fix: a real !Found path (or nil) must still
+// be treated as a failed recovery, so this doesn't regress into accepting
+// everything.
+func TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+		return &pathfinding.Path{Found: false}
+	})
+
+	pos := models.V3{X: 9, Y: -59, Z: -1}
+	exec.attemptRepathRecovery(pos, pos)
+
+	exec.pathMu.RLock()
+	defer exec.pathMu.RUnlock()
+	if exec.currentPath != nil {
+		t.Error("attemptRepathRecovery must still reject a genuine Found=false path as a failed recovery")
+	}
+}
+
+// TestPhysicsExecutor_SetTickRate_UpdatesTheLiveRate covers SetTickRate
+// (added so a ClientboundSetTickingState packet — the vanilla /tick
+// command, added 1.20.5 — can keep this executor's own physics loop
+// synchronized with a server that changed its tick rate away from the
+// 20 TPS default): the atomic value continuousTickLoop actually reads
+// must reflect the new rate, converted correctly (2x rate -> half the
+// nanoseconds-per-tick).
+func TestPhysicsExecutor_SetTickRate_UpdatesTheLiveRate(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	baselineNanos := int64(exec.tickRate) // 50ms/20TPS, per createTestPhysicsExecutor's own construction.
+
+	exec.SetTickRate(40) // 2x the 20 TPS default.
+
+	got := exec.tickRateNanos.Load()
+	want := baselineNanos / 2
+	if got != want {
+		t.Errorf("SetTickRate(40) stored %d ns/tick, want %d (half of the 20 TPS baseline %d)", got, want, baselineNanos)
+	}
+}
+
+// TestPhysicsExecutor_SetTickRate_IgnoresNonPositiveRates covers the
+// guard against a malformed or not-yet-meaningful report (e.g. 0 before
+// any real SetTickingState packet has ever arrived) dividing by zero or
+// leaving the live rate at an unusable value.
+func TestPhysicsExecutor_SetTickRate_IgnoresNonPositiveRates(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	exec.SetTickRate(40)
+	before := exec.tickRateNanos.Load()
+
+	exec.SetTickRate(0)
+	exec.SetTickRate(-5)
+
+	after := exec.tickRateNanos.Load()
+	if after != before {
+		t.Errorf("SetTickRate with a non-positive rate must be a no-op, got %d ns/tick (was %d)", after, before)
+	}
+}
+
 // BenchmarkPhysicsExecutor_SyncWithServer benchmarks server correction handling
 func BenchmarkPhysicsExecutor_SyncWithServer(b *testing.B) {
 	exec := createTestPhysicsExecutor()

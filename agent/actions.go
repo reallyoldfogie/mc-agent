@@ -1187,7 +1187,10 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 
 	// Calculate break time (on ground, not underwater, no effects for now)
 	// TODO: factor in underwater, on ground, potion effects, beacon effects, enchantments, etc.
-	breakTime := mining.CalcBreakTime(blockInfo, toolInfo, 0, 0, false, true)
+	// CalcBreakTime converts ticks to seconds at vanilla's 20 TPS; rescale
+	// to the server's actual rate so a /tick-accelerated server isn't
+	// waited on as if it still ran at 20 TPS.
+	breakTime := mining.CalcBreakTime(blockInfo, toolInfo, 0, 0, false, true) * a.breakTimeScale()
 
 	conn, err := a.getPacketWriter()
 	if err != nil {
@@ -1245,6 +1248,20 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	}
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
+}
+
+// vanillaTickRate is the tick rate mining.CalcBreakTime's seconds assume.
+const vanillaTickRate = 20.0
+
+// breakTimeScale is the factor converting a 20-TPS break time to wall-clock
+// seconds at the server's current tick rate (see onSetTickingState): 0.25 at
+// 80 TPS. 1 when the server has never reported a rate.
+func (a *agent) breakTimeScale() float64 {
+	rate := float64(math.Float32frombits(a.serverTickRateBits.Load()))
+	if rate <= 0 {
+		return 1
+	}
+	return vanillaTickRate / rate
 }
 
 // mineConfirmTimeout/mineConfirmPollInterval bound how long awaitBlockChanged

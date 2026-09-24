@@ -357,6 +357,42 @@ func TestStepMineActionMinesVisibleTargetAndEndsEpisode(t *testing.T) {
 	}
 }
 
+// TestResetRestoresBlocksMinedDuringTheEpisode: a mine episode whose target
+// is part of the terrain (dirt/grass in a superflat world) must not leave a
+// hole behind - found live as craters that made teleports land in pits.
+func TestResetRestoresBlocksMinedDuringTheEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:dirt", 5, -1, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:dirt"
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.restoredBlocks) != 0 {
+		t.Fatalf("nothing mined yet, but blocks were restored: %v", agent.restoredBlocks)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("second Reset: %v", err)
+	}
+	want := restoredBlock{5, -1, 0, "minecraft:dirt"}
+	if len(agent.restoredBlocks) != 1 || agent.restoredBlocks[0] != want {
+		t.Fatalf("restored = %v, want exactly [%v]", agent.restoredBlocks, want)
+	}
+
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("third Reset: %v", err)
+	}
+	if len(agent.restoredBlocks) != 1 {
+		t.Fatalf("a block must be restored once, not on every later Reset: %v", agent.restoredBlocks)
+	}
+}
+
 func TestStepObservationReflectsMineTargetDeltaRegardlessOfAction(t *testing.T) {
 	// mineDx/Dy/Dz/mineVisible are populated every step once configured,
 	// not only on steps that dispatch ActionMine — mirrors how

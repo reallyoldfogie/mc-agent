@@ -125,6 +125,16 @@ func (w *worldHandler) ParseUpdateTime(p pk.Packet) (worldAge, timeOfDay int64, 
 	return int64(pkt.Age), int64(pkt.Time), nil
 }
 
+// ParseSetTickingState parses the ClientboundSetTickingState packet
+// (added 1.20.5, part of the vanilla /tick command's protocol support).
+func (w *worldHandler) ParseSetTickingState(p pk.Packet) (tickRate float32, isFrozen bool, err error) {
+	pkt := cb.NewSetTickingState()
+	if err = pkt.Scan(p); err != nil {
+		return 0, false, common.ErrPacketParse{PacketName: "SetTickingState", Cause: err}
+	}
+	return float32(pkt.TickRate), bool(pkt.IsFrozen), nil
+}
+
 // ParseExplosion parses a ClientboundExplosion packet.
 // Returns whether the explosion pushed the receiving player and, if so,
 // the velocity delta to add to their current velocity (not a replacement
