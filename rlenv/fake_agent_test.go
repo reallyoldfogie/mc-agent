@@ -414,3 +414,7 @@ func (f *fakeAgent) TeleportTo(_ context.Context, x, y, z float64) error {
 	f.posKnown = true
 	return nil
 }
+
+// SendCommand satisfies models.CommandAgent (which rlenv's ResetAgent/
+// seeding paths now require); the fake never needs to observe commands.
+func (f *fakeAgent) SendCommand(string) error { return nil }
