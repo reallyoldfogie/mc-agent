@@ -2,6 +2,7 @@ package models_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -113,12 +114,12 @@ func TestFindInteractPosition_SkipsBlockedLineOfSight(t *testing.T) {
 	}
 }
 
-// TestFindInteractPositions_FloatingTargetOffersGroundLevelFallback covers a
+// TestTryInteractPositions_FloatingTargetFallsBackToGroundLevel covers a
 // block floating above the ground (found live: a seeded crafting table two
 // cells above the floor). The spot standing on top of it is the closest
-// candidate but unreachable from the floor, so callers need the ground-level
-// spots beside it as fallbacks.
-func TestFindInteractPositions_FloatingTargetOffersGroundLevelFallback(t *testing.T) {
+// candidate but unreachable from the floor, so when try rejects it the
+// ground-level spots beside it must be offered next.
+func TestTryInteractPositions_FloatingTargetFallsBackToGroundLevel(t *testing.T) {
 	registry := mctesting.NewSimpleBlockRegistry()
 	world := mctesting.NewWorldBuilder(registry).
 		FlatGroundDirect(-5, -5, 5, 5, -1, grassStateID).
@@ -128,28 +129,72 @@ func TestFindInteractPositions_FloatingTargetOffersGroundLevelFallback(t *testin
 	agent := &fakeInteractAgent{world: world, shapeMgr: mctesting.NewMockShapeManager()}
 	target := models.V3{X: 0, Y: 1, Z: 0}
 
-	positions, err := models.FindInteractPositions(context.Background(), agent, target, 5)
+	var tried []models.V3
+	err := models.TryInteractPositions(context.Background(), agent, target, func(pos models.V3) error {
+		tried = append(tried, pos)
+		if pos.Y == 0 { // only ground-level spots are "reachable"
+			return nil
+		}
+		return errors.New("no path")
+	})
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("expected a ground-level spot to succeed, got %v", err)
 	}
-	if len(positions) < 2 {
-		t.Fatalf("expected several candidates, got %v", positions)
+	if len(tried) < 2 || tried[0] != (models.V3{X: 0, Y: 2, Z: 0}) {
+		t.Fatalf("expected the on-top spot to be tried first and rejected, got %v", tried)
 	}
-	if positions[0] != (models.V3{X: 0, Y: 2, Z: 0}) {
-		t.Errorf("expected the on-top spot to rank first (closest), got %+v", positions[0])
+	if last := tried[len(tried)-1]; last.Y != 0 {
+		t.Errorf("expected iteration to stop at the first ground-level spot, last tried %+v", last)
 	}
-	groundLevel := false
-	for _, p := range positions[1:] {
-		if p.Y == 0 {
-			groundLevel = true
+	for i := 1; i < len(tried); i++ {
+		if tried[i-1].DistanceTo(target) > tried[i].DistanceTo(target) {
+			t.Errorf("candidates must be offered closest first: %v", tried)
 		}
 	}
-	if !groundLevel {
-		t.Errorf("expected a ground-level fallback among %v", positions)
-	}
+}
 
-	single, ok, err := models.FindInteractPosition(context.Background(), agent, target)
-	if err != nil || !ok || single != positions[0] {
-		t.Errorf("FindInteractPosition must return the first of FindInteractPositions, got %+v ok=%v err=%v", single, ok, err)
+// TestTryInteractPositions_AllCandidatesFailReturnsLastError: it only gives
+// up after every qualifying spot has been tried.
+func TestTryInteractPositions_AllCandidatesFailReturnsLastError(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(-5, -5, 5, 5, -1, grassStateID).
+		SetBlockDirect(0, 0, 0, grassStateID).
+		Build()
+	agent := &fakeInteractAgent{world: world, shapeMgr: mctesting.NewMockShapeManager()}
+
+	calls := 0
+	sentinel := errors.New("no path")
+	err := models.TryInteractPositions(context.Background(), agent, models.V3{}, func(models.V3) error {
+		calls++
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("expected the try error back, got %v", err)
+	}
+	if calls < 5 {
+		t.Errorf("expected every qualifying candidate to be tried, only %d were", calls)
+	}
+}
+
+func TestTryInteractPositions_NoCandidatesReturnsErrNoInteractPosition(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	const bound = int(models.InteractReachDistance) + 1
+	wb := mctesting.NewWorldBuilder(registry)
+	for dx := -bound; dx <= bound; dx++ {
+		for dy := -bound; dy <= bound; dy++ {
+			for dz := -bound; dz <= bound; dz++ {
+				wb = wb.SetBlockDirect(float64(dx), float64(dy), float64(dz), grassStateID)
+			}
+		}
+	}
+	agent := &fakeInteractAgent{world: wb.Build(), shapeMgr: mctesting.NewMockShapeManager()}
+
+	err := models.TryInteractPositions(context.Background(), agent, models.V3{}, func(models.V3) error {
+		t.Fatal("try must not be called when nothing qualifies")
+		return nil
+	})
+	if !errors.Is(err, models.ErrNoInteractPosition) {
+		t.Fatalf("expected ErrNoInteractPosition, got %v", err)
 	}
 }
