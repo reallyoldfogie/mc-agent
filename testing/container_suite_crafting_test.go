@@ -9,6 +9,7 @@ import (
 
 // TestCraftingTable tests crafting table functionality
 func (s *ContainerTestSuite) TestCraftingTable() {
+	s.spawnContainerAgent("CraftTableBot", "container_crafting_table")
 	s.T().Log("=== Testing Crafting Table ===")
 
 	// Teleport to crafting table
@@ -37,7 +38,7 @@ func (s *ContainerTestSuite) TestCraftingTable() {
 	}
 
 	// Close crafting table
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Crafting table test passed")
@@ -45,6 +46,7 @@ func (s *ContainerTestSuite) TestCraftingTable() {
 
 // TestCrafter tests crafter block functionality
 func (s *ContainerTestSuite) TestCrafter() {
+	s.spawnContainerAgent("CrafterBot", "container_crafter")
 	s.T().Log("=== Testing Crafter ===")
 
 	// Teleport to crafter
@@ -67,7 +69,7 @@ func (s *ContainerTestSuite) TestCrafter() {
 	s.Require().Equal(9, genericContainer.ContainerSlots, "crafter should have 9 container slots")
 
 	// Close crafter
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Crafter test passed")
@@ -75,6 +77,7 @@ func (s *ContainerTestSuite) TestCrafter() {
 
 // TestBrewingStand tests brewing stand functionality
 func (s *ContainerTestSuite) TestBrewingStand() {
+	s.spawnContainerAgent("BrewStandBot", "container_brewing_stand")
 	s.T().Log("=== Testing Brewing Stand ===")
 
 	// Teleport to brewing stand
@@ -97,7 +100,7 @@ func (s *ContainerTestSuite) TestBrewingStand() {
 	s.Require().Equal(5, genericContainer.ContainerSlots, "brewing stand should have 5 container slots")
 
 	// Close brewing stand
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Brewing stand test passed")

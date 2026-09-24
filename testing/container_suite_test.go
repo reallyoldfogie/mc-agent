@@ -19,73 +19,74 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-// ContainerTestSuite provides a shared test environment for all container tests
+// ContainerTestSuite covers all 16 container-type tests below (chest,
+// barrel, furnace family, crafting family, utility blocks): one server per
+// version, shared by every method, instead of the previous
+// per-test-function StartServer/StopServer pattern (this file's own prior
+// art, which already achieved the "one server, many tests" benefit via its
+// own hand-rolled SetupSuite/TearDownSuite driver before VersionWorldSuite
+// existed - this migration is pure consistency, not a boot-count win).
+//
+// Unlike most VersionWorldSuite-based suites, every method here shares ONE
+// pre-built world: all 23 container types are placed once, in SetupSuite,
+// around a single working-area origin (via a throwaway setup agent that
+// disconnects once the build is done) - this preserves the original's own
+// efficient one-time-build design rather than having each of the 16
+// methods redundantly place its own single container. Each method then
+// spawns its own uniquely-named agent near that shared origin
+// (spawnContainerAgent) and teleports to whichever container it needs.
+// Each method needing its own distinct agent name (VersionWorldSuite's
+// usedNames uniqueness check requires it) also means no explicit
+// inventory-clear step is needed between tests, unlike the original's
+// SetupTest/TearDownTest: a fresh player identity has no prior inventory,
+// whereas the original reused one "ContainerBot" identity across all 16
+// tests and had to clear it every time.
 type ContainerTestSuite struct {
-	suite.Suite
+	VersionWorldSuite
 
-	minecraftVersion string
-
-	ctx       context.Context
-	cancel    context.CancelFunc
-	framework *Framework
-	inst      *TestInstance
-	agent     *ManagedAgent
-
-	// Shared resources
-	screenMgr mcscreen.Manager
-
-	// Container positions (pre-placed in world)
+	// origin is the one working area every method's agent spawns near;
+	// containers holds every placed container's name -> position, both set
+	// once in SetupSuite.
+	origin     models.V3
 	containers map[string]models.V3
 
-	// Spawn point for teleporting back
-	spawnPoint models.V3
+	// leader/screenMgr are the CURRENT test method's agent and screen
+	// manager, set by spawnContainerAgent at each method's own start -
+	// analogous to the original's own s.agent/s.screenMgr fields, just
+	// refreshed per method instead of via testify's SetupTest hook.
+	leader    *WorkingAreaAgent
+	screenMgr mcscreen.Manager
 
-	currentTestStartTime time.Time
-	memProfilePath       string
-	memProfileInterval   time.Duration
-	memProfileStop       chan struct{}
-	memProfileDone       chan struct{}
+	memProfilePath     string
+	memProfileInterval time.Duration
+	memProfileStop     chan struct{}
+	memProfileDone     chan struct{}
 }
 
-// SetupSuite runs once before all tests in the suite
+func TestContainerSuite(t *testing.T) {
+	RunVersionWorldSuite(t, models.StandardVersionTests, func() suite.TestingSuite {
+		s := &ContainerTestSuite{}
+		s.WorldGen = WorldGenFlat
+		s.Memory = "1024M"
+		s.MinFreeMemoryMB = 512
+		s.ExtraEnv = map[string]string{
+			"FORCE_GAMEMODE":      "true",
+			"VIEW_DISTANCE":       "6",
+			"SIMULATION_DISTANCE": "4",
+			"SPAWN_PROTECTION":    "0",
+		}
+		return s
+	})
+}
+
+// SetupSuite boots the shared server (via the embedded VersionWorldSuite),
+// then builds the one shared container world every method in this suite
+// uses.
 func (s *ContainerTestSuite) SetupSuite() {
-	var err error
-	if s.minecraftVersion == "" {
-		s.minecraftVersion = "1.21.5"
-	}
-	s.T().Logf("setting up test suite for Minecraft %s...", s.minecraftVersion)
+	s.VersionWorldSuite.SetupSuite()
 
-	// Enable debug logging for container clicks and screen close
+	// Enable debug logging for container clicks and screen close.
 	os.Setenv("MC_AGENT_CLICK_DEBUG_PATH", "testing/logs/container_debug.log")
-
-	// Create context with long timeout for entire suite
-	s.ctx, s.cancel = context.WithTimeout(context.Background(), 30*time.Minute)
-
-	// Get working directory
-	cwd, err := os.Getwd()
-	s.Require().NoError(err, "get current working directory")
-
-	// Create framework
-	s.framework, err = NewFramework()
-	s.Require().NoError(err, "create framework")
-	s.T().Log("framework initialized")
-
-	// Configure server
-	serverCfg := DefaultServerConfig()
-	serverCfg.Memory = "1024M" // More memory for complex world
-	serverCfg.MinFreeMemoryMB = 512
-	serverCfg.Version = s.minecraftVersion
-	serverCfg.GameMode = "survival"
-	serverCfg.WorldGen = WorldGenFlat
-	serverCfg.ExtraEnv = map[string]string{
-		"FORCE_GAMEMODE":      "true",
-		"VIEW_DISTANCE":       "6",
-		"SIMULATION_DISTANCE": "4",
-		"SPAWN_PROTECTION":    "0",
-	}
-	serverCfg.PullImage = false
-	serverCfg.CacheDir = filepath.Join(cwd, ".server_cache", "ContainerTestSuite", s.minecraftVersion)
-	RequireIntegrationEnv(s.T(), serverCfg)
 
 	// Optional memory profile output path (file or directory).
 	s.memProfilePath = os.Getenv("MC_AGENT_MEM_PROFILE")
@@ -104,57 +105,35 @@ func (s *ContainerTestSuite) SetupSuite() {
 		s.startMemProfiler()
 	}
 
-	// Start server
-	s.inst, err = s.framework.StartServer(s.ctx, serverCfg)
-	s.Require().NoError(err, "start server")
-	s.T().Logf("server started: %s:%d", s.inst.Server.Host, s.inst.Server.HostServerPort)
+	// Spawn a throwaway setup agent to build the world and capture the
+	// working-area origin every real test method will spawn near.
+	setupAgent, err := s.SpawnWorkingAreaAgent("ContainerSetupBot", "container_suite_setup")
+	s.Require().NoError(err, "spawn setup agent")
+	s.origin = setupAgent.Origin
 
-	// Setup agent logging
-	s.Require().NoError(s.framework.setupAgentLogging(), "setup agent logging")
-
-	// Spawn a setup agent to build the world and capture spawn point.
-	addr := fmt.Sprintf("%s:%d", s.inst.Server.Host, s.inst.Server.HostServerPort)
-	botName := "ContainerBot"
-	agentCfg := AgentConfig{
-		Name:          botName,
-		ServerAddress: addr,
-		Version:       serverCfg.Version,
-	}
-
-	s.agent, err = s.framework.SpawnAgent(s.ctx, s.inst, agentCfg)
-	s.Require().NoError(err, "spawn agent")
-
-	// Wait for player to be online
-	s.Require().True(waitForPlayerOnline(s.ctx, s.inst.RCON, botName, 30*time.Second),
-		"agent never appeared in server player list")
-
-	// Get spawn point
-	playerPos, err := GetPlayerPosition(s.ctx, s.inst.RCON, botName)
-	s.Require().NoError(err, "get player position")
-	s.spawnPoint = models.V3{
-		X: playerPos.X,
-		Y: playerPos.Y,
-		Z: playerPos.Z,
-	}
-	if serverCfg.WorldGen == WorldGenFlat {
-		// Flat world default ground is at Y=64, keep agent's feet on ground.
-		s.spawnPoint.Y = 65
-	}
-	s.T().Logf("spawn point: %+v", s.spawnPoint)
-
-	// Build the test world with all containers
 	s.T().Log("building test world with all container types...")
-	s.containers = s.buildTestWorld()
+	s.containers = s.buildTestWorld(setupAgent)
 	s.T().Logf("test world built with %d containers", len(s.containers))
 
-	// Disconnect setup agent to ensure each test starts with a fresh agent.
-	s.stopAgent(s.agent)
-	s.agent = nil
-	s.screenMgr = nil
+	// Disconnect the setup agent immediately - it has no further role, and
+	// every real test method spawns its own fresh agent instead.
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	_ = setupAgent.Stop(stopCtx)
+	stopCancel()
 
 	if memStatsEnabled() {
 		logMemStats("ContainerTestSuite setup complete")
 	}
+}
+
+// TearDownSuite only handles memory-profiling cleanup - the shared
+// server itself is stopped via VersionWorldSuite's own t.Cleanup-based
+// teardown (teardownServer), not testify's TearDownSuite hook (see that
+// method's own doc comment for why), so this must not touch the
+// server/framework at all.
+func (s *ContainerTestSuite) TearDownSuite() {
+	s.stopMemProfiler()
+	s.writeMemProfile()
 }
 
 func memStatsEnabled() bool {
@@ -212,36 +191,6 @@ func parseKBLineMB(line string) float64 {
 	return kb / 1024
 }
 
-// TearDownSuite runs once after all tests in the suite
-func (s *ContainerTestSuite) TearDownSuite() {
-	s.T().Log("tearing down test suite...")
-
-	s.stopMemProfiler()
-	s.writeMemProfile()
-
-	// Close any remaining agent
-	s.stopAgent(s.agent)
-
-	// Close agent logging
-	if s.framework != nil {
-		s.framework.CloseAgentLog()
-	}
-
-	// Stop server
-	if s.inst != nil && s.framework != nil {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer stopCancel()
-		_ = s.framework.StopServer(stopCtx, s.inst, true)
-	}
-
-	// Cancel context
-	if s.cancel != nil {
-		s.cancel()
-	}
-
-	s.T().Log("test suite teardown complete")
-}
-
 func (s *ContainerTestSuite) startMemProfiler() {
 	if s.memProfilePath == "" || s.memProfileInterval <= 0 {
 		return
@@ -259,7 +208,7 @@ func (s *ContainerTestSuite) startMemProfiler() {
 				s.writeMemProfile()
 			case <-s.memProfileStop:
 				return
-			case <-s.ctx.Done():
+			case <-s.Ctx.Done():
 				return
 			}
 		}
@@ -316,166 +265,52 @@ func (s *ContainerTestSuite) memProfileOutputPath() string {
 	return path
 }
 
-// SetupTest runs before each test
-func (s *ContainerTestSuite) SetupTest() {
-	// Spawn a fresh agent for this test.
-	addr := fmt.Sprintf("%s:%d", s.inst.Server.Host, s.inst.Server.HostServerPort)
-	agentCfg := AgentConfig{
-		Name:          "ContainerBot",
-		ServerAddress: addr,
-		Version:       s.inst.Server.Version,
-	}
-
-	var err error
-	s.agent, err = s.framework.SpawnAgent(s.ctx, s.inst, agentCfg)
+// spawnContainerAgent spawns a fresh agent named name, near this suite's
+// one shared origin (built once in SetupSuite with every container type in
+// reach), and stores it as s.leader/s.screenMgr for
+// teleportToContainer/openContainer to use. Call this as the first line of
+// every Test* method below - each needs its own distinct name
+// (VersionWorldSuite's usedNames uniqueness check requires it).
+func (s *ContainerTestSuite) spawnContainerAgent(name, replayPrefix string) {
+	leader, err := s.SpawnAgentNear(name, replayPrefix, s.origin, 0, 0)
 	s.Require().NoError(err, "spawn agent")
-
-	// Get shared resources for this agent.
-	// NOTE: Container helper is now automatically initialized in agent.Start()
-	// after the client connects (not in Init())
-	// We retrieve it here for test inspection/cleanup if needed
-	s.screenMgr = s.agent.ScreenManager()
-	s.Require().NotNil(s.screenMgr, "screen manager should be available")
-
-	// Container helper and inventory manager are auto-initialized during agent.Start()
-	// Tests use agent's promoted interface methods directly
-
-	// Ensure agent is online before issuing RCON commands.
-	if !WaitForPlayerOnline(s.ctx, s.inst.RCON, "ContainerBot", 30*time.Second) {
-		if listResp, err := s.inst.RCON.Exec(s.ctx, "list"); err == nil {
-			s.T().Logf("player list: %s", listResp)
-		}
-		select {
-		case <-s.agent.Agent.Done():
-			s.T().Log("agent context closed before SetupTest")
-		default:
-		}
-		s.Require().Fail("ContainerBot not online before SetupTest")
-	}
-
-	// Teleport agent back to spawn
-	teleportCmd := fmt.Sprintf("tp ContainerBot %.1f %.1f %.1f", s.spawnPoint.X, s.spawnPoint.Y, s.spawnPoint.Z)
-	_, err = s.inst.RCON.Exec(s.ctx, teleportCmd)
-	s.Require().NoError(err, "teleport to spawn")
-	time.Sleep(200 * time.Millisecond)
-
-	// Clear agent inventory
-	_, err = s.inst.RCON.Exec(s.ctx, "clear ContainerBot")
-	s.Require().NoError(err, "clear inventory")
-	// Wait longer for inventory clear to propagate to client
-	time.Sleep(500 * time.Millisecond)
-	s.currentTestStartTime = time.Now()
+	s.leader = leader
+	s.screenMgr = leader.ScreenManager()
 }
 
-// TearDownTest runs after each test
-func (s *ContainerTestSuite) TearDownTest() {
-	// Log current screen count before close
-	if s.screenMgr != nil {
-		s.T().Logf("Screens before close: %d screens: %v", len(s.screenMgr.Screens()), getScreenIDs(s.screenMgr.Screens()))
-	}
-
-	// Don't close the container here - tests are responsible for closing their own containers
-	// If a test leaves a container open, TearDownTest will clean up properly when stopping the agent
-	// Calling CloseContainer twice (once in test, once here) can cause issues
-
-	// Wait to ensure window is fully closed on server and client before next test
-	// This prevents "accessing containers too quickly" and hitting window ID limits
-	time.Sleep(1 * time.Second)
-
-	// Log screen count after close
-	if s.screenMgr != nil {
-		s.T().Logf("Screens after close: %d screens: %v", len(s.screenMgr.Screens()), getScreenIDs(s.screenMgr.Screens()))
-	}
-
-	s.stopAgent(s.agent)
-
-	for time.Since(s.currentTestStartTime) < 10*time.Second {
-		// Ensure at least 10 seconds between tests to avoid server issues
-		time.Sleep(100 * time.Millisecond)
-	}
-	s.agent = nil
-	s.screenMgr = nil
-	// Note: itemUsage, invMgr, and containerHelper are now managed by agent.Init()
-	// They are automatically cleaned up when agent is stopped
-}
-
-func (s *ContainerTestSuite) stopAgent(agent *ManagedAgent) {
-	if agent == nil {
-		return
-	}
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := agent.Stop(stopCtx); err != nil {
-		s.T().Logf("warning: failed to stop agent %s cleanly: %v", agent.Name, err)
-	}
-	stopCancel()
-	s.removeAgent(agent)
-}
-
-func (s *ContainerTestSuite) removeAgent(agent *ManagedAgent) {
-	if s.inst == nil || agent == nil {
-		return
-	}
-	s.inst.mu.Lock()
-	defer s.inst.mu.Unlock()
-	for i, existing := range s.inst.Agents {
-		if existing == agent {
-			s.inst.Agents = append(s.inst.Agents[:i], s.inst.Agents[i+1:]...)
-			return
-		}
-	}
-}
-
-// Helper to get screen IDs for logging
-func getScreenIDs(screens map[int]mcscreen.Container) []int {
-	ids := make([]int, 0, len(screens))
-	for id := range screens {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// buildTestWorld creates all containers in the test world
-// Returns a map of container names to positions
-func (s *ContainerTestSuite) buildTestWorld() map[string]models.V3 {
+// buildTestWorld creates all containers in the test world using setupAgent
+// (SetupSuite's own throwaway agent - not s.leader, which doesn't exist
+// yet at this point in the suite's lifecycle). Returns a map of container
+// names to positions.
+func (s *ContainerTestSuite) buildTestWorld(setupAgent *WorkingAreaAgent) map[string]models.V3 {
 	containers := make(map[string]models.V3)
 
 	// Base Y level (ground level)
-	baseX := int(math.Floor(s.spawnPoint.X))
-	baseY := math.Floor(s.spawnPoint.Y)
-	baseZ := int(math.Floor(s.spawnPoint.Z))
-	if s.spawnPoint.Y >= 65 {
+	baseX := int(math.Floor(s.origin.X))
+	baseY := math.Floor(s.origin.Y)
+	baseZ := int(math.Floor(s.origin.Z))
+	if s.origin.Y >= 65 {
 		// For flat worlds, ground is at Y=64.
 		baseY = 64
 	}
 
 	// Ensure ground is clear
 	s.T().Log("clearing ground...")
-	// for x := -20; x <= 20; x++ {
-	// 	for z := -20; z <= 20; z++ {
-	// 		// Clear blocks above spawn
-	// 		for y := 0; y <= 5; y++ {
-	// 			cmd := fmt.Sprintf("setblock %d %d %d air",
-	// 				baseX+x, int(baseY)+y, baseZ+z)
-	// response, err := s.inst.RCON.Exec(s.ctx, cmd)
-	// s.T().Logf("[buildTestWorld] setblock response => '%s' (%#v)", response, err)
-	// 		}
-	// 	}
-	// }
 	groundY := int(baseY)
 	floorCmd := fmt.Sprintf("fill %d %d %d %d %d %d grass_block",
 		baseX-20, groundY, baseZ-20,
 		baseX+20, groundY, baseZ+20)
-	response, err := s.inst.RCON.Exec(s.ctx, floorCmd)
+	response, err := s.Inst.RCON.Exec(s.Ctx, floorCmd)
 	s.T().Logf("[buildTestWorld] floor fill response => '%s' (%#v)", response, err)
 	clearCmd := fmt.Sprintf("fill %d %d %d %d %d %d air",
 		baseX-20, groundY+1, baseZ-20,
 		baseX+20, groundY+6, baseZ+20)
-	response, err = s.inst.RCON.Exec(s.ctx, clearCmd)
+	response, err = s.Inst.RCON.Exec(s.Ctx, clearCmd)
 	s.T().Logf("[buildTestWorld] clear fill response => '%s' (%#v)", response, err)
 	time.Sleep(3 * time.Second)
 
 	baseY = float64(groundY + 1)
-	s.spawnPoint.Y = baseY
+	s.origin.Y = baseY
 
 	// Place containers according to the layout plan
 	s.T().Log("placing containers...")
@@ -487,7 +322,7 @@ func (s *ContainerTestSuite) buildTestWorld() map[string]models.V3 {
 			Y: baseY + float64(offsetY),
 			Z: float64(baseZ + offsetZ),
 		}
-		_, err := PlaceBlockAndWait(s.ctx, s.inst.RCON, s.agent, pos, "minecraft:"+blockType, blockType, 10*time.Second)
+		_, err := PlaceBlockAndWait(s.Ctx, s.Inst.RCON, setupAgent.ManagedAgent, pos, "minecraft:"+blockType, blockType, 10*time.Second)
 		if err != nil {
 			s.T().Logf("WARNING: failed to place %s: %v", name, err)
 			return
@@ -539,12 +374,12 @@ func (s *ContainerTestSuite) buildTestWorld() map[string]models.V3 {
 	// Place iron block pyramid base (3x3)
 	for dx := -1; dx <= 1; dx++ {
 		for dz := -1; dz <= 1; dz++ {
-			_, _ = s.inst.RCON.Exec(s.ctx, fmt.Sprintf("setblock %d %d %d iron_block",
+			_, _ = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("setblock %d %d %d iron_block",
 				beaconX+dx, beaconY-1, beaconZ+dz))
 		}
 	}
 	// Place beacon on top
-	_, _ = s.inst.RCON.Exec(s.ctx, fmt.Sprintf("setblock %d %d %d beacon",
+	_, _ = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("setblock %d %d %d beacon",
 		beaconX, beaconY, beaconZ))
 	containers["beacon"] = models.V3{X: float64(beaconX), Y: float64(beaconY), Z: float64(beaconZ)}
 
@@ -567,14 +402,14 @@ func (s *ContainerTestSuite) teleportToContainer(name string) models.V3 {
 	pos := s.getContainer(name)
 
 	// Teleport player next to container
-	teleportCmd := fmt.Sprintf("tp ContainerBot %.1f %.1f %.1f facing %.1f %.1f %.1f",
-		pos.X-2, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
-	_, err := s.inst.RCON.Exec(s.ctx, teleportCmd)
+	teleportCmd := fmt.Sprintf("tp %s %.1f %.1f %.1f facing %.1f %.1f %.1f",
+		s.leader.Name, pos.X-2, pos.Y, pos.Z, pos.X, pos.Y, pos.Z)
+	_, err := s.Inst.RCON.Exec(s.Ctx, teleportCmd)
 	s.Require().NoError(err, "teleport to container")
 
 	// Wait for block to be visible
 	time.Sleep(500 * time.Millisecond)
-	_, err = WaitForBlockState(s.ctx, s.agent, pos, "", 5*time.Second)
+	_, err = WaitForBlockState(s.Ctx, s.leader.ManagedAgent, pos, "", 5*time.Second)
 	s.Require().NoError(err, "wait for container block to load")
 
 	return pos
@@ -582,19 +417,16 @@ func (s *ContainerTestSuite) teleportToContainer(name string) models.V3 {
 
 // Helper method to open a container with retry logic
 func (s *ContainerTestSuite) openContainer(pos models.V3, face models.BlockFace) byte {
-	windowID, err := OpenContainerWithLOS(s.ctx, s.agent.Agent, pos, face, 5*time.Second)
+	windowID, err := OpenContainerWithLOS(s.Ctx, s.leader.Agent, pos, face, 5*time.Second)
 	s.Require().NoError(err, "open container at (%.0f, %.0f, %.0f)", pos.X, pos.Y, pos.Z)
 	return windowID
 }
 
-// TestContainerSuite runs the entire suite
-func TestContainerSuite(t *testing.T) {
-	for _, tt := range models.StandardVersionTests {
-		t.Run(tt.Name, func(t *testing.T) {
-			testSuite := new(ContainerTestSuite)
-			testSuite.minecraftVersion = tt.MCVersion
-			suite.Run(t, testSuite)
-		})
-		// suite.Run(t, new(ContainerTestSuite))
+// Helper to get screen IDs for logging
+func getScreenIDs(screens map[int]mcscreen.Container) []int {
+	ids := make([]int, 0, len(screens))
+	for id := range screens {
+		ids = append(ids, id)
 	}
+	return ids
 }

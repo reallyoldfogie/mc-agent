@@ -9,6 +9,7 @@ import (
 
 // TestAnvil tests anvil functionality
 func (s *ContainerTestSuite) TestAnvil() {
+	s.spawnContainerAgent("AnvilBot", "container_anvil")
 	s.T().Log("=== Testing Anvil ===")
 
 	// Teleport to anvil
@@ -37,7 +38,7 @@ func (s *ContainerTestSuite) TestAnvil() {
 	}
 
 	// Close anvil
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Anvil test passed")
@@ -45,6 +46,7 @@ func (s *ContainerTestSuite) TestAnvil() {
 
 // TestGrindstone tests grindstone functionality
 func (s *ContainerTestSuite) TestGrindstone() {
+	s.spawnContainerAgent("GrindstoneBot", "container_grindstone")
 	s.T().Log("=== Testing Grindstone ===")
 
 	// Teleport to grindstone
@@ -67,7 +69,7 @@ func (s *ContainerTestSuite) TestGrindstone() {
 	s.Require().Equal(3, genericContainer.ContainerSlots, "grindstone should have 3 container slots")
 
 	// Close grindstone
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Grindstone test passed")
@@ -75,6 +77,7 @@ func (s *ContainerTestSuite) TestGrindstone() {
 
 // TestSmithingTable tests smithing table functionality
 func (s *ContainerTestSuite) TestSmithingTable() {
+	s.spawnContainerAgent("SmithTableBot", "container_smithing_table")
 	s.T().Log("=== Testing Smithing Table ===")
 
 	// Teleport to smithing table
@@ -97,7 +100,7 @@ func (s *ContainerTestSuite) TestSmithingTable() {
 	s.Require().Equal(4, genericContainer.ContainerSlots, "smithing table should have 4 container slots")
 
 	// Close smithing table
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Smithing table test passed")

@@ -9,6 +9,7 @@ import (
 
 // TestFurnace tests furnace functionality
 func (s *ContainerTestSuite) TestFurnace() {
+	s.spawnContainerAgent("FurnaceBot", "container_furnace")
 	s.T().Log("=== Testing Furnace ===")
 
 	// Teleport to furnace
@@ -37,7 +38,7 @@ func (s *ContainerTestSuite) TestFurnace() {
 	}
 
 	// Close furnace
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Furnace test passed")
@@ -45,6 +46,7 @@ func (s *ContainerTestSuite) TestFurnace() {
 
 // TestBlastFurnace tests blast furnace functionality
 func (s *ContainerTestSuite) TestBlastFurnace() {
+	s.spawnContainerAgent("BlastFurnaceBot", "container_blast_furnace")
 	s.T().Log("=== Testing Blast Furnace ===")
 
 	// Teleport to blast furnace
@@ -67,7 +69,7 @@ func (s *ContainerTestSuite) TestBlastFurnace() {
 	s.Require().Equal(3, genericContainer.ContainerSlots, "blast furnace should have 3 container slots")
 
 	// Close blast furnace
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Blast furnace test passed")
@@ -75,6 +77,7 @@ func (s *ContainerTestSuite) TestBlastFurnace() {
 
 // TestSmoker tests smoker functionality
 func (s *ContainerTestSuite) TestSmoker() {
+	s.spawnContainerAgent("SmokerBot", "container_smoker")
 	s.T().Log("=== Testing Smoker ===")
 
 	// Teleport to smoker
@@ -97,7 +100,7 @@ func (s *ContainerTestSuite) TestSmoker() {
 	s.Require().Equal(3, genericContainer.ContainerSlots, "smoker should have 3 container slots")
 
 	// Close smoker
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Smoker test passed")
@@ -105,6 +108,7 @@ func (s *ContainerTestSuite) TestSmoker() {
 
 // TestHopper tests hopper functionality
 func (s *ContainerTestSuite) TestHopper() {
+	s.spawnContainerAgent("HopperBot", "container_hopper")
 	s.T().Log("=== Testing Hopper ===")
 
 	// Teleport to hopper
@@ -127,7 +131,7 @@ func (s *ContainerTestSuite) TestHopper() {
 	s.Require().Equal(5, genericContainer.ContainerSlots, "hopper should have 5 container slots")
 
 	// Close hopper
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Hopper test passed")
@@ -135,6 +139,7 @@ func (s *ContainerTestSuite) TestHopper() {
 
 // TestDispenser tests dispenser functionality
 func (s *ContainerTestSuite) TestDispenser() {
+	s.spawnContainerAgent("DispenserBot", "container_dispenser")
 	s.T().Log("=== Testing Dispenser ===")
 
 	// Teleport to dispenser
@@ -157,7 +162,7 @@ func (s *ContainerTestSuite) TestDispenser() {
 	s.Require().Equal(9, genericContainer.ContainerSlots, "dispenser should have 9 container slots")
 
 	// Close dispenser
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Dispenser test passed")
@@ -165,6 +170,7 @@ func (s *ContainerTestSuite) TestDispenser() {
 
 // TestDropper tests dropper functionality
 func (s *ContainerTestSuite) TestDropper() {
+	s.spawnContainerAgent("DropperBot", "container_dropper")
 	s.T().Log("=== Testing Dropper ===")
 
 	// Teleport to dropper
@@ -187,7 +193,7 @@ func (s *ContainerTestSuite) TestDropper() {
 	s.Require().Equal(9, genericContainer.ContainerSlots, "dropper should have 9 container slots")
 
 	// Close dropper
-	_ = s.agent.Agent.CloseContainer()
+	_ = s.leader.Agent.CloseContainer()
 	time.Sleep(100 * time.Millisecond)
 
 	s.T().Log("✓ Dropper test passed")

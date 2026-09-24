@@ -83,6 +83,14 @@ type VersionWorldSuite struct {
 	// keys here win if they collide with the shared defaults.
 	ExtraEnv map[string]string
 
+	// Memory/MinFreeMemoryMB override SharedServerConfig/SharedFlatWorldServerConfig's own
+	// 512M/256MB defaults, when set (zero value leaves those defaults in place - see
+	// buildServerConfig). Added for ContainerTestSuite: a single connection building and
+	// interacting with 23 container types is heavier than a typical suite's server, and its
+	// pre-VersionWorldSuite own config already bumped these to 1024M/512MB.
+	Memory          string
+	MinFreeMemoryMB int
+
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	Framework *Framework
@@ -139,6 +147,12 @@ func (s *VersionWorldSuite) buildServerConfig() ServerConfig {
 	}
 	if s.GameMode != "" {
 		cfg.GameMode = s.GameMode
+	}
+	if s.Memory != "" {
+		cfg.Memory = s.Memory
+	}
+	if s.MinFreeMemoryMB != 0 {
+		cfg.MinFreeMemoryMB = s.MinFreeMemoryMB
 	}
 	for k, v := range s.ExtraEnv {
 		if cfg.ExtraEnv == nil {
