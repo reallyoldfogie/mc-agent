@@ -24,7 +24,27 @@ type VehicleTestHelper struct {
 	ManagedAgent *testingpkg.ManagedAgent
 	AgentName    string
 	t            *testing.T
+
+	// Origin is the working-area origin this helper's agent was placed at
+	// (zero for a helper built by the legacy per-test NewVehicleTestHelper,
+	// whose server it owns outright, so absolute coordinates are already
+	// its own). Tests that build terrain or place entities at fixed
+	// offsets from "their" origin use AtX/AtZ so the same offsets land
+	// inside their own working area on a shared server instead of at the
+	// world origin, which every agent joins at.
+	Origin models.V3
 }
+
+// AtX returns the world X that is dx blocks from this helper's origin.
+// The origin is floored first so results are integer-aligned, exactly like
+// the absolute integer coordinates these tests were originally written
+// with: the origin itself is fractional (an agent's settled position), and
+// block-building helpers truncate toward zero, so a fractional base would
+// put a rail or block on a different row than the entity summoned at it.
+func (h *VehicleTestHelper) AtX(dx float64) float64 { return math.Floor(h.Origin.X) + dx }
+
+// AtZ returns the world Z that is dz blocks from this helper's origin (see AtX).
+func (h *VehicleTestHelper) AtZ(dz float64) float64 { return math.Floor(h.Origin.Z) + dz }
 
 // NewVehicleTestHelper creates a new vehicle test helper with a running server and agent
 func NewVehicleTestHelper(t *testing.T, mcVersion, agentName string) (*VehicleTestHelper, context.Context, context.CancelFunc) {
@@ -896,7 +916,7 @@ func (vh *VehicleTestHelper) SummonMinecart(ctx context.Context, x, y, z float64
 // direction: "north" | "south" | "east" | "west"
 // length: number of rail blocks to place
 func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
-	railY := int(startY)
+	railY := int(math.Floor(startY))
 	var dx, dz int
 
 	switch direction {
@@ -912,8 +932,8 @@ func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY,
 		return fmt.Errorf("invalid direction: %s", direction)
 	}
 
-	startRailX := int(startX)
-	startRailZ := int(startZ)
+	startRailX := int(math.Floor(startX))
+	startRailZ := int(math.Floor(startZ))
 
 	railName := "minecraft:rail"
 	if powered {
@@ -937,7 +957,7 @@ func (vh *VehicleTestHelper) BuildRailTrack(ctx context.Context, startX, startY,
 // direction: "north" | "south" | "east" | "west" (the upward direction)
 // length: number of rail blocks to place
 func (vh *VehicleTestHelper) BuildAscendingRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
-	railStartY := int(startY)
+	railStartY := int(math.Floor(startY))
 	var dx, dz int
 
 	switch direction {
@@ -953,8 +973,8 @@ func (vh *VehicleTestHelper) BuildAscendingRailTrack(ctx context.Context, startX
 		return fmt.Errorf("invalid direction: %s", direction)
 	}
 
-	startRailX := int(startX)
-	startRailZ := int(startZ)
+	startRailX := int(math.Floor(startX))
+	startRailZ := int(math.Floor(startZ))
 
 	railName := "minecraft:rail"
 	blockName := "minecraft:stone"
@@ -1002,7 +1022,7 @@ func (vh *VehicleTestHelper) BuildAscendingRailTrack(ctx context.Context, startX
 // direction: "north" | "south" | "east" | "west"
 // length: number of rail blocks to place
 func (vh *VehicleTestHelper) BuildWaterloggedRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
-	railY := int(startY)
+	railY := int(math.Floor(startY))
 	var dx, dz int
 	var shape string
 
@@ -1023,8 +1043,8 @@ func (vh *VehicleTestHelper) BuildWaterloggedRailTrack(ctx context.Context, star
 		return fmt.Errorf("invalid direction: %s", direction)
 	}
 
-	startRailX := int(startX)
-	startRailZ := int(startZ)
+	startRailX := int(math.Floor(startX))
+	startRailZ := int(math.Floor(startZ))
 
 	railName := "minecraft:rail"
 	if powered {
@@ -1052,7 +1072,7 @@ func (vh *VehicleTestHelper) BuildWaterloggedRailTrack(ctx context.Context, star
 // direction: "north" | "south" | "east" | "west" (the upward direction)
 // length: number of rail blocks to place
 func (vh *VehicleTestHelper) BuildAscendingWaterloggedRailTrack(ctx context.Context, startX, startY, startZ float64, direction string, length int, powered bool) error {
-	railStartY := int(startY)
+	railStartY := int(math.Floor(startY))
 	var dx, dz int
 
 	switch direction {
@@ -1068,8 +1088,8 @@ func (vh *VehicleTestHelper) BuildAscendingWaterloggedRailTrack(ctx context.Cont
 		return fmt.Errorf("invalid direction: %s", direction)
 	}
 
-	startRailX := int(startX)
-	startRailZ := int(startZ)
+	startRailX := int(math.Floor(startX))
+	startRailZ := int(math.Floor(startZ))
 
 	railName := "minecraft:rail"
 	blockName := "minecraft:stone"
@@ -1652,6 +1672,7 @@ func NewVehicleTestHelperForSuite(s *testingpkg.VersionWorldSuite, leader *testi
 		ManagedAgent: leader.ManagedAgent,
 		AgentName:    leader.Name,
 		t:            t,
+		Origin:       leader.Origin,
 	}
 
 	// Same readiness gate NewVehicleTestHelper applies: the entity_type
@@ -1660,5 +1681,29 @@ func NewVehicleTestHelperForSuite(s *testingpkg.VersionWorldSuite, leader *testi
 	if err := helper.WaitForRegistry(s.Ctx, "minecraft:entity_type", 10*time.Second); err != nil {
 		t.Fatalf("entity_type registry not ready: %v", err)
 	}
+
+	// The Summon*/EnableEntityAI helpers select their target with
+	// unordered `@e[type=X,limit=1]` selectors, which pick an arbitrary
+	// entity of that type server-wide. That was always the right one when
+	// every test owned a fresh server, but on a shared server it could grab
+	// a previous test's leftover entity and silently apply a saddle/AI
+	// change to the wrong one. So remove everything non-player this test
+	// left in its own working area (working areas are 256 blocks apart, so
+	// a 120-block radius never reaches a neighbor) when the method ends.
+	origin := leader.Origin
+	t.Cleanup(func() {
+		cmd := fmt.Sprintf("kill @e[type=!minecraft:player,x=%.1f,y=%.1f,z=%.1f,distance=..120]",
+			origin.X, origin.Y, origin.Z)
+		if _, err := s.Inst.RCON.Exec(s.Ctx, cmd); err != nil {
+			t.Logf("warning: failed to clear entities after test: %v", err)
+		}
+	})
 	return helper
 }
+
+// blockCoord converts a world coordinate to its block coordinate the way
+// vanilla does (floor). Plain int() truncates toward zero, which picks the
+// wrong block for negative coordinates - the original tests only ever
+// worked near the world origin's non-negative side, but a working area's
+// origin can have a negative X/Z.
+func blockCoord(v float64) int { return int(math.Floor(v)) }
