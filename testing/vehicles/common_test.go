@@ -1636,3 +1636,29 @@ func isVersionGreaterOrEqual(targetVersion, minVersion string) bool {
 
 	return c.Check(v)
 }
+
+// NewVehicleTestHelperForSuite builds a VehicleTestHelper on top of an
+// already-running shared server (s.Inst) and an agent the calling suite
+// method already spawned via SpawnWorkingAreaAgent, instead of booting a
+// fresh server per test the way NewVehicleTestHelper does. It does not
+// register any server/agent cleanup: the suite owns the server's lifetime
+// (VersionWorldSuite's own teardown) and each spawned agent's (its
+// t.Cleanup registered at spawn time).
+func NewVehicleTestHelperForSuite(s *testingpkg.VersionWorldSuite, leader *testingpkg.WorkingAreaAgent) *VehicleTestHelper {
+	t := s.T()
+	helper := &VehicleTestHelper{
+		Framework:    s.Framework,
+		Instance:     s.Inst,
+		ManagedAgent: leader.ManagedAgent,
+		AgentName:    leader.Name,
+		t:            t,
+	}
+
+	// Same readiness gate NewVehicleTestHelper applies: the entity_type
+	// registry arrives during configuration, so wait for it before any test
+	// code looks up an entity type.
+	if err := helper.WaitForRegistry(s.Ctx, "minecraft:entity_type", 10*time.Second); err != nil {
+		t.Fatalf("entity_type registry not ready: %v", err)
+	}
+	return helper
+}
