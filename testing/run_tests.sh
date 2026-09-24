@@ -17,24 +17,7 @@ NC='\033[0m' # No Color
 
 # Default values
 TEST_PATTERN=""
-# PARALLEL is go test's own -parallel flag: how many t.Parallel()-marked
-# subtests may run concurrently. It has NO effect on the ~149 pre-existing
-# test functions that don't call t.Parallel() - those still run one at a
-# time regardless of this value, exactly as before. It only matters for
-# suites that have adopted docs/plans/integration-test-shared-server/00-plan.md's
-# Phase 2 pattern (currently: NavigationFlatSuite's pure-movement methods -
-# testing/navigation_flat_test.go), where several working-area-isolated
-# test methods share one already-running server. Default 2, not 1, based on
-# real measurement on this project's own dev machine (6 CPUs, ~5.8GB RAM):
-# -parallel 2 and -parallel 3 both completed without OOM (min free memory
-# ~584MB and ~526MB respectively - see
-# docs/plans/integration-test-shared-server/04-phase2-parallelism.md for
-# the full data), but the margin at 3 was thin enough on this specific,
-# already-loaded host that 2 is the safer default. This is a DIFFERENT knob
-# from "how many separate go test invocations / Docker containers run at
-# once" (still effectively 1 in this script - see that same doc for why
-# multi-server horizontal scaling is deferred, not attempted here).
-PARALLEL=2
+PARALLEL=1  # IMPORTANT: Tests MUST run sequentially to prevent OOM
 TIMEOUT="60m"
 VERBOSE="-v"
 PULL_IMAGE=false
@@ -52,7 +35,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  -t, --test PATTERN      Run specific test (e.g., TestNavigationSingleAgent)"
-    echo "  -p, --parallel N        Max concurrent t.Parallel()-marked subtests (default: 2)"
+    echo "  -p, --parallel N        Run N tests in parallel (default: 1)"
     echo "  -T, --timeout DURATION  Set test timeout (default: 60m)"
     echo "  -q, --quiet             Reduce verbosity"
     echo "  -P, --pull              Pull latest Minecraft server image before testing"
@@ -158,8 +141,8 @@ else
     echo "  Test Pattern: All tests"
 fi
 echo "  Parallel: $PARALLEL"
-if [ "$PARALLEL" -gt 3 ]; then
-    echo -e "  ${YELLOW}WARNING: -p above 3 hasn't been measured safe on a machine this size (~584MB/~526MB free at -p 2/-p 3 respectively - see docs/plans/integration-test-shared-server/04-phase2-parallelism.md). Only t.Parallel()-marked suites are affected either way.${NC}"
+if [ "$PARALLEL" -gt 1 ]; then
+    echo -e "  ${YELLOW}WARNING: Parallel execution may cause OOM. Recommended: -p 1${NC}"
 fi
 echo "  Timeout: $TIMEOUT"
 echo "  Verbosity: $([ -n "$VERBOSE" ] && echo "Verbose" || echo "Quiet")"

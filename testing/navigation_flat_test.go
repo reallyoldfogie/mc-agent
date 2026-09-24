@@ -35,16 +35,8 @@ func TestNavigationFlatSuite(t *testing.T) {
 // TestSingleAgent tests that a single agent can navigate using basic
 // movement commands on flat terrain. Equivalent to the original
 // TestFlatMovementSingleAgent.
-//
-// Marked t.Parallel(): safe because SpawnWorkingAreaAgent gives every test
-// method its own working area, and WorldGenFlat means every working area
-// sits on uniform, deterministic terrain (no shared-Y terrain risk the way
-// WorldGenRandom suites have - see VersionWorldSuite's own doc comment).
-// -parallel 2 was the concurrency level actually measured safe on this
-// machine (real RAM measurements, not a guess); raise with care.
 func (s *NavigationFlatSuite) TestSingleAgent() {
 	t := s.T()
-	t.Parallel()
 	logger := NewTestLogger(t)
 
 	agent, err := s.SpawnWorkingAreaAgent("FlatMovementBot", "flat_movement_single")
@@ -105,10 +97,8 @@ func (s *NavigationFlatSuite) TestSingleAgent() {
 
 // TestMultipleDestinations tests navigation to multiple waypoints on flat
 // terrain. Equivalent to the original TestFlatMovementMultipleDestinations.
-// Marked t.Parallel() - see TestSingleAgent's doc comment for why this is safe.
 func (s *NavigationFlatSuite) TestMultipleDestinations() {
 	t := s.T()
-	t.Parallel()
 	logger := NewTestLogger(t)
 
 	agent, err := s.SpawnWorkingAreaAgent("WaypointBot", "flat_waypoints")
@@ -319,10 +309,8 @@ func (s *NavigationFlatSuite) TestLongLadderClimbAndHold() {
 
 // TestForwardCommand tests the moveForward command on flat terrain.
 // Equivalent to the original TestFlatMovementForwardCommand.
-// Marked t.Parallel() - see TestSingleAgent's doc comment for why this is safe.
 func (s *NavigationFlatSuite) TestForwardCommand() {
 	t := s.T()
-	t.Parallel()
 	logger := NewTestLogger(t)
 
 	agent, err := s.SpawnWorkingAreaAgent("ForwardBot", "flat_forward")
