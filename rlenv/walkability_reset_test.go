@@ -320,3 +320,35 @@ func TestResetAbortsWalkabilityRetryLoopOnceAggregateBudgetExpires(t *testing.T)
 		t.Fatalf("FindPath was called %d times after the aggregate budget already expired, want at most %d (one ring sweep, no further jitter retries)", len(fake.findPathCalls), oneAttemptsWorthOfCalls)
 	}
 }
+
+// TestResetMovesABotOutOfTerrainAfterTeleportingToABuriedOrigin: a
+// ResetOrigin whose Y is inside the floor (found live: a working-area copy
+// of a spawn captured in a pit, 512 blocks away where the floor is solid at
+// that Y) made the bot suffocate; Reset must snap it up to walkable ground.
+func TestResetMovesABotOutOfTerrainAfterTeleportingToABuriedOrigin(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	wb := mctesting.NewWorldBuilder(registry)
+	for _, y := range []float64{-3, -2, -1} { // solid floor, surface at y=0
+		wb = wb.FlatGroundDirect(-5, -5, 5, 5, y, walkGroundStateID)
+	}
+	agent := fakeWalkabilityAgent{fakeAgent: newFakeAgent(0, 0, 0), world: wb.Build(), shapeMgr: mctesting.NewMockShapeManager()}
+
+	buried := [3]float64{2, -2, 1} // feet and head inside solid floor
+	env := newWalkabilityTestEnvironment(t, agent, rlenv.Config{
+		ResetOrigin:        &buried,
+		GoToTargetDisabled: true,
+		ArrivalThreshold:   0.5,
+		StepTimeout:        200 * time.Millisecond,
+	})
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	pos, _, _, _ := agent.GetPosition()
+	if pos.X != 2 || pos.Z != 1 {
+		t.Fatalf("x/z = (%v,%v), want (2,1): only Y should be corrected", pos.X, pos.Z)
+	}
+	if pos.Y != 0 {
+		t.Fatalf("Y = %v, want 0 (snapped up out of the floor onto its surface)", pos.Y)
+	}
+}

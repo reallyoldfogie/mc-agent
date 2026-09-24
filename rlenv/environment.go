@@ -189,6 +189,29 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 			return rl.Observation{}, errPositionUnknown
 		}
 		x, y, z = pos.X, pos.Y, pos.Z
+
+		// The origin's Y was chosen somewhere else (a captured spawn, a
+		// working-area copy of it hundreds of blocks away, an x/z jitter
+		// off it) and can be inside terrain here: the bot then suffocates
+		// and dies, and its respawn scores as thousands of blocks of
+		// "movement". TeleportTo has just waited for this chunk to load,
+		// so the terrain is now checkable - if the bot isn't standing
+		// somewhere walkable, move it to the nearest Y that is.
+		if walkAgent, ok := e.agent.(WalkabilityAgent); ok {
+			world, shapeMgr := walkAgent.GetWorld(), walkAgent.BlockShapeManager()
+			if world != nil && shapeMgr != nil {
+				if snapped, found := groundSnap(world, shapeMgr, x, y, z); found && snapped != y {
+					if err := resetAgent.TeleportTo(ctx, x, snapped, z); err != nil {
+						return rl.Observation{}, fmt.Errorf("rlenv: moving out of terrain after reset: %w", err)
+					}
+					pos, yaw, pitch, ok = e.agent.GetPosition()
+					if !ok {
+						return rl.Observation{}, errPositionUnknown
+					}
+					x, y, z = pos.X, pos.Y, pos.Z
+				}
+			}
+		}
 	}
 
 	e.stepsWithoutObservationChange = 0
