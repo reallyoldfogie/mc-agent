@@ -431,20 +431,3 @@ func findAnyCachedVersionDataDir(t *testing.T) (cachedVersionDir, error) {
 	}
 	return cachedVersionDir{}, os.ErrNotExist
 }
-
-// TestWithinInteractReach pins the "close enough" rule openCraftingTable
-// uses to skip walking: the bot found live wedged 1.4 blocks from its table
-// (standing at (44014.99, -59.0, 24.02) with the table at (44016, -60, 24))
-// was well within reach, while a table across the room is not.
-func TestWithinInteractReach(t *testing.T) {
-	const eye = 1.62
-	stuck := models.V3{X: 44014.99, Y: -59.0, Z: 24.02}
-	table := models.V3{X: 44016, Y: -60, Z: 24}
-	if !withinInteractReach(stuck, eye, table) {
-		t.Errorf("a table ~2.5 blocks from the eyes must be within reach")
-	}
-	far := models.V3{X: 44010, Y: -60, Z: 24}
-	if withinInteractReach(far, eye, table) {
-		t.Errorf("a table 6 blocks away must not be within reach")
-	}
-}

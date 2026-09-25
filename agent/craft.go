@@ -3,9 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,66 +599,13 @@ func (a *agent) openCraftingTable(ctx context.Context) (craftWindowLayout, error
 	// close the table actually was. FindInteractPosition finds a walkable,
 	// line-of-sight-verified position near the table instead.
 	target := models.V3{X: x, Y: y, Z: z}
-	// Close enough is good enough: a real player opens a table from wherever
-	// they can already reach and see it, without shuffling to a "best"
-	// standing spot (found live: a bot 1.4 blocks from the table spent ~17
-	// minutes trying to step down into the exact cell beside it).
-	if a.canInteractFromHere(ctx, target) {
-		return a.openCraftingTableAt(ctx, x, y, z)
-	}
-
-	// Walkable + line-of-sight doesn't imply reachable: the closest spot to
-	// a table floating two cells above the floor is standing on top of it,
-	// which A* correctly refuses to path to (found live: 100 identical
-	// failed attempts in a row). Try every qualifying spot, closest first,
-	// and only fail once all of them have. Each attempt gets its own
-	// timeout: a wedged approach never returns an error by itself, so
-	// without one the next spot would never be tried. Chat-announce only the
-	// first attempt so a run of fallbacks can't trip the server's chat-spam
-	// kick.
-	announce := true
-	moveErr := models.TryInteractPositions(ctx, a, target, func(pos models.V3) error {
-		notify := announce
-		announce = false
-		moveCtx, cancel := context.WithTimeout(ctx, interactApproachTimeout)
-		defer cancel()
-		return a.MoveTo(moveCtx, pos.X, pos.Y, pos.Z, notify)
-	})
-	if errors.Is(moveErr, models.ErrNoInteractPosition) {
-		// Nothing standable with line of sight was found (or the world isn't
-		// available): fall back to walking at the table itself, as before.
-		moveErr = a.MoveToWithChat(ctx, target.X, target.Y, target.Z)
-	}
-	if moveErr != nil {
-		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", moveErr)
+	// Close enough is good enough, and a wedged approach must not block the
+	// fallback to other spots - see models.ApproachBlock.
+	if err := models.ApproachBlock(ctx, a, target, models.ApproachOptions{Announce: true, RequireSight: true}); err != nil {
+		return craftWindowLayout{}, fmt.Errorf("move to crafting table: %w", err)
 	}
 
 	return a.openCraftingTableAt(ctx, x, y, z)
-}
-
-// interactApproachTimeout bounds each walk toward one candidate standing
-// spot beside a crafting table before openCraftingTable moves on to the next.
-const interactApproachTimeout = 5 * time.Second
-
-// withinInteractReach reports whether a bot standing at pos (feet) with its
-// eyes eyeHeight higher is within models.InteractReachDistance of the center
-// of the block at target (block coordinates).
-func withinInteractReach(pos models.V3, eyeHeight float64, target models.V3) bool {
-	dx := target.X + 0.5 - pos.X
-	dy := target.Y + 0.5 - (pos.Y + eyeHeight)
-	dz := target.Z + 0.5 - pos.Z
-	return math.Sqrt(dx*dx+dy*dy+dz*dz) <= models.InteractReachDistance
-}
-
-// canInteractFromHere reports whether the bot can open the block at target
-// from its current position: within reach and with line of sight.
-func (a *agent) canInteractFromHere(ctx context.Context, target models.V3) bool {
-	pos, ok := a.GetPositionSimple()
-	if !ok || !withinInteractReach(pos, a.getEyeHeight(), target) {
-		return false
-	}
-	visible, err := a.CanInteractFromPosition(ctx, pos.X, pos.Y, pos.Z, target.X, target.Y, target.Z)
-	return err == nil && visible
 }
 
 // openCraftingTableAt opens the table at (x, y, z) and returns its layout.

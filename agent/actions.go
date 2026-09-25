@@ -1128,6 +1128,20 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 		return errors.New("action handler not available")
 	}
 
+	// Block integer coordinates
+	blockX := int(math.Floor(blockPos.X))
+	blockY := int(math.Floor(blockPos.Y))
+	blockZ := int(math.Floor(blockPos.Z))
+
+	// A block that is visible but beyond reach (FindVisibleBlock's radius
+	// is much larger than vanilla's ~4.5 blocks) can't be dug from here;
+	// the server just ignores the packets. Walk to a spot within reach
+	// first - but only if actually out of reach: close enough is good
+	// enough, and digging needs reach, not line of sight.
+	if err := models.ApproachBlock(ctx, a, models.V3{X: float64(blockX), Y: float64(blockY), Z: float64(blockZ)}, models.ApproachOptions{}); err != nil {
+		return fmt.Errorf("approach block to mine: %w", err)
+	}
+
 	// Get agent eye position
 	pos, _, _, ok := a.GetPosition()
 	if !ok {
@@ -1135,11 +1149,6 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	}
 	botX, botY, botZ := pos.X, pos.Y, pos.Z
 	eyeY := botY + a.getEyeHeight()
-
-	// Block integer coordinates
-	blockX := int(math.Floor(blockPos.X))
-	blockY := int(math.Floor(blockPos.Y))
-	blockZ := int(math.Floor(blockPos.Z))
 
 	a.logf("[MineBlockAt] At (%.2f,%.2f,%.2f), attempting to mine block at (%d,%d,%d)", botX, botY, botZ, blockX, blockY, blockZ)
 

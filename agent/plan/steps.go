@@ -518,12 +518,12 @@ func (s FindChest) Run(ctx context.Context, agent models.Agent) (StepResult, err
 		// docs/bugs/hpa-star-slowness for how this exact pattern turned a
 		// 5-block walk into an A* search that ran to its step limit every
 		// time.
+		// ApproachBlock also skips walking if the bot can already reach and
+		// see the block, tries every candidate spot (each with its own
+		// timeout) before failing, and falls back to the block's own
+		// coordinates only if no standable spot exists.
 		target := models.V3{X: x, Y: y, Z: z}
-		moveTarget := target
-		if pos, ok, err := models.FindInteractPosition(ctx, agent, target); err == nil && ok {
-			moveTarget = pos
-		}
-		if err := agent.MoveTo(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z, false); err != nil {
+		if err := models.ApproachBlock(ctx, agent, target, models.ApproachOptions{RequireSight: true}); err != nil {
 			return StepResult{Status: StepFailed, Details: err.Error()}, err
 		}
 	}
@@ -570,12 +570,12 @@ func (s FindBlock) Run(ctx context.Context, agent models.Agent) (StepResult, err
 		// See FindChest.Run above: a found block is generally solid, so
 		// MoveTo must target a walkable position near it, not its own
 		// coordinates.
+		// ApproachBlock also skips walking if the bot can already reach and
+		// see the block, tries every candidate spot (each with its own
+		// timeout) before failing, and falls back to the block's own
+		// coordinates only if no standable spot exists.
 		target := models.V3{X: x, Y: y, Z: z}
-		moveTarget := target
-		if pos, ok, err := models.FindInteractPosition(ctx, agent, target); err == nil && ok {
-			moveTarget = pos
-		}
-		if err := agent.MoveTo(ctx, moveTarget.X, moveTarget.Y, moveTarget.Z, false); err != nil {
+		if err := models.ApproachBlock(ctx, agent, target, models.ApproachOptions{RequireSight: true}); err != nil {
 			return StepResult{Status: StepFailed, Details: err.Error()}, err
 		}
 	}
