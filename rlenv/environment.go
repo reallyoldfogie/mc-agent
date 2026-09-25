@@ -42,6 +42,9 @@ type Environment struct {
 	// (a step that timed out leaves it going); see cancelInflight.
 	inflight *inflightAction
 
+	// consecutiveStepTimeouts backs Config.MaxConsecutiveStepTimeouts.
+	consecutiveStepTimeouts int
+
 	// mineX/Y/Z/mineVisible cache the last-resolved nearest visible
 	// Config.MineTargetBlock instance (see resolveMineTarget), the same
 	// way prevDistance/prevHealth cache the last-known state of their own
@@ -229,6 +232,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	}
 
 	e.stepsWithoutObservationChange = 0
+	e.consecutiveStepTimeouts = 0
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -483,8 +487,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		}
 		if resolved {
 			cancelAction()
+			e.consecutiveStepTimeouts = 0
 		} else {
 			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
+			e.consecutiveStepTimeouts++
 		}
 	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
@@ -568,6 +574,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 	e.lastObsValues = append(e.lastObsValues[:0], obs.Values...)
 	if e.cfg.StuckTimeout > 0 && e.stepsWithoutObservationChange >= e.cfg.StuckTimeout {
+		done = true
+	}
+	if e.cfg.MaxConsecutiveStepTimeouts > 0 && e.consecutiveStepTimeouts >= e.cfg.MaxConsecutiveStepTimeouts {
 		done = true
 	}
 

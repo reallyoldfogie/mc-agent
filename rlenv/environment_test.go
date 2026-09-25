@@ -299,6 +299,63 @@ func TestResetCancelsAndWaitsForAnActionLeftRunningByATimedOutStep(t *testing.T)
 	}
 }
 
+// TestMaxConsecutiveStepTimeoutsEndsAWedgedEpisode: an episode whose
+// dispatched action never resolves within StepTimeout, step after step, must
+// end after the configured count instead of running its whole step budget.
+func TestMaxConsecutiveStepTimeoutsEndsAWedgedEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.moveToWithChatDelay = 5 * time.Second
+	cfg := testConfig()
+	cfg.StepTimeout = 10 * time.Millisecond
+	cfg.MaxConsecutiveStepTimeouts = 3
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	for step := 1; step <= 3; step++ {
+		result, err := env.Step(ctx, rlenv.ActionGoToTarget)
+		if err != nil {
+			t.Fatalf("Step %d: %v", step, err)
+		}
+		if want := step == 3; result.Done != want {
+			t.Fatalf("Step %d: Done = %v, want %v", step, result.Done, want)
+		}
+	}
+}
+
+// TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves: only consecutive
+// timeouts count, and a new episode starts from zero.
+func TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.StepTimeout = 200 * time.Millisecond
+	cfg.MaxConsecutiveStepTimeouts = 2
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.moveToWithChatDelay = time.Second // times out
+	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
+		t.Fatal("one timeout must not end the episode")
+	}
+	// Resolves promptly (with an error, so the bot does not reach the target
+	// and end the episode by arrival), resetting the count.
+	agent.moveToWithChatDelay = 0
+	agent.moveToWithChatErr = context.DeadlineExceeded
+	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
+		t.Fatal("a resolving step must not end the episode")
+	}
+	agent.moveToWithChatErr = nil
+	agent.moveToWithChatDelay = time.Second // one timeout again, still below 2
+	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
+		t.Fatal("the count must have reset when the action resolved")
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes

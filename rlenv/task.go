@@ -100,6 +100,18 @@ type Config struct {
 	// matching the previous unbounded (episode_len-only) behavior.
 	StuckTimeout int
 
+	// MaxConsecutiveStepTimeouts, if > 0, ends the current episode once that
+	// many dispatched Steps in a row hit StepTimeout without their action
+	// resolving. StuckTimeout can't catch a wedged bot whose position jitters
+	// by float noise each step (found live: a bot straddling the edge of a
+	// slot it could never descend into, re-dispatching a craft that timed out
+	// every step), so its episode ran the whole step budget - about 17
+	// minutes at a 10s StepTimeout - while every other environment waited on
+	// it at the epoch barrier. A step whose action resolves resets the count;
+	// steps that dispatch nothing leave it unchanged. 0 (the default)
+	// disables the check.
+	MaxConsecutiveStepTimeouts int
+
 	// Jitter adds a uniform-random offset in [-Jitter[i], +Jitter[i]] to
 	// axis i of both ResetOrigin (if set) and TargetOffset, drawn fresh
 	// every Reset — see JitterSeed for the source. [3]float64{} (the
