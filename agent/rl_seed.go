@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -162,11 +163,26 @@ func (a *agent) ClearAir(ctx context.Context, x1, y1, z1, x2, y2, z2 int) error 
 		return fmt.Errorf("clear air: RCON not configured for this agent")
 	}
 	cmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air", x1, y1, z1, x2, y2, z2)
-	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+	resp, err := a.cfg.RCON.Exec(ctx, cmd)
+	if err != nil {
 		return fmt.Errorf("fill via RCON: %w", err)
+	}
+	// If blocks were actually removed, give this bot's own world view time to
+	// receive the block updates before returning: the very next thing a Reset
+	// does is seed a crafting table, and SeedNearbyBlock skips placing one if
+	// its client-side FindVisibleBlock still sees the table that was just
+	// removed - leaving the episode with no table at all (found live: ~2% of
+	// table episodes failed 100 steps in a row with "no crafting table
+	// found"). A fill that changed nothing has nothing to wait for.
+	if strings.Contains(resp, "Successfully filled") {
+		return sleepWithContext(ctx, clearAirSyncDelay)
 	}
 	return nil
 }
+
+// clearAirSyncDelay is how long ClearAir waits after a fill that removed
+// blocks for the resulting block-update packets to reach this bot.
+const clearAirSyncDelay = 300 * time.Millisecond
 
 // SeedCraftIngredients gives the bot, via its player command connection (with
 // an RCON fallback), one stack

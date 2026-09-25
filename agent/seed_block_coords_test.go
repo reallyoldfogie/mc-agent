@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/rlenv"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 )
 
 func TestSeedBlockCoords_FloorsNegativeCoordinates(t *testing.T) {
@@ -42,5 +45,49 @@ func TestAgentSatisfiesRLResetCapabilities(t *testing.T) {
 	}
 	if _, ok := agentInt.(rlenv.ResetAgent); !ok {
 		t.Error("agent must satisfy rlenv.ResetAgent")
+	}
+}
+
+// execOnlyRCON satisfies testenv.RCONHelper for the one method ClearAir
+// uses (the embedded nil interface panics if anything else is called).
+type execOnlyRCON struct {
+	testenv.RCONHelper
+	response string
+	cmds     []string
+}
+
+func (r *execOnlyRCON) Exec(_ context.Context, cmd string) (string, error) {
+	r.cmds = append(r.cmds, cmd)
+	return r.response, nil
+}
+
+func TestClearAir_WaitsForBlockUpdatesOnlyWhenBlocksWereRemoved(t *testing.T) {
+	newAgent := func(rc *execOnlyRCON) *agent {
+		agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", RCON: rc})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return agentInt.(*agent)
+	}
+
+	removed := &execOnlyRCON{response: "Successfully filled 1 block(s)"}
+	start := time.Now()
+	if err := newAgent(removed).ClearAir(context.Background(), -3, -60, -3, 3, -56, 3); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) < clearAirSyncDelay-50*time.Millisecond {
+		t.Errorf("returned in %v: after removing blocks it must wait for the client to see the updates", time.Since(start))
+	}
+	if want := "fill -3 -60 -3 3 -56 3 minecraft:air"; len(removed.cmds) != 1 || removed.cmds[0] != want {
+		t.Errorf("commands = %v, want [%s]", removed.cmds, want)
+	}
+
+	unchanged := &execOnlyRCON{response: "No blocks were filled"}
+	start = time.Now()
+	if err := newAgent(unchanged).ClearAir(context.Background(), -3, -60, -3, 3, -56, 3); err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > clearAirSyncDelay/2 {
+		t.Errorf("took %v: a fill that changed nothing has nothing to wait for", time.Since(start))
 	}
 }
