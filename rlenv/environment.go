@@ -46,6 +46,16 @@ type Environment struct {
 	// consecutiveStepTimeouts backs Config.MaxConsecutiveStepTimeouts.
 	consecutiveStepTimeouts int
 
+	// arrived is whether this episode's goto target has been reached yet;
+	// only consulted when arrival doesn't end the episode (see
+	// compositeGotoTask).
+	arrived bool
+
+	// farSeeded are the blocks seedFarTargets placed near this episode's
+	// goto target, removed at the next Reset (they sit outside
+	// Config.ClearAreaRadius).
+	farSeeded []farSeededBlock
+
 	// mineX/Y/Z/mineVisible cache the last-resolved nearest visible
 	// Config.MineTargetBlock instance (see resolveMineTarget), the same
 	// way prevDistance/prevHealth cache the last-known state of their own
@@ -183,6 +193,7 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	e.cancelInflight()
 	e.restoreMinedBlocks(ctx)
+	e.removeFarSeeded(ctx)
 	e.clearArea(ctx)
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
@@ -235,6 +246,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 
 	e.stepsWithoutObservationChange = 0
 	e.consecutiveStepTimeouts = 0
+	e.arrived = false
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -250,6 +262,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
+		e.cfg.SeedAtGoal = override.SeedAtGoal
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -355,8 +368,20 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		if !ok {
 			return rl.Observation{}, errSeederRequiresSeedAgent
 		}
-		if err := e.cfg.Seeder(ctx, seedAgent, e.cfg); err != nil {
+		// A composite "go there, then mine/craft" episode's mine block or
+		// crafting table belongs near the goto target, out of sight of the
+		// start - the seeder's near-the-bot placement would defeat the task.
+		seedCfg := e.cfg
+		if e.seedAtGoal() {
+			seedCfg.MineTargetBlock, seedCfg.CraftTargetItem = "", ""
+		}
+		if err := e.cfg.Seeder(ctx, seedAgent, seedCfg); err != nil {
 			return rl.Observation{}, fmt.Errorf("rlenv: episode seeding: %w", err)
+		}
+		if e.seedAtGoal() {
+			if err := e.seedFarTargets(ctx); err != nil {
+				return rl.Observation{}, fmt.Errorf("rlenv: episode seeding: %w", err)
+			}
 		}
 	}
 
@@ -522,7 +547,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	newCraftCount := e.craftCountNow()
 	craftedThisStep := e.cfg.CraftTargetItem != "" && newCraftCount > prevCraftCount
 
+	// Distance shaping and the arrival bonus belong to the goto task only.
+	// Applied unconditionally they scored mine and craft episodes against a
+	// phantom "target" (the jittered reset position, 1.5-2.8 blocks away):
+	// moving toward it paid +1 per block, and reaching it paid +10 and ended
+	// the episode without the block ever being mined or the item crafted.
+	gotoActive := !e.cfg.GoToTargetDisabled
 	newDistance := distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
+	if !gotoActive {
+		newDistance = e.prevDistance
+	}
 	reward, done := computeReward(stepOutcome{
 		prevDistance:      e.prevDistance,
 		newDistance:       newDistance,
@@ -531,9 +565,19 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		healthKnownBefore: e.prevHealthKnown,
 		healthKnownAfter:  newHealthKnown,
 	})
-	if newDistance <= e.cfg.ArrivalThreshold {
-		reward += arrivalBonus
-		done = true
+	if gotoActive && newDistance <= e.cfg.ArrivalThreshold {
+		if e.compositeGotoTask() {
+			// "Go there, then mine/craft": reaching the target pays once
+			// but doesn't end the episode - the mine or craft still has to
+			// happen.
+			if !e.arrived {
+				reward += arrivalBonus
+				e.arrived = true
+			}
+		} else {
+			reward += arrivalBonus
+			done = true
+		}
 	}
 	if mined {
 		reward += mineRewardBonus
@@ -757,5 +801,63 @@ func (e *Environment) clearArea(ctx context.Context) {
 	r := e.cfg.ClearAreaRadius
 	if err := clearer.ClearAir(ctx, x-r, y, z-r, x+r, y+height, z+r); err != nil {
 		log.Printf("rlenv: clearing area around (%d,%d,%d): %v", x, y, z, err)
+	}
+}
+
+// compositeGotoTask reports whether this episode is "go to the target, then
+// mine/craft there": the goto task active alongside a mine or craft task.
+// Reaching the target doesn't end such an episode.
+func (e *Environment) compositeGotoTask() bool {
+	return !e.cfg.GoToTargetDisabled && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
+}
+
+// seedAtGoal reports whether this episode's mine block / crafting table go
+// next to the goto target (Config.SeedAtGoal on a composite episode).
+func (e *Environment) seedAtGoal() bool {
+	return e.cfg.SeedAtGoal && e.compositeGotoTask()
+}
+
+// farSeededBlock is a block seedFarTargets placed.
+type farSeededBlock struct{ x, y, z int }
+
+// seedFarTargets places this composite episode's mine block and/or crafting
+// table (and the craft ingredients) next to the goto target, on the cell one
+// block +X of it, so the bot must travel to find them. Placed blocks are
+// recorded and removed at the next Reset.
+func (e *Environment) seedFarTargets(ctx context.Context) error {
+	far, ok := e.agent.(FarSeedAgent)
+	if !ok {
+		return errFarSeedRequiresFarSeedAgent
+	}
+	x, y, z := int(math.Floor(e.targetX))+1, int(math.Floor(e.targetY)), int(math.Floor(e.targetZ))
+	if e.cfg.MineTargetBlock != "" {
+		if err := far.SeedBlockAt(ctx, e.cfg.MineTargetBlock, x, y, z); err != nil {
+			return fmt.Errorf("seeding mine target at the goto target: %w", err)
+		}
+		e.farSeeded = append(e.farSeeded, farSeededBlock{x, y, z})
+	}
+	if e.cfg.CraftTargetItem != "" {
+		if err := far.SeedCraftIngredientsAt(ctx, e.cfg.CraftTargetItem, x, y, z); err != nil {
+			return fmt.Errorf("seeding craft ingredients at the goto target: %w", err)
+		}
+		e.farSeeded = append(e.farSeeded, farSeededBlock{x, y, z})
+	}
+	return nil
+}
+
+// removeFarSeeded clears the blocks the previous episode's seedFarTargets
+// placed (best effort; see BlockRestorer). They are outside the reach of
+// Config.ClearAreaRadius, so without this they would pile up across the map.
+func (e *Environment) removeFarSeeded(ctx context.Context) {
+	blocks := e.farSeeded
+	e.farSeeded = nil
+	restorer, ok := e.agent.(BlockRestorer)
+	if !ok {
+		return
+	}
+	for _, b := range blocks {
+		if err := restorer.RestoreBlock(ctx, b.x, b.y, b.z, "minecraft:air"); err != nil {
+			log.Printf("rlenv: removing far-seeded block at (%d,%d,%d): %v", b.x, b.y, b.z, err)
+		}
 	}
 }

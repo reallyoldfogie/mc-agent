@@ -389,6 +389,130 @@ func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
 	}
 }
 
+// TestMineOnlyEpisodeIgnoresThePhantomGotoTarget: with the goto task
+// disabled, the jittered "target" left over from Reset is not a goal. Moving
+// onto it used to pay the +10 arrival bonus and end the episode without the
+// block ever being mined, and moving toward it earned distance shaping.
+func TestMineOnlyEpisodeIgnoresThePhantomGotoTarget(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:stone", 40, 0, 0) // far: not the thing under test
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.TargetOffset = [3]float64{3, 0, 0} // the phantom target
+	cfg.ArrivalThreshold = 1.5
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.setPosition(3, 0, 0) // walk right onto the phantom target
+	result, err := env.Step(ctx, rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatal("Done = true: arriving at a phantom target must not end a mine episode")
+	}
+	if result.Reward > 0 || result.Reward < -0.5 {
+		t.Fatalf("Reward = %v, want only the tiny time penalty: no shaping, no arrival bonus", result.Reward)
+	}
+}
+
+// TestCompositeGotoThenMinePaysArrivalOnceAndEndsOnTheMine covers "go there,
+// then mine": reaching the goto target pays once without ending the episode;
+// only the mine does.
+func TestCompositeGotoThenMinePaysArrivalOnceAndEndsOnTheMine(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:stone", 6, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{5, 0, 0}
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.ArrivalThreshold = 1.5
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	arrive, err := env.Step(ctx, rlenv.ActionGoToTarget)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if arrive.Done {
+		t.Fatal("arriving must not end a go-then-mine episode")
+	}
+	if arrive.Reward < 10 {
+		t.Fatalf("arrival reward = %v, want the arrival bonus (>= 10) plus shaping", arrive.Reward)
+	}
+
+	again, _ := env.Step(ctx, rlenv.ActionWait)
+	if again.Done || again.Reward > 0 {
+		t.Fatalf("staying at the target: Done=%v Reward=%v, want no second arrival bonus", again.Done, again.Reward)
+	}
+
+	mine, err := env.Step(ctx, rlenv.ActionMine)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !mine.Done || mine.Reward < 9 {
+		t.Fatalf("mining: Done=%v Reward=%v, want the episode to end on the mine bonus", mine.Done, mine.Reward)
+	}
+}
+
+// TestSeedAtGoalPlacesTargetsNextToTheGotoTargetAndRemovesThemNextReset:
+// a composite episode's block must be near the goto target (out of sight of
+// the start), not beside the bot, and must not pile up across episodes.
+func TestSeedAtGoalPlacesTargetsNextToTheGotoTargetAndRemovesThemNextReset(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{30, 0, 0}
+	cfg.MineTargetBlock = "minecraft:sand"
+	cfg.SeedAtGoal = true
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedNearbyBlockCalls) != 0 {
+		t.Fatalf("SeedNearbyBlock was called %d times: a far episode must not seed beside the bot", len(agent.seedNearbyBlockCalls))
+	}
+	if len(agent.seedBlockAtCalls) != 1 || agent.seedBlockAtCalls[0] != (farSeedCall{"minecraft:sand", 31, 0, 0}) {
+		t.Fatalf("SeedBlockAt calls = %v, want sand one block +X of the goto target (30,0,0)", agent.seedBlockAtCalls)
+	}
+
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("second Reset: %v", err)
+	}
+	removed := false
+	for _, r := range agent.restoredBlocks {
+		if r == (restoredBlock{31, 0, 0, "minecraft:air"}) {
+			removed = true
+		}
+	}
+	if !removed {
+		t.Fatalf("restored = %v: the previous episode's far-seeded block must be removed at the next Reset", agent.restoredBlocks)
+	}
+}
+
+func TestSeedAtGoalIsIgnoredWithoutACompositeTask(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:sand"
+	cfg.SeedAtGoal = true
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedBlockAtCalls) != 0 || len(agent.seedNearbyBlockCalls) != 1 {
+		t.Fatalf("a plain mine episode must seed beside the bot as before: far=%v near=%v", agent.seedBlockAtCalls, agent.seedNearbyBlockCalls)
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes

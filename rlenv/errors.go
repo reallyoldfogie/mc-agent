@@ -9,5 +9,6 @@ var (
 	errNilRegistry                   = errors.New("rlenv: registry must not be nil")
 	errPositionUnknown               = errors.New("rlenv: agent position not yet initialized")
 	errSeederRequiresSeedAgent       = errors.New("rlenv: Config.Seeder is set but agent does not implement SeedAgent")
+	errFarSeedRequiresFarSeedAgent   = errors.New("rlenv: a go-there-then-mine/craft episode was posed but agent does not implement FarSeedAgent")
 	errResetOriginRequiresResetAgent = errors.New("rlenv: Config.ResetOrigin is set but agent does not implement ResetAgent")
 )

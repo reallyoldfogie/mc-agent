@@ -66,3 +66,17 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 	}
 	return nil
 }
+
+// FarSeedAgent is the optional capability composite "go there, then
+// mine/craft" episodes need: placing a block, or a crafting table plus the
+// craft ingredients, at a specific position instead of beside the bot.
+// Environment.Reset returns errFarSeedRequiresFarSeedAgent if it poses such
+// an episode (with a Seeder set) to an agent without it.
+type FarSeedAgent interface {
+	// SeedBlockAt places blockName at (x, y, z).
+	SeedBlockAt(ctx context.Context, blockName string, x, y, z int) error
+	// SeedCraftIngredientsAt gives the bot itemName's ingredients (clearing
+	// its inventory first, like SeedAgent.SeedCraftIngredients) and, if the
+	// recipe needs a crafting table, places one at (x, y, z).
+	SeedCraftIngredientsAt(ctx context.Context, itemName string, x, y, z int) error
+}

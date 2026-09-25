@@ -43,6 +43,8 @@ type fakeAgent struct {
 	mineBlockName                      string
 	restoredBlocks                     []restoredBlock
 	clearedBoxes                       []clearedBox
+	seedBlockAtCalls                   []farSeedCall
+	seedCraftAtCalls                   []farSeedCall
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
@@ -450,6 +452,27 @@ type clearedBox struct{ x1, y1, z1, x2, y2, z2 int }
 func (f *fakeAgent) ClearAir(_ context.Context, x1, y1, z1, x2, y2, z2 int) error {
 	f.mu.Lock()
 	f.clearedBoxes = append(f.clearedBoxes, clearedBox{x1, y1, z1, x2, y2, z2})
+	f.mu.Unlock()
+	return nil
+}
+
+// farSeedCall records one SeedBlockAt / SeedCraftIngredientsAt call.
+type farSeedCall struct {
+	name    string // block or item
+	x, y, z int
+}
+
+// SeedBlockAt and SeedCraftIngredientsAt satisfy rlenv.FarSeedAgent.
+func (f *fakeAgent) SeedBlockAt(_ context.Context, blockName string, x, y, z int) error {
+	f.mu.Lock()
+	f.seedBlockAtCalls = append(f.seedBlockAtCalls, farSeedCall{blockName, x, y, z})
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeAgent) SeedCraftIngredientsAt(_ context.Context, itemName string, x, y, z int) error {
+	f.mu.Lock()
+	f.seedCraftAtCalls = append(f.seedCraftAtCalls, farSeedCall{itemName, x, y, z})
 	f.mu.Unlock()
 	return nil
 }

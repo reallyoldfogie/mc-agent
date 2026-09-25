@@ -232,13 +232,9 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 	if a.cfg.RCON == nil {
 		return fmt.Errorf("seed craft ingredients: RCON not configured for inventory cleanup")
 	}
-	recipes, err := a.loadCraftingRecipes()
+	recipe, err := a.craftRecipeFor(itemName)
 	if err != nil {
-		return fmt.Errorf("load recipes: %w", err)
-	}
-	recipe, ok := recipes[normalizeItemName(itemName)]
-	if !ok {
-		return fmt.Errorf("no known crafting recipe for %s", itemName)
+		return err
 	}
 
 	// A recipe that doesn't fit the player's own 2x2 inventory grid needs
@@ -255,7 +251,58 @@ func (a *agent) SeedCraftIngredients(ctx context.Context, itemName string) error
 			return fmt.Errorf("seed craft ingredients: ensuring a crafting table for %s: %w", itemName, err)
 		}
 	}
+	return a.giveCraftIngredients(ctx, itemName, recipe)
+}
 
+// SeedCraftIngredientsAt is SeedCraftIngredients with the crafting table (if
+// the recipe needs one) placed at (x, y, z) instead of beside the bot - see
+// rlenv.FarSeedAgent.
+func (a *agent) SeedCraftIngredientsAt(ctx context.Context, itemName string, x, y, z int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed craft ingredients: RCON not configured for inventory cleanup")
+	}
+	recipe, err := a.craftRecipeFor(itemName)
+	if err != nil {
+		return err
+	}
+	if !recipe.fitsInventoryGrid() {
+		if err := a.SeedBlockAt(ctx, "minecraft:crafting_table", x, y, z); err != nil {
+			return fmt.Errorf("seed craft ingredients: placing a crafting table for %s: %w", itemName, err)
+		}
+	}
+	return a.giveCraftIngredients(ctx, itemName, recipe)
+}
+
+// SeedBlockAt places blockName at (x, y, z) via RCON - see
+// rlenv.FarSeedAgent. Unlike SeedNearbyBlock it doesn't wait for this bot to
+// see the block: the position is deliberately somewhere the bot can't yet.
+func (a *agent) SeedBlockAt(ctx context.Context, blockName string, x, y, z int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed block at: RCON not configured for this agent")
+	}
+	if _, err := a.cfg.RCON.SetBlock(ctx, int64(x), int64(y), int64(z), normalizeItemName(blockName), "replace").Exec(ctx); err != nil {
+		return fmt.Errorf("setblock via RCON: %w", err)
+	}
+	return nil
+}
+
+// craftRecipeFor loads itemName's crafting recipe.
+func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
+	recipes, err := a.loadCraftingRecipes()
+	if err != nil {
+		return craftingRecipe{}, fmt.Errorf("load recipes: %w", err)
+	}
+	recipe, ok := recipes[normalizeItemName(itemName)]
+	if !ok {
+		return craftingRecipe{}, fmt.Errorf("no known crafting recipe for %s", itemName)
+	}
+	return recipe, nil
+}
+
+// giveCraftIngredients is SeedCraftIngredients' inventory half: clears the
+// bot's inventory and gives it recipe's ingredients, waiting for them to
+// sync to this bot's own inventory tracking.
+func (a *agent) giveCraftIngredients(ctx context.Context, itemName string, recipe craftingRecipe) error {
 	// Clear the complete inventory, not just the items we are about to give.
 	// The inventory can contain unrelated crafted output and surplus materials
 	// from earlier episodes. If every slot is occupied, /give succeeds but

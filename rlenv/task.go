@@ -125,6 +125,10 @@ type Config struct {
 	// 4 if left 0 while ClearAreaRadius is set.
 	ClearAreaHeight int
 
+	// SeedAtGoal is Config's copy of TaskOverride.SeedAtGoal (set per
+	// episode by Config.TaskSelector; may also be set statically).
+	SeedAtGoal bool
+
 	// Jitter adds a uniform-random offset in [-Jitter[i], +Jitter[i]] to
 	// axis i of both ResetOrigin (if set) and TargetOffset, drawn fresh
 	// every Reset — see JitterSeed for the source. [3]float64{} (the
@@ -217,6 +221,13 @@ type TaskSelector func(episode int, rng *rand.Rand) TaskOverride
 // exactly mirroring how MineTargetBlock/CraftTargetItem must be
 // explicitly non-empty to enable their tasks.
 type TaskOverride struct {
+	// SeedAtGoal, for a composite episode (goto active alongside mine or
+	// craft), places the mine block or crafting table next to the goto
+	// target instead of beside the bot, so the bot has to travel to find
+	// it. Ignored unless the goto task and a mine or craft task are both
+	// active. See Environment.seedFarTargets.
+	SeedAtGoal bool
+
 	GoToTargetDisabled bool
 	TargetOffset       [3]float64
 	MineTargetBlock    string
