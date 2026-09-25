@@ -58,6 +58,19 @@ type Config struct {
 	// simultaneously.
 	CraftTargetItem string
 
+	// CraftSearchRadius, if > 0, makes the craft task need a crafting table
+	// within this many blocks: the craftReady observation feature (and so
+	// ActionCraft's mask) is true only while a table is visible that close,
+	// on top of the ingredients being held. It is the crafting counterpart of
+	// MineSearchRadius gating ActionMine, and exists for the same reason:
+	// mc-agent's craft action searches 32 blocks for a table and walks there
+	// itself, so without this gate a table 20 blocks away is crafted at
+	// without the policy ever travelling. Only meaningful for a recipe that
+	// needs a table; for one that fits the 2x2 inventory grid no table is
+	// ever seeded and the craft would never become ready. <= 0 (the default)
+	// applies no table condition. Ignored if CraftTargetItem is empty.
+	CraftSearchRadius int
+
 	// Seeder, if set, is called once per Reset to prepare the world for
 	// this episode's configured task(s) — see EpisodeSeeder's doc comment
 	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) for exactly what this
@@ -242,6 +255,7 @@ type TaskOverride struct {
 	MineTargetBlock    string
 	MineSearchRadius   int
 	CraftTargetItem    string
+	CraftSearchRadius  int
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

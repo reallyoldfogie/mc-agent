@@ -262,6 +262,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
+		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
 	}
 
@@ -393,7 +394,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		return rl.Observation{}, err
 	}
 	e.craftCount = e.craftCountNow()
-	e.craftReady = e.craftReadyNow()
+	e.craftReady = e.craftReadyNow(ctx)
 	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
@@ -417,13 +418,29 @@ func (e *Environment) craftCountNow() int {
 
 // craftReadyNow reports whether Environment's currently configured craft
 // target (if any) looks assembleable right now (see LiveAgent.Craftable),
-// or false if Config.CraftTargetItem is unset.
-func (e *Environment) craftReadyNow() bool {
+// or false if Config.CraftTargetItem is unset. With Config.CraftSearchRadius
+// set it additionally requires a crafting table visible within that radius,
+// so a table further away can't be crafted at (see that field for why).
+func (e *Environment) craftReadyNow(ctx context.Context) bool {
 	if e.cfg.CraftTargetItem == "" {
 		return false
 	}
-	return e.agent.Craftable(e.cfg.CraftTargetItem)
+	if !e.agent.Craftable(e.cfg.CraftTargetItem) {
+		return false
+	}
+	if e.cfg.CraftSearchRadius <= 0 {
+		return true
+	}
+	// A search error is treated as "no table in range" rather than failing
+	// the step: the next step searches again, and mining's equivalent
+	// (refreshMineTarget) only fails on errors that mean the world isn't
+	// ready, which Reset and Step have already surfaced by this point.
+	_, _, _, found, err := e.agent.FindVisibleBlock(ctx, craftingTableBlock, e.cfg.CraftSearchRadius)
+	return err == nil && found
 }
+
+// craftingTableBlock is the block Config.CraftSearchRadius looks for.
+const craftingTableBlock = "minecraft:crafting_table"
 
 // refreshMineTarget re-resolves the nearest currently-visible instance of
 // Config.MineTargetBlock and stores it into e.mineX/Y/Z/mineVisible, for
@@ -612,7 +629,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// changed even when craftedThisStep is false (e.g. an ingredient was
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
-	e.craftReady = e.craftReadyNow()
+	e.craftReady = e.craftReadyNow(ctx)
 	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive

@@ -1354,3 +1354,68 @@ var (
 	_ rlenv.ResetAgent      = (*fakeAgent)(nil)
 	_ rl.ActionMasker       = (*rlenv.Environment)(nil)
 )
+
+// A table gate (CraftSearchRadius) makes craft legal only while a table is
+// visible that close, so the policy has to travel to it - see
+// Config.CraftSearchRadius.
+func TestCraftSearchRadiusGatesCraftOnAVisibleTable(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:bowl", true, 0) // ingredients held
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:bowl"
+	cfg.CraftSearchRadius = 8
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if obs.Values[13] != 0 || env.ActionMask()[rlenv.ActionCraft] {
+		t.Fatalf("craft ready/legal with no table in range: obs=%v mask=%v", obs.Values[13], env.ActionMask()[rlenv.ActionCraft])
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionCraft); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 0 {
+		t.Fatalf("CraftItem calls = %d, want 0 (no table within the radius)", agent.craftItemCalls)
+	}
+
+	agent.tableVisible = true
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Observation.Values[13] != 1 || !env.ActionMask()[rlenv.ActionCraft] {
+		t.Fatalf("craft not ready/legal with a table in range: obs=%v mask=%v", result.Observation.Values[13], env.ActionMask()[rlenv.ActionCraft])
+	}
+	for _, r := range agent.tableSearchRadii {
+		if r != 8 {
+			t.Fatalf("table searched with radius %d, want 8", r)
+		}
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionCraft); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.craftItemCalls != 1 {
+		t.Fatalf("CraftItem calls = %d, want 1", agent.craftItemCalls)
+	}
+}
+
+// Without CraftSearchRadius no table search happens at all, so ordinary craft
+// tasks (table beside the bot, or none needed) are unchanged.
+func TestCraftWithoutSearchRadiusNeverSearchesForATable(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCraftTarget("minecraft:stick", true, 0)
+	cfg := testConfig()
+	cfg.CraftTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if obs.Values[13] != 1 {
+		t.Fatalf("craftReady = %v, want 1", obs.Values[13])
+	}
+	if len(agent.tableSearchRadii) != 0 {
+		t.Fatalf("searched for a table %d times, want 0", len(agent.tableSearchRadii))
+	}
+}

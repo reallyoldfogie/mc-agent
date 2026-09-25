@@ -50,6 +50,11 @@ type fakeAgent struct {
 	mineBlockAtCalls                   int
 	findVisibleBlockCalls              int
 
+	// Crafting table simulation: FindVisibleBlock reports a table (at the
+	// origin) only while tableVisible is set, and records the radius asked.
+	tableVisible     bool
+	tableSearchRadii []int
+
 	// Craft simulation: a single target item, craftTargetName, whose
 	// currently-held count is craftHeldCount. Craftable reports true only
 	// once craftIngredientsReady is set (simulating "ingredients are in
@@ -309,10 +314,14 @@ func (f *fakeAgent) StopCamFollow() error                                  { ret
 // contract (finds the nearest visible instance of that specific block name)
 // closely enough for rlenv.Environment's dispatch/observation logic to
 // exercise for real, without needing a live server.
-func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, _ int) (x, y, z float64, found bool, err error) {
+func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius int) (x, y, z float64, found bool, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.findVisibleBlockCalls++
+	if blockName == "minecraft:crafting_table" {
+		f.tableSearchRadii = append(f.tableSearchRadii, radius)
+		return 0, 0, 0, f.tableVisible, nil
+	}
 	if f.mineBlockName == "" || f.mineBlockName != blockName {
 		return 0, 0, 0, false, nil
 	}
