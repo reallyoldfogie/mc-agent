@@ -73,6 +73,7 @@ tmp/
 /libraries/
 *.test
 *.jar
+.worktrees
 
 
 # Credential and authentication files
