@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"strings"
 	"time"
@@ -182,6 +183,7 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	e.cancelInflight()
 	e.restoreMinedBlocks(ctx)
+	e.clearArea(ctx)
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -728,5 +730,32 @@ func (e *Environment) restoreMinedBlocks(ctx context.Context) {
 		if err := restorer.RestoreBlock(ctx, b.x, b.y, b.z, b.name); err != nil {
 			log.Printf("rlenv: restoring mined %s at (%d,%d,%d): %v", b.name, b.x, b.y, b.z, err)
 		}
+	}
+}
+
+// defaultClearAreaHeight is Config.ClearAreaHeight's default.
+const defaultClearAreaHeight = 4
+
+// clearArea wipes the space above the ground around ResetOrigin (see
+// Config.ClearAreaRadius). Done before the teleport, while the area is
+// still loaded around the bot. Best effort: a failure is logged, never
+// fails the Reset.
+func (e *Environment) clearArea(ctx context.Context) {
+	if e.cfg.ClearAreaRadius <= 0 || e.cfg.ResetOrigin == nil {
+		return
+	}
+	clearer, ok := e.agent.(AreaClearer)
+	if !ok {
+		return
+	}
+	height := e.cfg.ClearAreaHeight
+	if height <= 0 {
+		height = defaultClearAreaHeight
+	}
+	o := *e.cfg.ResetOrigin
+	x, y, z := int(math.Floor(o[0])), int(math.Floor(o[1])), int(math.Floor(o[2]))
+	r := e.cfg.ClearAreaRadius
+	if err := clearer.ClearAir(ctx, x-r, y, z-r, x+r, y+height, z+r); err != nil {
+		log.Printf("rlenv: clearing area around (%d,%d,%d): %v", x, y, z, err)
 	}
 }

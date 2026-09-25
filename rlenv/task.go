@@ -112,6 +112,19 @@ type Config struct {
 	// disables the check.
 	MaxConsecutiveStepTimeouts int
 
+	// ClearAreaRadius, if > 0 (and ResetOrigin is set and the agent is an
+	// AreaClearer), makes each Reset fill with air the box extending this
+	// many blocks either side of ResetOrigin in X and Z, from ResetOrigin's
+	// own Y (the bot's feet level, i.e. the first cell above the ground) up
+	// ClearAreaHeight further blocks - leaving the ground itself untouched.
+	// For flat training worlds; in real terrain it would delete trees and
+	// hills. Keep (2r+1)^2 * (height+1) under 32,768 (vanilla's fill limit).
+	// 0 (the default) disables it.
+	ClearAreaRadius int
+	// ClearAreaHeight is how many blocks above ResetOrigin's Y to clear;
+	// 4 if left 0 while ClearAreaRadius is set.
+	ClearAreaHeight int
+
 	// Jitter adds a uniform-random offset in [-Jitter[i], +Jitter[i]] to
 	// axis i of both ResetOrigin (if set) and TargetOffset, drawn fresh
 	// every Reset — see JitterSeed for the source. [3]float64{} (the

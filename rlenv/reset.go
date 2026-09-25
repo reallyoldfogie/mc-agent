@@ -26,3 +26,15 @@ type ResetAgent interface {
 type BlockRestorer interface {
 	RestoreBlock(ctx context.Context, x, y, z int, blockName string) error
 }
+
+// AreaClearer is the optional capability Environment.Reset uses, with
+// Config.ClearAreaRadius, to wipe the space above the ground around the
+// reset origin between episodes: seeding places blocks and crafting tables
+// at the bot's own level and mining/crafting episodes leave them behind, so
+// a working area slowly turned into an obstacle course (found live: a bot
+// wedged in a notch between a seeded gravel block, a crafting table and a
+// stray block). ClearAir fills the inclusive box between the corners with
+// air.
+type AreaClearer interface {
+	ClearAir(ctx context.Context, x1, y1, z1, x2, y2, z2 int) error
+}

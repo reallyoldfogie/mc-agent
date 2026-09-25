@@ -151,6 +151,23 @@ func (a *agent) RestoreBlock(ctx context.Context, x, y, z int, blockName string)
 	return nil
 }
 
+// ClearAir fills the box between the two corners (inclusive) with air via
+// RCON, removing whatever blocks - seeded ones, crafting tables, stacked
+// leftovers - a training episode left there. See rlenv.AreaClearer; the box
+// must stay under vanilla's 32,768-block fill limit. Training convenience
+// only, same scope note as SeedNearbyBlock; requires RCON. A box that isn't
+// loaded is a harmless no-op on the server side.
+func (a *agent) ClearAir(ctx context.Context, x1, y1, z1, x2, y2, z2 int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clear air: RCON not configured for this agent")
+	}
+	cmd := fmt.Sprintf("fill %d %d %d %d %d %d minecraft:air", x1, y1, z1, x2, y2, z2)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("fill via RCON: %w", err)
+	}
+	return nil
+}
+
 // SeedCraftIngredients gives the bot, via its player command connection (with
 // an RCON fallback), one stack
 // of each distinct ingredient itemName's recipe needs — the first

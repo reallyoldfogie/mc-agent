@@ -356,6 +356,39 @@ func TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves(t *testing.T) {
 	}
 }
 
+// TestResetClearsTheSpaceAboveTheGroundAroundTheOrigin: leftover seeded
+// blocks and tables above the ground must be wiped each episode, from the
+// origin's own Y up, leaving the ground alone.
+func TestResetClearsTheSpaceAboveTheGroundAroundTheOrigin(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10.5, -60, 5.2}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.ClearAreaRadius = 3
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	want := clearedBox{7, -60, 2, 13, -56, 8} // radius 3 around (10,5), y from -60 up the default 4
+	if len(agent.clearedBoxes) != 1 || agent.clearedBoxes[0] != want {
+		t.Fatalf("cleared = %v, want exactly [%v]", agent.clearedBoxes, want)
+	}
+}
+
+func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10, -60, 5}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.clearedBoxes) != 0 {
+		t.Fatalf("ClearAreaRadius is 0 but the area was cleared: %v", agent.clearedBoxes)
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes

@@ -42,6 +42,7 @@ type fakeAgent struct {
 	// moves the tracked position rather than just recording the call.
 	mineBlockName                      string
 	restoredBlocks                     []restoredBlock
+	clearedBoxes                       []clearedBox
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
@@ -438,6 +439,17 @@ type restoredBlock struct {
 func (f *fakeAgent) RestoreBlock(_ context.Context, x, y, z int, blockName string) error {
 	f.mu.Lock()
 	f.restoredBlocks = append(f.restoredBlocks, restoredBlock{x, y, z, blockName})
+	f.mu.Unlock()
+	return nil
+}
+
+// clearedBox records one ClearAir call.
+type clearedBox struct{ x1, y1, z1, x2, y2, z2 int }
+
+// ClearAir satisfies rlenv.AreaClearer, recording each call.
+func (f *fakeAgent) ClearAir(_ context.Context, x1, y1, z1, x2, y2, z2 int) error {
+	f.mu.Lock()
+	f.clearedBoxes = append(f.clearedBoxes, clearedBox{x1, y1, z1, x2, y2, z2})
 	f.mu.Unlock()
 	return nil
 }

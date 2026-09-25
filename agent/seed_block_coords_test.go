@@ -37,6 +37,9 @@ func TestAgentSatisfiesRLResetCapabilities(t *testing.T) {
 	if _, ok := agentInt.(rlenv.BlockRestorer); !ok {
 		t.Error("agent must satisfy rlenv.BlockRestorer")
 	}
+	if _, ok := agentInt.(rlenv.AreaClearer); !ok {
+		t.Error("agent must satisfy rlenv.AreaClearer")
+	}
 	if _, ok := agentInt.(rlenv.ResetAgent); !ok {
 		t.Error("agent must satisfy rlenv.ResetAgent")
 	}
