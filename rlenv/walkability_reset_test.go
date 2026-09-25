@@ -352,3 +352,45 @@ func TestResetMovesABotOutOfTerrainAfterTeleportingToABuriedOrigin(t *testing.T)
 		t.Fatalf("Y = %v, want 0 (snapped up out of the floor onto its surface)", pos.Y)
 	}
 }
+
+// TestFarTargetSkipsThePathfinderReachabilityCheck: for a go-there-then-mine
+// episode the target is 30+ blocks away, where every reachability A* run
+// times out; a standable cell is accepted on ground-snap alone (found live:
+// the reachability sweep burned the whole 45s Reset budget per attempt).
+func TestFarTargetSkipsThePathfinderReachabilityCheck(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(-5, -5, 40, 5, -1, walkGroundStateID).
+		Build()
+	fake := newFakeAgent(0, 0, 0)
+	fake.findPathUnreachable = func(x, y, z float64) bool { return x > 10 } // the pathfinder rejects anything far
+	agent := fakeWalkabilityAgent{fakeAgent: fake, world: world, shapeMgr: mctesting.NewMockShapeManager()}
+
+	cfg := rlenv.Config{
+		TargetOffset:     [3]float64{30, 0, 0},
+		MineTargetBlock:  "minecraft:sand",
+		SeedAtGoal:       true,
+		ArrivalThreshold: 0.5,
+		StepTimeout:      200 * time.Millisecond,
+	}
+	env := newWalkabilityTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v (a far target must not be gated on the pathfinder)", err)
+	}
+	if dx := obs.Values[0]; dx != 30 {
+		t.Fatalf("dx = %v, want 30: the far target should be accepted where it was posed", dx)
+	}
+	if len(fake.findPathCalls) != 0 {
+		t.Fatalf("FindPath was called %d times: far targets must not run reachability searches", len(fake.findPathCalls))
+	}
+
+	// The same episode without SeedAtGoal still goes through the reachability
+	// gate and is (correctly) rejected here.
+	cfg.SeedAtGoal = false
+	cfg.MineTargetBlock = ""
+	env = newWalkabilityTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err == nil {
+		t.Fatal("a plain goto target the pathfinder rejects must still fail Reset")
+	}
+}

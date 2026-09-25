@@ -331,7 +331,11 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		walkableFound = true
 		if !tooClose && checkWalkability {
 			var wx, wy, wz float64
-			wx, wy, wz, walkableFound = findWalkableTarget(walkabilityCtx, walkAgent, e.agent, e.targetX, e.targetY, e.targetZ)
+			if e.seedAtGoal() {
+				wx, wy, wz, walkableFound = findGroundedTarget(walkabilityCtx, walkAgent, e.targetX, e.targetY, e.targetZ)
+			} else {
+				wx, wy, wz, walkableFound = findWalkableTarget(walkabilityCtx, walkAgent, e.agent, e.targetX, e.targetY, e.targetZ)
+			}
 			if walkableFound {
 				e.targetX, e.targetY, e.targetZ = wx, wy, wz
 			}

@@ -170,6 +170,41 @@ func findWalkableTarget(ctx context.Context, walkAgent WalkabilityAgent, reachAg
 	return 0, 0, 0, false
 }
 
+// farTargetChunkWait bounds how long findGroundedTarget waits for the
+// target's chunk to reach this bot's world view.
+const farTargetChunkWait = 5 * time.Second
+
+// findGroundedTarget is findWalkableTarget for far (Config.SeedAtGoal)
+// targets: ground-snap only, no pathfinder reachability check. A
+// reachability check is an A* run per candidate, bounded at
+// reachabilityCheckTimeout; for a target 30-40 blocks away every one of them
+// times out (found live: the first attempt alone burned the whole 45s Reset
+// budget on ring candidates, for minutes at a time), so it rejects every
+// far target while starving the process. In a flat training world a
+// standable cell is reachable. The target's chunk may not have streamed in
+// yet, so ground-snapping is retried for up to farTargetChunkWait.
+func findGroundedTarget(ctx context.Context, walkAgent WalkabilityAgent, x, y, z float64) (wx, wy, wz float64, ok bool) {
+	world := walkAgent.GetWorld()
+	shapeMgr := walkAgent.BlockShapeManager()
+	if world == nil || shapeMgr == nil {
+		return 0, 0, 0, false
+	}
+	deadline := time.Now().Add(farTargetChunkWait)
+	for {
+		if snapped, ok := groundSnap(world, shapeMgr, x, y, z); ok {
+			return x, snapped, z, true
+		}
+		if !time.Now().Before(deadline) {
+			return 0, 0, 0, false
+		}
+		select {
+		case <-ctx.Done():
+			return 0, 0, 0, false
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
 // groundSnap scans Y outward from y (0, -1, +1, -2, +2, ...) up to
 // verticalSearchRadius, returning the first Y at (x, z) where
 // models.IsWalkablePosition holds.
