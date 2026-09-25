@@ -513,6 +513,36 @@ func TestSeedAtGoalIsIgnoredWithoutACompositeTask(t *testing.T) {
 	}
 }
 
+func TestStepChargesTheConfiguredTimePenaltyPerStep(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.TimePenalty = 0.2
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	for step := 1; step <= 3; step++ {
+		result, err := env.Step(ctx, rlenv.ActionWait)
+		if err != nil {
+			t.Fatalf("Step %d: %v", step, err)
+		}
+		if result.Reward != -0.2 {
+			t.Fatalf("Step %d reward = %v, want -0.2: a wasted step must cost the configured penalty", step, result.Reward)
+		}
+	}
+}
+
+func TestNewRejectsANegativeTimePenalty(t *testing.T) {
+	cfg := testConfig()
+	cfg.TimePenalty = -0.1
+	if _, err := rlenv.New(newFakeAgent(0, 0, 0), actions.NewRegistry(), cfg); err == nil {
+		t.Fatal("a negative TimePenalty would reward wasted steps and must be rejected")
+	}
+}
+
 func TestStepPropagatesContextCancellation(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.moveToWithChatErr = context.DeadlineExceeded // position never changes

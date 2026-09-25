@@ -125,6 +125,15 @@ type Config struct {
 	// 4 if left 0 while ClearAreaRadius is set.
 	ClearAreaHeight int
 
+	// TimePenalty is the reward subtracted every step, independent of outcome
+	// (see reward.go's timePenalty for what it's for). 0 means the built-in
+	// default, 0.01. The default is too small to matter next to a +10 success
+	// bonus: a policy that wastes ten steps loses 0.1, so nothing pushes it
+	// to be efficient (found live: 38-70% of all steps were the Wait action,
+	// and mine_far episodes took ~10.7 steps where ~3 suffice). Must not be
+	// negative.
+	TimePenalty float32
+
 	// SeedAtGoal is Config's copy of TaskOverride.SeedAtGoal (set per
 	// episode by Config.TaskSelector; may also be set statically).
 	SeedAtGoal bool
@@ -256,6 +265,9 @@ func (c Config) validate() error {
 	}
 	if c.StepTimeout <= 0 {
 		return errStepTimeout
+	}
+	if c.TimePenalty < 0 {
+		return errTimePenalty
 	}
 	return nil
 }

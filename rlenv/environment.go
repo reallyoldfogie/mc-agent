@@ -562,6 +562,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		newDistance = e.prevDistance
 	}
 	reward, done := computeReward(stepOutcome{
+		timePenalty:       e.cfg.TimePenalty,
 		prevDistance:      e.prevDistance,
 		newDistance:       newDistance,
 		prevHealth:        e.prevHealth,

@@ -87,6 +87,20 @@ func TestComputeRewardDeathAppliesPenaltyAndEndsEpisode(t *testing.T) {
 	}
 }
 
+// TestComputeRewardHonorsAConfiguredTimePenalty: the default 0.01 is too small
+// to make wasted steps costly next to a +10 success bonus, so it is
+// configurable; 0 keeps the default.
+func TestComputeRewardHonorsAConfiguredTimePenalty(t *testing.T) {
+	reward, _ := computeReward(stepOutcome{prevDistance: 10, newDistance: 10, timePenalty: 0.25})
+	if reward != -0.25 {
+		t.Fatalf("reward = %v, want -0.25 (the configured penalty, no other terms)", reward)
+	}
+	reward, _ = computeReward(stepOutcome{prevDistance: 10, newDistance: 10})
+	if reward != -timePenalty {
+		t.Fatalf("reward = %v, want the default %v when unset", reward, timePenalty)
+	}
+}
+
 // TestComputeRewardDeathIgnoresRespawnTeleportDistance: dying respawns the
 // bot at world spawn, so the "distance change" on the death step is a
 // teleport artifact (here 5000 blocks), not progress, and must not swamp

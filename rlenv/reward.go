@@ -57,6 +57,10 @@ const (
 // healthKnown feature for why "unknown" must be handled explicitly rather
 // than treated as zero).
 type stepOutcome struct {
+	// timePenalty overrides the default per-step penalty when > 0 (see
+	// Config.TimePenalty).
+	timePenalty float32
+
 	prevDistance, newDistance           float64
 	prevHealth, newHealth               float32
 	healthKnownBefore, healthKnownAfter bool
@@ -79,7 +83,11 @@ func computeReward(o stepOutcome) (reward float32, diedThisStep bool) {
 	if !diedThisStep {
 		reward = distanceRewardScale * float32(o.prevDistance-o.newDistance)
 	}
-	reward -= timePenalty
+	penalty := o.timePenalty
+	if penalty <= 0 {
+		penalty = timePenalty
+	}
+	reward -= penalty
 
 	if o.healthKnownBefore && o.healthKnownAfter {
 		if damage := o.prevHealth - o.newHealth; damage > 0 {
