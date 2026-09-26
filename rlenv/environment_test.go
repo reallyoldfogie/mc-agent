@@ -1419,3 +1419,40 @@ func TestCraftWithoutSearchRadiusNeverSearchesForATable(t *testing.T) {
 		t.Fatalf("searched for a table %d times, want 0", len(agent.tableSearchRadii))
 	}
 }
+
+// With Config.NormalizeObservation every feature is scaled to about [-1, 1];
+// without it the raw layout is unchanged.
+func TestNormalizeObservationScalesFeaturesAndIsOffByDefault(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.yaw, agent.pitch = 90, -45
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{24, 0, 0}
+	cfg.Jitter = [3]float64{}
+
+	raw := newTestEnvironment(t, agent, cfg)
+	rawObs, err := raw.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if rawObs.Values[0] != 24 || rawObs.Values[3] != 90 || rawObs.Values[4] != -45 {
+		t.Fatalf("raw obs dx/yaw/pitch = %v/%v/%v, want 24/90/-45", rawObs.Values[0], rawObs.Values[3], rawObs.Values[4])
+	}
+
+	cfg.NormalizeObservation = true
+	norm := newTestEnvironment(t, agent, cfg)
+	obs, err := norm.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	want := map[int]float32{0: 24.0 / 16, 3: 0.5, 4: -0.5}
+	for i, w := range want {
+		if got := obs.Values[i]; got < w-1e-6 || got > w+1e-6 {
+			t.Errorf("normalized Values[%d] = %v, want %v", i, got, w)
+		}
+	}
+	for i, v := range obs.Values {
+		if v > 2 || v < -2 {
+			t.Errorf("normalized Values[%d] = %v, want within about [-2, 2]", i, v)
+		}
+	}
+}

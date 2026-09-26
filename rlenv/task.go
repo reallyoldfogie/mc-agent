@@ -147,6 +147,17 @@ type Config struct {
 	// negative.
 	TimePenalty float32
 
+	// NormalizeObservation scales every observation feature to roughly
+	// [-1, 1] (see NormalizedObservation), instead of handing the policy raw
+	// blocks and degrees. A network fed raw values (yaw up to +-180, distances
+	// of tens of blocks) against ~0.1-magnitude weights saturates its first
+	// layer immediately, which with a learning rate that isn't tiny kills the
+	// ReLU units outright - one such run had every second-layer unit dead after
+	// two generations and never learned again. Off by default so a policy
+	// trained on the raw layout keeps working; a checkpoint trained with it on
+	// must be run with it on.
+	NormalizeObservation bool
+
 	// SeedAtGoal is Config's copy of TaskOverride.SeedAtGoal (set per
 	// episode by Config.TaskSelector; may also be set statically).
 	SeedAtGoal bool

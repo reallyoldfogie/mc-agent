@@ -101,6 +101,17 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // automatically with no separate version bump needed there).
 const observationSize = 17
 
+// NormalizedObservation's scales (Config.NormalizeObservation): every feature
+// divided by the largest magnitude it normally takes, so they all land near
+// [-1, 1]. Distances use 16 blocks, which puts the far tasks' 18-24 block
+// targets at 1.1-1.5 and the 8-block mine search radius at 0.5.
+const (
+	obsDistanceScale = 16
+	obsYawScale      = 180
+	obsPitchScale    = 90
+	obsVitalScale    = 20 // health, food level and saturation all top out at 20
+)
+
 // buildObservation constructs the fixed-length feature vector described
 // above from the bot's current position/rotation, health/food state,
 // (if configured/visible) nearest mine-target block position, (if
@@ -110,7 +121,7 @@ const observationSize = 17
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -122,6 +133,29 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	ready := float32(0)
 	if craftReady {
 		ready = 1
+	}
+	if normalize {
+		return rl.Observation{
+			Values: []float32{
+				float32(targetX-x) / obsDistanceScale,
+				float32(targetY-y) / obsDistanceScale,
+				float32(targetZ-z) / obsDistanceScale,
+				float32(yaw) / obsYawScale,
+				float32(pitch) / obsPitchScale,
+				health / obsVitalScale,
+				float32(food) / obsVitalScale,
+				saturation / obsVitalScale,
+				known,
+				mineDx / obsDistanceScale,
+				mineDy / obsDistanceScale,
+				mineDz / obsDistanceScale,
+				visible,
+				ready,
+				boolToFloat32(goToActive),
+				boolToFloat32(mineActive),
+				boolToFloat32(craftActive),
+			},
+		}
 	}
 	return rl.Observation{
 		Values: []float32{
