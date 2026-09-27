@@ -103,7 +103,13 @@ func Rank(targets []Target, includeNeutral bool) []Target {
 func RankWithPolicy(targets []Target, policy TargetPolicy) []Target {
 	eligible := make([]Target, 0, len(targets))
 	for _, target := range targets {
-		if target.Removed || !target.Visible || target.Category == Unknown {
+		// A tracked living entity may remain in the table briefly between its
+		// final health metadata and the server's removal packet. Once a known
+		// maximum health is available, zero health is terminal and must not be
+		// reacquired for another attack cycle. MaxHealth == 0 remains eligible
+		// because it represents an incomplete/unknown health snapshot.
+		if target.Removed || (target.MaxHealth > 0 && target.Health <= 0) ||
+			!target.Visible || target.Category == Unknown {
 			continue
 		}
 		if target.Category == Neutral && !policy.IncludeNeutral {

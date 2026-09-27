@@ -42,6 +42,18 @@ func TestRankExcludesUnsafeTargetsAndNeutralByDefault(t *testing.T) {
 	}
 }
 
+func TestRankExcludesKnownDeadTargetsBeforeRemovalPacket(t *testing.T) {
+	targets := []Target{
+		{EntityID: 1, Category: Hostile, Visible: true, Distance: 2, Health: 0, MaxHealth: 20},
+		{EntityID: 2, Category: Hostile, Visible: true, Distance: 3, Health: 0, MaxHealth: 0},
+		{EntityID: 3, Category: Hostile, Visible: true, Distance: 4, Health: 10, MaxHealth: 20},
+	}
+	ranked := RankWithPolicy(targets, TargetPolicy{})
+	if len(ranked) != 2 || ranked[0].EntityID != 2 || ranked[1].EntityID != 3 {
+		t.Fatalf("known dead target should be excluded while unknown health remains eligible: %#v", ranked)
+	}
+}
+
 func TestPriorityPrefersLowerHealthAtSameDistance(t *testing.T) {
 	healthy := Target{Category: Hostile, Distance: 4, MaxHealth: 20, Health: 20}
 	weak := Target{Category: Hostile, Distance: 4, MaxHealth: 20, Health: 2}
