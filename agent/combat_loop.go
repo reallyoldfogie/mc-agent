@@ -60,6 +60,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				Health: health, MaxHealth: 20, EnemyCount: len(targets), CurrentWeapon: currentWeapon,
 				ShieldAvailable: a.hasCombatShield(), ShieldActive: shieldActive,
 			}
+			a.populateCombatMovementState(&obs)
 			if len(targets) > 0 {
 				target := targets[0]
 				obs.HasTarget, obs.TargetVisible = true, target.Visible
@@ -167,6 +168,31 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			}
 			timer.Reset(a.combatTickInterval())
 		}
+	}
+}
+
+// populateCombatMovementState copies authoritative movement/status facts into
+// the transport-independent combat observation. If the executor does not
+// expose its physics state, the zero velocity leaves Critical false rather
+// than guessing that a critical is possible.
+func (a *agent) populateCombatMovementState(obs *combat.Observation) {
+	if obs == nil {
+		return
+	}
+	a.movementMu.RLock()
+	executor := a.moveExec
+	a.movementMu.RUnlock()
+	if stateProvider, ok := executor.(interface{ GetPhysicsState() models.PhysicsState }); ok {
+		if state := stateProvider.GetPhysicsState(); state != nil {
+			obs.OnGround = state.OnGround()
+			obs.VerticalVelocity = state.Velocity().Y
+			obs.InWater = state.IsInWater()
+		}
+	}
+	obs.OnVehicle = a.IsMounted()
+	_, obs.HasBlindness = a.GetOwnActiveEffect("minecraft:blindness")
+	if executor != nil {
+		obs.Sprinting = executor.IsSprinting()
 	}
 }
 
