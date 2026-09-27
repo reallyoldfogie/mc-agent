@@ -160,7 +160,18 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionWait:
 		return true
 	case ActionGoToTarget:
-		return !e.cfg.GoToTargetDisabled
+		if e.cfg.GoToTargetDisabled {
+			return false
+		}
+		// In a go-there-then-mine/craft episode, once the bot has arrived
+		// and the mine or craft it came for is possible, going anywhere is
+		// only a wasted step. Left legal, a policy that has learned "goto"
+		// is the right answer far away keeps choosing it at the target: 3.7
+		// and 4.9 goto steps per episode where 1-2 suffice, and a greedy
+		// evaluation that never picks anything else stands there until the
+		// step limit. Stays legal if the task action isn't ready (the block
+		// slipped out of sight, say), so the bot can still re-approach.
+		return !(e.compositeGotoTask() && e.arrived && e.taskActionReady())
 	case ActionMine:
 		return e.cfg.MineTargetBlock != "" && e.mineVisible
 	case ActionCraft:

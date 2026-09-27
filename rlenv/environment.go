@@ -833,6 +833,12 @@ func (e *Environment) compositeGotoTask() bool {
 	return !e.cfg.GoToTargetDisabled && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
 }
 
+// taskActionReady reports whether the mine or craft this episode's target is
+// for can be done right now: the block is visible, or the craft is ready.
+func (e *Environment) taskActionReady() bool {
+	return (e.cfg.MineTargetBlock != "" && e.mineVisible) || (e.cfg.CraftTargetItem != "" && e.craftReady)
+}
+
 // seedAtGoal reports whether this episode's mine block / crafting table go
 // next to the goto target (Config.SeedAtGoal on a composite episode).
 func (e *Environment) seedAtGoal() bool {

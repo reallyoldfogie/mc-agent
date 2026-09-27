@@ -1456,3 +1456,55 @@ func TestNormalizeObservationScalesFeaturesAndIsOffByDefault(t *testing.T) {
 		}
 	}
 }
+
+// Once a go-there-then-mine episode has arrived and the block is in reach,
+// going anywhere only wastes steps, so goto is masked (and a masked goto is
+// the usual safe no-op).
+func TestCompositeMasksGotoOnceArrivedAndTheTaskActionIsReady(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:stone", 6, 0, 0)
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{5, 0, 0}
+	cfg.MineTargetBlock = "minecraft:stone"
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if !env.ActionMask()[rlenv.ActionGoToTarget] {
+		t.Fatal("goto masked before arriving")
+	}
+
+	if _, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	mask := env.ActionMask()
+	if mask[rlenv.ActionGoToTarget] {
+		t.Fatal("goto still legal after arriving with the block in reach")
+	}
+	if !mask[rlenv.ActionMine] || !mask[rlenv.ActionWait] {
+		t.Fatalf("mask = %v, want mine and wait legal", mask)
+	}
+
+	// The mine action isn't possible (block out of sight): re-approaching is
+	// the only way forward, so goto must come back.
+	agent.setMineBlock("", 0, 0, 0)
+	if _, err := env.Step(ctx, rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !env.ActionMask()[rlenv.ActionGoToTarget] {
+		t.Fatal("goto masked although nothing can be mined from here")
+	}
+}
+
+// A plain goto episode ends on arrival, so its mask never changes.
+func TestPlainGotoIsNeverMaskedByArrival(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if !env.ActionMask()[rlenv.ActionGoToTarget] {
+		t.Fatal("goto masked in a plain goto episode")
+	}
+}
