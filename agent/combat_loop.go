@@ -66,6 +66,11 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				obs.TargetDistance = target.Distance
 				obs.TargetDirectionX, obs.TargetDirectionZ = target.DirectionX, target.DirectionZ
 				obs.TargetIsRanged = combatTargetIsRanged(target.TypeName)
+				if target.Visible {
+					if err := a.TurnTowards(ctx, target.X, target.Y+1.0, target.Z); err != nil {
+						a.logf("[combat] target facing failed: entity=%d error=%v", target.EntityID, err)
+					}
+				}
 				if target.EntityID != lastTargetID || target.Visible != lastTargetVisible {
 					a.logf("[combat] target selected: entity=%d type=%s category=%d distance=%.2f visible=%v health=%.1f/%.1f",
 						target.EntityID, target.TypeName, target.Category, target.Distance, target.Visible, target.Health, target.MaxHealth)
@@ -227,14 +232,18 @@ func (a *agent) setCombatShield(ctx context.Context, active bool) error {
 	if active && !ok {
 		return fmt.Errorf("shield action: agent position not initialized")
 	}
-	return sendCombatShieldAction(actions, conn, active, yaw, pitch, a.getNextSequence())
+	hand, _, shieldAvailable := a.combatShieldLocation()
+	if !shieldAvailable {
+		return fmt.Errorf("shield action: shield is no longer equipped")
+	}
+	return sendCombatShieldAction(actions, conn, hand, active, yaw, pitch, a.getNextSequence())
 }
 
 // sendCombatShieldAction is kept separate from agent state so packet dispatch
 // can be tested against each version handler without a live server.
-func sendCombatShieldAction(actions models.ActionHandler, conn models.PacketWriter, active bool, yaw, pitch float64, sequence int32) error {
+func sendCombatShieldAction(actions models.ActionHandler, conn models.PacketWriter, hand models.Hand, active bool, yaw, pitch float64, sequence int32) error {
 	if active {
-		return actions.SendUseItem(conn, models.OffHand, sequence, yaw, pitch)
+		return actions.SendUseItem(conn, hand, sequence, yaw, pitch)
 	}
 	return actions.SendPlayerAction(conn, common.PlayerActionReleaseUseItem, 0, 0, 0, 0, sequence)
 }

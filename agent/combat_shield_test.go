@@ -18,10 +18,10 @@ func TestSendCombatShieldActionDispatchesRaiseAndRelease(t *testing.T) {
 			var packets []packetCapture
 			conn := &shieldPacketWriter{packets: &packets}
 
-			if err := sendCombatShieldAction(handler.Play().Actions(), conn, true, 12, -4, 7); err != nil {
+			if err := sendCombatShieldAction(handler.Play().Actions(), conn, models.OffHand, true, 12, -4, 7); err != nil {
 				t.Fatalf("raise shield: %v", err)
 			}
-			if err := sendCombatShieldAction(handler.Play().Actions(), conn, false, 0, 0, 8); err != nil {
+			if err := sendCombatShieldAction(handler.Play().Actions(), conn, models.OffHand, false, 0, 0, 8); err != nil {
 				t.Fatalf("release shield: %v", err)
 			}
 			if len(packets) != 2 {

@@ -196,13 +196,6 @@ func (s *CombatFlatSuite) TestRunCombatShieldBlocksSkeleton() {
 	leader, err := s.SpawnWorkingAreaAgent("CombatShieldBot", "combat_shield")
 	require.NoError(s.T(), err, "spawn shield combat agent")
 
-	spawnX := leader.Origin.X + 8
-	spawnY := leader.Origin.Y
-	spawnZ := leader.Origin.Z
-	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
-		`summon minecraft:skeleton %.1f %.1f %.1f {PersistenceRequired:1b}`,
-		spawnX, spawnY, spawnZ))
-	require.NoError(s.T(), err, "spawn skeleton")
 	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
 		"item replace entity %s weapon.offhand with minecraft:shield",
 		leader.Name))
@@ -214,6 +207,17 @@ func (s *CombatFlatSuite) TestRunCombatShieldBlocksSkeleton() {
 	hasShield, err := waitForAgentHasItem(s.Ctx, leader.Agent, "minecraft:shield", 5*time.Second)
 	require.NoError(s.T(), err, "wait for shield inventory update")
 	require.True(s.T(), hasShield, "agent should observe the off-hand shield")
+
+	// Spawn the threat only after the shield is present in the server and
+	// visible to the agent. This prevents setup damage from being mistaken for
+	// a failure of the blocking behavior under test.
+	spawnX := leader.Origin.X + 8
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:skeleton %.1f %.1f %.1f {PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn skeleton")
 
 	zombieID := zombieIDForTest(s, leader, "minecraft:skeleton")
 	require.NotZero(s.T(), zombieID, "skeleton should be tracked")
