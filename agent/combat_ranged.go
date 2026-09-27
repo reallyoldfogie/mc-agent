@@ -79,6 +79,17 @@ func projectileForCombatWeapon(weapon combat.ProjectileWeapon) (string, models.P
 	}
 }
 
+func filterCombatProjectileWeapons(available map[string]bool) []combat.ProjectileWeapon {
+	weapons := make([]combat.ProjectileWeapon, 0, 3)
+	for _, weapon := range []combat.ProjectileWeapon{combat.Bow, combat.Crossbow, combat.Trident} {
+		itemName, _, err := projectileForCombatWeapon(weapon)
+		if err == nil && available[itemName] {
+			weapons = append(weapons, weapon)
+		}
+	}
+	return weapons
+}
+
 func rangedRequestForTarget(target combat.Target, weapon combat.ProjectileWeapon) (combat.RangedAttackRequest, error) {
 	if target.Distance <= 0 {
 		return combat.RangedAttackRequest{}, fmt.Errorf("ranged attack: target %d has invalid distance %.2f", target.EntityID, target.Distance)

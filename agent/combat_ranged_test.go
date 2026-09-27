@@ -56,6 +56,17 @@ func TestProjectileForCombatWeapon(t *testing.T) {
 	}
 }
 
+func TestAvailableCombatProjectileWeaponsUsesStableInventoryOrder(t *testing.T) {
+	available := map[string]bool{
+		"minecraft:crossbow": true,
+		"minecraft:trident":  true,
+	}
+	got := filterCombatProjectileWeapons(available)
+	if len(got) != 2 || got[0] != combat.Crossbow || got[1] != combat.Trident {
+		t.Fatalf("unexpected available projectile order: %v", got)
+	}
+}
+
 func TestRangedRequestForTarget(t *testing.T) {
 	target := combat.Target{EntityID: 42, X: 10, Y: 2, Z: -4, Distance: 30}
 	request, err := rangedRequestForTarget(target, combat.Bow)

@@ -150,7 +150,11 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			}
 			if decision.Attack && decision.Weapon == combat.RangedWeapon && len(targets) > 0 {
 				var lastErr error
-				for _, weapon := range []combat.ProjectileWeapon{combat.Bow, combat.Crossbow, combat.Trident} {
+				weapons, err := a.availableCombatProjectileWeapons(ctx)
+				if err != nil {
+					lastErr = err
+				}
+				for _, weapon := range weapons {
 					request, err := rangedRequestForTarget(targets[0], weapon)
 					if err != nil {
 						lastErr = err
@@ -171,6 +175,28 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			timer.Reset(a.combatTickInterval())
 		}
 	}
+}
+
+// availableCombatProjectileWeapons returns the stable fallback order filtered
+// by the synchronized player inventory. This avoids repeatedly attempting to
+// equip absent weapons on every combat tick and keeps the final error tied to
+// an actually available weapon.
+func (a *agent) availableCombatProjectileWeapons(ctx context.Context) ([]combat.ProjectileWeapon, error) {
+	available := make(map[string]bool, 3)
+	for _, weapon := range []combat.ProjectileWeapon{combat.Bow, combat.Crossbow, combat.Trident} {
+		itemName, _, err := projectileForCombatWeapon(weapon)
+		if err != nil {
+			return nil, err
+		}
+		_, found, err := a.FindSlotWith(ctx, itemName, -2)
+		if err != nil {
+			return nil, fmt.Errorf("combat ranged inventory: check %s: %w", itemName, err)
+		}
+		if found {
+			available[itemName] = true
+		}
+	}
+	return filterCombatProjectileWeapons(available), nil
 }
 
 // populateCombatMovementState copies authoritative movement/status facts into
