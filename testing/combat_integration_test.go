@@ -187,6 +187,50 @@ func (s *CombatFlatSuite) TestRunCombatRangedCrossbow() {
 	}
 }
 
+// TestRunCombatShieldBlocksSkeleton verifies the end-to-end shield path:
+// inventory synchronization, off-hand shield detection, use-item/release
+// packets, and server-side projectile mitigation. This deliberately uses an
+// active skeleton rather than /damage because shield blocking only applies to
+// an actual directional projectile threat.
+func (s *CombatFlatSuite) TestRunCombatShieldBlocksSkeleton() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatShieldBot", "combat_shield")
+	require.NoError(s.T(), err, "spawn shield combat agent")
+
+	spawnX := leader.Origin.X + 8
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:skeleton %.1f %.1f %.1f {PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn skeleton")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		"item replace entity %s weapon.offhand with minecraft:shield",
+		leader.Name))
+	require.NoError(s.T(), err, "equip shield in off-hand")
+
+	// Confirm the server-side inventory update reached the agent before combat
+	// starts; otherwise a successful run could merely mean the shield policy
+	// never considered a shield available.
+	hasShield, err := waitForAgentHasItem(s.Ctx, leader.Agent, "minecraft:shield", 5*time.Second)
+	require.NoError(s.T(), err, "wait for shield inventory update")
+	require.True(s.T(), hasShield, "agent should observe the off-hand shield")
+
+	zombieID := zombieIDForTest(s, leader, "minecraft:skeleton")
+	require.NotZero(s.T(), zombieID, "skeleton should be tracked")
+
+	before, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(s.T(), err, "read health before shield combat")
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 6*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 12, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "shield combat should stop on test context")
+	after, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(s.T(), err, "read health after shield combat")
+	require.GreaterOrEqual(s.T(), after, before-0.01, "shield should block skeleton arrow damage")
+}
+
 func (s *CombatFlatSuite) TestRunCombatMovingTarget() {
 	leader, err := s.SpawnWorkingAreaAgent("CombatMovingBot", "combat_moving")
 	require.NoError(s.T(), err, "spawn agent")
