@@ -897,26 +897,31 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 		}
 	}
 
+	a.updateTrackedEntityVelocity(entityID, velX, velY, velZ)
+	return nil
+}
+
+// updateTrackedEntityVelocity updates entity velocity without holding the
+// entity lock while acquiring the projectile lock. Keeping the two critical
+// sections separate prevents a lock-order inversion with renderTick.
+func (a *agent) updateTrackedEntityVelocity(entityID int32, velX, velY, velZ float64) {
+	a.activeProjectilesMu.Lock()
+	isProjectile := a.activeProjectiles[entityID] != nil
+	a.activeProjectilesMu.Unlock()
+
+	if isProjectile {
+		a.logf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
+			entityID, velX, velY, velZ)
+	}
+
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		// Check if this is a tracked projectile
-		a.activeProjectilesMu.Lock()
-		isProjectile := a.activeProjectiles[entityID] != nil
-		a.activeProjectilesMu.Unlock()
-
-		if isProjectile {
-			a.logf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
-				entityID, velX, velY, velZ)
-		}
-
-		// Store velocity and update timestamp for interpolation
 		e.VelX = velX
 		e.VelY = velY
 		e.VelZ = velZ
-		e.LastMetadataUpdate = time.Now() // Record when velocity was updated for interpolation
+		e.LastMetadataUpdate = time.Now()
 	}
 	a.entitiesMu.Unlock()
-	return nil
 }
 
 // onDamageEvent handles ClientboundDamageEvent packets.

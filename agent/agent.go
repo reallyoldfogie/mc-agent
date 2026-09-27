@@ -327,6 +327,11 @@ type agent struct {
 	// clutch assist
 	lastClutchAction time.Time
 
+	// combatMu serializes the global melee attack cooldown. Minecraft's attack
+	// strength is player-wide, not target-specific, so one timestamp is enough.
+	combatMu         sync.Mutex
+	lastCombatAttack time.Time
+
 	// boatItemNamesMu guards boatItemNamesCache.
 	boatItemNamesMu sync.Mutex
 	// boatItemNamesCache memoizes boatItemNames' resolution of the

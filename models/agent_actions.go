@@ -52,7 +52,10 @@ type AgentActions interface { // Action helpers (used by plan runner)
 
 	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
 	// PlaceBlockAt(ctx context.Context, pos V3, blockName string) error
-	// AttackEntity(ctx context.Context, entityID int32) error
+	// AttackEntity sends a left-click attack against the tracked entity. The
+	// caller is responsible for selecting the weapon and positioning the agent;
+	// autonomous target selection and combat policy belong to the combat layer.
+	AttackEntity(ctx context.Context, entityID int32, sneaking bool) error
 	// InteractWithEntity(ctx context.Context, entityID int32) error
 
 	// Bow firing actions
