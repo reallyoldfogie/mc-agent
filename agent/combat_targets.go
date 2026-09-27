@@ -13,6 +13,15 @@ import (
 // resolved against the current world, so callers get a decision-ready view.
 // A non-positive radius means no distance limit.
 func (a *agent) RankCombatTargets(ctx context.Context, radius float64, includeNeutral bool) ([]combat.Target, error) {
+	return a.RankCombatTargetsWithPolicy(ctx, radius, combat.TargetPolicy{
+		IncludePlayers: false,
+		IncludeNeutral: includeNeutral,
+	})
+}
+
+// RankCombatTargetsWithPolicy ranks tracked entities using an explicit PvP and
+// neutral-target policy. Players remain excluded unless IncludePlayers is true.
+func (a *agent) RankCombatTargetsWithPolicy(ctx context.Context, radius float64, policy combat.TargetPolicy) ([]combat.Target, error) {
 	position, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return nil, fmt.Errorf("combat target ranking: position not initialized")
@@ -34,7 +43,7 @@ func (a *agent) RankCombatTargets(ctx context.Context, radius float64, includeNe
 			typeName = string(a.entityRegistry.GetEntityType(entity.EntityID))
 		}
 		category := combat.Classify(typeName)
-		if category == combat.Unknown || (category == combat.Neutral && !includeNeutral) {
+		if category == combat.Unknown || (category == combat.Neutral && !policy.IncludeNeutral) {
 			continue
 		}
 		visible, err := a.HasLineOfSight(ctx, entity.X, entity.Y, entity.Z)
@@ -56,5 +65,5 @@ func (a *agent) RankCombatTargets(ctx context.Context, radius float64, includeNe
 			Health: entity.Health, MaxHealth: entity.MaxHealth, Visible: visible,
 		})
 	}
-	return combat.Rank(targets, includeNeutral), nil
+	return combat.RankWithPolicy(targets, policy), nil
 }

@@ -89,7 +89,7 @@ Supporting document: `docs/plans/combat/RANGED_INTEGRATION.md`.
 
 Goal: validate the complete subsystem against real server behavior.
 
-- [ ] Add player-vs-player target discovery and explicit friendly-fire policy.
+- [x] Add player-vs-player target discovery and explicit friendly-fire policy.
 - [ ] Add tests for player targeting, armor/equipment changes, shields, projectile attacks, and death/respawn.
 - [ ] Add multi-version live coverage for supported protocol versions.
 - [ ] Add combat metrics/logging sufficient to diagnose target choice, state transitions, attacks, misses, and retreats.
@@ -184,3 +184,10 @@ Combat is complete only when the agent can, without direct per-attack commands:
 - Fixed spear Charge aiming and visibility validation to use the target entity body rather than its feet position, avoiding ground-block occlusion on 1.21.11 and 26.1 flat-world scenarios.
 - Verified the agent deadlock regression test with and without `-race`, the combat package, and the integration package compilation.
 - The next step is to rerun the full focused live combat suite and verify all 1.21.11+ spear Jab and Charge cases pass.
+
+### 2026-09-26 — Explicit PvP target policy
+
+- Added `combat.TargetPolicy` and policy-aware ranking so player targets are selectable only when explicitly enabled.
+- Added `RankCombatTargetsWithPolicy` and `RunCombatWithPolicy`; the existing `RunCombat` entry point now defaults to PvE-only targeting.
+- Added deterministic tests covering player exclusion by default and player priority when PvP is enabled.
+- Next step: implement combat observability and attack-primitive unit coverage before adding shield/critical-hit execution behavior.

@@ -38,6 +38,13 @@ type Target struct {
 	Removed    bool
 }
 
+// TargetPolicy controls which non-hostile target categories combat may select.
+// Players are opt-in so callers do not accidentally enable friendly fire.
+type TargetPolicy struct {
+	IncludePlayers bool
+	IncludeNeutral bool
+}
+
 // Classify maps a registry type name to the default combat category.
 func Classify(typeName string) Category {
 	name := strings.ToLower(strings.TrimSpace(typeName))
@@ -85,12 +92,24 @@ func Priority(target Target) float64 {
 // Rank returns eligible targets from highest priority to lowest priority.
 // Neutral targets are excluded unless includeNeutral is true.
 func Rank(targets []Target, includeNeutral bool) []Target {
+	return RankWithPolicy(targets, TargetPolicy{
+		IncludePlayers: true,
+		IncludeNeutral: includeNeutral,
+	})
+}
+
+// RankWithPolicy returns eligible targets ordered by combat priority while
+// applying the caller's explicit player and neutral-target policy.
+func RankWithPolicy(targets []Target, policy TargetPolicy) []Target {
 	eligible := make([]Target, 0, len(targets))
 	for _, target := range targets {
 		if target.Removed || !target.Visible || target.Category == Unknown {
 			continue
 		}
-		if target.Category == Neutral && !includeNeutral {
+		if target.Category == Neutral && !policy.IncludeNeutral {
+			continue
+		}
+		if target.Category == Player && !policy.IncludePlayers {
 			continue
 		}
 		eligible = append(eligible, target)

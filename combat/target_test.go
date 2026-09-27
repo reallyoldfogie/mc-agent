@@ -49,3 +49,20 @@ func TestPriorityPrefersLowerHealthAtSameDistance(t *testing.T) {
 		t.Fatalf("low-health target should have higher priority")
 	}
 }
+
+func TestRankWithPolicyRequiresExplicitPlayerOptIn(t *testing.T) {
+	targets := []Target{
+		{EntityID: 1, Category: Player, Distance: 2, Visible: true},
+		{EntityID: 2, Category: Hostile, Distance: 3, Visible: true},
+	}
+
+	pve := RankWithPolicy(targets, TargetPolicy{})
+	if len(pve) != 1 || pve[0].EntityID != 2 {
+		t.Fatalf("PvE policy selected %+v, want only hostile target", pve)
+	}
+
+	pvp := RankWithPolicy(targets, TargetPolicy{IncludePlayers: true})
+	if len(pvp) != 2 || pvp[0].EntityID != 1 {
+		t.Fatalf("PvP policy selected %+v, want player first", pvp)
+	}
+}

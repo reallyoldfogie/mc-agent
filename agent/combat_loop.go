@@ -14,6 +14,16 @@ import (
 // executes melee decisions only; ranged decisions produce movement intents but
 // do not send a ranged attack until projectile integration is ready.
 func (a *agent) RunCombat(ctx context.Context, radius float64, includeNeutral bool) error {
+	return a.RunCombatWithPolicy(ctx, radius, combat.TargetPolicy{
+		IncludePlayers: false,
+		IncludeNeutral: includeNeutral,
+	})
+}
+
+// RunCombatWithPolicy runs autonomous combat with an explicit target policy.
+// Player targeting is opt-in at this boundary to prevent accidental friendly
+// fire for callers that need PvE-only behavior.
+func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy combat.TargetPolicy) error {
 	if ctx == nil {
 		return fmt.Errorf("combat loop: nil context")
 	}
@@ -32,7 +42,7 @@ func (a *agent) RunCombat(ctx context.Context, radius float64, includeNeutral bo
 		case <-ctx.Done():
 			return ctx.Err()
 		case now := <-timer.C:
-			targets, err := a.RankCombatTargets(ctx, radius, includeNeutral)
+			targets, err := a.RankCombatTargetsWithPolicy(ctx, radius, policy)
 			if err != nil {
 				return fmt.Errorf("combat loop: rank targets: %w", err)
 			}
