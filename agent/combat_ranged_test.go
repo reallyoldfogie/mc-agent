@@ -1,10 +1,39 @@
 package agent
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/combat"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
+
+func TestExecuteRangedAttackRejectsLostTargetBeforeInventoryMutation(t *testing.T) {
+	a := &agent{entities: make(map[int32]*trackedEntity)}
+	request := combat.RangedAttackRequest{
+		TargetID: 42, Weapon: combat.Bow, TargetPosition: models.V3{X: 1},
+		ProjectileSpeed: 3, CancelOnTargetLoss: true,
+	}
+	if err := a.ExecuteRangedAttack(context.Background(), request); err == nil {
+		t.Fatal("lost ranged target should be rejected before dispatch")
+	}
+}
+
+func TestSleepRangedChargeCancelsWhenTargetIsRemoved(t *testing.T) {
+	a := &agent{entities: map[int32]*trackedEntity{
+		42: {EntityID: 42},
+	}}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		a.entitiesMu.Lock()
+		a.entities[42].Removed = true
+		a.entitiesMu.Unlock()
+	}()
+	if err := a.sleepRangedCharge(context.Background(), 42, true, 500*time.Millisecond); err == nil {
+		t.Fatal("ranged charge should cancel after target removal")
+	}
+}
 
 func TestProjectileForCombatWeapon(t *testing.T) {
 	tests := []struct {

@@ -22,6 +22,9 @@ func (a *agent) ExecuteRangedAttack(ctx context.Context, request combat.RangedAt
 	if err != nil {
 		return err
 	}
+	if request.CancelOnTargetLoss && !a.combatTargetAvailable(request.TargetID) {
+		return fmt.Errorf("ranged attack: target %d was lost before dispatch", request.TargetID)
+	}
 
 	itemName, projectile, err := projectileForCombatWeapon(request.Weapon)
 	if err != nil {
@@ -38,7 +41,7 @@ func (a *agent) ExecuteRangedAttack(ctx context.Context, request combat.RangedAt
 	switch projectile {
 	case models.Arrow:
 		if request.Weapon == combat.Crossbow {
-			if err := a.fireCrossbowAt(ctx, position.X, position.Y, position.Z, request.ChargeDuration); err != nil {
+			if err := a.fireCrossbowAt(ctx, request.TargetID, request.CancelOnTargetLoss, position.X, position.Y, position.Z, request.ChargeDuration); err != nil {
 				return fmt.Errorf("ranged attack: fire crossbow: %w", err)
 			}
 		} else if _, err := a.FireBowAt(ctx, position.X, position.Y, position.Z); err != nil {
@@ -96,7 +99,7 @@ func crossbowChargeDuration(weapon combat.ProjectileWeapon) time.Duration {
 	return 0
 }
 
-func (a *agent) fireCrossbowAt(ctx context.Context, x, y, z float64, chargeDuration time.Duration) error {
+func (a *agent) fireCrossbowAt(ctx context.Context, targetID int32, cancelOnTargetLoss bool, x, y, z float64, chargeDuration time.Duration) error {
 	if chargeDuration <= 0 {
 		return fmt.Errorf("invalid crossbow charge duration %v", chargeDuration)
 	}
@@ -135,9 +138,40 @@ func (a *agent) fireCrossbowAt(ctx context.Context, x, y, z float64, chargeDurat
 	if err := actions.SendUseItem(conn, models.MainHand, a.getNextSequence(), yaw, pitch); err != nil {
 		return err
 	}
-	if err := sleepWithContext(ctx, chargeDuration); err != nil {
+	if err := a.sleepRangedCharge(ctx, targetID, cancelOnTargetLoss, chargeDuration); err != nil {
 		_ = actions.SendPlayerAction(conn, common.PlayerActionReleaseUseItem, 0, 0, 0, 0, a.getNextSequence())
 		return err
 	}
 	return actions.SendPlayerAction(conn, common.PlayerActionReleaseUseItem, 0, 0, 0, 0, a.getNextSequence())
+}
+
+func (a *agent) combatTargetAvailable(entityID int32) bool {
+	target, ok := a.GetTrackedEntities()[entityID]
+	return ok && !target.Removed
+}
+
+func (a *agent) sleepRangedCharge(ctx context.Context, targetID int32, cancelOnTargetLoss bool, duration time.Duration) error {
+	if !cancelOnTargetLoss {
+		return sleepWithContext(ctx, duration)
+	}
+	if !a.combatTargetAvailable(targetID) {
+		return fmt.Errorf("ranged attack: target %d was lost while charging", targetID)
+	}
+	const pollInterval = 50 * time.Millisecond
+	timer := time.NewTimer(duration)
+	poll := time.NewTicker(pollInterval)
+	defer timer.Stop()
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		case <-poll.C:
+			if !a.combatTargetAvailable(targetID) {
+				return fmt.Errorf("ranged attack: target %d was lost while charging", targetID)
+			}
+		}
+	}
 }
