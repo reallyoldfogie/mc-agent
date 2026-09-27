@@ -92,7 +92,7 @@ Goal: validate the complete subsystem against real server behavior.
 - [x] Add player-vs-player target discovery and explicit friendly-fire policy.
 - [ ] Add tests for player targeting, armor/equipment changes, shields, projectile attacks, and death/respawn.
 - [ ] Add multi-version live coverage for supported protocol versions.
-- [ ] Add combat metrics/logging sufficient to diagnose target choice, state transitions, attacks, misses, and retreats.
+- [x] Add combat logging sufficient to diagnose target choice, state transitions, attacks, misses, and retreats.
 - [ ] Update README/testing status and mark this plan complete only after the autonomous scenario passes.
 
 ## Completion criteria
@@ -191,3 +191,9 @@ Combat is complete only when the agent can, without direct per-attack commands:
 - Added `RankCombatTargetsWithPolicy` and `RunCombatWithPolicy`; the existing `RunCombat` entry point now defaults to PvE-only targeting.
 - Added deterministic tests covering player exclusion by default and player priority when PvP is enabled.
 - Next step: implement combat observability and attack-primitive unit coverage before adding shield/critical-hit execution behavior.
+
+### 2026-09-26 — Combat decision observability
+
+- Added bounded combat logs for target selection/loss, state transitions, and melee attack success/failure.
+- Logging is emitted only when target identity/visibility or combat state changes, plus attack outcomes, avoiding per-tick log flooding.
+- Next step: add focused unit coverage for `AttackEntity` validation and dispatch paths.

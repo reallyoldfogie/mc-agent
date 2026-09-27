@@ -34,6 +34,9 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 
 	controller := combat.NewController()
 	currentWeapon := combat.NoWeapon
+	lastState := combat.Idle
+	lastTargetID := int32(-1)
+	lastTargetVisible := false
 	timer := time.NewTimer(a.combatTickInterval())
 	defer timer.Stop()
 
@@ -56,9 +59,24 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				obs.HasTarget, obs.TargetVisible = true, target.Visible
 				obs.TargetDistance = target.Distance
 				obs.TargetDirectionX, obs.TargetDirectionZ = target.DirectionX, target.DirectionZ
+				if target.EntityID != lastTargetID || target.Visible != lastTargetVisible {
+					a.logf("[combat] target selected: entity=%d type=%s category=%d distance=%.2f visible=%v health=%.1f/%.1f",
+						target.EntityID, target.TypeName, target.Category, target.Distance, target.Visible, target.Health, target.MaxHealth)
+				}
+				lastTargetID = target.EntityID
+				lastTargetVisible = target.Visible
+			} else if lastTargetID != -1 {
+				a.logf("[combat] target lost: entity=%d", lastTargetID)
+				lastTargetID = -1
+				lastTargetVisible = false
 			}
 
 			decision, intent := controller.Next(now, obs)
+			if decision.State != lastState {
+				a.logf("[combat] state transition: %d -> %d weapon=%d targets=%d health=%.1f/%.1f",
+					lastState, decision.State, decision.Weapon, len(targets), health, obs.MaxHealth)
+				lastState = decision.State
+			}
 			currentWeapon = decision.Weapon
 			if len(targets) > 0 {
 				target := targets[0]
@@ -73,7 +91,10 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			}
 			if decision.Attack && decision.Weapon == combat.MeleeWeapon && len(targets) > 0 {
 				if err := a.AttackEntity(ctx, targets[0].EntityID, false); err == nil {
+					a.logf("[combat] melee attack succeeded: entity=%d", targets[0].EntityID)
 					controller.CommitAttack(now)
+				} else {
+					a.logf("[combat] melee attack failed: entity=%d error=%v", targets[0].EntityID, err)
 				}
 			}
 			if decision.Attack && decision.Weapon == combat.RangedWeapon && len(targets) > 0 {
