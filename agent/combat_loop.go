@@ -139,11 +139,12 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				return fmt.Errorf("combat loop: movement: %w", err)
 			}
 			if decision.Attack && decision.Weapon == combat.MeleeWeapon && len(targets) > 0 {
+				critical := decision.Critical && a.combatCriticalEligible()
 				if err := a.AttackEntity(ctx, targets[0].EntityID, false); err == nil {
-					a.logf("[combat] melee attack succeeded: entity=%d", targets[0].EntityID)
+					a.logf("[combat] melee attack succeeded: entity=%d critical=%v", targets[0].EntityID, critical)
 					controller.CommitAttack(now)
 				} else {
-					a.logf("[combat] melee attack failed: entity=%d error=%v", targets[0].EntityID, err)
+					a.logf("[combat] melee attack failed: entity=%d critical=%v error=%v", targets[0].EntityID, critical, err)
 				}
 			}
 			if decision.Attack && decision.Weapon == combat.RangedWeapon && len(targets) > 0 {
@@ -194,6 +195,18 @@ func (a *agent) populateCombatMovementState(obs *combat.Observation) {
 	if executor != nil {
 		obs.Sprinting = executor.IsSprinting()
 	}
+}
+
+// combatCriticalEligible re-reads the movement/status state immediately before
+// melee dispatch. There is no critical-hit bit in the interaction packet: the
+// server derives critical-hit eligibility from the movement state at the time
+// it handles the attack. Rechecking here prevents stale controller decisions
+// from being reported as critical while preserving ordinary AttackEntity
+// dispatch when the state has changed between ticks.
+func (a *agent) combatCriticalEligible() bool {
+	var obs combat.Observation
+	a.populateCombatMovementState(&obs)
+	return combat.CriticalHitAllowed(obs)
 }
 
 // combatShieldLocation returns the preferred shield hand and, for a main-hand
