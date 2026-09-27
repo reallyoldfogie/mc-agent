@@ -41,6 +41,22 @@ func TestDecideStateTransitions(t *testing.T) {
 	}
 }
 
+func TestCriticalHealthForcesRetreatWithoutAttacking(t *testing.T) {
+	obs := Observation{
+		Health: 4, MaxHealth: 20, HasTarget: true, TargetVisible: true,
+		TargetDistance: 3, TargetDirectionX: 1,
+	}
+	decision := Decide(obs)
+	if decision.State != Retreating || decision.Attack {
+		t.Fatalf("critical health must retreat without attacking: %+v", decision)
+	}
+
+	intent := MovementFor(obs, decision, false)
+	if intent.Action != RetreatFromTarget || intent.ThrottleX != -1 || !intent.Sprint || !intent.Jump {
+		t.Fatalf("critical health should produce a sprinting retreat: %+v", intent)
+	}
+}
+
 func TestDecideShieldRaiseHoldAndRelease(t *testing.T) {
 	base := Observation{
 		Health: 20, MaxHealth: 20, HasTarget: true, TargetVisible: true,

@@ -101,6 +101,57 @@ func (s *CombatFlatSuite) TestRunCombatMelee() {
 	}
 }
 
+// TestRunCombatRetreatsAtCriticalHealth verifies that a known low-health agent
+// stops attacking and moves away from a visible target. The target is NoAI so
+// any displacement is attributable to the combat retreat policy.
+func (s *CombatFlatSuite) TestRunCombatRetreatsAtCriticalHealth() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatRetreatBot", "combat_retreat")
+	require.NoError(s.T(), err, "spawn retreat combat agent")
+
+	spawnX := leader.Origin.X + 4
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:zombie %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn retreat target")
+	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("damage %s 17 minecraft:generic", leader.Name))
+	require.NoError(s.T(), err, "reduce agent health")
+	healthProvider, ok := leader.Agent.(models.HealthProvider)
+	require.True(s.T(), ok, "agent should expose health observations")
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		health, _, _, known := healthProvider.Health()
+		if known && health <= 4 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	health, _, _, known := healthProvider.Health()
+	require.True(s.T(), known, "agent health should be synchronized")
+	require.LessOrEqual(s.T(), health, float32(4), "agent should be at critical health")
+
+	before, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "agent position should be initialized")
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 2*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 8, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "retreat combat should stop on test context")
+
+	after, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "agent position should remain initialized")
+	tracked, trackedOK := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), trackedOK, "retreat target should remain tracked")
+	beforeDistance := before.DistanceToXZ(models.V3{X: tracked.X, Z: tracked.Z})
+	afterDistance := after.DistanceToXZ(models.V3{X: tracked.X, Z: tracked.Z})
+	require.Greater(s.T(), afterDistance, beforeDistance+0.1,
+		"critical-health combat should move away from the target")
+}
+
 // TestAttackEntityCriticalWhileFalling verifies the server-derived critical
 // hit path independently of target-selection movement. The agent is
 // teleported above a stationary target, allowed to enter the falling phase,
