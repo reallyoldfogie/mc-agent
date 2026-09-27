@@ -17,6 +17,10 @@ type combatRunner interface {
 	RunCombat(context.Context, float64, bool) error
 }
 
+type entityAttackRunner interface {
+	AttackEntity(context.Context, int32, bool) error
+}
+
 type spearRunner interface {
 	ExecuteSpearAttack(context.Context, combat.SpearAttackRequest) error
 }
@@ -95,6 +99,58 @@ func (s *CombatFlatSuite) TestRunCombatMelee() {
 	if stillTracked && !after.Removed {
 		require.Less(s.T(), after.Health, before.Health, "combat loop should damage the stationary target")
 	}
+}
+
+// TestAttackEntityCriticalWhileFalling verifies the server-derived critical
+// hit path independently of target-selection movement. The agent is
+// teleported above a stationary target, allowed to enter the falling phase,
+// and then sends the normal entity-interaction attack packet. A netherite
+// sword's damage must exceed its fully charged non-critical base damage.
+func (s *CombatFlatSuite) TestAttackEntityCriticalWhileFalling() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatCriticalBot", "combat_critical")
+	require.NoError(s.T(), err, "spawn critical combat agent")
+
+	spawnX := leader.Origin.X + 2
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:zombie %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn critical target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", leader.Name))
+	require.NoError(s.T(), err, "give critical sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:netherite_sword"), "equip critical sword")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "critical target should have an initial health snapshot")
+
+	// Two blocks gives the client time to report a negative vertical velocity
+	// while keeping the target inside the normal interaction reach. Facing the
+	// target also removes server-side direction as a confounding variable.
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		"tp %s %.1f %.1f %.1f facing %.1f %.1f %.1f",
+		leader.Name, spawnX, spawnY+2, spawnZ, spawnX, spawnY+1, spawnZ))
+	require.NoError(s.T(), err, "teleport agent above critical target")
+	time.Sleep(150 * time.Millisecond)
+
+	attacker, ok := leader.Agent.(entityAttackRunner)
+	require.True(s.T(), ok, "agent should expose entity attack")
+	require.NoError(s.T(), attacker.AttackEntity(s.Ctx, targetID, false), "send falling attack")
+
+	deadline := time.Now().Add(2 * time.Second)
+	var after models.TrackedEntityInfo
+	for time.Now().Before(deadline) {
+		if current, tracked := leader.GetTrackedEntities()[targetID]; tracked {
+			after = current
+			if current.Health < before.Health {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Less(s.T(), after.Health, before.Health, "falling attack should damage the target")
+	require.Greater(s.T(), before.Health-after.Health, float32(8), "falling attack should exceed a fully charged netherite sword base hit")
 }
 
 func (s *CombatFlatSuite) TestRunCombatRangedBow() {
