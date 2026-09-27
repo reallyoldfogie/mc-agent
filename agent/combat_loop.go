@@ -9,11 +9,12 @@ import (
 	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
+	mcscreen "github.com/reallyoldfogie/mc-bot-go/bot/screen"
 )
 
-// RunCombat runs the first conservative autonomous combat loop. It currently
-// executes melee decisions only; ranged decisions produce movement intents but
-// do not send a ranged attack until projectile integration is ready.
+// RunCombat runs the first conservative autonomous combat loop. It dispatches
+// ordinary melee, version-aware spear Jab, and ranged projectile decisions
+// through their respective execution adapters.
 func (a *agent) RunCombat(ctx context.Context, radius float64, includeNeutral bool) error {
 	return a.RunCombatWithPolicy(ctx, radius, combat.TargetPolicy{
 		IncludePlayers: false,
@@ -140,7 +141,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			}
 			if decision.Attack && decision.Weapon == combat.MeleeWeapon && len(targets) > 0 {
 				critical := decision.Critical && a.combatCriticalEligible()
-				if err := a.AttackEntity(ctx, targets[0].EntityID, false); err == nil {
+				if err := a.executeCombatMeleeAttack(ctx, targets[0]); err == nil {
 					a.logf("[combat] melee attack succeeded: entity=%d critical=%v", targets[0].EntityID, critical)
 					controller.CommitAttack(now)
 				} else {
@@ -207,6 +208,40 @@ func (a *agent) combatCriticalEligible() bool {
 	var obs combat.Observation
 	a.populateCombatMovementState(&obs)
 	return combat.CriticalHitAllowed(obs)
+}
+
+// executeCombatMeleeAttack keeps ordinary melee dispatch unchanged while
+// routing a held spear through its version-aware executor. Spear Jab uses the
+// same primary interaction as a normal melee attack, but the adapter must
+// validate the 1.21.11+ item and reach semantics before sending it.
+func (a *agent) executeCombatMeleeAttack(ctx context.Context, target combat.Target) error {
+	itemName := a.combatHeldItemName()
+	if combat.ClassifyMeleeItem(itemName) != combat.SpearMeleeWeapon {
+		return a.AttackEntity(ctx, target.EntityID, false)
+	}
+	request, err := spearJabRequestForTarget(target, itemName)
+	if err != nil {
+		return err
+	}
+	return a.ExecuteSpearAttack(ctx, request)
+}
+
+func (a *agent) combatHeldItemName() string {
+	a.heldSlotMu.RLock()
+	heldSlot, set := a.heldSlot, a.heldSlotSet
+	a.heldSlotMu.RUnlock()
+	if !set {
+		return ""
+	}
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		return ""
+	}
+	itemID, count, ok := slots.ResolveSlot(-2, mcscreen.HotbarSlotStart+heldSlot)
+	if !ok || count <= 0 {
+		return ""
+	}
+	return normalizeItemName(itemMgr.GetItemNameByID(itemID))
 }
 
 // combatShieldLocation returns the preferred shield hand and, for a main-hand

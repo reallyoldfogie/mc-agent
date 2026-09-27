@@ -473,6 +473,41 @@ func (s *CombatFlatSuite) TestSpearJab1211() {
 	}
 }
 
+// TestRunCombatSpearJab1211 verifies that autonomous melee dispatch detects a
+// held 1.21.11+ spear and routes it through the spear executor instead of
+// treating it as an untyped AttackEntity weapon.
+func (s *CombatFlatSuite) TestRunCombatSpearJab1211() {
+	if !combat.SpearSupportedVersion(s.Version) {
+		s.T().Skipf("spears require Minecraft Java 1.21.11+: %s", s.Version)
+	}
+	leader, err := s.SpawnWorkingAreaAgent("CombatSpearLoopBot", "combat_spear_loop")
+	require.NoError(s.T(), err, "spawn autonomous spear agent")
+	spawnX := leader.Origin.X + 3
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:zombie %.1f %.1f %.1f {Health:20f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn autonomous spear target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:iron_spear", leader.Name))
+	require.NoError(s.T(), err, "give autonomous spear")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:iron_spear"), "equip autonomous spear")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "autonomous spear target should be tracked")
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 3*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 8, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "autonomous spear combat should stop on test context")
+	after, stillTracked := leader.GetTrackedEntities()[targetID]
+	if stillTracked && !after.Removed {
+		require.Less(s.T(), after.Health, before.Health, "autonomous spear Jab should damage the target")
+	}
+}
+
 func (s *CombatFlatSuite) TestSpearCharge1211() {
 	if !combat.SpearSupportedVersion(s.Version) {
 		s.T().Skipf("spears require Minecraft Java 1.21.11+: %s", s.Version)

@@ -10,6 +10,19 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
+func spearJabRequestForTarget(target combat.Target, itemName string) (combat.SpearAttackRequest, error) {
+	request := combat.SpearAttackRequest{
+		TargetID:       target.EntityID,
+		ItemName:       itemName,
+		Mode:           combat.SpearJab,
+		Distance:       target.Distance,
+		MinReach:       1,
+		MaxReach:       6,
+		TargetPosition: models.V3{X: target.X, Y: target.Y, Z: target.Z},
+	}
+	return request, request.Validate()
+}
+
 // ExecuteSpearAttack executes a validated Jab or held-use Charge for a
 // 1.21.11+ spear. The request supplies version/item-component thresholds.
 func (a *agent) ExecuteSpearAttack(ctx context.Context, request combat.SpearAttackRequest) error {
