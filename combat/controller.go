@@ -46,6 +46,15 @@ type Observation struct {
 	// attacks are withheld while it is true.
 	TargetIsRanged bool
 	TargetBlocking bool
+	// Critical-hit inputs are supplied by the movement/status adapter. A
+	// critical requires a downward/falling velocity and is invalid while on
+	// ground, swimming, mounted, blinded, or sprinting.
+	OnGround         bool
+	VerticalVelocity float64
+	InWater          bool
+	OnVehicle        bool
+	HasBlindness     bool
+	Sprinting        bool
 }
 
 // Decision is the controller's next high-level action. Execution is left to
@@ -55,6 +64,7 @@ type Decision struct {
 	Weapon       Weapon
 	Attack       bool
 	ShieldAction ShieldAction
+	Critical     bool
 }
 
 // ShieldAction is the controller's edge-triggered shield instruction. The
@@ -124,7 +134,16 @@ func Decide(obs Observation) Decision {
 	shield := shieldAction(obs, state)
 	attack := state == Engaging && obs.TargetVisible && shield != RaiseShield && shield != HoldShield &&
 		!(obs.TargetBlocking && weapon == MeleeWeapon)
-	return Decision{State: state, Weapon: weapon, Attack: attack, ShieldAction: shield}
+	return Decision{State: state, Weapon: weapon, Attack: attack, ShieldAction: shield,
+		Critical: attack && weapon == MeleeWeapon && CriticalHitAllowed(obs)}
+}
+
+// CriticalHitAllowed applies the client-observable preconditions for a Java
+// critical hit. Attack cooldown and reach are separate policies; this helper
+// only answers whether the movement/status state permits the critical flag.
+func CriticalHitAllowed(obs Observation) bool {
+	return !obs.OnGround && obs.VerticalVelocity < 0 && !obs.InWater &&
+		!obs.OnVehicle && !obs.HasBlindness && !obs.Sprinting
 }
 
 // shieldAction decides when the adapter should raise or release a shield.

@@ -69,6 +69,33 @@ func TestDecideWithholdsMeleeAttackAgainstBlockingTarget(t *testing.T) {
 	}
 }
 
+func TestCriticalHitAllowedRequiresFallingUnobstructedState(t *testing.T) {
+	base := Observation{VerticalVelocity: -0.1}
+	if !CriticalHitAllowed(base) {
+		t.Fatal("falling unobstructed agent should permit a critical hit")
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Observation)
+	}{
+		{"on ground", func(obs *Observation) { obs.OnGround = true }},
+		{"rising", func(obs *Observation) { obs.VerticalVelocity = 0.1 }},
+		{"in water", func(obs *Observation) { obs.InWater = true }},
+		{"on vehicle", func(obs *Observation) { obs.OnVehicle = true }},
+		{"blind", func(obs *Observation) { obs.HasBlindness = true }},
+		{"sprinting", func(obs *Observation) { obs.Sprinting = true }},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			obs := base
+			test.mutate(&obs)
+			if CriticalHitAllowed(obs) {
+				t.Fatalf("critical should be disallowed for %s", test.name)
+			}
+		})
+	}
+}
+
 func TestReadyToAttackUsesInjectedTimes(t *testing.T) {
 	now := time.Unix(100, 0)
 	if !ReadyToAttack(now, time.Time{}, MeleeWeapon) {
