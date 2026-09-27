@@ -39,6 +39,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 	lastTargetID := int32(-1)
 	lastTargetVisible := false
 	shieldActive := false
+	shieldRestoreSlot := int16(-1)
 	timer := time.NewTimer(a.combatTickInterval())
 	defer timer.Stop()
 
@@ -80,6 +81,22 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			decision, intent := controller.Next(now, obs)
 			switch decision.ShieldAction {
 			case combat.RaiseShield:
+				if hand, slot, ok := a.combatShieldLocation(); ok && hand == models.MainHand {
+					a.heldSlotMu.RLock()
+					currentSlot, currentSet := a.heldSlot, a.heldSlotSet
+					a.heldSlotMu.RUnlock()
+					if !currentSet {
+						a.logf("[combat] shield raise skipped: current hotbar slot is unknown")
+						break
+					}
+					shieldRestoreSlot = currentSlot
+					if currentSlot != slot {
+						if err := a.SelectHotbarSlot(ctx, slot); err != nil {
+							a.logf("[combat] shield slot selection failed: %v", err)
+							break
+						}
+					}
+				}
 				if err := a.setCombatShield(ctx, true); err != nil {
 					a.logf("[combat] shield raise failed: %v", err)
 				} else {
@@ -90,6 +107,12 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 					a.logf("[combat] shield lower failed: %v", err)
 				} else {
 					shieldActive = false
+					if shieldRestoreSlot >= 0 {
+						if err := a.SelectHotbarSlot(ctx, shieldRestoreSlot); err != nil {
+							a.logf("[combat] shield weapon restore failed: %v", err)
+						}
+						shieldRestoreSlot = -1
+					}
 				}
 			}
 			if decision.State != lastState {
@@ -142,19 +165,32 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 	}
 }
 
-// hasCombatShield reports only an off-hand shield. Raising a shield in the
-// main hand would require selecting a weapon slot and would race the combat
-// weapon selector; that equip policy is intentionally a separate follow-up.
-func (a *agent) hasCombatShield() bool {
+// combatShieldLocation returns the preferred shield hand and, for a main-hand
+// shield, its hotbar slot. Off-hand is preferred because it does not disturb
+// the selected combat weapon.
+func (a *agent) combatShieldLocation() (models.Hand, int16, bool) {
 	slots, itemMgr := a.getSlotInfoDeps()
 	if slots == nil || itemMgr == nil {
-		return false
+		return models.MainHand, -1, false
 	}
-	itemID, count, ok := slots.ResolveSlot(-2, 45) // player off-hand
-	if !ok || count <= 0 {
-		return false
+	isShield := func(index int16) bool {
+		itemID, count, ok := slots.ResolveSlot(-2, index)
+		return ok && count > 0 && normalizeItemName(itemMgr.GetItemNameByID(itemID)) == "minecraft:shield"
 	}
-	return normalizeItemName(itemMgr.GetItemNameByID(itemID)) == "minecraft:shield"
+	if isShield(45) { // player off-hand
+		return models.OffHand, -1, true
+	}
+	for slot := minHotbarSlot; slot <= maxHotbarSlot; slot++ {
+		if isShield(36 + slot) {
+			return models.MainHand, slot, true
+		}
+	}
+	return models.MainHand, -1, false
+}
+
+func (a *agent) hasCombatShield() bool {
+	_, _, ok := a.combatShieldLocation()
+	return ok
 }
 
 func combatTargetIsRanged(typeName string) bool {

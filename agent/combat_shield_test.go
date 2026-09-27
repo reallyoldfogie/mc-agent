@@ -47,11 +47,29 @@ func TestHasCombatShieldRequiresOffHandShield(t *testing.T) {
 	if makeAgent("minecraft:shield", 0).hasCombatShield() {
 		t.Fatal("empty off-hand slot should not be detected")
 	}
+
+	mainHand := &agent{
+		slots:   shieldMapResolver{items: map[int16]int32{38: 9}},
+		itemMgr: fakeMultiItemMgr{nameByID: map[int32]string{9: "minecraft:shield"}},
+	}
+	hand, slot, ok := mainHand.combatShieldLocation()
+	if !ok || hand != models.MainHand || slot != 2 {
+		t.Fatalf("main-hand shield location = hand=%v slot=%d ok=%v, want main hand slot 2", hand, slot, ok)
+	}
 }
 
 type shieldSlotResolver struct {
 	itemID int32
 	count  int
+}
+
+type shieldMapResolver struct {
+	items map[int16]int32
+}
+
+func (r shieldMapResolver) ResolveSlot(_ int, index int16) (int32, int, bool) {
+	itemID, ok := r.items[index]
+	return itemID, 1, ok
 }
 
 func (r shieldSlotResolver) ResolveSlot(_ int, index int16) (int32, int, bool) {
