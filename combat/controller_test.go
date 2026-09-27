@@ -41,6 +41,34 @@ func TestDecideStateTransitions(t *testing.T) {
 	}
 }
 
+func TestDecideShieldRaiseHoldAndRelease(t *testing.T) {
+	base := Observation{
+		Health: 20, MaxHealth: 20, HasTarget: true, TargetVisible: true,
+		TargetDistance: 12, ShieldAvailable: true, TargetIsRanged: true,
+	}
+	if got := Decide(base); got.ShieldAction != RaiseShield || got.Attack {
+		t.Fatalf("unraised shield should be raised before attacking: action=%v attack=%v", got.ShieldAction, got.Attack)
+	}
+	base.ShieldActive = true
+	if got := Decide(base); got.ShieldAction != HoldShield || got.Attack {
+		t.Fatalf("active shield should be held against ranged threat: action=%v attack=%v", got.ShieldAction, got.Attack)
+	}
+	base.TargetVisible = false
+	if got := Decide(base); got.ShieldAction != LowerShield {
+		t.Fatalf("shield should be lowered after losing line of sight: action=%v", got.ShieldAction)
+	}
+}
+
+func TestDecideWithholdsMeleeAttackAgainstBlockingTarget(t *testing.T) {
+	got := Decide(Observation{
+		Health: 20, MaxHealth: 20, HasTarget: true, TargetVisible: true,
+		TargetDistance: 3, CurrentWeapon: MeleeWeapon, TargetBlocking: true,
+	})
+	if got.State != Engaging || got.Weapon != MeleeWeapon || got.Attack {
+		t.Fatalf("melee attack should be withheld against blocking target: %+v", got)
+	}
+}
+
 func TestReadyToAttackUsesInjectedTimes(t *testing.T) {
 	now := time.Unix(100, 0)
 	if !ReadyToAttack(now, time.Time{}, MeleeWeapon) {

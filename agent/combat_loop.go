@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/combat"
+	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -37,6 +38,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 	lastState := combat.Idle
 	lastTargetID := int32(-1)
 	lastTargetVisible := false
+	shieldActive := false
 	timer := time.NewTimer(a.combatTickInterval())
 	defer timer.Stop()
 
@@ -53,12 +55,16 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			if !known {
 				health = 20
 			}
-			obs := combat.Observation{Health: health, MaxHealth: 20, EnemyCount: len(targets), CurrentWeapon: currentWeapon}
+			obs := combat.Observation{
+				Health: health, MaxHealth: 20, EnemyCount: len(targets), CurrentWeapon: currentWeapon,
+				ShieldAvailable: a.hasCombatShield(), ShieldActive: shieldActive,
+			}
 			if len(targets) > 0 {
 				target := targets[0]
 				obs.HasTarget, obs.TargetVisible = true, target.Visible
 				obs.TargetDistance = target.Distance
 				obs.TargetDirectionX, obs.TargetDirectionZ = target.DirectionX, target.DirectionZ
+				obs.TargetIsRanged = combatTargetIsRanged(target.TypeName)
 				if target.EntityID != lastTargetID || target.Visible != lastTargetVisible {
 					a.logf("[combat] target selected: entity=%d type=%s category=%d distance=%.2f visible=%v health=%.1f/%.1f",
 						target.EntityID, target.TypeName, target.Category, target.Distance, target.Visible, target.Health, target.MaxHealth)
@@ -72,6 +78,20 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			}
 
 			decision, intent := controller.Next(now, obs)
+			switch decision.ShieldAction {
+			case combat.RaiseShield:
+				if err := a.setCombatShield(ctx, true); err != nil {
+					a.logf("[combat] shield raise failed: %v", err)
+				} else {
+					shieldActive = true
+				}
+			case combat.LowerShield:
+				if err := a.setCombatShield(ctx, false); err != nil {
+					a.logf("[combat] shield lower failed: %v", err)
+				} else {
+					shieldActive = false
+				}
+			}
 			if decision.State != lastState {
 				a.logf("[combat] state transition: %d -> %d weapon=%d targets=%d health=%.1f/%.1f",
 					lastState, decision.State, decision.Weapon, len(targets), health, obs.MaxHealth)
@@ -120,6 +140,67 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 			timer.Reset(a.combatTickInterval())
 		}
 	}
+}
+
+// hasCombatShield reports only an off-hand shield. Raising a shield in the
+// main hand would require selecting a weapon slot and would race the combat
+// weapon selector; that equip policy is intentionally a separate follow-up.
+func (a *agent) hasCombatShield() bool {
+	slots, itemMgr := a.getSlotInfoDeps()
+	if slots == nil || itemMgr == nil {
+		return false
+	}
+	itemID, count, ok := slots.ResolveSlot(-2, 45) // player off-hand
+	if !ok || count <= 0 {
+		return false
+	}
+	return normalizeItemName(itemMgr.GetItemNameByID(itemID)) == "minecraft:shield"
+}
+
+func combatTargetIsRanged(typeName string) bool {
+	switch normalizeItemName(typeName) {
+	case "minecraft:skeleton", "minecraft:stray", "minecraft:bogged", "minecraft:breeze", "skeleton", "stray", "bogged", "breeze":
+		return true
+	default:
+		return false
+	}
+}
+
+// setCombatShield emits the same generic use-item/release sequence used by a
+// vanilla client. The off-hand item is known to be a shield by
+// hasCombatShield; no version-specific shield packet exists.
+func (a *agent) setCombatShield(ctx context.Context, active bool) error {
+	if ctx == nil {
+		return fmt.Errorf("shield action: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a.versionHandler == nil {
+		return fmt.Errorf("shield action: missing version handler")
+	}
+	actions := a.versionHandler.Play().Actions()
+	if actions == nil {
+		return fmt.Errorf("shield action: action handler not available")
+	}
+	conn, err := a.getPacketWriter()
+	if err != nil {
+		return err
+	}
+	_, yaw, pitch, ok := a.GetPosition()
+	if active && !ok {
+		return fmt.Errorf("shield action: agent position not initialized")
+	}
+	return sendCombatShieldAction(actions, conn, active, yaw, pitch, a.getNextSequence())
+}
+
+// sendCombatShieldAction is kept separate from agent state so packet dispatch
+// can be tested against each version handler without a live server.
+func sendCombatShieldAction(actions models.ActionHandler, conn models.PacketWriter, active bool, yaw, pitch float64, sequence int32) error {
+	if active {
+		return actions.SendUseItem(conn, models.OffHand, sequence, yaw, pitch)
+	}
+	return actions.SendPlayerAction(conn, common.PlayerActionReleaseUseItem, 0, 0, 0, 0, sequence)
 }
 
 // combatTickInterval returns the current server tick interval. The packet

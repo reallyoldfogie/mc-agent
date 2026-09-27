@@ -35,15 +35,39 @@ type Observation struct {
 	TargetDirectionX float64
 	TargetDirectionZ float64
 	CurrentWeapon    Weapon
+	// ShieldAvailable reports that the adapter has a usable shield equipped.
+	// ShieldActive reports the server/client state currently known by the
+	// adapter.  The controller never assumes a shield exists merely because a
+	// block would be tactically useful.
+	ShieldAvailable bool
+	ShieldActive    bool
+	// TargetIsRanged identifies a target whose primary threat is a projectile.
+	// TargetBlocking is the target's currently observed blocking state; melee
+	// attacks are withheld while it is true.
+	TargetIsRanged bool
+	TargetBlocking bool
 }
 
 // Decision is the controller's next high-level action. Execution is left to
 // an adapter so this package can be tested without a Minecraft connection.
 type Decision struct {
-	State  State
-	Weapon Weapon
-	Attack bool
+	State        State
+	Weapon       Weapon
+	Attack       bool
+	ShieldAction ShieldAction
 }
+
+// ShieldAction is the controller's edge-triggered shield instruction. The
+// adapter owns packet details and must report ShieldActive in its next
+// observation after executing RaiseShield or LowerShield.
+type ShieldAction uint8
+
+const (
+	NoShieldAction ShieldAction = iota
+	RaiseShield
+	HoldShield
+	LowerShield
+)
 
 const (
 	meleeRange          = 5.0
@@ -87,7 +111,7 @@ func ChooseWeapon(distance float64, current Weapon) Weapon {
 // allowed in principle. Cooldown timing is applied separately by ReadyToAttack.
 func Decide(obs Observation) Decision {
 	if !obs.HasTarget {
-		return Decision{State: Idle, Weapon: obs.CurrentWeapon}
+		return Decision{State: Idle, Weapon: obs.CurrentWeapon, ShieldAction: shieldAction(obs, Idle)}
 	}
 	ratio := HealthRatio(obs.Health, obs.MaxHealth)
 	state := Engaging
@@ -97,7 +121,29 @@ func Decide(obs Observation) Decision {
 		state = Evading
 	}
 	weapon := ChooseWeapon(obs.TargetDistance, obs.CurrentWeapon)
-	return Decision{State: state, Weapon: weapon, Attack: state == Engaging && obs.TargetVisible}
+	shield := shieldAction(obs, state)
+	attack := state == Engaging && obs.TargetVisible && shield != RaiseShield && shield != HoldShield &&
+		!(obs.TargetBlocking && weapon == MeleeWeapon)
+	return Decision{State: state, Weapon: weapon, Attack: attack, ShieldAction: shield}
+}
+
+// shieldAction decides when the adapter should raise or release a shield.
+// Ranged threats are the first supported trigger because the decision is
+// useful without guessing at melee timing. A shield is held only while the
+// threat remains visible, preventing stale blocking after a target is lost.
+func shieldAction(obs Observation, state State) ShieldAction {
+	threat := obs.ShieldAvailable && obs.HasTarget && obs.TargetVisible &&
+		obs.TargetIsRanged && state != Idle
+	if !threat {
+		if obs.ShieldActive {
+			return LowerShield
+		}
+		return NoShieldAction
+	}
+	if obs.ShieldActive {
+		return HoldShield
+	}
+	return RaiseShield
 }
 
 // AttackInterval returns conservative range-class intervals. Specific item
