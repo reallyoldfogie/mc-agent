@@ -120,6 +120,11 @@ func (s *CombatFlatSuite) TestAttackEntityCriticalWhileFalling() {
 	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", leader.Name))
 	require.NoError(s.T(), err, "give critical sword")
 	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:netherite_sword"), "equip critical sword")
+	// The server's attack-strength ticker starts below full charge after the
+	// agent joins/equips an item. Let it reach full strength before beginning
+	// the falling sequence; otherwise the server reports a weak hit regardless
+	// of the falling movement state.
+	time.Sleep(600 * time.Millisecond)
 
 	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
 	before, ok := leader.GetTrackedEntities()[targetID]
