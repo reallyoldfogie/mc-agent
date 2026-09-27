@@ -143,7 +143,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				critical := decision.Critical && a.combatCriticalEligible()
 				if err := a.executeCombatMeleeAttack(ctx, targets[0]); err == nil {
 					a.logf("[combat] melee attack succeeded: entity=%d critical=%v", targets[0].EntityID, critical)
-					controller.CommitAttack(now)
+					controller.CommitAttack(time.Now())
 				} else {
 					a.logf("[combat] melee attack failed: entity=%d critical=%v error=%v", targets[0].EntityID, critical, err)
 				}
@@ -157,7 +157,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 						continue
 					}
 					if err := a.ExecuteRangedAttack(ctx, request); err == nil {
-						controller.CommitAttack(now)
+						controller.CommitAttack(time.Now())
 						lastErr = nil
 						break
 					} else {

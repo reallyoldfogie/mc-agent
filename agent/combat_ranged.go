@@ -44,8 +44,17 @@ func (a *agent) ExecuteRangedAttack(ctx context.Context, request combat.RangedAt
 			if err := a.fireCrossbowAt(ctx, request.TargetID, request.CancelOnTargetLoss, position.X, position.Y, position.Z, request.ChargeDuration); err != nil {
 				return fmt.Errorf("ranged attack: fire crossbow: %w", err)
 			}
-		} else if _, err := a.FireBowAt(ctx, position.X, position.Y, position.Z); err != nil {
-			return fmt.Errorf("ranged attack: fire bow: %w", err)
+		} else {
+			if _, err := a.FireBowAt(ctx, position.X, position.Y, position.Z); err != nil {
+				return fmt.Errorf("ranged attack: fire bow: %w", err)
+			}
+			// FireBowAt starts the vanilla hold/release sequence asynchronously
+			// for legacy callers. Autonomous combat must wait for that sequence
+			// to finish before its controller cooldown is committed, otherwise
+			// the next tick can overlap an active draw.
+			if err := sleepWithContext(ctx, maxBowHoldDuration); err != nil {
+				return fmt.Errorf("ranged attack: wait for bow release: %w", err)
+			}
 		}
 	case models.Trident:
 		if _, err := a.ThrowProjectileAt(ctx, models.Trident, position.X, position.Y, position.Z); err != nil {
