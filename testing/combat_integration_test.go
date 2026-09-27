@@ -299,6 +299,39 @@ func (s *CombatFlatSuite) TestRunCombatRangedCrossbow() {
 	}
 }
 
+// TestRunCombatRangedTrident verifies the final fallback in autonomous ranged
+// dispatch: when no bow or crossbow is available, a held trident is selected
+// and thrown at a distant target.
+func (s *CombatFlatSuite) TestRunCombatRangedTrident() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatTridentBot", "combat_trident")
+	require.NoError(s.T(), err, "spawn trident combat agent")
+
+	spawnX := leader.Origin.X + 12
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:zombie %.1f %.1f %.1f {Health:20f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn trident target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:trident", leader.Name))
+	require.NoError(s.T(), err, "give trident")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:trident"), "equip trident")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "trident target should be tracked")
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 10*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 20, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "trident combat should stop on test context")
+	after, stillTracked := leader.GetTrackedEntities()[targetID]
+	if stillTracked && !after.Removed {
+		require.Less(s.T(), after.Health, before.Health, "autonomous trident throw should damage the target")
+	}
+}
+
 // TestRunCombatShieldBlocksSkeleton verifies the end-to-end shield path:
 // inventory synchronization, off-hand shield detection, use-item/release
 // packets, and server-side projectile mitigation. This deliberately uses an
