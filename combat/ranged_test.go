@@ -60,3 +60,21 @@ func TestRangedAttackRequestCarriesTargetVelocityIntoLead(t *testing.T) {
 		t.Fatalf("velocity lead: got %+v", got)
 	}
 }
+
+func TestRangedAttackRequestCarriesProjectileCallbacks(t *testing.T) {
+	callback := func(models.ProjectileHitEvent) {}
+	request := RangedAttackRequest{
+		TargetID:            7,
+		Weapon:              Bow,
+		TargetPosition:      models.V3{X: 10, Y: 2, Z: -4},
+		ProjectileSpeed:     3,
+		FlightTime:          1,
+		ProjectileCallbacks: []models.ProjectileHitCallback{callback},
+	}
+	if err := request.Validate(); err != nil {
+		t.Fatalf("request with callback should validate: %v", err)
+	}
+	if len(request.ProjectileCallbacks) != 1 {
+		t.Fatalf("request lost projectile callback: %d", len(request.ProjectileCallbacks))
+	}
+}

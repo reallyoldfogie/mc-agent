@@ -34,6 +34,9 @@ type RangedAttackRequest struct {
 	ChargeDuration     time.Duration
 	Priority           int
 	CancelOnTargetLoss bool
+	// ProjectileCallbacks receive the existing server-authoritative projectile
+	// result, including target-position validation, after the shot is tracked.
+	ProjectileCallbacks []models.ProjectileHitCallback
 }
 
 // Validate rejects requests that cannot be executed safely.

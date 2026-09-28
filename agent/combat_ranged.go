@@ -41,11 +41,11 @@ func (a *agent) ExecuteRangedAttack(ctx context.Context, request combat.RangedAt
 	switch projectile {
 	case models.Arrow:
 		if request.Weapon == combat.Crossbow {
-			if err := a.fireCrossbowAt(ctx, request.TargetID, request.CancelOnTargetLoss, position.X, position.Y, position.Z, request.ChargeDuration); err != nil {
+			if err := a.fireCrossbowAt(ctx, request.TargetID, request.CancelOnTargetLoss, position, request.TargetPosition, request.ChargeDuration, request.ProjectileCallbacks...); err != nil {
 				return fmt.Errorf("ranged attack: fire crossbow: %w", err)
 			}
 		} else {
-			if _, err := a.FireBowAt(ctx, position.X, position.Y, position.Z); err != nil {
+			if _, err := a.FireBowAt(ctx, position.X, position.Y, position.Z, request.ProjectileCallbacks...); err != nil {
 				return fmt.Errorf("ranged attack: fire bow: %w", err)
 			}
 			// FireBowAt starts the vanilla hold/release sequence asynchronously
@@ -57,7 +57,7 @@ func (a *agent) ExecuteRangedAttack(ctx context.Context, request combat.RangedAt
 			}
 		}
 	case models.Trident:
-		if _, err := a.ThrowProjectileAt(ctx, models.Trident, position.X, position.Y, position.Z); err != nil {
+		if _, err := a.ThrowProjectileAt(ctx, models.Trident, position.X, position.Y, position.Z, request.ProjectileCallbacks...); err != nil {
 			return fmt.Errorf("ranged attack: throw trident: %w", err)
 		}
 	default:
@@ -119,14 +119,14 @@ func crossbowChargeDuration(weapon combat.ProjectileWeapon) time.Duration {
 	return 0
 }
 
-func (a *agent) fireCrossbowAt(ctx context.Context, targetID int32, cancelOnTargetLoss bool, x, y, z float64, chargeDuration time.Duration) error {
+func (a *agent) fireCrossbowAt(ctx context.Context, targetID int32, cancelOnTargetLoss bool, aimedPosition, targetPosition models.V3, chargeDuration time.Duration, callbacks ...models.ProjectileHitCallback) error {
 	if chargeDuration <= 0 {
 		return fmt.Errorf("invalid crossbow charge duration %v", chargeDuration)
 	}
-	if err := a.TurnTowards(ctx, x, y, z); err != nil {
+	if err := a.TurnTowards(ctx, aimedPosition.X, aimedPosition.Y, aimedPosition.Z); err != nil {
 		return err
 	}
-	visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, x, y, z)
+	visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, aimedPosition.X, aimedPosition.Y, aimedPosition.Z)
 	if err != nil {
 		return err
 	}
@@ -138,7 +138,7 @@ func (a *agent) fireCrossbowAt(ctx context.Context, targetID int32, cancelOnTarg
 		return fmt.Errorf("agent position not initialized")
 	}
 	origin := models.V3{X: botPos.X, Y: botPos.Y + a.getEyeHeight() - 0.1, Z: botPos.Z}
-	if solution, err := a.FindValidTrajectory(models.Arrow, origin, models.V3{X: x, Y: y, Z: z}); err != nil {
+	if solution, err := a.FindValidTrajectory(models.Arrow, origin, aimedPosition); err != nil {
 		return err
 	} else if len(solution.Trajectory) == 0 {
 		return fmt.Errorf("no unobstructed crossbow trajectory to target")
@@ -155,6 +155,10 @@ func (a *agent) fireCrossbowAt(ctx context.Context, targetID int32, cancelOnTarg
 	if !ok {
 		return fmt.Errorf("agent position not initialized")
 	}
+	// Register before the use packet, matching bow/trident behavior. The
+	// server-spawned arrow is then associated with this request and its
+	// intended target position for hit validation.
+	a.setPendingProjectileCallback(models.Arrow, &targetPosition, callbacks...)
 	if err := actions.SendUseItem(conn, models.MainHand, a.getNextSequence(), yaw, pitch); err != nil {
 		return err
 	}
