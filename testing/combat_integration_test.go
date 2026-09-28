@@ -307,7 +307,11 @@ func (s *CombatFlatSuite) TestRunCombatRangedTrident() {
 	require.NoError(s.T(), err, "spawn trident combat agent")
 
 	spawnX := leader.Origin.X + 12
-	spawnY := leader.Origin.Y
+	// Keep the target's feet one block above the flat-world origin. At Y=0,
+	// the trident solver can correctly report the ground block as intersecting
+	// the final downward trajectory on older protocol versions, even though the
+	// server-side mob is otherwise a valid target.
+	spawnY := leader.Origin.Y + 1
 	spawnZ := leader.Origin.Z
 	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
 		`summon minecraft:zombie %.1f %.1f %.1f {Health:20f,NoAI:1b,PersistenceRequired:1b}`,
