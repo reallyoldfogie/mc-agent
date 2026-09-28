@@ -53,15 +53,15 @@ type fakeAgent struct {
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
 	// recipes, instead of the single mine block / craft target above.
-	chainInv              map[string]int
-	chainBlocks           map[[3]int]string
-	chainDrops            int
-	clearedInventory      int
-	clearedDropAreas      [][4]int
-	failNextPlace         bool
+	chainInv         map[string]int
+	chainBlocks      map[[3]int]string
+	chainDrops       int
+	clearedInventory int
+	clearedDropAreas [][4]int
+	failNextPlace    bool
 	// placeThenFail places the block but reports failure once: the world
 	// changed, the caller was not told (the bot's view lagged).
-	placeThenFail bool
+	placeThenFail         bool
 	findVisibleBlockCalls int
 
 	// Crafting table simulation: FindVisibleBlock reports a table (at the

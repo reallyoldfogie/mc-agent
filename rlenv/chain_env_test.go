@@ -242,6 +242,28 @@ func TestChainUnreportedPlacementIsFoundAndCleanedUp(t *testing.T) {
 	}
 }
 
+// A table that was not placed by this episode (a craft task's seeded table,
+// another bot's) never counts as placed: it must not pay the placement bonus
+// or end a stage-3 episode, before or without a place action.
+func TestChainForeignTableIsNotPlaced(t *testing.T) {
+	agent, env := newChainEnv(t, rlenv.ChainPlace, "minecraft:crafting_table")
+	ctx := context.Background()
+	agent.mu.Lock()
+	agent.chainBlocks[[3]int{0, -60, 1}] = "minecraft:crafting_table" // beside the bot at its start
+	agent.mu.Unlock()
+	obs, err := env.Reset(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.Values[20] != 0 {
+		t.Fatalf("a foreign table shows as placed at Reset: %v", obs.Values[20])
+	}
+	r := step(t, env, rlenv.ActionWait)
+	if r.Done || r.Observation.Values[20] != 0 || r.Reward > 0 {
+		t.Fatalf("wait next to a foreign table: done=%v placed=%v reward=%v, want nothing", r.Done, r.Observation.Values[20], r.Reward)
+	}
+}
+
 // Every table in reach is recorded for removal, not just the first: a second
 // one (a repeated placement) must not be left standing for the next episode.
 func TestChainRecordsEveryPlacedTable(t *testing.T) {

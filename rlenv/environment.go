@@ -60,8 +60,14 @@ type Environment struct {
 	chainState       chainState
 	chainInv         chainInventory
 	chainTablePlaced bool
-	placedAt         *farSeededBlock
-	chainAnchor      *farSeededBlock
+	// placeAttempted is whether this episode has dispatched a place action.
+	// Only then can a table beside the bot be one it put there: a table the
+	// craft tasks seeded, or another bot placed, is not (found live, in the
+	// first minutes of a parallel run: a table already standing near the
+	// bot paid the placement bonus after a single wait).
+	placeAttempted bool
+	placedAt       *farSeededBlock
+	chainAnchor    *farSeededBlock
 
 	// farSeeded are the blocks seedFarTargets placed near this episode's
 	// goto target, removed at the next Reset (they sit outside
@@ -208,7 +214,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.removeFarSeeded(ctx)
 	e.clearChainDrops(ctx)
 	e.clearArea(ctx)
-	e.chainState, e.chainInv, e.chainTablePlaced, e.placedAt = chainState{}, chainInventory{}, false, nil
+	e.chainState, e.chainInv, e.chainTablePlaced, e.placedAt, e.placeAttempted = chainState{}, chainInventory{}, false, nil, false
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -560,6 +566,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
 			e.consecutiveStepTimeouts++
 		}
+	}
+	if shouldDispatch && dispatch.name == placeActionName {
+		e.placeAttempted = true
 	}
 	if shouldDispatch && dispatch.name == mineActionName && e.cfg.CollectDrops {
 		e.collectDrops(ctx)
@@ -920,14 +929,14 @@ func (e *Environment) refreshChain() {
 		sticks: e.agent.InventoryCount(chainStick),
 		tables: e.agent.InventoryCount(chainTable),
 	}
-	if e.cfg.ChainStage >= ChainPlace {
+	if e.cfg.ChainStage >= ChainPlace && e.placeAttempted {
 		e.recordPlacedTable() // every table beside the bot, for removal at Reset
 	}
 	e.chainTablePlaced = e.placedAt != nil && e.agent.BlockNameAt(e.placedAt.x, e.placedAt.y, e.placedAt.z) == chainTable
-	if !e.chainTablePlaced && e.cfg.ChainStage >= ChainPlace && e.chainInv.tables == 0 {
+	if !e.chainTablePlaced && e.placeAttempted && e.chainInv.tables == 0 {
 		// Not where we recorded it (or never recorded), and none in hand: a
 		// table the bot's view was slow to show when it was placed may be in
-		// sight by now. A chain episode has no other table nearby.
+		// sight by now (only after a place action: see placeAttempted).
 		if x, y, z, found, err := e.agent.FindVisibleBlock(context.Background(), chainTable, chainTableSearchRadius); err == nil && found {
 			e.notePlacedTable(farSeededBlock{int(math.Floor(x)), int(math.Floor(y)), int(math.Floor(z))})
 			e.chainTablePlaced = true
