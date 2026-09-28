@@ -158,6 +158,18 @@ type Config struct {
 	// must be run with it on.
 	NormalizeObservation bool
 
+	// ChainStage, if non-zero, makes this a multi-step crafting-chain
+	// episode (chain.go): 1 gather a log, 2 ... craft planks and a table,
+	// 3 ... place the table, 4 ... craft CraftTargetItem (a chainGoals item)
+	// at the placed table. Enables ActionPlace, makes ActionCraft craft the
+	// next missing link toward the stage's goal instead of CraftTargetItem
+	// directly, replaces the mine and craft bonuses with milestone rewards,
+	// and adds the inventory-count features to the observation. Needs
+	// MineTargetBlock (the tree's log), SeedAtGoal and a Seeder whose agent
+	// implements ChainSeedAgent and FarSeedAgent (the tree is seeded out of
+	// sight, and the inventory and stray drops cleared each episode).
+	ChainStage int
+
 	// CollectDrops makes a mine step also collect the drops it produced, so
 	// the mined item is in the inventory when the step's observation and
 	// reward are computed. Breaking a block leaves an item entity on the
@@ -270,6 +282,9 @@ type TaskOverride struct {
 	// CollectDrops is Config.CollectDrops for this episode.
 	CollectDrops bool
 
+	// ChainStage is Config.ChainStage for this episode.
+	ChainStage int
+
 	// SeedAtGoal, for a composite episode (goto active alongside mine or
 	// craft), places the mine block or crafting table next to the goto
 	// target instead of beside the bot, so the bot has to travel to find
@@ -309,6 +324,9 @@ func (c Config) validate() error {
 	}
 	if c.TimePenalty < 0 {
 		return errTimePenalty
+	}
+	if c.ChainStage < 0 || c.ChainStage > ChainUse {
+		return errChainStage
 	}
 	return nil
 }

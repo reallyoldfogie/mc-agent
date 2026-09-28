@@ -80,3 +80,16 @@ type FarSeedAgent interface {
 	// recipe needs a crafting table, places one at (x, y, z).
 	SeedCraftIngredientsAt(ctx context.Context, itemName string, x, y, z int) error
 }
+
+// ChainSeedAgent is the optional capability multi-step chain episodes
+// (Config.ChainStage) need on top of FarSeedAgent: starting each one from an
+// empty inventory and with no stray drops lying around. A drop a previous
+// episode left near the tree, or near where the bot stood, would otherwise
+// be picked up by a later episode as a free log.
+type ChainSeedAgent interface {
+	// ClearInventory empties the bot's inventory.
+	ClearInventory(ctx context.Context) error
+	// ClearDroppedItems removes dropped item entities within radius blocks
+	// of (x, y, z).
+	ClearDroppedItems(ctx context.Context, x, y, z, radius int) error
+}

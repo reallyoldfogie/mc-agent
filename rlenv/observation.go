@@ -56,6 +56,18 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          active-vs-ready distinction as goalMineActive above, against
 //	          index 13 (craftReady).
 //
+//	index 17: chainLogs — oak logs held, / 8 when normalized.
+//	index 18: chainPlanks — oak planks held, / 8 when normalized.
+//	index 19: chainTables — crafting tables held (not placed), / 8 when normalized.
+//	index 20: chainTablePlaced — 1.0 if this chain episode has placed its table.
+//
+// indices 17-20 are the multi-step chain block (Config.ChainStage,
+// docs/plans/12 in mc-rsi-trainer): all zero outside chain episodes, so
+// every other task's observation differs from before only by four trailing
+// zeros. The action space also grew by one (ActionPlace); together they
+// change the checkpoint environment ID, so old checkpoints are refused
+// rather than misread.
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -99,7 +111,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 17
+const observationSize = 21
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -121,7 +133,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -154,6 +166,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				boolToFloat32(goToActive),
 				boolToFloat32(mineActive),
 				boolToFloat32(craftActive),
+				float32(chain.logs) / chainInventoryCountNorm,
+				float32(chain.planks) / chainInventoryCountNorm,
+				float32(chain.tables) / chainInventoryCountNorm,
+				boolToFloat32(chain.placed),
 			},
 		}
 	}
@@ -176,6 +192,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			boolToFloat32(goToActive),
 			boolToFloat32(mineActive),
 			boolToFloat32(craftActive),
+			float32(chain.logs),
+			float32(chain.planks),
+			float32(chain.tables),
+			boolToFloat32(chain.placed),
 		},
 	}
 }
@@ -190,4 +210,10 @@ func boolToFloat32(b bool) float32 {
 		return 1
 	}
 	return 0
+}
+
+// chainObs is the chain block of an observation (indices 17-20).
+type chainObs struct {
+	logs, planks, tables int
+	placed               bool
 }

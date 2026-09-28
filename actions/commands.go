@@ -887,6 +887,36 @@ func (Craft) Execute(ctx context.Context, agent models.CommandAgent, args []stri
 	return completion, nil
 }
 
+// Place places a block from the inventory on the ground next to the bot and
+// confirms it appeared (models.BlockPlacer).
+type Place struct{}
+
+func (Place) Name() string  { return "place" }
+func (Place) Usage() string { return "place <itemName>" }
+func (Place) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 {
+		_ = agent.SendChat("Usage: place <itemName>")
+		return models.Done(nil), nil
+	}
+	placer, ok := agent.(models.BlockPlacer)
+	if !ok {
+		_ = agent.SendChat("Place error: this agent cannot place blocks")
+		return models.Done(nil), nil
+	}
+	itemName := args[0]
+	completion, resolve := models.NewCompletion()
+	go func() {
+		cell, err := placer.PlaceHeldBlock(ctx, itemName)
+		if err != nil {
+			_ = agent.SendChat("Place error: " + err.Error())
+		} else {
+			_ = agent.SendChat(fmt.Sprintf("Placed %s at (%.0f, %.0f, %.0f)", itemName, cell.X, cell.Y, cell.Z))
+		}
+		resolve(err)
+	}()
+	return completion, nil
+}
+
 type Equip struct{}
 
 func (Equip) Name() string  { return "equip" }

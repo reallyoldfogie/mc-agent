@@ -51,6 +51,18 @@ type Environment struct {
 	// compositeGotoTask).
 	arrived bool
 
+	// chainState/chainInv/chainTablePlaced/chainAnchor back Config.ChainStage
+	// (chain.go). chainInv and chainTablePlaced cache the inventory and table
+	// state as of the last Step or Reset (refreshChain), read by the action
+	// mask and the craft resolver the way craftReady is; chainState remembers
+	// which milestones have paid; chainAnchor is the tree's base, kept to
+	// clear its stray drops at the next Reset.
+	chainState       chainState
+	chainInv         chainInventory
+	chainTablePlaced bool
+	placedAt         *farSeededBlock
+	chainAnchor      *farSeededBlock
+
 	// farSeeded are the blocks seedFarTargets placed near this episode's
 	// goto target, removed at the next Reset (they sit outside
 	// Config.ClearAreaRadius).
@@ -194,7 +206,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.cancelInflight()
 	e.restoreMinedBlocks(ctx)
 	e.removeFarSeeded(ctx)
+	e.clearChainDrops(ctx)
 	e.clearArea(ctx)
+	e.chainState, e.chainInv, e.chainTablePlaced, e.placedAt = chainState{}, chainInventory{}, false, nil
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -265,6 +279,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
 		e.cfg.CollectDrops = override.CollectDrops
+		e.cfg.ChainStage = override.ChainStage
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -395,8 +410,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		return rl.Observation{}, err
 	}
 	e.craftCount = e.craftCountNow()
+	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -423,6 +439,9 @@ func (e *Environment) craftCountNow() int {
 // set it additionally requires a crafting table visible within that radius,
 // so a table further away can't be crafted at (see that field for why).
 func (e *Environment) craftReadyNow(ctx context.Context) bool {
+	if e.cfg.ChainStage > 0 {
+		return e.chainCraftTarget() != ""
+	}
 	if e.cfg.CraftTargetItem == "" {
 		return false
 	}
@@ -545,6 +564,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if shouldDispatch && dispatch.name == mineActionName && e.cfg.CollectDrops {
 		e.collectDrops(ctx)
 	}
+	if shouldDispatch && dispatch.name == placeActionName {
+		e.recordPlacedTable()
+	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
 		return rl.StepResult{}, errPositionUnknown
@@ -571,6 +593,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// "increased."
 	newCraftCount := e.craftCountNow()
 	craftedThisStep := e.cfg.CraftTargetItem != "" && newCraftCount > prevCraftCount
+
+	// A chain episode replaces the mine and craft bonuses (which end the
+	// episode on the first mined block or crafted item) with milestone
+	// rewards for the whole chain; see chain.go.
+	var chainReward float32
+	chainDone := false
+	if e.chainActive() {
+		e.refreshChain()
+		chainReward, chainDone = e.chainState.advance(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced, e.cfg.ChainStage == ChainUse && craftedThisStep)
+		craftedThisStep = false
+	}
 
 	// Distance shaping and the arrival bonus belong to the goto task only.
 	// Applied unconditionally they scored mine and craft episodes against a
@@ -606,14 +639,20 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		}
 	}
 	if mined {
-		reward += mineRewardBonus
-		done = true
+		if !e.chainActive() {
+			reward += mineRewardBonus
+			done = true
+		}
 		if restorableBlockName(prevMineBlockName) {
 			e.minedBlocks = append(e.minedBlocks, minedBlock{int(prevMineX), int(prevMineY), int(prevMineZ), prevMineBlockName})
 		}
 	}
 	if craftedThisStep {
 		reward += craftRewardBonus
+		done = true
+	}
+	reward += chainReward
+	if chainDone {
 		done = true
 	}
 	e.prevDistance = newDistance
@@ -634,7 +673,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
@@ -855,6 +894,108 @@ func (e *Environment) collectDrops(ctx context.Context) {
 // to the block.
 const collectDropsRadius = 6.0
 
+// chainActive reports whether this episode is a multi-step chain episode.
+func (e *Environment) chainActive() bool { return e.cfg.ChainStage > 0 }
+
+// chainObs is the chain block of the observation from the cached state.
+func (e *Environment) chainObs() chainObs {
+	if !e.chainActive() {
+		return chainObs{}
+	}
+	return chainObs{logs: e.chainInv.logs, planks: e.chainInv.planks, tables: e.chainInv.tables, placed: e.chainTablePlaced}
+}
+
+// chainCraftTarget is what ActionCraft crafts right now in a chain episode
+// ("" if nothing useful can be), from the cached inventory.
+func (e *Environment) chainCraftTarget() string {
+	return nextChainCraft(e.cfg.ChainStage, e.cfg.CraftTargetItem, e.chainInv, e.chainTablePlaced)
+}
+
+// refreshChain re-reads the inventory counts the chain cares about and
+// whether the table this episode placed is still there.
+func (e *Environment) refreshChain() {
+	if !e.chainActive() {
+		return
+	}
+	e.chainInv = chainInventory{
+		logs:   e.agent.InventoryCount(chainLog),
+		planks: e.agent.InventoryCount(chainPlanks),
+		sticks: e.agent.InventoryCount(chainStick),
+		tables: e.agent.InventoryCount(chainTable),
+	}
+	e.chainTablePlaced = e.placedAt != nil && e.agent.BlockNameAt(e.placedAt.x, e.placedAt.y, e.placedAt.z) == chainTable
+}
+
+// recordPlacedTable finds the table a place step just put down (the action
+// chooses the cell, and reports only success) and remembers it, so it is
+// seen as placed and removed at the next Reset.
+func (e *Environment) recordPlacedTable() {
+	if !e.chainActive() || e.placedAt != nil {
+		return
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return
+	}
+	bx, by, bz := int(math.Floor(pos.X)), int(math.Floor(pos.Y)), int(math.Floor(pos.Z))
+	for _, c := range models.PlacementCandidates(bx, by, bz) {
+		x, y, z := int(c.Cell.X), int(c.Cell.Y), int(c.Cell.Z)
+		if e.agent.BlockNameAt(x, y, z) == chainTable {
+			e.placedAt = &farSeededBlock{x, y, z}
+			e.farSeeded = append(e.farSeeded, *e.placedAt)
+			return
+		}
+	}
+}
+
+// seedChain prepares a chain episode at (x, y, z), the cell beside the goto
+// target: an empty inventory, no stray drops, and a tree (a column of logs
+// tall enough for the chain plus a spare) standing there for the bot to find.
+func (e *Environment) seedChain(ctx context.Context, far FarSeedAgent, x, y, z int) error {
+	chain, ok := e.agent.(ChainSeedAgent)
+	if !ok {
+		return errChainSeedRequiresChainSeedAgent
+	}
+	if err := chain.ClearInventory(ctx); err != nil {
+		return fmt.Errorf("clearing the inventory for a chain episode: %w", err)
+	}
+	if err := chain.ClearDroppedItems(ctx, x, y, z, chainDropClearRadius); err != nil {
+		return fmt.Errorf("clearing stray drops at the tree: %w", err)
+	}
+	height := ChainTreeHeight(e.cfg.ChainStage, e.cfg.CraftTargetItem)
+	for i := 0; i < height; i++ {
+		if err := far.SeedBlockAt(ctx, e.cfg.MineTargetBlock, x, y+i, z); err != nil {
+			return fmt.Errorf("seeding the chain tree: %w", err)
+		}
+		e.farSeeded = append(e.farSeeded, farSeededBlock{x, y + i, z})
+	}
+	e.chainAnchor = &farSeededBlock{x, y, z}
+	return nil
+}
+
+// chainDropClearRadius is how far around the tree, and around the bot's
+// previous position, stray drops are cleared.
+const chainDropClearRadius = 16
+
+// clearChainDrops removes what the previous chain episode left lying about:
+// drops near where the bot stood and near the tree. Best effort.
+func (e *Environment) clearChainDrops(ctx context.Context) {
+	chain, ok := e.agent.(ChainSeedAgent)
+	if !ok || (e.chainAnchor == nil && !e.chainActive()) {
+		return
+	}
+	if pos, _, _, ok := e.agent.GetPosition(); ok {
+		if err := chain.ClearDroppedItems(ctx, int(math.Floor(pos.X)), int(math.Floor(pos.Y)), int(math.Floor(pos.Z)), chainDropClearRadius); err != nil {
+			log.Printf("rlenv: clearing drops around the bot: %v", err)
+		}
+	}
+	if a := e.chainAnchor; a != nil {
+		if err := chain.ClearDroppedItems(ctx, a.x, a.y, a.z, chainDropClearRadius); err != nil {
+			log.Printf("rlenv: clearing drops at the tree: %v", err)
+		}
+	}
+}
+
 // compositeGotoTask reports whether this episode is "go to the target, then
 // mine/craft there": the goto task active alongside a mine or craft task.
 // Reaching the target doesn't end such an episode.
@@ -887,6 +1028,9 @@ func (e *Environment) seedFarTargets(ctx context.Context) error {
 		return errFarSeedRequiresFarSeedAgent
 	}
 	x, y, z := int(math.Floor(e.targetX))+1, int(math.Floor(e.targetY)), int(math.Floor(e.targetZ))
+	if e.cfg.ChainStage > 0 {
+		return e.seedChain(ctx, far, x, y, z)
+	}
 	if e.cfg.MineTargetBlock != "" {
 		if err := far.SeedBlockAt(ctx, e.cfg.MineTargetBlock, x, y, z); err != nil {
 			return fmt.Errorf("seeding mine target at the goto target: %w", err)
