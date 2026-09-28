@@ -54,6 +54,26 @@ func TestRankExcludesKnownDeadTargetsBeforeRemovalPacket(t *testing.T) {
 	}
 }
 
+func TestRankReacquiresTargetAfterVisibilityReturns(t *testing.T) {
+	target := Target{
+		EntityID: 9,
+		Category: Hostile,
+		Visible:  false,
+		Distance: 4,
+	}
+	policy := TargetPolicy{}
+
+	if got := RankWithPolicy([]Target{target}, policy); len(got) != 0 {
+		t.Fatalf("invisible target was selected: %+v", got)
+	}
+
+	target.Visible = true
+	got := RankWithPolicy([]Target{target}, policy)
+	if len(got) != 1 || got[0].EntityID != target.EntityID {
+		t.Fatalf("target was not reacquired after visibility returned: %+v", got)
+	}
+}
+
 func TestPriorityPrefersLowerHealthAtSameDistance(t *testing.T) {
 	healthy := Target{Category: Hostile, Distance: 4, MaxHealth: 20, Health: 20}
 	weak := Target{Category: Hostile, Distance: 4, MaxHealth: 20, Health: 2}

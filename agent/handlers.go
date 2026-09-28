@@ -332,33 +332,10 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 
 	a.entitiesMu.Lock()
 	now := time.Now()
-	if e, ok := a.entities[entityID]; ok {
-		e.EntityType = entityType
-		e.UUID = uuid
-		e.X, e.Y, e.Z = x, y, z
-		e.Yaw, e.Pitch = yaw, pitch
-		e.VelX, e.VelY, e.VelZ = velX, velY, velZ // Initial velocity from spawn packet
-		e.Removed = false
-		e.LastMetadataUpdate = now // Initialize velocity timestamp
-		e.LastPositionUpdate = now // Initialize position timestamp
-	} else {
-		a.entities[entityID] = &trackedEntity{
-			EntityID:           entityID,
-			EntityType:         entityType,
-			UUID:               uuid,
-			X:                  x,
-			Y:                  y,
-			Z:                  z,
-			Yaw:                yaw,
-			Pitch:              pitch,
-			VelX:               velX, // Initial velocity from spawn packet
-			VelY:               velY,
-			VelZ:               velZ,
-			Removed:            false,
-			LastMetadataUpdate: now, // Initialize velocity timestamp
-			LastPositionUpdate: now, // Initialize position timestamp
-		}
-	}
+	// Replace the record even when the ID already exists. The server may reuse
+	// IDs after RemoveEntities, and mutating the old record would leak its
+	// health/effects/equipment/removed state into the new entity.
+	a.entities[entityID] = newTrackedEntityFromSpawn(entityID, entityType, uuid, x, y, z, yaw, pitch, velX, velY, velZ, now)
 	a.entitiesMu.Unlock()
 
 	// Register entity in the metadata handler's entity registry
@@ -487,9 +464,6 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
 	}
 	a.entitiesMu.Unlock()
@@ -617,9 +591,6 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
 	}
 	a.entitiesMu.Unlock()
@@ -722,9 +693,6 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 		e.currentServerUpdateTime = now
 		e.LastPositionUpdate = now
 
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
 	a.entitiesMu.Unlock()
@@ -825,9 +793,6 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 		e.Yaw, e.Pitch = yaw, pitch
 		e.LastPositionUpdate = now
 
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
 	a.entitiesMu.Unlock()

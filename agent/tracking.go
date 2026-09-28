@@ -120,6 +120,28 @@ type trackedEntity struct {
 	HasAirSupply bool
 }
 
+// newTrackedEntityFromSpawn creates a fresh tracker record for an AddEntity
+// packet. Entity IDs are reusable, so a respawn must not retain health,
+// attributes, effects, equipment, inventory, or removed state from the old
+// entity that occupied the ID.
+func newTrackedEntityFromSpawn(entityID, entityType int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, velX, velY, velZ float64, now time.Time) *trackedEntity {
+	return &trackedEntity{
+		EntityID:           entityID,
+		EntityType:         entityType,
+		UUID:               uuid,
+		X:                  x,
+		Y:                  y,
+		Z:                  z,
+		Yaw:                yaw,
+		Pitch:              pitch,
+		VelX:               velX,
+		VelY:               velY,
+		VelZ:               velZ,
+		LastMetadataUpdate: now,
+		LastPositionUpdate: now,
+	}
+}
+
 // GetPosition returns the current bot position and rotation.
 // When mounted, returns a.posX/Y/Z which is updated every tick by the physics
 // executor (handleRidingMode → setBotPosition). The entity tracker is NOT used
