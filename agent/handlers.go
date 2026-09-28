@@ -1324,7 +1324,10 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		return err
 	}
 
-	if projInfo, exists := a.activeProjectiles[entityID]; exists {
+	a.activeProjectilesMu.Lock()
+	projInfo, projectileTracked := a.activeProjectiles[entityID]
+	a.activeProjectilesMu.Unlock()
+	if projectileTracked {
 
 		a.logf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.cfg.Name, projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
 	}
