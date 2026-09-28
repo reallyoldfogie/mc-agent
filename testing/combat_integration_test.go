@@ -151,6 +151,60 @@ func (s *CombatFlatSuite) TestPlayerArmorEquipmentTracking() {
 	require.FailNow(s.T(), "observer never received the target's cleared chest slot")
 }
 
+// TestPlayerDeathRespawnTracking verifies that a player death removes the
+// target from combat tracking and that the same player becomes eligible again
+// after the target agent's automatic respawn.
+func (s *CombatFlatSuite) TestPlayerDeathRespawnTracking() {
+	observer, err := s.SpawnWorkingAreaAgentNoCam("CombatDeathObserver", "combat_death_observer")
+	require.NoError(s.T(), err, "spawn death observer")
+	target, err := s.SpawnAgentNearNoCam("CombatDeathTarget", "combat_death_target", observer.Origin, 3, 0)
+	require.NoError(s.T(), err, "spawn death target")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		"spawnpoint %s %.0f %.0f %.0f", target.Name, observer.Origin.X, observer.Origin.Y, observer.Origin.Z))
+	require.NoError(s.T(), err, "set target spawn point")
+
+	targetID := target.Agent.GetEntityID()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, found := observer.GetTrackedEntities()[targetID]; found && !info.Removed && info.MaxHealth > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	initial, found := observer.GetTrackedEntities()[targetID]
+	require.True(s.T(), found, "observer should track the player before death")
+	require.False(s.T(), initial.Removed, "player should be active before death")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("kill %s", target.Name))
+	require.NoError(s.T(), err, "kill target player")
+
+	deadline = time.Now().Add(5 * time.Second)
+	deadObserved := false
+	for time.Now().Before(deadline) {
+		info, tracked := observer.GetTrackedEntities()[targetID]
+		if !tracked || info.Removed || (info.MaxHealth > 0 && info.Health <= 0) {
+			deadObserved = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.True(s.T(), deadObserved, "observer should stop treating the dead player as an active target")
+
+	// onDeath schedules Respawn after five seconds. Allow that plus packet
+	// propagation and verify that the respawned player is tracked at the same
+	// entity ID with a fresh positive-health snapshot.
+	deadline = time.Now().Add(12 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, tracked := observer.GetTrackedEntities()[targetID]; tracked && !info.Removed && info.Health > 0 {
+			require.Greater(s.T(), info.MaxHealth, float32(0), "respawned player should have known max health")
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.FailNow(s.T(), "observer never received an active positive-health snapshot after player respawn")
+}
+
 // TestRunCombatRetreatsAtCriticalHealth verifies that a known low-health agent
 // stops attacking and moves away from a visible target. The target is NoAI so
 // any displacement is attributable to the combat retreat policy.
