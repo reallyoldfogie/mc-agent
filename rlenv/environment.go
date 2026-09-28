@@ -564,9 +564,6 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if shouldDispatch && dispatch.name == mineActionName && e.cfg.CollectDrops {
 		e.collectDrops(ctx)
 	}
-	if shouldDispatch && dispatch.name == placeActionName {
-		e.recordPlacedTable()
-	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
 		return rl.StepResult{}, errPositionUnknown
@@ -923,29 +920,60 @@ func (e *Environment) refreshChain() {
 		sticks: e.agent.InventoryCount(chainStick),
 		tables: e.agent.InventoryCount(chainTable),
 	}
+	if e.cfg.ChainStage >= ChainPlace {
+		e.recordPlacedTable() // every table beside the bot, for removal at Reset
+	}
 	e.chainTablePlaced = e.placedAt != nil && e.agent.BlockNameAt(e.placedAt.x, e.placedAt.y, e.placedAt.z) == chainTable
+	if !e.chainTablePlaced && e.cfg.ChainStage >= ChainPlace && e.chainInv.tables == 0 {
+		// Not where we recorded it (or never recorded), and none in hand: a
+		// table the bot's view was slow to show when it was placed may be in
+		// sight by now. A chain episode has no other table nearby.
+		if x, y, z, found, err := e.agent.FindVisibleBlock(context.Background(), chainTable, chainTableSearchRadius); err == nil && found {
+			e.notePlacedTable(farSeededBlock{int(math.Floor(x)), int(math.Floor(y)), int(math.Floor(z))})
+			e.chainTablePlaced = true
+		}
+	}
 }
 
-// recordPlacedTable finds the table a place step just put down (the action
-// chooses the cell, and reports only success) and remembers it, so it is
-// seen as placed and removed at the next Reset.
+// chainTableSearchRadius is how far refreshChain looks for a placed table
+// that it has no record of.
+const chainTableSearchRadius = 6
+
+// recordPlacedTable finds the tables beside the bot (a place step chooses
+// its own cell and reports only success) and remembers them, so they are
+// seen as placed and removed at the next Reset. refreshChain runs it every
+// step, so a table is found even when the step that placed it saw nothing.
 func (e *Environment) recordPlacedTable() {
-	if !e.chainActive() || e.placedAt != nil {
+	if !e.chainActive() {
 		return
 	}
 	pos, _, _, ok := e.agent.GetPosition()
 	if !ok {
 		return
 	}
-	bx, by, bz := int(math.Floor(pos.X)), int(math.Floor(pos.Y)), int(math.Floor(pos.Z))
+	bx, by, bz := models.StandingCell(pos)
 	for _, c := range models.PlacementCandidates(bx, by, bz) {
 		x, y, z := int(c.Cell.X), int(c.Cell.Y), int(c.Cell.Z)
 		if e.agent.BlockNameAt(x, y, z) == chainTable {
-			e.placedAt = &farSeededBlock{x, y, z}
-			e.farSeeded = append(e.farSeeded, *e.placedAt)
+			e.notePlacedTable(farSeededBlock{x, y, z})
+		}
+	}
+}
+
+// notePlacedTable remembers a table in the world: the first is "the" placed
+// table (what tablePlaced tracks), and every one is queued for removal at
+// the next Reset - a second table (a placement whose success the bot's view
+// was slow to show, then repeated) must not be left standing.
+func (e *Environment) notePlacedTable(b farSeededBlock) {
+	if e.placedAt == nil {
+		e.placedAt = &b
+	}
+	for _, s := range e.farSeeded {
+		if s == b {
 			return
 		}
 	}
+	e.farSeeded = append(e.farSeeded, b)
 }
 
 // seedChain prepares a chain episode at (x, y, z), the cell beside the goto
@@ -963,6 +991,17 @@ func (e *Environment) seedChain(ctx context.Context, far FarSeedAgent, x, y, z i
 		return fmt.Errorf("clearing stray drops at the tree: %w", err)
 	}
 	height := ChainTreeHeight(e.cfg.ChainStage, e.cfg.CraftTargetItem)
+	// Wipe the ground-level space around the tree first. A previous episode's
+	// table is normally removed at Reset, but one this instance never
+	// recorded (a crash or restart between episodes, a placement whose
+	// success it could not see) would still be standing where the bot is
+	// about to work, and right-clicking beside it opens its crafting screen
+	// instead of placing anything. Found live.
+	if clearer, ok := e.agent.(AreaClearer); ok {
+		if err := clearer.ClearAir(ctx, x-chainSeedClearRadius, y, z-chainSeedClearRadius, x+chainSeedClearRadius, y+height+1, z+chainSeedClearRadius); err != nil {
+			log.Printf("rlenv: clearing the chain work area around (%d,%d,%d): %v", x, y, z, err)
+		}
+	}
 	for i := 0; i < height; i++ {
 		if err := far.SeedBlockAt(ctx, e.cfg.MineTargetBlock, x, y+i, z); err != nil {
 			return fmt.Errorf("seeding the chain tree: %w", err)
@@ -972,6 +1011,9 @@ func (e *Environment) seedChain(ctx context.Context, far FarSeedAgent, x, y, z i
 	e.chainAnchor = &farSeededBlock{x, y, z}
 	return nil
 }
+
+// chainSeedClearRadius is how far around the tree base seedChain clears.
+const chainSeedClearRadius = 4
 
 // chainDropClearRadius is how far around the tree, and around the bot's
 // previous position, stray drops are cleared.

@@ -632,3 +632,25 @@ func (ch *ContainerHelper) GetChestRows(windowID byte) int {
 
 	return chest.Rows
 }
+
+// ReleaseInventoryGrid tells the server the player's own window (ID 0) was
+// closed, which makes it return whatever sits in the 2x2 crafting grid to the
+// inventory (the vanilla client does this whenever the inventory screen is
+// dismissed). A craft that fails part-way leaves its ingredients in that grid,
+// where they are gone from InventoryCount and block every later grid recipe;
+// this is the recovery. No-op while another container is open - that one is
+// closed by CloseContainer.
+func (ch *ContainerHelper) ReleaseInventoryGrid() error {
+	if ch == nil {
+		return nil
+	}
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	if ch.currentWindowID != 0 {
+		return nil
+	}
+	packet := serverbound.NewCloseWindow()
+	packet.SetPacketID(int32(ch.packetMgr.GetServerboundPacketID("ServerboundContainerClose")))
+	packet.WindowId = basetypes.ContainerID(0)
+	return ch.client.Conn().WritePacket(packet.Marshal())
+}

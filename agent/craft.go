@@ -652,6 +652,15 @@ func (a *agent) CraftItem(ctx context.Context, itemName string) error {
 
 	if recipe.fitsInventoryGrid() {
 		if err := a.executeCraft(ctx, itemName, recipe, inventoryGridLayout); err != nil {
+			// A part-done craft leaves its ingredients in the 2x2 grid, out of
+			// InventoryCount and blocking every later grid recipe (found live:
+			// a table craft that produced nothing consumed the planks, then
+			// every craft after it failed). Ask the server to give them back.
+			if r, ok := a.containerHelper.(interface{ ReleaseInventoryGrid() error }); ok {
+				if relErr := r.ReleaseInventoryGrid(); relErr != nil {
+					a.logf("[Agent %s] releasing the crafting grid after a failed craft: %v", a.cfg.Name, relErr)
+				}
+			}
 			return err
 		}
 	} else {

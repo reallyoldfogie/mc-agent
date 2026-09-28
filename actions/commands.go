@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, place <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -887,6 +889,26 @@ func (Craft) Execute(ctx context.Context, agent models.CommandAgent, args []stri
 	return completion, nil
 }
 
+var (
+	placeErrorChatMu   sync.Mutex
+	placeErrorChatLast time.Time
+)
+
+// placeErrorChatEvery is the least gap between two "Place error" chat lines.
+const placeErrorChatEvery = 5 * time.Second
+
+// placeErrorChatAllowed reports whether a Place error may be chatted at now,
+// and if so records it.
+func placeErrorChatAllowed(now time.Time) bool {
+	placeErrorChatMu.Lock()
+	defer placeErrorChatMu.Unlock()
+	if now.Sub(placeErrorChatLast) < placeErrorChatEvery {
+		return false
+	}
+	placeErrorChatLast = now
+	return true
+}
+
 // Place places a block from the inventory on the ground next to the bot and
 // confirms it appeared (models.BlockPlacer).
 type Place struct{}
@@ -908,7 +930,13 @@ func (Place) Execute(ctx context.Context, agent models.CommandAgent, args []stri
 	go func() {
 		cell, err := placer.PlaceHeldBlock(ctx, itemName)
 		if err != nil {
-			_ = agent.SendChat("Place error: " + err.Error())
+			// A placement that fails instantly can be retried a step later,
+			// again and again; a chat line each time gets the bot kicked for
+			// spamming (found live: 55 in a few milliseconds). Say so at most
+			// every few seconds.
+			if placeErrorChatAllowed(time.Now()) {
+				_ = agent.SendChat("Place error: " + err.Error())
+			}
 		} else {
 			_ = agent.SendChat(fmt.Sprintf("Placed %s at (%.0f, %.0f, %.0f)", itemName, cell.X, cell.Y, cell.Z))
 		}

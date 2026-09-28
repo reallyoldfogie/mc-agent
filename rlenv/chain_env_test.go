@@ -208,6 +208,93 @@ func TestChainFailedPlacementCanBeRetried(t *testing.T) {
 	}
 }
 
+// A placement that took effect in the world but was reported as a failure
+// (the bot's view lagged) is found by the world scan: the table counts as
+// placed, place stops being legal (no second table), and the table is removed
+// at the next Reset.
+func TestChainUnreportedPlacementIsFoundAndCleanedUp(t *testing.T) {
+	agent, env := newChainEnv(t, rlenv.ChainUse, "minecraft:bowl")
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	step(t, env, rlenv.ActionGoToTarget)
+	step(t, env, rlenv.ActionMine)
+	step(t, env, rlenv.ActionCraft)
+	step(t, env, rlenv.ActionCraft)
+	agent.placeThenFail = true
+	r := step(t, env, rlenv.ActionPlace)
+	if r.Observation.Values[20] != 1 {
+		t.Fatalf("tablePlaced=%v after an unreported placement, want the scan to find it", r.Observation.Values[20])
+	}
+	if legal(env, rlenv.ActionPlace) {
+		t.Error("place still legal: it would put down a second table")
+	}
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	removed := false
+	for _, b := range agent.restoredBlocks {
+		removed = removed || (b.name == "minecraft:air" && b.x == 12 && b.y == -60 && b.z == 1)
+	}
+	if !removed {
+		t.Errorf("the unreported table was not removed at the next Reset: %v", agent.restoredBlocks)
+	}
+}
+
+// Every table in reach is recorded for removal, not just the first: a second
+// one (a repeated placement) must not be left standing for the next episode.
+func TestChainRecordsEveryPlacedTable(t *testing.T) {
+	agent, env := newChainEnv(t, rlenv.ChainUse, "minecraft:chest")
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	step(t, env, rlenv.ActionGoToTarget)
+	step(t, env, rlenv.ActionMine)
+	step(t, env, rlenv.ActionCraft)
+	step(t, env, rlenv.ActionCraft)
+	step(t, env, rlenv.ActionPlace)
+	agent.mu.Lock()
+	agent.chainBlocks[[3]int{12, -60, -1}] = "minecraft:crafting_table" // a second, stray table
+	agent.mu.Unlock()
+	step(t, env, rlenv.ActionMine) // any step: the chain records what it can see
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[[3]int]bool{}
+	for _, b := range agent.restoredBlocks {
+		if b.name == "minecraft:air" {
+			seen[[3]int{b.x, b.y, b.z}] = true
+		}
+	}
+	if !seen[[3]int{12, -60, 1}] {
+		t.Errorf("the placed table was not removed: %v", agent.restoredBlocks)
+	}
+	if !seen[[3]int{12, -60, -1}] {
+		t.Errorf("the second table was not removed: %v", agent.restoredBlocks)
+	}
+}
+
+// Seeding a chain episode clears the ground-level space around the tree first,
+// so a table left by an episode this instance never recorded cannot be
+// standing where the bot is about to work.
+func TestChainSeedClearsTheWorkArea(t *testing.T) {
+	agent, env := newChainEnv(t, rlenv.ChainPlace, "minecraft:crafting_table")
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range agent.clearedBoxes {
+		if b.x1 <= 12 && 12 <= b.x2 && b.z1 <= 0 && 0 <= b.z2 && b.y1 == -60 && b.y2 > -60 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no cleared box covers the tree base at (12,-60,0): %v", agent.clearedBoxes)
+	}
+}
+
 // Outside a chain episode the new action is illegal and the chain features
 // stay zero, so the older tasks behave as before.
 func TestPlaceIsIllegalOutsideChainEpisodes(t *testing.T) {

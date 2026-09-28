@@ -59,6 +59,9 @@ type fakeAgent struct {
 	clearedInventory      int
 	clearedDropAreas      [][4]int
 	failNextPlace         bool
+	// placeThenFail places the block but reports failure once: the world
+	// changed, the caller was not told (the bot's view lagged).
+	placeThenFail bool
 	findVisibleBlockCalls int
 
 	// Crafting table simulation: FindVisibleBlock reports a table (at the
@@ -622,6 +625,10 @@ func (f *fakeAgent) PlaceHeldBlock(_ context.Context, itemName string) (models.V
 	f.chainInv[itemName]--
 	cell := [3]int{int(f.x), int(f.y), int(f.z) + 1}
 	f.chainBlocks[cell] = itemName
+	if f.placeThenFail {
+		f.placeThenFail = false
+		return models.V3{}, errors.New("the block never appeared")
+	}
 	return models.V3{X: float64(cell[0]), Y: float64(cell[1]), Z: float64(cell[2])}, nil
 }
 

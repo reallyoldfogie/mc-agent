@@ -1,6 +1,9 @@
 package models
 
-import "context"
+import (
+	"context"
+	"math"
+)
 
 // BlockPlacer is the optional capability of placing a block the bot holds
 // on the ground next to it and confirming it appeared. Callers type-assert
@@ -42,4 +45,15 @@ func PlacementCandidates(bx, by, bz int) []PlacementCell {
 		})
 	}
 	return out
+}
+
+// standingTolerance absorbs floating-point drift in a resting bot's feet Y:
+// a bot standing on the ground reads -60.0000000001 as often as -60, and
+// floor(-60.0000000001) is the floor block's cell, not the bot's.
+const standingTolerance = 1e-3
+
+// StandingCell returns the block cell a bot at feet position pos occupies,
+// treating a Y within standingTolerance below an integer as that integer.
+func StandingCell(pos V3) (x, y, z int) {
+	return int(math.Floor(pos.X)), int(math.Floor(pos.Y + standingTolerance)), int(math.Floor(pos.Z))
 }

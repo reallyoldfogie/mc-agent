@@ -33,3 +33,22 @@ func abs(x float64) float64 {
 	}
 	return x
 }
+
+func TestStandingCellAbsorbsFeetYDrift(t *testing.T) {
+	cases := []struct {
+		pos     V3
+		x, y, z int
+	}{
+		{V3{X: 10.5, Y: -60, Z: 20.5}, 10, -60, 20},
+		{V3{X: 10.5, Y: -60.0000000001, Z: 20.5}, 10, -60, 20}, // drift below the integer
+		{V3{X: 10.5, Y: -59.9999999, Z: 20.5}, 10, -60, 20},
+		{V3{X: -296.5, Y: -60.0002, Z: -299.5}, -297, -60, -300},
+		{V3{X: 10.5, Y: -60.4, Z: 20.5}, 10, -61, 20}, // genuinely lower: stays lower
+	}
+	for _, c := range cases {
+		x, y, z := StandingCell(c.pos)
+		if x != c.x || y != c.y || z != c.z {
+			t.Errorf("StandingCell(%v) = (%d,%d,%d), want (%d,%d,%d)", c.pos, x, y, z, c.x, c.y, c.z)
+		}
+	}
+}
