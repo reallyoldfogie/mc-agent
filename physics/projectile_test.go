@@ -65,6 +65,35 @@ func TestGetProjectilePhysics(t *testing.T) {
 	}
 }
 
+type targetThenGroundValidator struct{}
+
+func (targetThenGroundValidator) GetBlockAt(x, y, z float64) (uint32, bool) {
+	if y < 1 {
+		return 1, true
+	}
+	return 0, true
+}
+
+func (targetThenGroundValidator) GetCollisionBoxes(_ uint32, x, y, z int) []models.AABB {
+	return []models.AABB{models.NewAABB(float64(x), float64(y), float64(z), float64(x)+1, float64(y)+1, float64(z)+1)}
+}
+
+func (targetThenGroundValidator) IsSolid(uint32) bool         { return true }
+func (targetThenGroundValidator) BlockName(uint32) string     { return "minecraft:stone" }
+func (targetThenGroundValidator) FullBlockName(uint32) string { return "minecraft:stone" }
+
+func TestValidateTrajectoryStopsAtEntityTargetBeforePostTargetGround(t *testing.T) {
+	trajectory := []models.TrajectoryPoint{
+		{Pos: models.V3{X: 0, Y: 2, Z: 0}},
+		{Pos: models.V3{X: 3, Y: 1, Z: 0}},
+		{Pos: models.V3{X: 6, Y: 0.2, Z: 0}},
+	}
+	clear, hitPos, _ := ValidateTrajectory(trajectory, targetThenGroundValidator{}, models.V3{X: 3, Y: 1, Z: 0})
+	if !clear || hitPos != nil {
+		t.Fatalf("trajectory should stop at target before later ground collision: clear=%v hit=%v", clear, hitPos)
+	}
+}
+
 func TestGetProjectilePhysics_DefaultFallback(t *testing.T) {
 	// Test that unknown projectile types get snowball physics as default
 	invalidType := models.ProjectileType(999)
