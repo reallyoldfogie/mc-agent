@@ -463,3 +463,54 @@ func (a *agent) waitForChunkLoaded(ctx context.Context, x, y, z float64) error {
 		}
 	}
 }
+
+// ClearInventory empties the bot's whole inventory via RCON, and waits (bounded
+// by seedSyncTimeout) for the bot's own tracking to agree. Implements
+// rlenv.ChainSeedAgent: a multi-step chain episode must start with nothing
+// held, or leftovers from the last one would stand in for gathering.
+func (a *agent) ClearInventory(ctx context.Context) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clear inventory: RCON not configured")
+	}
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s", a.cfg.Name)); err != nil {
+		return fmt.Errorf("clear inventory via RCON: %w", err)
+	}
+	deadline := time.Now().Add(seedSyncTimeout)
+	for !a.inventoryEmpty() {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("clear inventory: the bot's own inventory never emptied within %s", seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+	return nil
+}
+
+// inventoryEmpty reports whether none of the items a chain episode cares
+// about is held (the full inventory is not enumerated cheaply here, and these
+// are the ones whose presence would corrupt an episode).
+func (a *agent) inventoryEmpty() bool {
+	for _, item := range []string{"minecraft:oak_log", "minecraft:oak_planks", "minecraft:stick", "minecraft:crafting_table", "minecraft:bowl", "minecraft:chest", "minecraft:wooden_pickaxe"} {
+		if a.InventoryCount(item) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// ClearDroppedItems kills item entities within radius blocks of (x, y, z) via
+// RCON. Implements rlenv.ChainSeedAgent: a drop a previous episode left behind
+// would be picked up by a later one as a free log.
+func (a *agent) ClearDroppedItems(ctx context.Context, x, y, z, radius int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clear dropped items: RCON not configured")
+	}
+	cmd := fmt.Sprintf("execute positioned %d %d %d run kill @e[type=item,distance=..%d]", x, y, z, radius)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("clear dropped items via RCON: %w", err)
+	}
+	return nil
+}

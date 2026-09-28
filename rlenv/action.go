@@ -67,8 +67,15 @@ const (
 	// ActionMine's "environment poses the task" pattern exactly.
 	ActionCraft
 
+	// ActionPlace places the crafting table the bot holds on the ground
+	// beside it ("place minecraft:crafting_table" - see actions.Place),
+	// confirming it appeared. Only legal in a chain episode (Config.ChainStage
+	// >= ChainPlace) holding a table with none placed yet. Appended after
+	// the original four so their numbers never change.
+	ActionPlace
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionCraft) + 1
+	NumActions = int(ActionPlace) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -86,6 +93,7 @@ const (
 	moveToActionName = "movetoquiet"
 	mineActionName   = "mine"
 	craftActionName  = "craft"
+	placeActionName  = "place"
 )
 
 // actionDispatch describes what Step should send through the
@@ -138,7 +146,15 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if !e.actionLegal(ActionCraft) {
 			return actionDispatch{}, false, nil
 		}
+		if e.cfg.ChainStage > 0 {
+			return actionDispatch{name: craftActionName, args: []string{e.chainCraftTarget()}}, true, nil
+		}
 		return actionDispatch{name: craftActionName, args: []string{e.cfg.CraftTargetItem}}, true, nil
+	case ActionPlace:
+		if !e.actionLegal(ActionPlace) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -175,7 +191,12 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionMine:
 		return e.cfg.MineTargetBlock != "" && e.mineVisible
 	case ActionCraft:
+		if e.cfg.ChainStage > 0 {
+			return e.chainCraftTarget() != ""
+		}
 		return e.cfg.CraftTargetItem != "" && e.craftReady
+	case ActionPlace:
+		return e.cfg.ChainStage > 0 && chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
 	default:
 		return false
 	}

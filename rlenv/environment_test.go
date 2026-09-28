@@ -49,7 +49,7 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 17, not 14: indices 0-13 are the original per-task numeric features;
+	// 21 (17 before the chain block, 14 before the goal block): indices 0-13 are the original per-task numeric features;
 	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
 	// goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md
@@ -57,8 +57,8 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// full layout. This exact value is also what makes cmd/rl-train's
 	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
 	// reject an old checkpoint trained against the pre-goal-block size.
-	if got := env.ObservationSize(); got != 17 {
-		t.Fatalf("ObservationSize() = %d, want 17", got)
+	if got := env.ObservationSize(); got != 21 {
+		t.Fatalf("ObservationSize() = %d, want 21", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -73,8 +73,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 17 {
-		t.Fatalf("len(obs.Values) = %d, want 17 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 21 {
+		t.Fatalf("len(obs.Values) = %d, want 21 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1506,5 +1506,52 @@ func TestPlainGotoIsNeverMaskedByArrival(t *testing.T) {
 	}
 	if !env.ActionMask()[rlenv.ActionGoToTarget] {
 		t.Fatal("goto masked in a plain goto episode")
+	}
+}
+
+// With Config.CollectDrops a mine step collects what it dropped; other
+// steps, and a Config without it, never do.
+func TestCollectDropsRunsAfterAMineStepOnly(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:oak_log", 1, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:oak_log"
+	cfg.CollectDrops = true
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 0 {
+		t.Fatalf("collect calls after a Wait = %d, want 0", agent.collectDropsCalls)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 1 {
+		t.Fatalf("collect calls after a Mine = %d, want 1", agent.collectDropsCalls)
+	}
+}
+
+func TestCollectDropsIsOffByDefault(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:oak_log", 1, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:oak_log"
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 0 {
+		t.Fatalf("collect calls = %d, want 0 without Config.CollectDrops", agent.collectDropsCalls)
 	}
 }

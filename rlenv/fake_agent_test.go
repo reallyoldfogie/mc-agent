@@ -48,7 +48,21 @@ type fakeAgent struct {
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
-	findVisibleBlockCalls              int
+	collectDropsCalls                  int
+
+	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
+	// fake models a tiny world of blocks and an inventory with the real
+	// recipes, instead of the single mine block / craft target above.
+	chainInv              map[string]int
+	chainBlocks           map[[3]int]string
+	chainDrops            int
+	clearedInventory      int
+	clearedDropAreas      [][4]int
+	failNextPlace         bool
+	// placeThenFail places the block but reports failure once: the world
+	// changed, the caller was not told (the bot's view lagged).
+	placeThenFail bool
+	findVisibleBlockCalls int
 
 	// Crafting table simulation: FindVisibleBlock reports a table (at the
 	// origin) only while tableVisible is set, and records the radius asked.
@@ -318,6 +332,14 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.findVisibleBlockCalls++
+	if f.chainBlocks != nil {
+		for pos, name := range f.chainBlocks {
+			if name == blockName {
+				return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+			}
+		}
+		return 0, 0, 0, false, nil
+	}
 	if blockName == "minecraft:crafting_table" {
 		f.tableSearchRadii = append(f.tableSearchRadii, radius)
 		return 0, 0, 0, f.tableVisible, nil
@@ -335,6 +357,15 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 func (f *fakeAgent) MineBlockAt(_ context.Context, pos models.V3, _ models.BlockFace) error {
 	f.mu.Lock()
 	f.mineBlockAtCalls++
+	if f.chainBlocks != nil {
+		key := [3]int{int(pos.X), int(pos.Y), int(pos.Z)}
+		if f.chainBlocks[key] == "minecraft:oak_log" {
+			delete(f.chainBlocks, key)
+			f.chainDrops++
+		}
+		f.mu.Unlock()
+		return nil
+	}
 	err := f.mineBlockAtErr
 	if err == nil && int(pos.X) == int(f.mineBlockX) && int(pos.Y) == int(f.mineBlockY) && int(pos.Z) == int(f.mineBlockZ) {
 		f.mineBlockName = "minecraft:air"
@@ -350,6 +381,12 @@ func (f *fakeAgent) MineBlockAt(_ context.Context, pos models.V3, _ models.Block
 func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.chainBlocks != nil {
+		if name, ok := f.chainBlocks[[3]int{ix, iy, iz}]; ok {
+			return name
+		}
+		return "minecraft:air"
+	}
 	if f.mineBlockName != "" && ix == int(f.mineBlockX) && iy == int(f.mineBlockY) && iz == int(f.mineBlockZ) {
 		return f.mineBlockName
 	}
@@ -365,6 +402,10 @@ func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 func (f *fakeAgent) CraftItem(_ context.Context, itemName string) error {
 	f.mu.Lock()
 	f.craftItemCalls++
+	if f.chainInv != nil {
+		defer f.mu.Unlock()
+		return f.craftChainLocked(itemName)
+	}
 	err := f.craftItemErr
 	if err == nil && f.craftTargetName != "" && itemName == f.craftTargetName && f.craftIngredientsReady {
 		f.craftHeldCount++
@@ -379,6 +420,9 @@ func (f *fakeAgent) CraftItem(_ context.Context, itemName string) error {
 func (f *fakeAgent) InventoryCount(itemName string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.chainInv != nil {
+		return f.chainInv[itemName]
+	}
 	if f.craftTargetName != "" && itemName == f.craftTargetName {
 		return f.craftHeldCount
 	}
@@ -450,6 +494,13 @@ type restoredBlock struct {
 func (f *fakeAgent) RestoreBlock(_ context.Context, x, y, z int, blockName string) error {
 	f.mu.Lock()
 	f.restoredBlocks = append(f.restoredBlocks, restoredBlock{x, y, z, blockName})
+	if f.chainBlocks != nil {
+		if blockName == "minecraft:air" {
+			delete(f.chainBlocks, [3]int{x, y, z})
+		} else {
+			f.chainBlocks[[3]int{x, y, z}] = blockName
+		}
+	}
 	f.mu.Unlock()
 	return nil
 }
@@ -475,6 +526,9 @@ type farSeedCall struct {
 func (f *fakeAgent) SeedBlockAt(_ context.Context, blockName string, x, y, z int) error {
 	f.mu.Lock()
 	f.seedBlockAtCalls = append(f.seedBlockAtCalls, farSeedCall{blockName, x, y, z})
+	if f.chainBlocks != nil {
+		f.chainBlocks[[3]int{x, y, z}] = blockName
+	}
 	f.mu.Unlock()
 	return nil
 }
@@ -483,5 +537,118 @@ func (f *fakeAgent) SeedCraftIngredientsAt(_ context.Context, itemName string, x
 	f.mu.Lock()
 	f.seedCraftAtCalls = append(f.seedCraftAtCalls, farSeedCall{itemName, x, y, z})
 	f.mu.Unlock()
+	return nil
+}
+
+// CollectNearbyItems makes fakeAgent a models.ItemCollector; it only records
+// that a collect was asked for.
+func (f *fakeAgent) CollectNearbyItems(context.Context, float64) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collectDropsCalls++
+	if f.chainInv != nil {
+		n := f.chainDrops
+		f.chainInv["minecraft:oak_log"] += n
+		f.chainDrops = 0
+		return n, nil
+	}
+	return 1, nil
+}
+
+// craftChainLocked applies the real recipes the chain uses; the caller holds mu.
+func (f *fakeAgent) craftChainLocked(item string) error {
+	take := func(name string, n int) bool {
+		if f.chainInv[name] < n {
+			return false
+		}
+		f.chainInv[name] -= n
+		return true
+	}
+	switch item {
+	case "minecraft:oak_planks":
+		if !take("minecraft:oak_log", 1) {
+			return errors.New("missing ingredient: log")
+		}
+		f.chainInv[item] += 4
+	case "minecraft:crafting_table":
+		if !take("minecraft:oak_planks", 4) {
+			return errors.New("missing ingredient: planks")
+		}
+		f.chainInv[item]++
+	case "minecraft:stick":
+		if !take("minecraft:oak_planks", 2) {
+			return errors.New("missing ingredient: planks")
+		}
+		f.chainInv[item] += 4
+	case "minecraft:bowl", "minecraft:chest", "minecraft:wooden_pickaxe":
+		if !f.chainTablePlacedLocked() {
+			return errors.New("no crafting table found within 32 blocks")
+		}
+		cost := map[string]int{"minecraft:bowl": 3, "minecraft:chest": 8, "minecraft:wooden_pickaxe": 3}[item]
+		if item == "minecraft:wooden_pickaxe" && f.chainInv["minecraft:stick"] < 2 {
+			return errors.New("missing ingredient: sticks")
+		}
+		if !take("minecraft:oak_planks", cost) {
+			return errors.New("missing ingredient: planks")
+		}
+		if item == "minecraft:wooden_pickaxe" {
+			f.chainInv["minecraft:stick"] -= 2
+		}
+		f.chainInv[item]++
+	default:
+		return errors.New("unknown recipe " + item)
+	}
+	return nil
+}
+
+func (f *fakeAgent) chainTablePlacedLocked() bool {
+	for _, name := range f.chainBlocks {
+		if name == "minecraft:crafting_table" {
+			return true
+		}
+	}
+	return false
+}
+
+// PlaceHeldBlock makes fakeAgent a models.BlockPlacer: it puts the table
+// one block +Z of the bot, unless failNextPlace asks for a failure.
+func (f *fakeAgent) PlaceHeldBlock(_ context.Context, itemName string) (models.V3, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failNextPlace {
+		f.failNextPlace = false
+		return models.V3{}, errors.New("the block never appeared")
+	}
+	if f.chainInv == nil || f.chainInv[itemName] == 0 {
+		return models.V3{}, errors.New("none in the inventory")
+	}
+	f.chainInv[itemName]--
+	cell := [3]int{int(f.x), int(f.y), int(f.z) + 1}
+	f.chainBlocks[cell] = itemName
+	if f.placeThenFail {
+		f.placeThenFail = false
+		return models.V3{}, errors.New("the block never appeared")
+	}
+	return models.V3{X: float64(cell[0]), Y: float64(cell[1]), Z: float64(cell[2])}, nil
+}
+
+// ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.
+func (f *fakeAgent) ClearInventory(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clearedInventory++
+	if f.chainInv != nil {
+		for k := range f.chainInv {
+			delete(f.chainInv, k)
+		}
+	}
+	return nil
+}
+
+func (f *fakeAgent) ClearDroppedItems(_ context.Context, x, y, z, radius int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.clearedDropAreas = append(f.clearedDropAreas, [4]int{x, y, z, radius})
+	f.chainDrops = 0
 	return nil
 }
