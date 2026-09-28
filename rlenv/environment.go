@@ -264,6 +264,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
+		e.cfg.CollectDrops = override.CollectDrops
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -540,6 +541,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
 			e.consecutiveStepTimeouts++
 		}
+	}
+	if shouldDispatch && dispatch.name == mineActionName && e.cfg.CollectDrops {
+		e.collectDrops(ctx)
 	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -825,6 +829,31 @@ func (e *Environment) clearArea(ctx context.Context) {
 		log.Printf("rlenv: clearing area around (%d,%d,%d): %v", x, y, z, err)
 	}
 }
+
+// collectDropsTimeout bounds one collectDrops call: a few drops at a walk
+// and a short wait each, well inside Config.StepTimeout's default.
+const collectDropsTimeout = 6 * time.Second
+
+// collectDrops collects the items a mine step just dropped (see
+// Config.CollectDrops). Best effort: a drop that cannot be collected leaves
+// the step as it was and the reward judges the inventory as it stands, so a
+// failure is logged, not returned.
+func (e *Environment) collectDrops(ctx context.Context) {
+	collector, ok := e.agent.(models.ItemCollector)
+	if !ok {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, collectDropsTimeout)
+	defer cancel()
+	if _, err := collector.CollectNearbyItems(cctx, collectDropsRadius); err != nil && ctx.Err() == nil {
+		log.Printf("rlenv: collecting drops after a mine step: %v", err)
+	}
+}
+
+// collectDropsRadius is how far around the bot collectDrops looks for drops:
+// a block's drop lands within a block or two of it, and the bot stands next
+// to the block.
+const collectDropsRadius = 6.0
 
 // compositeGotoTask reports whether this episode is "go to the target, then
 // mine/craft there": the goto task active alongside a mine or craft task.

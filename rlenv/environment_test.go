@@ -1508,3 +1508,50 @@ func TestPlainGotoIsNeverMaskedByArrival(t *testing.T) {
 		t.Fatal("goto masked in a plain goto episode")
 	}
 }
+
+// With Config.CollectDrops a mine step collects what it dropped; other
+// steps, and a Config without it, never do.
+func TestCollectDropsRunsAfterAMineStepOnly(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:oak_log", 1, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:oak_log"
+	cfg.CollectDrops = true
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 0 {
+		t.Fatalf("collect calls after a Wait = %d, want 0", agent.collectDropsCalls)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 1 {
+		t.Fatalf("collect calls after a Mine = %d, want 1", agent.collectDropsCalls)
+	}
+}
+
+func TestCollectDropsIsOffByDefault(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:oak_log", 1, 0, 0)
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:oak_log"
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(ctx, rlenv.ActionMine); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.collectDropsCalls != 0 {
+		t.Fatalf("collect calls = %d, want 0 without Config.CollectDrops", agent.collectDropsCalls)
+	}
+}

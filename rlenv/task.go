@@ -158,6 +158,19 @@ type Config struct {
 	// must be run with it on.
 	NormalizeObservation bool
 
+	// CollectDrops makes a mine step also collect the drops it produced, so
+	// the mined item is in the inventory when the step's observation and
+	// reward are computed. Breaking a block leaves an item entity on the
+	// ground that the bot only collects if it happens to be within about a
+	// block of where it lands (drops land up to a block and a half away, and
+	// cannot be collected for half a second of server time), so without this
+	// a task whose next step needs the mined item - crafting planks from a
+	// log - fails at random. Off by default: existing mine tasks do not use
+	// the item, and collecting costs a fraction of a second per mine step.
+	// Needs an agent implementing models.ItemCollector; without one it is a
+	// no-op.
+	CollectDrops bool
+
 	// SeedAtGoal is Config's copy of TaskOverride.SeedAtGoal (set per
 	// episode by Config.TaskSelector; may also be set statically).
 	SeedAtGoal bool
@@ -254,6 +267,9 @@ type TaskSelector func(episode int, rng *rand.Rand) TaskOverride
 // exactly mirroring how MineTargetBlock/CraftTargetItem must be
 // explicitly non-empty to enable their tasks.
 type TaskOverride struct {
+	// CollectDrops is Config.CollectDrops for this episode.
+	CollectDrops bool
+
 	// SeedAtGoal, for a composite episode (goto active alongside mine or
 	// craft), places the mine block or crafting table next to the goto
 	// target instead of beside the bot, so the bot has to travel to find

@@ -48,6 +48,7 @@ type fakeAgent struct {
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
+	collectDropsCalls                  int
 	findVisibleBlockCalls              int
 
 	// Crafting table simulation: FindVisibleBlock reports a table (at the
@@ -484,4 +485,13 @@ func (f *fakeAgent) SeedCraftIngredientsAt(_ context.Context, itemName string, x
 	f.seedCraftAtCalls = append(f.seedCraftAtCalls, farSeedCall{itemName, x, y, z})
 	f.mu.Unlock()
 	return nil
+}
+
+// CollectNearbyItems makes fakeAgent a models.ItemCollector; it only records
+// that a collect was asked for.
+func (f *fakeAgent) CollectNearbyItems(context.Context, float64) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collectDropsCalls++
+	return 1, nil
 }

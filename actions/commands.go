@@ -820,6 +820,24 @@ func (PickUpNearbyItem) Execute(ctx context.Context, agent models.CommandAgent, 
 		maxDistance = d
 	}
 
+	// An agent that can collect by getting within pickup range does so:
+	// walking to the item's own cell fails whenever that cell is not
+	// walkable (a drop under a still-standing log, in a hole), where a cell
+	// beside it works just as well.
+	if collector, ok := agent.(models.ItemCollector); ok {
+		completion, resolve := models.NewCompletion()
+		go func() {
+			n, err := collector.CollectNearbyItems(ctx, maxDistance)
+			if err != nil {
+				_ = agent.SendChat("Pick up item error: " + err.Error())
+			} else if n == 0 {
+				_ = agent.SendChat(fmt.Sprintf("No visible item found within %.0f blocks", maxDistance))
+			}
+			resolve(err)
+		}()
+		return completion, nil
+	}
+
 	_, x, y, z, found, err := agent.FindNearestVisibleItem(ctx, maxDistance)
 	if err != nil {
 		_ = agent.SendChat("Find item error: " + err.Error())
