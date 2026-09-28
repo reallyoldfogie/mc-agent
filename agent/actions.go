@@ -983,6 +983,10 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 	// that method's own doc comment (docs/plans/FIND_VISIBLE_BLOCK_PERFORMANCE_PLAN.md
 	// item 2, local/untracked).
 	nameMatchCache := make(map[uint32]bool)
+	// candidatesConsidered/candidatesUnloaded feed findVisibleBlockUnloadedWarning
+	// below - see its own doc comment for why this counts rather than logs
+	// inline.
+	var candidatesConsidered, candidatesUnloaded int
 
 	for r := 0; r <= maxDistance; r++ {
 		// Once a match is found, no cell in a farther shell can possibly be
@@ -1002,8 +1006,10 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 			cx := baseX + float64(off[0])
 			cy := baseY + float64(off[1])
 			cz := baseZ + float64(off[2])
+			candidatesConsidered++
 			stateID, loaded := world.GetBlockAt(cx, cy, cz)
 			if !loaded {
+				candidatesUnloaded++
 				continue
 			}
 			if stateID == 0 {
@@ -1047,9 +1053,40 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 		}
 	}
 	if bestDistSq == math.MaxFloat64 {
+		if msg, ok := findVisibleBlockUnloadedWarning(targetName, maxDistance, candidatesConsidered, candidatesUnloaded); ok {
+			a.logf("%s", msg)
+		}
 		return 0, 0, 0, false, nil
 	}
 	return bestX, bestY, bestZ, true, nil
+}
+
+// findVisibleBlockUnloadedWarning decides whether FindVisibleBlock's failure
+// to find blockName is worth flagging as possibly spurious: it found nothing
+// to report ("not there") and "some fraction of what it searched was never
+// loaded, so it couldn't tell" are indistinguishable to a caller unless this
+// says so. Only fires on an outright failure — a successful find or a call
+// where everything was loaded (candidatesUnloaded == 0, the overwhelming
+// common case for an established bot in its own long-lived working area)
+// stays silent, so this costs nothing in the normal case and only speaks up
+// when there's something to actually investigate.
+//
+// Found live (2026-09-27): a freshly-teleported standalone bot
+// (mc-rsi-trainer's cmd/rsi-infer, a location it had never visited before)
+// searched an entire episode without ever finding a target block that
+// genuinely-loaded chunks nearby did contain — TeleportTo's own chunk-sync
+// wait (see waitForChunkLoaded) only confirmed the teleport destination's
+// own chunk, not the wider area a search radius like this one reaches into,
+// so a neighboring chunk simply hadn't arrived on this bot's own connection
+// yet. Nothing surfaced that at the time; this is what should have.
+func findVisibleBlockUnloadedWarning(targetName string, maxDistance, candidatesConsidered, candidatesUnloaded int) (string, bool) {
+	if candidatesUnloaded == 0 {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"FindVisibleBlock(%q, radius=%d): found nothing, but %d of %d candidates searched had an unloaded chunk — this may be a false negative, not a real absence",
+		targetName, maxDistance, candidatesUnloaded, candidatesConsidered,
+	), true
 }
 
 // blockStateMatchesName reports whether stateID's block name matches

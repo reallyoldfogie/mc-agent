@@ -393,25 +393,68 @@ func (a *agent) TeleportTo(ctx context.Context, x, y, z float64) error {
 	}
 }
 
-// waitForChunkLoaded polls World.GetBlockAt's own loaded return at (x, y, z)
-// until the destination chunk has arrived, bounded by chunkSyncTimeout — see
-// that constant's doc comment for why TeleportTo needs this in addition to
-// (not instead of) its position-sync wait above. Skips the wait entirely if
-// this agent has no world wired up (a minimal test double, say), matching
-// how other optional-capability checks in this codebase degrade (e.g.
-// rlenv/walkability.go's WalkabilityAgent) rather than erroring.
+// chunkPreloadRadius is how far around a teleport destination
+// waitForChunkLoaded also waits for chunks to arrive, on top of the
+// destination's own chunk — see chunkPreloadPoints and this function's own
+// doc comment for why one point was never enough.
+const chunkPreloadRadius = 16
+
+// chunkPreloadPoints returns the destination point plus one point in each of
+// its horizontal chunk neighbors (a 3x3 grid of chunk columns centered on
+// (x, y, z), sampled once per column since a whole 16-block column loads as
+// one unit) — everywhere within chunkPreloadRadius blocks of the
+// destination, matching the common case of a mine/craft search radius run
+// right after a Config.ResetOrigin teleport (rlenv.Environment.Reset).
+func chunkPreloadPoints(x, y, z float64) [][3]float64 {
+	offsets := []float64{-chunkPreloadRadius, 0, chunkPreloadRadius}
+	points := make([][3]float64, 0, len(offsets)*len(offsets))
+	for _, dx := range offsets {
+		for _, dz := range offsets {
+			points = append(points, [3]float64{x + dx, y, z + dz})
+		}
+	}
+	return points
+}
+
+// waitForChunkLoaded polls World.GetBlockAt's own loaded return across
+// chunkPreloadPoints until every one of them has arrived, bounded by
+// chunkSyncTimeout — see that constant's doc comment for why TeleportTo
+// needs this in addition to (not instead of) its position-sync wait above.
+// Skips the wait entirely if this agent has no world wired up (a minimal
+// test double, say), matching how other optional-capability checks in this
+// codebase degrade (e.g. rlenv/walkability.go's WalkabilityAgent) rather
+// than erroring.
+//
+// Checks a spread of points around the destination, not just the
+// destination itself: found live (2026-09-27) via mc-rsi-trainer's
+// cmd/rsi-infer teleporting a standalone bot somewhere it had never visited
+// before — the destination's own chunk loaded and this wait returned, but a
+// FindVisibleBlock search a few blocks later reached into a neighboring
+// chunk that simply hadn't arrived yet on this bot's own connection (a
+// client-tracked state entirely separate from what the server itself
+// already knows), and silently found nothing for the rest of the episode.
+// One point loading says nothing about a chunk chunkPreloadRadius blocks
+// away.
 func (a *agent) waitForChunkLoaded(ctx context.Context, x, y, z float64) error {
 	if a.worldMgr == nil {
 		return nil
 	}
 
+	points := chunkPreloadPoints(x, y, z)
 	deadline := time.Now().Add(chunkSyncTimeout)
 	for {
-		if _, loaded := a.worldMgr.GetBlockAt(x, y, z); loaded {
+		allLoaded := true
+		for _, p := range points {
+			if _, loaded := a.worldMgr.GetBlockAt(p[0], p[1], p[2]); !loaded {
+				allLoaded = false
+				break
+			}
+		}
+		if allLoaded {
 			return nil
 		}
 		if !time.Now().Before(deadline) {
-			return fmt.Errorf("teleport: destination chunk at (%.2f, %.2f, %.2f) never loaded within %s", x, y, z, chunkSyncTimeout)
+			return fmt.Errorf("teleport: chunks within %d blocks of (%.2f, %.2f, %.2f) never all loaded within %s", chunkPreloadRadius, x, y, z, chunkSyncTimeout)
 		}
 		select {
 		case <-ctx.Done():
