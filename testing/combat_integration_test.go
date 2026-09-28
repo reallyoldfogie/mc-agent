@@ -112,6 +112,9 @@ func (s *CombatFlatSuite) TestPlayerArmorEquipmentTracking() {
 
 	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:diamond_chestplate", target.Name))
 	require.NoError(s.T(), err, "give chestplate")
+	found, err := waitForAgentHasItem(s.Ctx, target.Agent, "minecraft:diamond_chestplate", 5*time.Second)
+	require.NoError(s.T(), err, "wait for chestplate inventory update")
+	require.True(s.T(), found, "target should observe the diamond chestplate in its inventory")
 	require.NoError(s.T(), target.Agent.Equip(s.Ctx, "minecraft:diamond_chestplate"), "equip chestplate")
 
 	itemRegistry := observer.Agent.GetRegistry("minecraft:item")
