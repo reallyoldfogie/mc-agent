@@ -22,3 +22,21 @@ func TestCombatTickIntervalUsesServerTickRate(t *testing.T) {
 		t.Fatalf("10 TPS: got %s, want %s", got, want)
 	}
 }
+
+func TestCombatHazardClassification(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		hazard bool
+	}{
+		{name: "minecraft:creeper", hazard: true},
+		{name: "skeleton", hazard: true},
+		{name: "zombie", hazard: false},
+		{name: "minecraft:spider", hazard: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := combatHazard(test.name); got != test.hazard {
+				t.Fatalf("combatHazard(%q)=%v, want %v", test.name, got, test.hazard)
+			}
+		})
+	}
+}

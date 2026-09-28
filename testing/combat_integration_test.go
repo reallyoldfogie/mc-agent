@@ -205,6 +205,110 @@ func (s *CombatFlatSuite) TestPlayerDeathRespawnTracking() {
 	require.FailNow(s.T(), "observer never received an active positive-health snapshot after player respawn")
 }
 
+// TestRunCombatMultipleTargetsRetreats verifies that the combat loop counts
+// multiple active hostile targets and retreats instead of attacking into a
+// surround.
+func (s *CombatFlatSuite) TestRunCombatMultipleTargetsRetreats() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatMultiTargetBot", "combat_multi_target")
+	require.NoError(s.T(), err, "spawn multi-target combat agent")
+
+	positions := [][2]float64{{4, 0}, {5, 2}, {5, -2}, {7, 0}}
+	for i, position := range positions {
+		_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+			`summon minecraft:zombie %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+			leader.Origin.X+position[0], leader.Origin.Y, leader.Origin.Z+position[1]))
+		require.NoError(s.T(), err, "spawn hostile target %d", i)
+	}
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", leader.Name))
+	require.NoError(s.T(), err, "give multi-target sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:netherite_sword"), "equip multi-target sword")
+
+	typeID, found := leader.Agent.GetEntityTypeID("minecraft:zombie")
+	require.True(s.T(), found, "zombie type should be registered")
+	deadline := time.Now().Add(5 * time.Second)
+	var targets []models.TrackedEntityInfo
+	for time.Now().Before(deadline) {
+		targets = targets[:0]
+		for _, entity := range leader.GetTrackedEntities() {
+			if entity.EntityType == typeID && !entity.Removed && entity.MaxHealth > 0 {
+				targets = append(targets, entity)
+			}
+		}
+		if len(targets) >= len(positions) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.GreaterOrEqual(s.T(), len(targets), len(positions), "all hostile targets should be tracked")
+
+	before, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "multi-target agent position should be initialized")
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 2*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 12, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "multi-target combat should stop on test context")
+
+	after, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "multi-target agent position should remain initialized")
+	nearestBefore := math.MaxFloat64
+	nearestAfter := math.MaxFloat64
+	for _, target := range targets {
+		nearestBefore = math.Min(nearestBefore, before.DistanceToXZ(models.V3{X: target.X, Z: target.Z}))
+		nearestAfter = math.Min(nearestAfter, after.DistanceToXZ(models.V3{X: target.X, Z: target.Z}))
+	}
+	require.Greater(s.T(), nearestAfter, nearestBefore+0.1, "multi-target pressure should move the agent away from the surround")
+}
+
+// TestRunCombatCreeperMaintainsDistance verifies that the hazardous-target
+// movement filter replaces an exposed approach with evasive movement.
+func (s *CombatFlatSuite) TestRunCombatCreeperMaintainsDistance() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatCreeperBot", "combat_creeper")
+	require.NoError(s.T(), err, "spawn creeper combat agent")
+
+	spawnX := leader.Origin.X + 8
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:creeper %.1f %.1f %.1f {NoAI:1b,PersistenceRequired:1b}`, spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn stationary creeper")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", leader.Name))
+	require.NoError(s.T(), err, "give creeper sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:netherite_sword"), "equip creeper sword")
+
+	typeID, found := leader.Agent.GetEntityTypeID("minecraft:creeper")
+	require.True(s.T(), found, "creeper type should be registered")
+	deadline := time.Now().Add(5 * time.Second)
+	var targetID int32
+	for time.Now().Before(deadline) {
+		if id, _, ok := leader.Agent.FindNearestEntityByType(typeID, leader.Origin.X, leader.Origin.Y, leader.Origin.Z, false); ok {
+			targetID = id
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NotZero(s.T(), targetID, "creeper should be tracked")
+	target, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "creeper snapshot should be available")
+	before, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "creeper combat agent position should be initialized")
+	initialDistance := before.DistanceToXZ(models.V3{X: target.X, Z: target.Z})
+
+	runner, ok := leader.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose RunCombat")
+	ctx, cancel := context.WithTimeout(s.Ctx, 2*time.Second)
+	defer cancel()
+	err = runner.RunCombat(ctx, 12, false)
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "creeper combat should stop on test context")
+
+	after, initialized := leader.Agent.GetPositionSimple()
+	require.True(s.T(), initialized, "creeper combat agent position should remain initialized")
+	finalDistance := after.DistanceToXZ(models.V3{X: target.X, Z: target.Z})
+	require.GreaterOrEqual(s.T(), finalDistance, initialDistance-0.5,
+		"hazardous creeper approach should preserve distance: initial=%.2f final=%.2f", initialDistance, finalDistance)
+}
+
 // TestRunCombatRetreatsAtCriticalHealth verifies that a known low-health agent
 // stops attacking and moves away from a visible target. The target is NoAI so
 // any displacement is attributable to the combat retreat policy.

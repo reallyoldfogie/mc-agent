@@ -57,6 +57,21 @@ func TestCriticalHealthForcesRetreatWithoutAttacking(t *testing.T) {
 	}
 }
 
+func TestMultipleEnemiesForceRetreatWithoutAttacking(t *testing.T) {
+	decision := Decide(Observation{
+		Health: 20, MaxHealth: 20, EnemyCount: 4,
+		HasTarget: true, TargetVisible: true, TargetDistance: 3,
+		TargetDirectionX: 1,
+	})
+	if decision.State != Retreating || decision.Attack {
+		t.Fatalf("four active enemies should force retreat without attacking: %+v", decision)
+	}
+	intent := MovementFor(Observation{HasTarget: true, TargetDirectionX: 1}, decision, false)
+	if intent.Action != RetreatFromTarget || intent.ThrottleX != -1 || !intent.Sprint || !intent.Jump {
+		t.Fatalf("multi-target pressure should produce a sprinting retreat: %+v", intent)
+	}
+}
+
 func TestDecideShieldRaiseHoldAndRelease(t *testing.T) {
 	base := Observation{
 		Health: 20, MaxHealth: 20, HasTarget: true, TargetVisible: true,
