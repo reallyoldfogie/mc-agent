@@ -101,6 +101,53 @@ func (s *CombatFlatSuite) TestRunCombatMelee() {
 	}
 }
 
+// TestPlayerArmorEquipmentTracking verifies that a combat agent observes armor
+// changes made by another player, including the explicit empty-slot update
+// sent when the armor is removed.
+func (s *CombatFlatSuite) TestPlayerArmorEquipmentTracking() {
+	observer, err := s.SpawnWorkingAreaAgentNoCam("CombatArmorObserver", "combat_armor_observer")
+	require.NoError(s.T(), err, "spawn armor observer")
+	target, err := s.SpawnAgentNearNoCam("CombatArmorTarget", "combat_armor_target", observer.Origin, 3, 0)
+	require.NoError(s.T(), err, "spawn armor target")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:diamond_chestplate", target.Name))
+	require.NoError(s.T(), err, "give chestplate")
+	require.NoError(s.T(), target.Agent.Equip(s.Ctx, "minecraft:diamond_chestplate"), "equip chestplate")
+
+	itemRegistry := observer.Agent.GetRegistry("minecraft:item")
+	require.NotNil(s.T(), itemRegistry, "item registry should be available")
+	chestplateID, ok := itemRegistry.GetIDByName("minecraft:diamond_chestplate")
+	require.True(s.T(), ok, "diamond chestplate should be in the item registry")
+
+	deadline := time.Now().Add(5 * time.Second)
+	equipped := false
+	for time.Now().Before(deadline) {
+		if info, found := observer.GetTrackedEntities()[target.Agent.GetEntityID()]; found {
+			if item, hasEquipment := info.Equipment[models.EquipmentSlotChest]; hasEquipment && item.Present && item.Count > 0 && item.ItemID == chestplateID {
+				equipped = true
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.True(s.T(), equipped, "observer never received the target's equipped chestplate")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("item replace entity %s armor.chest with air", target.Name))
+	require.NoError(s.T(), err, "remove chestplate")
+
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, found := observer.GetTrackedEntities()[target.Agent.GetEntityID()]; found {
+			item := info.Equipment[models.EquipmentSlotChest]
+			if !item.Present || item.Count == 0 {
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.FailNow(s.T(), "observer never received the target's cleared chest slot")
+}
+
 // TestRunCombatRetreatsAtCriticalHealth verifies that a known low-health agent
 // stops attacking and moves away from a visible target. The target is NoAI so
 // any displacement is attributable to the combat retreat policy.

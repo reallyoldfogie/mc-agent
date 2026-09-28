@@ -45,3 +45,26 @@ func TestNewTrackedEntityFromSpawnDoesNotReuseState(t *testing.T) {
 		t.Fatalf("spawn data was not initialized correctly: %+v", spawned)
 	}
 }
+
+func TestGetTrackedEntitiesExposesEquipmentSnapshot(t *testing.T) {
+	const chestItemID int32 = 1234
+	a := &agent{entities: map[int32]*trackedEntity{
+		7: {
+			EntityID: 7,
+			Equipment: map[models.EquipmentSlotType]models.InventorySlot{
+				models.EquipmentSlotChest: {ItemID: chestItemID, Count: 1, Present: true},
+			},
+		},
+	}}
+
+	first := a.GetTrackedEntities()[7]
+	if got := first.Equipment[models.EquipmentSlotChest]; got.ItemID != chestItemID || got.Count != 1 || !got.Present {
+		t.Fatalf("equipment snapshot lost chest item: %+v", got)
+	}
+
+	delete(first.Equipment, models.EquipmentSlotChest)
+	second := a.GetTrackedEntities()[7]
+	if _, ok := second.Equipment[models.EquipmentSlotChest]; !ok {
+		t.Fatal("mutating the returned equipment map changed tracker state")
+	}
+}

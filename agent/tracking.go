@@ -39,11 +39,6 @@ type trackedEntity struct {
 	// reported by ClientboundEntityEquipment. Used to tell whether a mount is
 	// saddled (1.21.5+, where the saddle became a real equipment slot).
 	//
-	// Caveat: the version handlers currently leave EquipmentEntry.Item.ItemID
-	// at 0 with a TODO, so only occupancy (Count/Present) is trustworthy here,
-	// not the item identity. That is enough for saddle detection because the
-	// slot itself carries the meaning, but any check that needs to know *which*
-	// item is equipped must wait for the parsers to extract the item ID.
 	Equipment map[models.EquipmentSlotType]models.InventorySlot
 	// Inventory is a cached snapshot of the entity's own container contents
 	// (donkey/mule/llama chest, chest boat, chest minecart). Nil until the
@@ -516,6 +511,13 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 	defer a.entitiesMu.RUnlock()
 	out := make(map[int32]models.TrackedEntityInfo, len(a.entities))
 	for id, e := range a.entities {
+		var equipment map[models.EquipmentSlotType]models.InventorySlot
+		if e.Equipment != nil {
+			equipment = make(map[models.EquipmentSlotType]models.InventorySlot, len(e.Equipment))
+			for slot, item := range e.Equipment {
+				equipment[slot] = item
+			}
+		}
 		out[id] = models.TrackedEntityInfo{
 			EntityID:   e.EntityID,
 			EntityType: e.EntityType,
@@ -528,6 +530,7 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 			Health:     e.Health,
 			MaxHealth:  e.MaxHealth,
 			Removed:    e.Removed,
+			Equipment:  equipment,
 			Pose:       e.Pose,
 			PoseName:   e.PoseName,
 			HasPose:    e.HasPose,
