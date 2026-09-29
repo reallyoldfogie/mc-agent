@@ -28,21 +28,35 @@ type PlacementCell struct {
 // PlacementCandidates lists the cells around a bot standing in block cell
 // (bx, by, bz) that a block could be placed in, nearest first: the four
 // orthogonal neighbours, then the four diagonals, then the cells two blocks
-// out along each axis. Only geometry: whether a cell is actually free and
-// has a floor is for the caller to check.
+// out along each axis, all at the bot's own level; then the same 12 offsets
+// one level down. Only geometry: whether a cell is actually free and has a
+// floor is for the caller to check.
+//
+// The lower tier is for a bot standing on top of something rather than the
+// floor (a leftover block the chain's cleanup or its own mining missed):
+// every neighbour at the bot's own level then looks floorless - its floor
+// would be at by-1, which is open air one level above the real, normal
+// ground - even though the real ground is right there, one step down and
+// well within click reach. Found live: chain_place/chain_use episodes
+// occasionally reporting "no free cell" while standing at a fractional Y a
+// full block above the usual -60/-61 pair, with every one of the 12
+// same-level candidates rejected for want of a floor.
 func PlacementCandidates(bx, by, bz int) []PlacementCell {
 	offsets := [][2]int{
 		{1, 0}, {-1, 0}, {0, 1}, {0, -1},
 		{1, 1}, {1, -1}, {-1, 1}, {-1, -1},
 		{2, 0}, {-2, 0}, {0, 2}, {0, -2},
 	}
-	out := make([]PlacementCell, 0, len(offsets))
-	for _, o := range offsets {
-		x, z := float64(bx+o[0]), float64(bz+o[1])
-		out = append(out, PlacementCell{
-			Cell:  V3{X: x, Y: float64(by), Z: z},
-			Floor: V3{X: x, Y: float64(by - 1), Z: z},
-		})
+	out := make([]PlacementCell, 0, len(offsets)*2)
+	for _, dy := range [2]int{0, -1} {
+		y := float64(by + dy)
+		for _, o := range offsets {
+			x, z := float64(bx+o[0]), float64(bz+o[1])
+			out = append(out, PlacementCell{
+				Cell:  V3{X: x, Y: y, Z: z},
+				Floor: V3{X: x, Y: y - 1, Z: z},
+			})
+		}
 	}
 	return out
 }

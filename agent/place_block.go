@@ -30,6 +30,10 @@ const (
 // the floor's top face - the same sequence the Phase 0 spikes of
 // docs/plans/12 showed placing a crafting table 19 times out of 20. The
 // twentieth returned success and placed nothing, hence the verification.
+// PlacementCandidates' second tier (one level down) is what finds a cell at
+// all when the bot is standing on top of something rather than the floor -
+// found live as chain_place/chain_use episodes reporting "no free cell"
+// while standing a full block higher than the usual -60/-61 pair.
 func (a *agent) PlaceHeldBlock(ctx context.Context, itemName string) (models.V3, error) {
 	if a.InventoryCount(itemName) == 0 {
 		return models.V3{}, fmt.Errorf("place %s: none in the inventory", itemName)
