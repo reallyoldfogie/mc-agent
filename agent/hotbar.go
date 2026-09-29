@@ -329,6 +329,32 @@ func (a *agent) FindHotbarSlotWithItem(ctx context.Context, itemName string) (in
 // Returns (nil, true) if the item was found and equipped, (nil, false) if not found,
 // or (err, false) on error.
 func (a *agent) SwitchToItem(ctx context.Context, itemName string) (bool, error) {
+	// Inventory updates arrive asynchronously after server-side give/pickup
+	// commands. Poll briefly so a caller does not observe the transient state
+	// where the item has been reported but the slot resolver has not converged.
+	const inventorySyncRetryWindow = 2 * time.Second
+	deadline := time.Now().Add(inventorySyncRetryWindow)
+	for {
+		found, err := a.switchToItemOnce(ctx, itemName)
+		if err != nil || found {
+			return found, err
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return false, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *agent) switchToItemOnce(ctx context.Context, itemName string) (bool, error) {
 	// Check hotbar first (fast path)
 	hotbarSlot, found := a.FindHotbarSlotWithItem(ctx, itemName)
 	if found {

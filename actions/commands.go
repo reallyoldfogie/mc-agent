@@ -864,6 +864,25 @@ func (PickUpNearbyItem) Execute(ctx context.Context, agent models.CommandAgent, 
 	return completion, nil
 }
 
+type KillCreeperForGunpowder struct{}
+
+func (KillCreeperForGunpowder) Name() string  { return "killcreeperforgunpowder" }
+func (KillCreeperForGunpowder) Usage() string { return "killCreeperForGunpowder" }
+func (KillCreeperForGunpowder) Execute(ctx context.Context, agent models.CommandAgent, _ []string) (models.Completion, error) {
+	killer, ok := agent.(interface {
+		KillCreeperForGunpowder(context.Context) (bool, error)
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("kill creeper action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		_, err := killer.KillCreeperForGunpowder(ctx)
+		resolve(err)
+	}()
+	return completion, nil
+}
+
 type Craft struct{}
 
 func (Craft) Name() string  { return "craft" }

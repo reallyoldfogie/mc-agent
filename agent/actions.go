@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/agent/mining"
+	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/items"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -633,6 +634,55 @@ func (a *agent) UseItemOnEntity(ctx context.Context, entityID int32, hand models
 		return err
 	}
 	return usage.UseItemOnEntity(entityID, hand, sneaking)
+}
+
+// AttackEntity sends a left-click attack against an entity. This is the
+// transport-level combat primitive; it deliberately does not choose targets,
+// weapons, spacing, or attack timing. Those decisions belong to the combat
+// controller built on top of AgentActions.
+func (a *agent) AttackEntity(ctx context.Context, entityID int32, sneaking bool) error {
+	return a.attackEntityAtRange(ctx, entityID, sneaking, models.InteractReachDistance)
+}
+
+func (a *agent) attackEntityAtRange(ctx context.Context, entityID int32, sneaking bool, maxReach float64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entities := a.GetTrackedEntities()
+	target, ok := entities[entityID]
+	if !ok || target.Removed {
+		return fmt.Errorf("cannot attack entity %d: target is not tracked", entityID)
+	}
+	position, _, _, initialized := a.GetPosition()
+	if !initialized {
+		return errors.New("cannot attack entity: position not initialized")
+	}
+	targetPosition := models.V3{X: target.X, Y: target.Y, Z: target.Z}
+	if position.DistanceTo(targetPosition) > maxReach {
+		return fmt.Errorf("cannot attack entity %d: target is beyond reach", entityID)
+	}
+	visible, err := a.HasLineOfSight(ctx, target.X, target.Y, target.Z)
+	if err != nil {
+		return fmt.Errorf("check attack line of sight: %w", err)
+	}
+	if !visible {
+		return fmt.Errorf("cannot attack entity %d: target is not visible", entityID)
+	}
+	usage, err := a.itemUsageOrCreate()
+	if err != nil {
+		return err
+	}
+	a.combatMu.Lock()
+	defer a.combatMu.Unlock()
+	now := time.Now()
+	if !combat.ReadyToAttack(now, a.lastCombatAttack, combat.MeleeWeapon) {
+		return fmt.Errorf("cannot attack entity %d: melee attack is on cooldown", entityID)
+	}
+	if err := usage.AttackEntity(entityID, sneaking); err != nil {
+		return err
+	}
+	a.lastCombatAttack = now
+	return nil
 }
 
 // HasLineOfSight checks if the agent can see the target position.

@@ -1,0 +1,82 @@
+package agent
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/reallyoldfogie/mc-agent/combat"
+	"github.com/reallyoldfogie/mc-agent/models"
+)
+
+func TestExecuteRangedAttackRejectsLostTargetBeforeInventoryMutation(t *testing.T) {
+	a := &agent{entities: make(map[int32]*trackedEntity)}
+	request := combat.RangedAttackRequest{
+		TargetID: 42, Weapon: combat.Bow, TargetPosition: models.V3{X: 1},
+		ProjectileSpeed: 3, CancelOnTargetLoss: true,
+	}
+	if err := a.ExecuteRangedAttack(context.Background(), request); err == nil {
+		t.Fatal("lost ranged target should be rejected before dispatch")
+	}
+}
+
+func TestSleepRangedChargeCancelsWhenTargetIsRemoved(t *testing.T) {
+	a := &agent{entities: map[int32]*trackedEntity{
+		42: {EntityID: 42},
+	}}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		a.entitiesMu.Lock()
+		a.entities[42].Removed = true
+		a.entitiesMu.Unlock()
+	}()
+	if err := a.sleepRangedCharge(context.Background(), 42, true, 500*time.Millisecond); err == nil {
+		t.Fatal("ranged charge should cancel after target removal")
+	}
+}
+
+func TestProjectileForCombatWeapon(t *testing.T) {
+	tests := []struct {
+		weapon  combat.ProjectileWeapon
+		item    string
+		wantErr bool
+	}{
+		{weapon: combat.Bow, item: "minecraft:bow"},
+		{weapon: combat.Crossbow, item: "minecraft:crossbow"},
+		{weapon: combat.Trident, item: "minecraft:trident"},
+	}
+	for _, tt := range tests {
+		item, _, err := projectileForCombatWeapon(tt.weapon)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("weapon %d: error=%v, wantErr=%v", tt.weapon, err, tt.wantErr)
+		}
+		if err == nil && item != tt.item {
+			t.Errorf("weapon %d: item=%q, want %q", tt.weapon, item, tt.item)
+		}
+	}
+}
+
+func TestAvailableCombatProjectileWeaponsUsesStableInventoryOrder(t *testing.T) {
+	available := map[string]bool{
+		"minecraft:crossbow": true,
+		"minecraft:trident":  true,
+	}
+	got := filterCombatProjectileWeapons(available)
+	if len(got) != 2 || got[0] != combat.Crossbow || got[1] != combat.Trident {
+		t.Fatalf("unexpected available projectile order: %v", got)
+	}
+}
+
+func TestRangedRequestForTarget(t *testing.T) {
+	target := combat.Target{EntityID: 42, X: 10, Y: 2, Z: -4, Distance: 30}
+	request, err := rangedRequestForTarget(target, combat.Bow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.TargetID != target.EntityID || request.TargetPosition.X != target.X {
+		t.Fatalf("request does not preserve target: %+v", request)
+	}
+	if request.FlightTime <= 0 || request.ProjectileSpeed <= 0 {
+		t.Fatalf("request has invalid timing: %+v", request)
+	}
+}

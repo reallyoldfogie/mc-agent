@@ -39,11 +39,6 @@ type trackedEntity struct {
 	// reported by ClientboundEntityEquipment. Used to tell whether a mount is
 	// saddled (1.21.5+, where the saddle became a real equipment slot).
 	//
-	// Caveat: the version handlers currently leave EquipmentEntry.Item.ItemID
-	// at 0 with a TODO, so only occupancy (Count/Present) is trustworthy here,
-	// not the item identity. That is enough for saddle detection because the
-	// slot itself carries the meaning, but any check that needs to know *which*
-	// item is equipped must wait for the parsers to extract the item ID.
 	Equipment map[models.EquipmentSlotType]models.InventorySlot
 	// Inventory is a cached snapshot of the entity's own container contents
 	// (donkey/mule/llama chest, chest boat, chest minecart). Nil until the
@@ -118,6 +113,28 @@ type trackedEntity struct {
 	// different here and must not be conflated.
 	AirSupply    int32
 	HasAirSupply bool
+}
+
+// newTrackedEntityFromSpawn creates a fresh tracker record for an AddEntity
+// packet. Entity IDs are reusable, so a respawn must not retain health,
+// attributes, effects, equipment, inventory, or removed state from the old
+// entity that occupied the ID.
+func newTrackedEntityFromSpawn(entityID, entityType int32, uuid [16]byte, x, y, z float64, yaw, pitch int8, velX, velY, velZ float64, now time.Time) *trackedEntity {
+	return &trackedEntity{
+		EntityID:           entityID,
+		EntityType:         entityType,
+		UUID:               uuid,
+		X:                  x,
+		Y:                  y,
+		Z:                  z,
+		Yaw:                yaw,
+		Pitch:              pitch,
+		VelX:               velX,
+		VelY:               velY,
+		VelZ:               velZ,
+		LastMetadataUpdate: now,
+		LastPositionUpdate: now,
+	}
 }
 
 // GetPosition returns the current bot position and rotation.
@@ -494,6 +511,13 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 	defer a.entitiesMu.RUnlock()
 	out := make(map[int32]models.TrackedEntityInfo, len(a.entities))
 	for id, e := range a.entities {
+		var equipment map[models.EquipmentSlotType]models.InventorySlot
+		if e.Equipment != nil {
+			equipment = make(map[models.EquipmentSlotType]models.InventorySlot, len(e.Equipment))
+			for slot, item := range e.Equipment {
+				equipment[slot] = item
+			}
+		}
 		out[id] = models.TrackedEntityInfo{
 			EntityID:   e.EntityID,
 			EntityType: e.EntityType,
@@ -506,6 +530,7 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 			Health:     e.Health,
 			MaxHealth:  e.MaxHealth,
 			Removed:    e.Removed,
+			Equipment:  equipment,
 			Pose:       e.Pose,
 			PoseName:   e.PoseName,
 			HasPose:    e.HasPose,

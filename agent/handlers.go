@@ -332,33 +332,10 @@ func (a *agent) onAddEntity(p pk.Packet) error {
 
 	a.entitiesMu.Lock()
 	now := time.Now()
-	if e, ok := a.entities[entityID]; ok {
-		e.EntityType = entityType
-		e.UUID = uuid
-		e.X, e.Y, e.Z = x, y, z
-		e.Yaw, e.Pitch = yaw, pitch
-		e.VelX, e.VelY, e.VelZ = velX, velY, velZ // Initial velocity from spawn packet
-		e.Removed = false
-		e.LastMetadataUpdate = now // Initialize velocity timestamp
-		e.LastPositionUpdate = now // Initialize position timestamp
-	} else {
-		a.entities[entityID] = &trackedEntity{
-			EntityID:           entityID,
-			EntityType:         entityType,
-			UUID:               uuid,
-			X:                  x,
-			Y:                  y,
-			Z:                  z,
-			Yaw:                yaw,
-			Pitch:              pitch,
-			VelX:               velX, // Initial velocity from spawn packet
-			VelY:               velY,
-			VelZ:               velZ,
-			Removed:            false,
-			LastMetadataUpdate: now, // Initialize velocity timestamp
-			LastPositionUpdate: now, // Initialize position timestamp
-		}
-	}
+	// Replace the record even when the ID already exists. The server may reuse
+	// IDs after RemoveEntities, and mutating the old record would leak its
+	// health/effects/equipment/removed state into the new entity.
+	a.entities[entityID] = newTrackedEntityFromSpawn(entityID, entityType, uuid, x, y, z, yaw, pitch, velX, velY, velZ, now)
 	a.entitiesMu.Unlock()
 
 	// Register entity in the metadata handler's entity registry
@@ -487,9 +464,6 @@ func (a *agent) onMoveEntityPosRot(p pk.Packet) error {
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
 	}
 	a.entitiesMu.Unlock()
@@ -617,9 +591,6 @@ func (a *agent) onMoveEntityPos(p pk.Packet) error {
 			e.currentServerUpdateTime = now
 			e.LastPositionUpdate = now
 		}
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: newX, Y: newY, Z: newZ}
 	}
 	a.entitiesMu.Unlock()
@@ -722,9 +693,6 @@ func (a *agent) onSyncEntityPosition(p pk.Packet) error {
 		e.currentServerUpdateTime = now
 		e.LastPositionUpdate = now
 
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
 	a.entitiesMu.Unlock()
@@ -825,9 +793,6 @@ func (a *agent) onTeleportEntity(p pk.Packet) error {
 		e.Yaw, e.Pitch = yaw, pitch
 		e.LastPositionUpdate = now
 
-		if e.Removed {
-			e.Removed = false
-		}
 		callbackPos = &models.V3{X: x, Y: y, Z: z}
 	}
 	a.entitiesMu.Unlock()
@@ -897,26 +862,31 @@ func (a *agent) onEntityVelocityUpdate(p pk.Packet) error {
 		}
 	}
 
+	a.updateTrackedEntityVelocity(entityID, velX, velY, velZ)
+	return nil
+}
+
+// updateTrackedEntityVelocity updates entity velocity without holding the
+// entity lock while acquiring the projectile lock. Keeping the two critical
+// sections separate prevents a lock-order inversion with renderTick.
+func (a *agent) updateTrackedEntityVelocity(entityID int32, velX, velY, velZ float64) {
+	a.activeProjectilesMu.Lock()
+	isProjectile := a.activeProjectiles[entityID] != nil
+	a.activeProjectilesMu.Unlock()
+
+	if isProjectile {
+		a.logf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
+			entityID, velX, velY, velZ)
+	}
+
 	a.entitiesMu.Lock()
 	if e, ok := a.entities[entityID]; ok {
-		// Check if this is a tracked projectile
-		a.activeProjectilesMu.Lock()
-		isProjectile := a.activeProjectiles[entityID] != nil
-		a.activeProjectilesMu.Unlock()
-
-		if isProjectile {
-			a.logf("[onEntityVelocityUpdate] PROJECTILE: entityID=%d, velocity=(%.4f, %.4f, %.4f)",
-				entityID, velX, velY, velZ)
-		}
-
-		// Store velocity and update timestamp for interpolation
 		e.VelX = velX
 		e.VelY = velY
 		e.VelZ = velZ
-		e.LastMetadataUpdate = time.Now() // Record when velocity was updated for interpolation
+		e.LastMetadataUpdate = time.Now()
 	}
 	a.entitiesMu.Unlock()
-	return nil
 }
 
 // onDamageEvent handles ClientboundDamageEvent packets.
@@ -1354,7 +1324,10 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 		return err
 	}
 
-	if projInfo, exists := a.activeProjectiles[entityID]; exists {
+	a.activeProjectilesMu.Lock()
+	projInfo, projectileTracked := a.activeProjectiles[entityID]
+	a.activeProjectilesMu.Unlock()
+	if projectileTracked {
 
 		a.logf("[Agent %s][onSetEntityMetadata] %s entityID=%d %s)", a.cfg.Name, projInfo.projectileType.String(), entityID, spew.Sdump(projInfo))
 	}

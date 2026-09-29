@@ -650,10 +650,8 @@ func (a *agent) entityTypeLocalName(entityTypeID int32) (string, bool) {
 // equipmentHasSaddle reports whether an equipment map has an occupied saddle
 // slot.
 //
-// Only occupancy is consulted, not item identity: the version handlers still
-// leave EquipmentEntry.Item.ItemID at 0 (see trackedEntity.Equipment). That is
-// sufficient because the slot itself carries the meaning — nothing but a saddle
-// goes in the saddle slot.
+// Only occupancy is consulted: the slot itself carries the meaning — nothing
+// but a saddle goes in the saddle slot.
 func equipmentHasSaddle(equipment map[models.EquipmentSlotType]models.InventorySlot) bool {
 	saddleItem, hasSaddleSlot := equipment[models.EquipmentSlotSaddle]
 	return hasSaddleSlot && saddleItem.Count > 0

@@ -41,6 +41,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(Mine{})
 	reg.Register(LookAround{})
 	reg.Register(PickUpNearbyItem{})
+	reg.Register(KillCreeperForGunpowder{})
 	reg.Register(Craft{})
 	reg.Register(Place{})
 	reg.Register(Equip{})

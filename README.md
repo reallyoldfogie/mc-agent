@@ -6,12 +6,13 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 
 ## Features
 
-- **Multi-Version Support**: Compatible with Minecraft 1.21 through 1.21.8
+- **Multi-Version Support**: Compatible with the supported Minecraft 1.21.x releases through 26.1
 - **Microsoft Authentication**: Secure authentication via Microsoft accounts with credential caching
 - **Replay Recording**: Full ReplayMod .mcpr recording with bot visibility and skin texture embedding
 - **Skin Management**: Automatic download and extraction of Minecraft client skins with caching
 - **Recipe System**: Parse and export server recipes (property sets, stonecutter, slot displays)
 - **Bow Firing**: Physics-based ballistic calculation for accurate bow aiming
+- **Autonomous PvP/Combat**: Target selection, melee/ranged combat, shields, armor/equipment tracking, retreat behavior, spear support, and hazardous-target handling
 - **Packet Logging**: Comprehensive logging of all received packets for debugging and analysis
 - **Entity Tracking**: Real-time tracking of players and entities with position updates
 - **Player Following**: Intelligent pathfinding-based following with obstacle avoidance
@@ -83,6 +84,7 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `stopTracking` | Stop tracking |
 | `fireBow` | Fire equipped bow (basic) |
 | `fireBowAt <x> <y> <z>` | Fire bow at target coordinates with ballistic calculation |
+| `killCreeperForGunpowder` | Fight a creeper, maintain a safe distance, and collect gunpowder when it drops (caller must equip a melee weapon first) |
 
 Example:
 ```
@@ -203,6 +205,10 @@ The bot includes a comprehensive skin management system that can download and ex
 **Available skins:** alex, ari, efe, kai, makena, noor, steve, sunny, zuri (in both slim and wide models)
 
 See [docs/SKINS.md](docs/SKINS.md) for detailed documentation.
+
+### Combat testing status
+
+Combat has deterministic unit coverage plus multi-version Docker integration coverage for melee, shields, ranged weapons, armor/equipment tracking, target death/respawn, multiple targets, hazardous creepers, and the reusable creeper loot action. The current integration matrix covers the supported versions listed by `models.StandardVersionTests`; the PvP/combat implementation plan in `docs/plans/PVP_COMBAT_IMPLEMENTATION_PLAN.md` records remaining audit and merge-readiness work.
 
 **Try the demo:**
 ```bash

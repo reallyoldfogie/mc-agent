@@ -12,6 +12,11 @@ type TrackedEntityInfo struct {
 	MaxHealth  float32 // Maximum health (typically 20.0 for mobs)
 	Removed    bool
 
+	// Equipment is the last server-reported item in each entity equipment
+	// slot. The map is a snapshot; callers may modify it without changing the
+	// agent's tracker state.
+	Equipment map[EquipmentSlotType]InventorySlot
+
 	// Pose metadata from EntityPose wire value (e.g., standing, sitting, sleeping)
 	// HasPose is false until the server sends a pose update
 	Pose     int32  // Raw wire ordinal from protocol

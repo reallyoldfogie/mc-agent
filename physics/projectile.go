@@ -612,11 +612,20 @@ func ValidateTrajectory(trajectory []models.TrajectoryPoint, validator Trajector
 
 	var target *models.V3
 	var targetBlockX, targetBlockY, targetBlockZ int
+	var targetBoxMin, targetBoxMax models.V3
 	if len(targetOpt) > 0 {
 		target = &targetOpt[0]
 		targetBlockX = int(math.Floor(target.X))
 		targetBlockY = int(math.Floor(target.Y))
 		targetBlockZ = int(math.Floor(target.Z))
+		// Entity targets are points supplied by the tracker (normally the
+		// entity feet), not solid blocks. Treat the target's approximate body
+		// volume as the successful intercept and stop validation there. Without
+		// this, a valid shot can be rejected because its later post-target arc
+		// falls into the ground.
+		const targetRadius = 0.5
+		targetBoxMin = models.V3{X: target.X - targetRadius, Y: target.Y - targetRadius, Z: target.Z - targetRadius}
+		targetBoxMax = models.V3{X: target.X + targetRadius, Y: target.Y + targetRadius, Z: target.Z + targetRadius}
 	}
 
 	const (
@@ -636,6 +645,13 @@ func ValidateTrajectory(trajectory []models.TrajectoryPoint, validator Trajector
 	for i := 0; i < len(trajectory); i += sampleRate {
 		point := trajectory[i]
 		projBox := projectileAABB(point.Pos)
+
+		if target != nil && isPointInBox(point.Pos, targetBoxMin, targetBoxMax) {
+			return true, nil, ""
+		}
+		if target != nil && i > 0 && trajectorySegmentIntersectsBox(trajectory[i-1].Pos, point.Pos, targetBoxMin, targetBoxMax) {
+			return true, nil, ""
+		}
 
 		// Get block coordinates
 		blockX := int(math.Floor(point.Pos.X))

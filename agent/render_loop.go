@@ -38,10 +38,17 @@ func (a *agent) startRenderLoop(ctxDone <-chan struct{}) {
 // 2. Detects collisions using the interpolated position
 // 3. Fires hit callbacks when collisions are detected
 func (a *agent) renderTick() {
-	a.activeProjectilesMu.Lock()
-	defer a.activeProjectilesMu.Unlock()
-
 	now := time.Now()
+	type collisionCandidate struct {
+		entityID int32
+		position models.V3
+	}
+	candidates := make([]collisionCandidate, 0)
+
+	// Keep the projectile lock limited to interpolation state. Collision checks
+	// may inspect entities and must not be performed while this lock is held;
+	// doing so would invert the lock order with entity packet handlers.
+	a.activeProjectilesMu.Lock()
 
 	for entityID, projInfo := range a.activeProjectiles {
 		// Skip if already collided
@@ -135,20 +142,26 @@ func (a *agent) renderTick() {
 			// Skip collision detection for non-persistent projectiles
 			// They will be handled by onRemoveEntities when server removes them
 			continue
-		} else {
-			// For persistent projectiles (arrows, tridents), try to distinguish hit type
-			// Check for block collisions at interpolated position
-			if a.checkBlockCollision(projInfo.interpolatedPos) {
-				a.fireProjectileCollisionCallback(entityID, projInfo, models.ProjectileHitBlock)
-				continue
-			}
+		}
 
-			// Check for entity collisions at interpolated position
-			if hitEntityID, ok := a.checkEntityCollision(entityID, projInfo.interpolatedPos); ok {
-				a.fireProjectileCollisionCallback(entityID, projInfo, models.ProjectileHitEntity)
-				a.logf("[renderTick] Projectile %d hit entity %d at (%.4f, %.4f, %.4f)",
-					entityID, hitEntityID, projInfo.interpolatedPos.X, projInfo.interpolatedPos.Y, projInfo.interpolatedPos.Z)
-			}
+		candidates = append(candidates, collisionCandidate{
+			entityID: entityID,
+			position: projInfo.interpolatedPos,
+		})
+	}
+	a.activeProjectilesMu.Unlock()
+
+	// Collision checks run without either projectile or entity lock held.
+	for _, candidate := range candidates {
+		if a.checkBlockCollision(candidate.position) {
+			a.queueProjectileCollision(candidate.entityID, candidate.position, models.ProjectileHitBlock)
+			continue
+		}
+
+		if hitEntityID, ok := a.checkEntityCollision(candidate.entityID, candidate.position); ok {
+			a.queueProjectileCollision(candidate.entityID, candidate.position, models.ProjectileHitEntity)
+			a.logf("[renderTick] Projectile %d hit entity %d at (%.4f, %.4f, %.4f)",
+				candidate.entityID, hitEntityID, candidate.position.X, candidate.position.Y, candidate.position.Z)
 		}
 	}
 }
@@ -218,6 +231,18 @@ func (a *agent) checkEntityCollision(projectileID int32, pos models.V3) (int32, 
 // fireProjectileCollisionCallback handles collision callbacks for projectiles.
 // For persistent projectiles (arrows, tridents), queues callback for server-authoritative position.
 // For non-persistent projectiles, fires immediately with client prediction.
+func (a *agent) queueProjectileCollision(projectileID int32, position models.V3, hitType models.ProjectileHitType) {
+	a.activeProjectilesMu.Lock()
+	defer a.activeProjectilesMu.Unlock()
+
+	projInfo, exists := a.activeProjectiles[projectileID]
+	if !exists {
+		return
+	}
+	projInfo.interpolatedPos = position
+	a.fireProjectileCollisionCallback(projectileID, projInfo, hitType)
+}
+
 func (a *agent) fireProjectileCollisionCallback(projectileID int32, projInfo *activeProjectileInfo, hitType models.ProjectileHitType) {
 	if projInfo.callbacksFired || len(projInfo.callbacks) == 0 {
 		return // Already fired or no callbacks registered
