@@ -17,6 +17,14 @@ type combatRunner interface {
 	RunCombat(context.Context, float64, bool) error
 }
 
+type combatPolicyRunner interface {
+	RunCombatWithPolicy(context.Context, float64, combat.TargetPolicy) error
+}
+
+type creeperLootRunner interface {
+	KillCreeperForGunpowder(context.Context) (bool, error)
+}
+
 type entityAttackRunner interface {
 	AttackEntity(context.Context, int32, bool) error
 }
@@ -149,6 +157,47 @@ func (s *CombatFlatSuite) TestPlayerArmorEquipmentTracking() {
 		time.Sleep(100 * time.Millisecond)
 	}
 	require.FailNow(s.T(), "observer never received the target's cleared chest slot")
+}
+
+// TestRunCombatPvPOptIn verifies that the normal combat entry point does not
+// target players, while the explicit policy entry point can damage a tracked
+// player after PvP is enabled by the caller.
+func (s *CombatFlatSuite) TestRunCombatPvPOptIn() {
+	attacker, err := s.SpawnWorkingAreaAgent("CombatPvPAttacker", "combat_pvp_attacker")
+	require.NoError(s.T(), err, "spawn attacker")
+	// Keep the target very close. On 1.21.1 the initial near-agent teleport can
+	// settle several blocks farther away than requested; one block still leaves
+	// enough separation for a real player target while avoiding a reach-boundary
+	// failure in the PvP assertion.
+	target, err := s.SpawnAgentNearNoCam("CombatPvPTarget", "combat_pvp_target", attacker.Origin, 1, 0)
+	require.NoError(s.T(), err, "spawn target")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", attacker.Name))
+	require.NoError(s.T(), err, "give PvP sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, attacker, "minecraft:netherite_sword"), "equip PvP sword")
+
+	before, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
+	require.NoError(s.T(), err, "read target health before PvP")
+
+	defaultRunner, ok := attacker.Agent.(combatRunner)
+	require.True(s.T(), ok, "agent should expose default combat runner")
+	defaultCtx, defaultCancel := context.WithTimeout(s.Ctx, 1200*time.Millisecond)
+	err = defaultRunner.RunCombat(defaultCtx, 8, false)
+	defaultCancel()
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "default PvE combat should stop on context")
+	afterDefault, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
+	require.NoError(s.T(), err, "read target health after default combat")
+	require.InDelta(s.T(), before, afterDefault, 0.01, "default combat must not target players")
+
+	policyRunner, ok := attacker.Agent.(combatPolicyRunner)
+	require.True(s.T(), ok, "agent should expose policy combat runner")
+	pvpCtx, pvpCancel := context.WithTimeout(s.Ctx, 4*time.Second)
+	defer pvpCancel()
+	err = policyRunner.RunCombatWithPolicy(pvpCtx, 8, combat.TargetPolicy{IncludePlayers: true})
+	require.ErrorIs(s.T(), err, context.DeadlineExceeded, "PvP combat should stop on context")
+	afterPvP, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
+	require.NoError(s.T(), err, "read target health after PvP")
+	require.Less(s.T(), afterPvP, afterDefault, "explicit PvP policy should damage the player target")
 }
 
 // TestPlayerDeathRespawnTracking verifies that a player death removes the
@@ -307,6 +356,41 @@ func (s *CombatFlatSuite) TestRunCombatCreeperMaintainsDistance() {
 	finalDistance := after.DistanceToXZ(models.V3{X: target.X, Z: target.Z})
 	require.GreaterOrEqual(s.T(), finalDistance, initialDistance-0.5,
 		"hazardous creeper approach should preserve distance: initial=%.2f final=%.2f", initialDistance, finalDistance)
+}
+
+// TestRunCombatCreeperKillsAndCollectsGunpowder verifies the complete
+// strike-and-disengage encounter. The agent must close to melee reach, land
+// hits, retreat far enough to reset the fuse, and repeat until the creeper
+// dies; it then walks to the dropped gunpowder and lets vanilla pickup collect
+// it.
+func (s *CombatFlatSuite) TestRunCombatCreeperKillsAndCollectsGunpowder() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatCreeperLootBot", "combat_creeper_loot")
+	require.NoError(s.T(), err, "spawn creeper loot agent")
+
+	spawnX := leader.Origin.X + 6
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:creeper %.1f %.1f %.1f {Health:20f,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn creeper")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", leader.Name))
+	require.NoError(s.T(), err, "give creeper sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:netherite_sword"), "equip creeper sword")
+
+	runner, ok := leader.Agent.(creeperLootRunner)
+	require.True(s.T(), ok, "agent should expose KillCreeperForGunpowder")
+	collected, err := runner.KillCreeperForGunpowder(s.Ctx)
+	require.NoError(s.T(), err, "complete creeper encounter")
+
+	health, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, leader.Name)
+	require.NoError(s.T(), err, "check agent health after creeper encounter")
+	require.Greater(s.T(), health, float32(0), "agent must survive the creeper encounter")
+	if collected {
+		collected, err = waitForInventoryItem(s.Ctx, s.Inst.RCON, leader.Name, "minecraft:gunpowder", 5*time.Second)
+		require.NoError(s.T(), err, "verify collected gunpowder")
+		require.True(s.T(), collected, "action reported gunpowder collection")
+	}
 }
 
 // TestRunCombatRetreatsAtCriticalHealth verifies that a known low-health agent

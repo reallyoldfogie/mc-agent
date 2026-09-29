@@ -46,6 +46,9 @@ type Observation struct {
 	// attacks are withheld while it is true.
 	TargetIsRanged bool
 	TargetBlocking bool
+	// TargetIsExplosive identifies a target that must be engaged with a
+	// strike-and-disengage cycle rather than ordinary sustained melee.
+	TargetIsExplosive bool
 	// Critical-hit inputs are supplied by the movement/status adapter. A
 	// critical requires a downward/falling velocity and is invalid while on
 	// ground, swimming, mounted, blinded, or sprinting.
@@ -81,6 +84,8 @@ const (
 
 const (
 	meleeRange          = 5.0
+	explosiveMeleeRange = 2.75
+	explosiveResetRange = 3.5
 	rangedRange         = 8.0
 	criticalHealthRatio = 0.20
 	evadeHealthRatio    = 0.40
@@ -214,6 +219,9 @@ type MovementEnvironment struct {
 	CanJump        bool
 	HasCover       bool
 	TargetIsHazard bool
+	// ExplosiveTarget permits the controlled approach required by the
+	// strike-and-disengage creeper policy.
+	ExplosiveTarget bool
 }
 
 // FilterMovement applies conservative environmental safety rules before an
@@ -231,7 +239,7 @@ func FilterMovement(intent MovementIntent, env MovementEnvironment) MovementInte
 	if !env.CanJump {
 		intent.Jump = false
 	}
-	if env.TargetIsHazard && !env.HasCover && (intent.Action == ApproachTarget || intent.Action == StrafeTarget) {
+	if env.TargetIsHazard && !env.ExplosiveTarget && !env.HasCover && (intent.Action == ApproachTarget || intent.Action == StrafeTarget) {
 		intent.Action = EvadeTarget
 		intent.Sprint = true
 	}
@@ -296,6 +304,20 @@ func MovementFor(obs Observation, decision Decision, clockwise bool) MovementInt
 		}
 		intent.Sprint, intent.Jump = true, true
 	case Engaging:
+		if obs.TargetIsExplosive {
+			// Creepers begin their fuse at roughly three blocks. Close only
+			// to reliable melee reach; after a strike, retreat until the
+			// fuse is reset before approaching again.
+			if obs.TargetDistance <= explosiveResetRange {
+				intent.Action = RetreatFromTarget
+				intent.ThrottleX, intent.ThrottleZ = -dx, -dz
+				intent.Sprint, intent.Jump = true, true
+			} else {
+				intent.Action = ApproachTarget
+				intent.ThrottleX, intent.ThrottleZ = dx, dz
+			}
+			break
+		}
 		if decision.Weapon == MeleeWeapon && obs.TargetDistance > meleeRange {
 			intent.Action = ApproachTarget
 			intent.ThrottleX, intent.ThrottleZ = dx, dz

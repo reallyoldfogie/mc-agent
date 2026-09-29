@@ -68,6 +68,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				obs.TargetDistance = target.Distance
 				obs.TargetDirectionX, obs.TargetDirectionZ = target.DirectionX, target.DirectionZ
 				obs.TargetIsRanged = combatTargetIsRanged(target.TypeName)
+				obs.TargetIsExplosive = combatTargetIsExplosive(target.TypeName)
 				if target.Visible {
 					if err := a.TurnTowards(ctx, target.X, target.Y+1.0, target.Z); err != nil {
 						a.logf("[combat] target facing failed: entity=%d error=%v", target.EntityID, err)
@@ -134,6 +135,7 @@ func (a *agent) RunCombatWithPolicy(ctx context.Context, radius float64, policy 
 				if err != nil {
 					return fmt.Errorf("combat loop: environment: %w", err)
 				}
+				environment.ExplosiveTarget = combatTargetIsExplosive(target.TypeName)
 				intent = combat.FilterMovement(intent, environment)
 			}
 			if err := a.ApplyCombatMovement(ctx, intent); err != nil {
@@ -367,4 +369,13 @@ func combatHazard(typeName string) bool {
 	return typeName == "minecraft:creeper" || typeName == "creeper" ||
 		typeName == "minecraft:skeleton" || typeName == "skeleton" ||
 		typeName == "minecraft:stray" || typeName == "stray"
+}
+
+func combatTargetIsExplosive(typeName string) bool {
+	switch normalizeItemName(typeName) {
+	case "minecraft:creeper", "creeper":
+		return true
+	default:
+		return false
+	}
 }

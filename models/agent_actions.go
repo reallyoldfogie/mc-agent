@@ -56,6 +56,10 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	// caller is responsible for selecting the weapon and positioning the agent;
 	// autonomous target selection and combat policy belong to the combat layer.
 	AttackEntity(ctx context.Context, entityID int32, sneaking bool) error
+	// KillCreeperForGunpowder performs a controlled creeper encounter. It
+	// returns true when a dropped item is observed and gunpowder is collected;
+	// false is a valid result when the creeper drops no item.
+	KillCreeperForGunpowder(ctx context.Context) (collected bool, err error)
 	// InteractWithEntity(ctx context.Context, entityID int32) error
 
 	// Bow firing actions
