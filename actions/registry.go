@@ -35,6 +35,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(PlanStop{})
 	reg.Register(FireBow{})
 	reg.Register(FireBowAt{})
+	reg.Register(MaceAttack{})
 	reg.Register(Mount{})
 	reg.Register(Dismount{})
 	reg.Register(VehicleJump{})
