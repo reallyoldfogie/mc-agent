@@ -331,6 +331,9 @@ type agent struct {
 	// strength is player-wide, not target-specific, so one timestamp is enough.
 	combatMu         sync.Mutex
 	lastCombatAttack time.Time
+	// maceSmashActive prevents the autonomous melee loop from consuming the
+	// attack while an explicit falling Mace attack is waiting for its window.
+	maceSmashActive atomic.Bool
 
 	// boatItemNamesMu guards boatItemNamesCache.
 	boatItemNamesMu sync.Mutex

@@ -84,6 +84,16 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `stopTracking` | Stop tracking |
 | `fireBow` | Fire equipped bow (basic) |
 | `fireBowAt <x> <y> <z>` | Fire bow at target coordinates with ballistic calculation |
+| `attackEntity <entityID> [sneaking]` | Perform a validated direct melee attack |
+| `shield <raise\|lower>` | Raise or lower the equipped shield |
+| `fireCrossbowAt <entityID>` | Fire a crossbow at a tracked entity |
+| `throwTridentAt <entityID>` | Throw a trident at a tracked entity |
+| `spearJab <entityID> <itemName>` | Perform a spear Jab |
+| `spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]` | Perform a spear Charge |
+| `maceAttack <entityID> <itemName>` | Perform a normal Mace attack |
+| `maceSmash <entityID> <itemName>` | Wait for the falling-attack window and perform a Mace smash |
+| `runCombat [radius] [includeNeutral]` | Run autonomous combat, including melee, ranged weapons, shields, and spear support |
+| `runCombatWithPolicy <radius> [includePlayers] [includeNeutral]` | Run autonomous combat with explicit target-category policy |
 | `killCreeperForGunpowder` | Fight a creeper, maintain a safe distance, and collect gunpowder when it drops (caller must equip a melee weapon first) |
 
 Example:

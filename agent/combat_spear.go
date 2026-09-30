@@ -3,12 +3,55 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
+
+// SpearJabAt performs a validated spear Jab against a tracked entity.
+func (a *agent) SpearJabAt(ctx context.Context, targetID int32, itemName string) error {
+	_, request, err := a.spearRequestForEntity(targetID, itemName, combat.SpearJab, 0, 0, 0, 0, 0)
+	if err != nil {
+		return err
+	}
+	return a.ExecuteSpearAttack(ctx, request)
+}
+
+// SpearChargeAt performs a validated held-use spear Charge. Durations and
+// motion thresholds are supplied by the caller because they come from the
+// item components and movement state rather than the transport.
+func (a *agent) SpearChargeAt(ctx context.Context, targetID int32, itemName string, holdDuration, engagedDuration, tiredDuration time.Duration, minSpeed, minAlignment float64) error {
+	_, request, err := a.spearRequestForEntity(targetID, itemName, combat.SpearCharge, holdDuration, engagedDuration, tiredDuration, minSpeed, minAlignment)
+	if err != nil {
+		return err
+	}
+	return a.ExecuteSpearAttack(ctx, request)
+}
+
+func (a *agent) spearRequestForEntity(targetID int32, itemName string, mode combat.SpearAttackMode, holdDuration, engagedDuration, tiredDuration time.Duration, minSpeed, minAlignment float64) (combat.Target, combat.SpearAttackRequest, error) {
+	target, ok := a.GetTrackedEntities()[targetID]
+	if !ok || target.Removed {
+		return combat.Target{}, combat.SpearAttackRequest{}, fmt.Errorf("spear attack: target %d is not tracked", targetID)
+	}
+	position, _, _, initialized := a.GetPosition()
+	if !initialized {
+		return combat.Target{}, combat.SpearAttackRequest{}, fmt.Errorf("spear attack: agent position not initialized")
+	}
+	dx, dy, dz := target.X-position.X, target.Y-position.Y, target.Z-position.Z
+	distance := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	combatTarget := combat.Target{EntityID: targetID, X: target.X, Y: target.Y, Z: target.Z, Distance: distance}
+	request := combat.SpearAttackRequest{
+		TargetID: targetID, ItemName: itemName, Mode: mode, Distance: distance,
+		MinReach: 1, MaxReach: 6, TargetPosition: models.V3{X: target.X, Y: target.Y, Z: target.Z},
+		ViewAlignment: 1, RelativeSpeed: minSpeed, MinSpeed: minSpeed, MinAlignment: minAlignment,
+		HoldDuration: holdDuration,
+		Profile:      combat.SpearChargeProfile{EngagedDuration: engagedDuration, TiredDuration: tiredDuration},
+	}
+	return combatTarget, request, request.Validate()
+}
 
 func spearJabRequestForTarget(target combat.Target, itemName string) (combat.SpearAttackRequest, error) {
 	request := combat.SpearAttackRequest{

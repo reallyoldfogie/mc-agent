@@ -29,6 +29,14 @@ type entityAttackRunner interface {
 	AttackEntity(context.Context, int32, bool) error
 }
 
+type maceAttackRunner interface {
+	MaceAttackAt(context.Context, int32, string) error
+}
+
+type maceSmashRunner interface {
+	MaceSmashAt(context.Context, int32, string) error
+}
+
 type spearRunner interface {
 	ExecuteSpearAttack(context.Context, combat.SpearAttackRequest) error
 }
@@ -499,6 +507,111 @@ func (s *CombatFlatSuite) TestAttackEntityCriticalWhileFalling() {
 	}
 	require.Less(s.T(), after.Health, before.Health, "falling attack should damage the target")
 	require.Greater(s.T(), before.Health-after.Health, float32(8), "falling attack should exceed a fully charged netherite sword base hit")
+}
+
+// TestMaceAttack verifies that a Mace can be equipped and used through the
+// public agent combat API against a stationary target. The target's high
+// health keeps it alive for the health update assertion.
+func (s *CombatFlatSuite) TestMaceAttack() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatMaceBot", "combat_mace")
+	require.NoError(s.T(), err, "spawn mace combat agent")
+
+	spawnX := leader.Origin.X + 2
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:husk %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn stationary mace target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:mace", leader.Name))
+	require.NoError(s.T(), err, "give mace")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:mace"), "equip mace")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:husk")
+	runner, ok := leader.Agent.(maceAttackRunner)
+	require.True(s.T(), ok, "agent should expose Mace attack")
+	// The Mace has the vanilla -3.4 attack-speed modifier, so wait for its
+	// roughly 1.4-second attack-strength cycle to reach full charge.
+	time.Sleep(2 * time.Second)
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "mace target should have a health snapshot before attack")
+	require.NoError(s.T(), runner.MaceAttackAt(s.Ctx, targetID, "minecraft:mace"), "send Mace attack")
+
+	after := waitForTrackedHealthDrop(s, leader, targetID, before.Health)
+	require.Greater(s.T(), before.Health-after.Health, float32(4), "a fully charged Mace ground attack should deal its base damage")
+}
+
+// TestMaceSmashWhileFalling verifies the server-derived Mace smash path. A
+// NoAI target stays fixed while the agent falls more than 1.5 blocks before
+// sending the ordinary entity attack packet.
+func (s *CombatFlatSuite) TestMaceSmashWhileFalling() {
+	leader, err := s.SpawnWorkingAreaAgent("CombatMaceSmashBot", "combat_mace_smash")
+	require.NoError(s.T(), err, "spawn falling Mace agent")
+
+	// Put the target below the agent so the attack is sent inside vanilla's
+	// three-block entity interaction range. The agent has no weapon during
+	// setup, so the target may be close before the falling sequence begins.
+	spawnX := leader.Origin.X + 2
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:husk %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn stationary smash target")
+	targetID := zombieIDForTest(s, leader, "minecraft:husk")
+	runner, ok := leader.Agent.(maceSmashRunner)
+	require.True(s.T(), ok, "agent should expose Mace attack")
+	time.Sleep(2 * time.Second)
+	// Establish the baseline after the attack-strength charge period. The
+	// autonomous loop may otherwise attack a nearby target before the smash
+	// request is made.
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "smash target should have a health snapshot before the attack")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		"tp %s %.1f %.1f %.1f facing %.1f %.1f %.1f",
+		leader.Name, spawnX, spawnY+10, spawnZ, spawnX, spawnY+1, spawnZ))
+	require.NoError(s.T(), err, "teleport agent above Mace target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:mace", leader.Name))
+	require.NoError(s.T(), err, "give smash mace")
+	require.NoError(s.T(), runner.MaceSmashAt(s.Ctx, targetID, "minecraft:mace"), "send falling Mace attack")
+
+	after := waitForTrackedDamage(s, leader, targetID, before.Health, 10)
+	require.Greater(s.T(), before.Health-after.Health, float32(10), "falling Mace attack should include smash bonus damage")
+}
+
+func waitForTrackedDamage(s *CombatFlatSuite, leader *WorkingAreaAgent, targetID int32, before, minimum float32) models.TrackedEntityInfo {
+	s.T().Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var after models.TrackedEntityInfo
+	for time.Now().Before(deadline) {
+		if current, tracked := leader.GetTrackedEntities()[targetID]; tracked {
+			after = current
+			if before-current.Health > minimum {
+				return current
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Greater(s.T(), before-after.Health, minimum, "target should receive the expected damage")
+	return after
+}
+
+func waitForTrackedHealthDrop(s *CombatFlatSuite, leader *WorkingAreaAgent, targetID int32, before float32) models.TrackedEntityInfo {
+	s.T().Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	var after models.TrackedEntityInfo
+	for time.Now().Before(deadline) {
+		if current, tracked := leader.GetTrackedEntities()[targetID]; tracked {
+			after = current
+			if current.Health < before {
+				return current
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Less(s.T(), after.Health, before, "Mace attack should damage the target")
+	return after
 }
 
 func (s *CombatFlatSuite) TestRunCombatRangedBow() {

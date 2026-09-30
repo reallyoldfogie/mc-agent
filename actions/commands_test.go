@@ -2,6 +2,15 @@ package actions
 
 import "testing"
 
+func TestNewRegistryRegistersCombatActions(t *testing.T) {
+	registry := NewRegistry()
+	for _, name := range []string{"attackentity", "shield", "firecrossbowat", "throwtridentat", "spearjab", "spearcharge", "maceattack", "macesmash", "runcombat", "runcombatwithpolicy", "killcreeperforgunpowder"} {
+		if _, ok := registry.Get(name); !ok {
+			t.Fatalf("NewRegistry() missing combat action %q", name)
+		}
+	}
+}
+
 // TestParsePositiveIntArg backs Mine's "mine <blockName> [radius]" — see
 // its own doc comment on why an explicit override was added
 // (2026-09-10, mine's own hardcoded default radius used to be entirely

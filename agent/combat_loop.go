@@ -244,7 +244,15 @@ func (a *agent) combatCriticalEligible() bool {
 // validate the 1.21.11+ item and reach semantics before sending it.
 func (a *agent) executeCombatMeleeAttack(ctx context.Context, target combat.Target) error {
 	itemName := a.combatHeldItemName()
-	if combat.ClassifyMeleeItem(itemName) != combat.SpearMeleeWeapon {
+	switch combat.ClassifyMeleeItem(itemName) {
+	case combat.MaceMeleeWeapon:
+		if a.maceSmashActive.Load() {
+			return nil
+		}
+		return a.MaceAttackAt(ctx, target.EntityID, itemName)
+	case combat.SpearMeleeWeapon:
+		break
+	default:
 		return a.AttackEntity(ctx, target.EntityID, false)
 	}
 	request, err := spearJabRequestForTarget(target, itemName)
@@ -339,6 +347,12 @@ func (a *agent) setCombatShield(ctx context.Context, active bool) error {
 		return fmt.Errorf("shield action: shield is no longer equipped")
 	}
 	return sendCombatShieldAction(actions, conn, hand, active, yaw, pitch, a.getNextSequence())
+}
+
+// SetCombatShield exposes the same validated shield packet sequence used by
+// the autonomous combat loop.
+func (a *agent) SetCombatShield(ctx context.Context, active bool) error {
+	return a.setCombatShield(ctx, active)
 }
 
 // sendCombatShieldAction is kept separate from agent state so packet dispatch
