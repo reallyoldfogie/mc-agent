@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/combat"
@@ -10,6 +11,37 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
 )
+
+// FireCrossbowAt fires the currently tracked target with a crossbow.
+func (a *agent) FireCrossbowAt(ctx context.Context, targetID int32) error {
+	return a.executeRangedAttackAt(ctx, targetID, combat.Crossbow)
+}
+
+// ThrowTridentAt throws a trident at the currently tracked target.
+func (a *agent) ThrowTridentAt(ctx context.Context, targetID int32) error {
+	return a.executeRangedAttackAt(ctx, targetID, combat.Trident)
+}
+
+func (a *agent) executeRangedAttackAt(ctx context.Context, targetID int32, weapon combat.ProjectileWeapon) error {
+	target, ok := a.GetTrackedEntities()[targetID]
+	if !ok || target.Removed {
+		return fmt.Errorf("ranged attack: target %d is not tracked", targetID)
+	}
+	position, _, _, initialized := a.GetPosition()
+	if !initialized {
+		return fmt.Errorf("ranged attack: agent position not initialized")
+	}
+	dx, dy, dz := target.X-position.X, target.Y-position.Y, target.Z-position.Z
+	request, err := rangedRequestForTarget(combat.Target{
+		EntityID: targetID, X: target.X, Y: target.Y, Z: target.Z,
+		VelocityX: 0, VelocityY: 0, VelocityZ: 0,
+		Distance: math.Sqrt(dx*dx + dy*dy + dz*dz),
+	}, weapon)
+	if err != nil {
+		return err
+	}
+	return a.ExecuteRangedAttack(ctx, request)
+}
 
 // ExecuteRangedAttack adapts a validated combat request to the existing
 // projectile actions. Inventory selection happens here rather than in the

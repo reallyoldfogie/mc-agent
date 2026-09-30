@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], craft <itemName>, place <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -602,6 +603,273 @@ func (FireBowAt) Execute(ctx context.Context, agent models.CommandAgent, args []
 			_ = agent.SendChat("Fire bow at error: " + err.Error())
 		}
 		resolve(err)
+	}()
+	return completion, nil
+}
+
+type AttackEntity struct{}
+
+func (AttackEntity) Name() string  { return "attackentity" }
+func (AttackEntity) Usage() string { return "attackEntity <entityID> [sneaking]" }
+func (AttackEntity) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 1 || len(args) > 2 {
+		_ = agent.SendChat("Usage: attackEntity <entityID> [sneaking]")
+		return models.Done(nil), nil
+	}
+	entityID, err := strconv.ParseInt(args[0], 10, 32)
+	if err != nil {
+		_ = agent.SendChat("Invalid entity ID")
+		return models.Done(nil), nil
+	}
+	sneaking := false
+	if len(args) == 2 {
+		sneaking, err = strconv.ParseBool(args[1])
+		if err != nil {
+			_ = agent.SendChat("Usage: attackEntity <entityID> [sneaking] - sneaking must be true or false")
+			return models.Done(nil), nil
+		}
+	}
+	attacker, ok := agent.(interface {
+		AttackEntity(context.Context, int32, bool) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("attack entity action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() { resolve(attacker.AttackEntity(ctx, int32(entityID), sneaking)) }()
+	return completion, nil
+}
+
+type RunCombat struct{}
+
+type Shield struct{}
+
+func (Shield) Name() string  { return "shield" }
+func (Shield) Usage() string { return "shield <raise|lower>" }
+func (Shield) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 || (args[0] != "raise" && args[0] != "lower") {
+		_ = agent.SendChat("Usage: shield <raise|lower>")
+		return models.Done(nil), nil
+	}
+	shielder, ok := agent.(interface {
+		SetCombatShield(context.Context, bool) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("shield action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() { resolve(shielder.SetCombatShield(ctx, args[0] == "raise")) }()
+	return completion, nil
+}
+
+type FireCrossbowAt struct{}
+
+func (FireCrossbowAt) Name() string  { return "firecrossbowat" }
+func (FireCrossbowAt) Usage() string { return "fireCrossbowAt <entityID>" }
+func (FireCrossbowAt) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	attacker, ok := agent.(interface {
+		FireCrossbowAt(context.Context, int32) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("crossbow action is not supported by this agent")), nil
+	}
+	return executeCombatEntityAction(ctx, agent, args, "fireCrossbowAt <entityID>", func(targetID int32) error {
+		return attacker.FireCrossbowAt(ctx, targetID)
+	})
+}
+
+type ThrowTridentAt struct{}
+
+func (ThrowTridentAt) Name() string  { return "throwtridentat" }
+func (ThrowTridentAt) Usage() string { return "throwTridentAt <entityID>" }
+func (ThrowTridentAt) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	attacker, ok := agent.(interface {
+		ThrowTridentAt(context.Context, int32) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("trident action is not supported by this agent")), nil
+	}
+	return executeCombatEntityAction(ctx, agent, args, "throwTridentAt <entityID>", func(targetID int32) error {
+		return attacker.ThrowTridentAt(ctx, targetID)
+	})
+}
+
+type SpearJab struct{}
+
+func (SpearJab) Name() string  { return "spearjab" }
+func (SpearJab) Usage() string { return "spearJab <entityID> <itemName>" }
+func (SpearJab) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 2 {
+		_ = agent.SendChat("Usage: spearJab <entityID> <itemName>")
+		return models.Done(nil), nil
+	}
+	targetID, err := parseCombatEntityID(args[0], agent)
+	if err != nil {
+		return models.Done(nil), nil
+	}
+	spear, ok := agent.(interface {
+		SpearJabAt(context.Context, int32, string) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("spear Jab action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() { resolve(spear.SpearJabAt(ctx, targetID, args[1])) }()
+	return completion, nil
+}
+
+type SpearCharge struct{}
+
+func (SpearCharge) Name() string { return "spearcharge" }
+func (SpearCharge) Usage() string {
+	return "spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]"
+}
+func (SpearCharge) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 5 || len(args) > 7 {
+		_ = agent.SendChat("Usage: spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]")
+		return models.Done(nil), nil
+	}
+	targetID, err := parseCombatEntityID(args[0], agent)
+	if err != nil {
+		return models.Done(nil), nil
+	}
+	ms := make([]float64, 5)
+	for i := 0; i < 3; i++ {
+		n, parseErr := strconv.Atoi(args[i+2])
+		if parseErr != nil || n <= 0 {
+			_ = agent.SendChat("Spear charge durations must be positive milliseconds")
+			return models.Done(nil), nil
+		}
+		ms[i] = float64(n)
+	}
+	if len(args) >= 6 {
+		ms[3], err = strconv.ParseFloat(args[5], 64)
+		if err != nil {
+			_ = agent.SendChat("Invalid spear minimum speed")
+			return models.Done(nil), nil
+		}
+	}
+	if len(args) == 7 {
+		ms[4], err = strconv.ParseFloat(args[6], 64)
+		if err != nil || ms[4] < -1 || ms[4] > 1 {
+			_ = agent.SendChat("Invalid spear minimum alignment")
+			return models.Done(nil), nil
+		}
+	}
+	spear, ok := agent.(interface {
+		SpearChargeAt(context.Context, int32, string, time.Duration, time.Duration, time.Duration, float64, float64) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("spear Charge action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		resolve(spear.SpearChargeAt(ctx, targetID, args[1], time.Duration(ms[0])*time.Millisecond,
+			time.Duration(ms[1])*time.Millisecond, time.Duration(ms[2])*time.Millisecond, ms[3], ms[4]))
+	}()
+	return completion, nil
+}
+
+func parseCombatEntityID(s string, agent models.CommandAgent) (int32, error) {
+	value, err := strconv.ParseInt(s, 10, 32)
+	if err != nil {
+		_ = agent.SendChat("Invalid entity ID")
+	}
+	return int32(value), err
+}
+
+func executeCombatEntityAction(ctx context.Context, agent models.CommandAgent, args []string, usage string, execute func(int32) error) (models.Completion, error) {
+	if len(args) != 1 {
+		_ = agent.SendChat("Usage: " + usage)
+		return models.Done(nil), nil
+	}
+	targetID, err := parseCombatEntityID(args[0], agent)
+	if err != nil {
+		return models.Done(nil), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() { resolve(execute(targetID)) }()
+	return completion, nil
+}
+
+func (RunCombat) Name() string  { return "runcombat" }
+func (RunCombat) Usage() string { return "runCombat [radius] [includeNeutral]" }
+func (RunCombat) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) > 2 {
+		_ = agent.SendChat("Usage: runCombat [radius] [includeNeutral]")
+		return models.Done(nil), nil
+	}
+	radius := 16.0
+	includeNeutral := false
+	var err error
+	if len(args) >= 1 {
+		radius, err = parseFloat(args[0])
+		if err != nil || radius <= 0 {
+			_ = agent.SendChat("Usage: runCombat [radius] [includeNeutral] - radius must be positive")
+			return models.Done(nil), nil
+		}
+	}
+	if len(args) == 2 {
+		includeNeutral, err = strconv.ParseBool(args[1])
+		if err != nil {
+			_ = agent.SendChat("Usage: runCombat [radius] [includeNeutral] - includeNeutral must be true or false")
+			return models.Done(nil), nil
+		}
+	}
+	runner, ok := agent.(interface {
+		RunCombat(context.Context, float64, bool) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("combat action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() { resolve(runner.RunCombat(ctx, radius, includeNeutral)) }()
+	return completion, nil
+}
+
+type RunCombatWithPolicy struct{}
+
+func (RunCombatWithPolicy) Name() string { return "runcombatwithpolicy" }
+func (RunCombatWithPolicy) Usage() string {
+	return "runCombatWithPolicy <radius> [includePlayers] [includeNeutral]"
+}
+func (RunCombatWithPolicy) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 1 || len(args) > 3 {
+		_ = agent.SendChat("Usage: runCombatWithPolicy <radius> [includePlayers] [includeNeutral]")
+		return models.Done(nil), nil
+	}
+	radius, err := parseFloat(args[0])
+	if err != nil || radius <= 0 {
+		_ = agent.SendChat("Usage: runCombatWithPolicy <radius> [includePlayers] [includeNeutral] - radius must be positive")
+		return models.Done(nil), nil
+	}
+	includePlayers, includeNeutral := false, false
+	if len(args) >= 2 {
+		includePlayers, err = strconv.ParseBool(args[1])
+		if err != nil {
+			_ = agent.SendChat("Usage: runCombatWithPolicy <radius> [includePlayers] [includeNeutral] - flags must be true or false")
+			return models.Done(nil), nil
+		}
+	}
+	if len(args) == 3 {
+		includeNeutral, err = strconv.ParseBool(args[2])
+		if err != nil {
+			_ = agent.SendChat("Usage: runCombatWithPolicy <radius> [includePlayers] [includeNeutral] - flags must be true or false")
+			return models.Done(nil), nil
+		}
+	}
+	runner, ok := agent.(interface {
+		RunCombatWithPolicy(context.Context, float64, combat.TargetPolicy) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("combat policy action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		resolve(runner.RunCombatWithPolicy(ctx, radius, combat.TargetPolicy{
+			IncludePlayers: includePlayers,
+			IncludeNeutral: includeNeutral,
+		}))
 	}()
 	return completion, nil
 }

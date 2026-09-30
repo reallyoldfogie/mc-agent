@@ -44,6 +44,7 @@ const (
 	UnknownMeleeWeapon MeleeWeaponKind = iota
 	StandardMeleeWeapon
 	SpearMeleeWeapon
+	MaceMeleeWeapon
 )
 
 // SpearAttackMode is the two spear actions introduced in Java 1.21.11.
@@ -192,6 +193,9 @@ func ClassifyMeleeItem(itemName string) MeleeWeaponKind {
 	name = strings.TrimPrefix(name, "minecraft:")
 	if name == "spear" || strings.HasSuffix(name, "_spear") {
 		return SpearMeleeWeapon
+	}
+	if name == "mace" {
+		return MaceMeleeWeapon
 	}
 	if name == "" {
 		return UnknownMeleeWeapon
