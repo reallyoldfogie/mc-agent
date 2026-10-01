@@ -22,8 +22,12 @@ type HPABuilder struct {
 
 	// buildMu protects concurrent cluster building
 	buildMu sync.Mutex
-	// building tracks clusters currently being built to prevent double-building
-	building map[ClusterID]bool
+	// building maps a cluster currently being built to a channel that
+	// BuildCluster closes when that build finishes, so a second goroutine
+	// wanting the same cluster can block on it instead of busy-polling
+	// IsDirty - see BuildCluster's own comment for why that distinction
+	// matters.
+	building map[ClusterID]chan struct{}
 }
 
 // NewHPABuilder creates a new HPA* builder
@@ -39,7 +43,7 @@ func NewHPABuilder(world models.World, shapeMgr models.BlockShapeManager, lowLev
 		abstractGraph:      abstractGraph,
 		movementValidator:  NewMovementValidator(world, shapeMgr, logger),
 		logger:             logger,
-		building:           make(map[ClusterID]bool),
+		building:           make(map[ClusterID]chan struct{}),
 	}
 }
 
@@ -63,25 +67,37 @@ func (b *HPABuilder) BuildCluster(clusterID ClusterID) *Cluster {
 	}
 
 	// Check if another goroutine is already building this cluster
-	if b.building[clusterID] {
+	if done, building := b.building[clusterID]; building {
 		b.buildMu.Unlock()
-		// Wait for the other goroutine to finish by polling IsDirty
-		// This is a simple approach - could use channels for more efficiency
-		for cluster.IsDirty() {
-			// Yield to other goroutines
-		}
+		// Block until the in-progress build finishes, rather than
+		// busy-polling IsDirty in a tight loop: under contention (several
+		// bots needing nearby clusters at the same time, e.g. right after
+		// a batch of episode resets marks many clusters dirty at once),
+		// every waiter spinning like that burns a full core on RWMutex
+		// churn instead of actually waiting, which starves the one
+		// goroutine doing the real work and makes every waiter wait even
+		// longer. Found live via pprof: this exact loop was over 40% of a
+		// training run's total CPU time. done is closed only after
+		// SetDirty(false) below has already run (same goroutine,
+		// sequential), so every waiter it wakes sees a clean cluster with
+		// no need to re-check IsDirty itself.
+		<-done
 		return cluster
 	}
 
-	// Mark as building
-	b.building[clusterID] = true
+	// Mark as building, and let any concurrent BuildCluster(clusterID)
+	// calls block on this channel instead of polling.
+	done := make(chan struct{})
+	b.building[clusterID] = done
 	b.buildMu.Unlock()
 
-	// Ensure we clean up building flag when done
+	// Ensure we clean up the building entry and wake any waiters when done,
+	// on every exit path (including a panic unwinding through here).
 	defer func() {
 		b.buildMu.Lock()
 		delete(b.building, clusterID)
 		b.buildMu.Unlock()
+		close(done)
 	}()
 
 	utils.SafeLogger(b.logger).Debug("[HPABuilder] building cluster", "cluster", cluster.String())
