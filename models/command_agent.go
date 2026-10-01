@@ -131,6 +131,21 @@ type CommandAgent interface {
 	// digging.
 	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
 
+	// PlaceBlockAt places itemName at the world cell pos — unlike
+	// BlockPlacer.PlaceHeldBlock (place_block.go), which puts a block on a
+	// standable cell beside the bot's *current* position, this places at an
+	// arbitrary absolute target: it picks a solid neighbor of pos to click
+	// against, walks to a reachable position with line of sight (see
+	// models.FindInteractPosition/TryInteractPositions), and places there,
+	// retrying the same way PlaceHeldBlock does. Returns an error if pos has
+	// no solid neighbor to support a placement, if itemName isn't in the
+	// inventory, or if no reachable/visible standing position exists. See
+	// the agent package implementation's doc comment for the full sequence.
+	// This was anticipated (see the formerly-commented-out line in
+	// models/agent_actions.go) before being built for
+	// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md's Phase 1.
+	PlaceBlockAt(ctx context.Context, pos V3, itemName string) error
+
 	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
 	// within radius blocks that the agent has a clear line of sight to
 	// (the entity analogue of FindAllVisibleBlocksInSphere), sorted by

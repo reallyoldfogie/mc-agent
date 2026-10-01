@@ -632,6 +632,28 @@ func (f *fakeAgent) PlaceHeldBlock(_ context.Context, itemName string) (models.V
 	return models.V3{X: float64(cell[0]), Y: float64(cell[1]), Z: float64(cell[2])}, nil
 }
 
+// PlaceBlockAt makes fakeAgent satisfy models.CommandAgent's PlaceBlockAt:
+// records itemName at pos in the same chainBlocks bookkeeping PlaceHeldBlock
+// uses, unless failNextPlace asks for a failure. No test currently exercises
+// arbitrary-position placement (fakeAgent's existing callers only use
+// PlaceHeldBlock's bot-relative placement), so this is a minimal, honest
+// stub to satisfy the interface rather than a fully-modeled implementation.
+func (f *fakeAgent) PlaceBlockAt(_ context.Context, pos models.V3, itemName string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failNextPlace {
+		f.failNextPlace = false
+		return errors.New("the block never appeared")
+	}
+	if f.chainInv == nil || f.chainInv[itemName] == 0 {
+		return errors.New("none in the inventory")
+	}
+	f.chainInv[itemName]--
+	cell := [3]int{int(pos.X), int(pos.Y), int(pos.Z)}
+	f.chainBlocks[cell] = itemName
+	return nil
+}
+
 // ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.
 func (f *fakeAgent) ClearInventory(context.Context) error {
 	f.mu.Lock()

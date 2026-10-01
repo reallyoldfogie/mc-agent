@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -60,29 +61,137 @@ func (a *agent) PlaceHeldBlock(ctx context.Context, itemName string) (models.V3,
 			continue
 		}
 		tried++
-		for attempt := 0; attempt < placeAttemptsPerCell; attempt++ {
-			if err := ctx.Err(); err != nil {
-				return models.V3{}, err
-			}
-			if err := a.equipAndConfirm(ctx, itemName, want); err != nil {
-				lastErr = err
-				continue
-			}
-			before := a.InventoryCount(itemName)
-			if err := a.UseItemOnBlock(ctx, c.Floor.X, c.Floor.Y, c.Floor.Z, models.FaceUp, models.MainHand); err != nil {
-				lastErr = fmt.Errorf("use %s on (%v): %w", itemName, c.Floor, err)
-				continue
-			}
-			if a.waitForPlacement(ctx, c.Cell, want, itemName, before) {
-				return c.Cell, nil
-			}
-			lastErr = fmt.Errorf("place %s at (%v): the block never appeared", itemName, c.Cell)
+		if err := ctx.Err(); err != nil {
+			return models.V3{}, err
 		}
+		if err := a.placeAgainst(ctx, itemName, want, c.Floor, models.FaceUp, c.Cell); err != nil {
+			lastErr = err
+			continue
+		}
+		return c.Cell, nil
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("place %s: no free cell with a floor beside the bot (standing in cell %d,%d,%d at y=%.4f; %d candidate cells unusable)", itemName, bx, by, bz, pos.Y, unusable)
 	}
 	return models.V3{}, lastErr
+}
+
+// placeAgainst attempts, up to placeAttemptsPerCell times, to place itemName
+// into targetCell by right-clicking support's face face - the shared retry/
+// verify core of both PlaceHeldBlock (clicking a floor beside the bot) and
+// PlaceBlockAt (clicking whatever solid neighbor an arbitrary target cell
+// has). want is itemName already run through normalizeItemName, passed in
+// rather than recomputed so both callers normalize exactly once. Returns
+// nil once waitForPlacement confirms the block appeared, or the last error
+// encountered across all attempts.
+func (a *agent) placeAgainst(ctx context.Context, itemName, want string, support models.V3, face models.BlockFace, targetCell models.V3) error {
+	var lastErr error
+	for attempt := 0; attempt < placeAttemptsPerCell; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := a.equipAndConfirm(ctx, itemName, want); err != nil {
+			lastErr = err
+			continue
+		}
+		before := a.InventoryCount(itemName)
+		if err := a.UseItemOnBlock(ctx, support.X, support.Y, support.Z, face, models.MainHand); err != nil {
+			lastErr = fmt.Errorf("use %s on (%v): %w", itemName, support, err)
+			continue
+		}
+		if a.waitForPlacement(ctx, targetCell, want, itemName, before) {
+			return nil
+		}
+		lastErr = fmt.Errorf("place %s at (%v): the block never appeared", itemName, targetCell)
+	}
+	return lastErr
+}
+
+// supportFaceOrder is the preference order PlaceBlockAt's findSupportFace
+// checks target's six neighbors in: down first (how a player naturally
+// builds - floor before walls), then the four horizontal neighbors, then
+// up last (placing against a ceiling is the least natural choice and the
+// worst for reach from a standing position).
+var supportFaceOrder = []struct {
+	dx, dy, dz int
+	face       models.BlockFace
+}{
+	{0, -1, 0, models.FaceUp},    // support below target -> click its top face
+	{0, 0, -1, models.FaceSouth}, // support north of target -> click its south face
+	{0, 0, 1, models.FaceNorth},  // support south of target -> click its north face
+	{1, 0, 0, models.FaceWest},   // support east of target -> click its west face
+	{-1, 0, 0, models.FaceEast},  // support west of target -> click its east face
+	{0, 1, 0, models.FaceDown},   // support above target -> click its bottom face
+}
+
+// blockReader is the minimal world-query surface findSupportFace needs -
+// narrower than models.World (14 methods, most of them world-time/border/
+// light queries irrelevant here) so it stays trivially fakeable in tests.
+// Same reasoning as models.InteractPositionAgent's doc comment. A
+// models.World value satisfies this automatically (Go interfaces are
+// structural), so real callers (PlaceBlockAt, passing a.GetWorld()) need no
+// adapter.
+type blockReader interface {
+	GetBlockAt(x, y, z float64) (stateID uint32, chunkLoaded bool)
+}
+
+// passabilityChecker is the single-method slice of models.BlockShapeManager
+// findSupportFace needs - same narrowing rationale as blockReader.
+type passabilityChecker interface {
+	IsPassable(blockStateID uint32) bool
+}
+
+// findSupportFace looks at target's six neighbors, in supportFaceOrder, for
+// the first solid one to place against, returning that neighbor's position
+// and the face of it (facing target) to click. ok is false if every
+// neighbor is passable - target is unsupported from every side (e.g. a
+// floating/overhang cell a bottom-up build order hasn't reached support
+// for yet), and PlaceBlockAt should fail that cell rather than guess.
+func findSupportFace(world blockReader, shapeMgr passabilityChecker, target models.V3) (support models.V3, face models.BlockFace, ok bool) {
+	tx, ty, tz := math.Floor(target.X), math.Floor(target.Y), math.Floor(target.Z)
+	for _, o := range supportFaceOrder {
+		nx, ny, nz := tx+float64(o.dx), ty+float64(o.dy), tz+float64(o.dz)
+		id, loaded := world.GetBlockAt(nx+0.5, ny+0.5, nz+0.5)
+		if !loaded || shapeMgr.IsPassable(id) {
+			continue
+		}
+		return models.V3{X: nx, Y: ny, Z: nz}, o.face, true
+	}
+	return models.V3{}, 0, false
+}
+
+// PlaceBlockAt implements models.CommandAgent. See that interface's doc
+// comment for the contract; this picks a support face via findSupportFace,
+// then reuses models.TryInteractPositions (built for walking up to an
+// existing solid block, but equally correct here - CanInteractFromPosition's
+// underlying line-of-sight check already special-cases an air/empty target,
+// see hasLineOfSightForAccessFrom in actions.go) to find a reachable
+// standing position and place from there.
+func (a *agent) PlaceBlockAt(ctx context.Context, target models.V3, itemName string) error {
+	if a.InventoryCount(itemName) == 0 {
+		return fmt.Errorf("place %s at (%v): none in the inventory", itemName, target)
+	}
+	world, shapeMgr := a.GetWorld(), a.BlockShapeManager()
+	if world == nil || shapeMgr == nil {
+		return fmt.Errorf("place %s at (%v): world not available", itemName, target)
+	}
+
+	support, face, ok := findSupportFace(world, shapeMgr, target)
+	if !ok {
+		return fmt.Errorf("place %s at (%v): no solid neighbor to place against", itemName, target)
+	}
+
+	want := normalizeItemName(itemName)
+	err := models.TryInteractPositions(ctx, a, target, func(standAt models.V3) error {
+		if err := a.MoveTo(ctx, standAt.X, standAt.Y, standAt.Z, false); err != nil {
+			return err
+		}
+		return a.placeAgainst(ctx, itemName, want, support, face, target)
+	})
+	if err != nil {
+		return fmt.Errorf("place %s at (%v): %w", itemName, target, err)
+	}
+	return nil
 }
 
 // placementCellUsable reports whether a block can go in c.Cell against
