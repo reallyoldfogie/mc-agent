@@ -12,7 +12,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1230,6 +1230,82 @@ func (Place) Execute(ctx context.Context, agent models.CommandAgent, args []stri
 		resolve(err)
 	}()
 	return completion, nil
+}
+
+// buildStructureSummaryMaxFailures bounds how many individual failures
+// BuildStructure lists in its chat summary - full detail for every failure
+// in a large build would risk the same chat-spam problem
+// placeErrorChatAllowed guards against elsewhere.
+const buildStructureSummaryMaxFailures = 5
+
+// BuildStructure loads a structure/template file and builds it in-world via
+// real block placement (models.CommandAgent.BuildStructure) - see
+// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md.
+type BuildStructure struct{}
+
+func (BuildStructure) Name() string  { return "buildstructure" }
+func (BuildStructure) Usage() string { return "buildStructure <path> <x> <y> <z>" }
+func (BuildStructure) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 4 {
+		_ = agent.SendChat("Usage: buildStructure <path> <x> <y> <z>")
+		return models.Done(nil), nil
+	}
+	path := args[0]
+	x, err := parseFloat(args[1])
+	if err != nil {
+		_ = agent.SendChat("Invalid X coordinate")
+		return models.Done(nil), nil
+	}
+	y, err := parseFloat(args[2])
+	if err != nil {
+		_ = agent.SendChat("Invalid Y coordinate")
+		return models.Done(nil), nil
+	}
+	z, err := parseFloat(args[3])
+	if err != nil {
+		_ = agent.SendChat("Invalid Z coordinate")
+		return models.Done(nil), nil
+	}
+
+	// A real structure can take minutes to place block-by-block - same
+	// goroutine+Completion pattern as Craft/Mine's longer-running actions.
+	completion, resolve := models.NewCompletion()
+	go func() {
+		result, err := agent.BuildStructure(ctx, path, models.V3{X: x, Y: y, Z: z})
+		if err != nil {
+			_ = agent.SendChat("Build structure error: " + err.Error())
+			resolve(err)
+			return
+		}
+		_ = agent.SendChat(buildStructureSummary(result))
+		resolve(nil)
+	}()
+	return completion, nil
+}
+
+// buildStructureSummary formats BuildStructure's result as a single chat
+// line: a placed/failed count, plus up to buildStructureSummaryMaxFailures
+// failure positions so a caller knows what to look at without needing logs
+// for a typical small number of failures.
+func buildStructureSummary(result models.BuildStructureResult) string {
+	if len(result.Failed) == 0 {
+		return fmt.Sprintf("Build complete: placed %d blocks", result.Placed)
+	}
+	shown := result.Failed
+	more := 0
+	if len(shown) > buildStructureSummaryMaxFailures {
+		more = len(shown) - buildStructureSummaryMaxFailures
+		shown = shown[:buildStructureSummaryMaxFailures]
+	}
+	parts := make([]string, 0, len(shown))
+	for _, f := range shown {
+		parts = append(parts, fmt.Sprintf("%s at (%.0f, %.0f, %.0f)", f.Item, f.Pos.X, f.Pos.Y, f.Pos.Z))
+	}
+	msg := fmt.Sprintf("Build complete: placed %d blocks, %d failed: %s", result.Placed, len(result.Failed), strings.Join(parts, "; "))
+	if more > 0 {
+		msg += fmt.Sprintf(" (+%d more)", more)
+	}
+	return msg
 }
 
 type Equip struct{}

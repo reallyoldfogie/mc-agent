@@ -54,6 +54,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(KillCreeperForGunpowder{})
 	reg.Register(Craft{})
 	reg.Register(Place{})
+	reg.Register(BuildStructure{})
 	reg.Register(Equip{})
 	reg.Register(UseItem{})
 	reg.Register(FlyTo{})

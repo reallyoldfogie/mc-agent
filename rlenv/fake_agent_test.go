@@ -654,6 +654,15 @@ func (f *fakeAgent) PlaceBlockAt(_ context.Context, pos models.V3, itemName stri
 	return nil
 }
 
+// BuildStructure makes fakeAgent satisfy models.CommandAgent's
+// BuildStructure. No test currently exercises it (nothing in rlenv drives
+// structure loading), so this is a minimal stub - not a fake file loader -
+// that simply reports no file support, satisfying the interface without
+// pretending to implement behavior nothing here exercises or verifies.
+func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (models.BuildStructureResult, error) {
+	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
+}
+
 // ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.
 func (f *fakeAgent) ClearInventory(context.Context) error {
 	f.mu.Lock()

@@ -166,4 +166,27 @@ type CommandAgent interface {
 	// sequence and its known limitations (no rollback on partial failure,
 	// dynamic crafting_special_* recipes like armor dye out of scope).
 	CraftItem(ctx context.Context, itemName string) error
+
+	// BuildStructure loads a structure/template file from path (any format
+	// structure.LoadFile recognizes - vanilla Structure Block .nbt today,
+	// see docs/plans/NBT_STRUCTURE_LOADER_PLAN.md) and builds it in-world
+	// via real client interaction (PlaceBlockAt), with origin added to each
+	// block's local position. Checks every needed material is already in
+	// the inventory first (no auto-sourcing/crafting) and returns an error
+	// without placing anything if something is short. Otherwise places
+	// every block bottom-up, continuing past an individual placement
+	// failure rather than aborting the whole build - Result.Failed records
+	// exactly which cells didn't make it and why, so a caller can report or
+	// retry them specifically.
+	//
+	// Known v1 limitations: no block-state/orientation matching (a
+	// palette entry's Properties - stair facing, log axis, etc. - are
+	// ignored; vanilla's default placement orientation is whatever
+	// results), no block-entity content restoration (chest contents, sign
+	// text), and a structure's palette block name is assumed to equal the
+	// item name needed to place it - true for most blocks but not all
+	// (e.g. minecraft:wall_torch's item is minecraft:torch) - the same
+	// assumption the plain place <itemName> command already makes, not a
+	// new gap this introduces.
+	BuildStructure(ctx context.Context, path string, origin V3) (BuildStructureResult, error)
 }
