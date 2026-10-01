@@ -1,0 +1,157 @@
+package structure
+
+import "fmt"
+
+func init() {
+	RegisterFormat(vanillaFormat{})
+}
+
+// vanillaFormat decodes the file a vanilla Structure Block's "Save" button
+// produces (and "Load" reads back): a root compound with size/palette/
+// blocks/entities/DataVersion. See the schema section of
+// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md for the full shape.
+type vanillaFormat struct{}
+
+func (vanillaFormat) Name() string { return "vanilla" }
+
+// Sniff checks for the three top-level keys every vanilla structure file
+// has, each of the expected tag type. That's specific enough not to
+// false-positive on another NBT-based format's root (litematica's root has
+// "Regions"/"MinecraftDataVersion", sponge's has "Width"/"Version" - neither
+// has all of size/palette/blocks as lists).
+func (vanillaFormat) Sniff(root Tag) bool {
+	size, ok := root.Get("size")
+	if !ok || size.Type != TagList {
+		return false
+	}
+	palette, ok := root.Get("palette")
+	if !ok || palette.Type != TagList {
+		return false
+	}
+	blocks, ok := root.Get("blocks")
+	if !ok || blocks.Type != TagList {
+		return false
+	}
+	return true
+}
+
+func (vanillaFormat) Decode(root Tag) (*Structure, error) {
+	sizeTag, ok := root.Get("size")
+	if !ok {
+		return nil, fmt.Errorf("vanilla structure: missing %q", "size")
+	}
+	size, err := decodeSize(sizeTag)
+	if err != nil {
+		return nil, fmt.Errorf("vanilla structure: %w", err)
+	}
+
+	paletteTag, ok := root.Get("palette")
+	if !ok {
+		return nil, fmt.Errorf("vanilla structure: missing %q", "palette")
+	}
+	palette, err := decodePalette(paletteTag)
+	if err != nil {
+		return nil, fmt.Errorf("vanilla structure: %w", err)
+	}
+
+	blocksTag, ok := root.Get("blocks")
+	if !ok {
+		return nil, fmt.Errorf("vanilla structure: missing %q", "blocks")
+	}
+	blocks, err := decodeBlocks(blocksTag, len(palette))
+	if err != nil {
+		return nil, fmt.Errorf("vanilla structure: %w", err)
+	}
+
+	return &Structure{Size: size, Palette: palette, Blocks: blocks}, nil
+}
+
+// decodeSize reads the 3-element Int list "size" ([x, y, z]).
+func decodeSize(t Tag) (Pos, error) {
+	if t.Type != TagList || len(t.List) != 3 {
+		return Pos{}, fmt.Errorf("%q must be a 3-element list, got type %d len %d", "size", t.Type, len(t.List))
+	}
+	return Pos{X: t.List[0].Int(), Y: t.List[1].Int(), Z: t.List[2].Int()}, nil
+}
+
+// decodePos reads a 3-element Int list [x, y, z] such as a block's "pos".
+func decodePos(t Tag, field string) (Pos, error) {
+	if t.Type != TagList || len(t.List) != 3 {
+		return Pos{}, fmt.Errorf("%q must be a 3-element list, got type %d len %d", field, t.Type, len(t.List))
+	}
+	return Pos{X: t.List[0].Int(), Y: t.List[1].Int(), Z: t.List[2].Int()}, nil
+}
+
+// decodePalette reads the "palette" list: each element a compound with a
+// required "Name" string and an optional "Properties" compound of
+// string->string.
+func decodePalette(t Tag) ([]PaletteEntry, error) {
+	if t.Type != TagList {
+		return nil, fmt.Errorf("%q must be a list, got type %d", "palette", t.Type)
+	}
+	out := make([]PaletteEntry, 0, len(t.List))
+	for i, entry := range t.List {
+		if entry.Type != TagCompound {
+			return nil, fmt.Errorf("palette[%d]: expected compound, got type %d", i, entry.Type)
+		}
+		nameTag, ok := entry.Get("Name")
+		if !ok || nameTag.Type != TagString {
+			return nil, fmt.Errorf("palette[%d]: missing or non-string %q", i, "Name")
+		}
+		pe := PaletteEntry{Name: nameTag.Str}
+		if propsTag, ok := entry.Get("Properties"); ok && propsTag.Type == TagCompound {
+			props := make(map[string]string, len(propsTag.Compound))
+			for k, v := range propsTag.Compound {
+				if v.Type == TagString {
+					props[k] = v.Str
+				}
+			}
+			if len(props) > 0 {
+				pe.Properties = props
+			}
+		}
+		out = append(out, pe)
+	}
+	return out, nil
+}
+
+// decodeBlocks reads the "blocks" list: each element a compound with a
+// required 3-element Int "pos", a required Int "state" (an index into the
+// palette - checked against paletteLen here so a malformed file is caught
+// at load time, not silently misplaced later), and an optional "nbt"
+// compound (block-entity data, captured but unused by v1 - see the plan
+// doc's Non-goals).
+func decodeBlocks(t Tag, paletteLen int) ([]BlockEntry, error) {
+	if t.Type != TagList {
+		return nil, fmt.Errorf("%q must be a list, got type %d", "blocks", t.Type)
+	}
+	out := make([]BlockEntry, 0, len(t.List))
+	for i, entry := range t.List {
+		if entry.Type != TagCompound {
+			return nil, fmt.Errorf("blocks[%d]: expected compound, got type %d", i, entry.Type)
+		}
+		posTag, ok := entry.Get("pos")
+		if !ok {
+			return nil, fmt.Errorf("blocks[%d]: missing %q", i, "pos")
+		}
+		pos, err := decodePos(posTag, "pos")
+		if err != nil {
+			return nil, fmt.Errorf("blocks[%d]: %w", i, err)
+		}
+		stateTag, ok := entry.Get("state")
+		if !ok || stateTag.Type != TagInt {
+			return nil, fmt.Errorf("blocks[%d]: missing or non-int %q", i, "state")
+		}
+		state := stateTag.Int()
+		if state < 0 || state >= paletteLen {
+			return nil, fmt.Errorf("blocks[%d]: state index %d out of range (palette has %d entries)", i, state, paletteLen)
+		}
+		be := BlockEntry{Pos: pos, PaletteIndex: state}
+		if nbtTag, ok := entry.Get("nbt"); ok && nbtTag.Type == TagCompound {
+			nbtCopy := nbtTag
+			be.BlockEntityData = &nbtCopy
+		}
+		out = append(out, be)
+	}
+	return out, nil
+}
