@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
@@ -21,6 +22,29 @@ type blockShapeManager struct {
 	blockMgr   mc_versions.BlockMgr
 	stateProps *StatePropertyLoader
 	logger     *slog.Logger
+
+	// blockInfoCache memoizes blockInfoFromStateID (uint32 -> blockInfo):
+	// a state ID's resolved (name, properties) never changes once
+	// blockMgr/stateProps are loaded, and the space of state IDs for one
+	// Minecraft version is small and fixed, so this turns what used to be
+	// real lookup work on every call into an O(1) hit after the first
+	// resolution of each ID. sync.Map, not a plain map+mutex: every
+	// IsPassable/IsSolid/mining/water-flow/HPA-cluster-scan check funnels
+	// through this, from many goroutines at once, and the key set
+	// stabilizes fast, which is exactly sync.Map's read-mostly-after-
+	// warmup sweet spot. Found live via pprof on an RL training run:
+	// this was the single hottest function in the whole binary (>75% of
+	// CPU time in one profile) even after fixing a separate busy-wait
+	// bug elsewhere in this package.
+	blockInfoCache sync.Map
+}
+
+// blockInfo is blockInfoCache's cached value: blockInfoFromStateID's two
+// return values bundled into one, since sync.Map.Load/Store only carries
+// a single any.
+type blockInfo struct {
+	name  string
+	props map[string]string
 }
 
 // NewBlockShapeManager creates a manager for a specific Minecraft version
@@ -163,12 +187,31 @@ func (bsm *blockShapeManager) getInfo(blockID string, props map[string]string) m
 }
 
 // blockInfoFromStateID resolves a raw block state ID to a name and state
-// properties. Logging is gated behind MC_AGENT_VERBOSE_LOG — see
-// getInfo's doc comment; this is called from every collision/passability
-// query via getInfoFromStateID (and directly elsewhere in this file), so
-// the same unconditional-logging-compounds-into-gigabytes concern applies
-// here too.
+// properties, memoized in bsm.blockInfoCache (see that field's doc
+// comment for why) — the real resolution happens once per distinct
+// blockStateID, in resolveBlockInfoFromStateID. The returned props map is
+// shared across every call for the same state ID (consistent with
+// StatePropertyLoader.GetProperties, which already hands out its own
+// backing map rather than a copy): callers must treat it as read-only.
 func (bsm *blockShapeManager) blockInfoFromStateID(blockStateID uint32) (string, map[string]string) {
+	if cached, ok := bsm.blockInfoCache.Load(blockStateID); ok {
+		info := cached.(blockInfo)
+		return info.name, info.props
+	}
+
+	name, props := bsm.resolveBlockInfoFromStateID(blockStateID)
+	bsm.blockInfoCache.Store(blockStateID, blockInfo{name: name, props: props})
+	return name, props
+}
+
+// resolveBlockInfoFromStateID is blockInfoFromStateID's uncached slow
+// path: the original lookup logic, unchanged. Logging is gated behind
+// MC_AGENT_VERBOSE_LOG — see getInfo's doc comment; this used to run on
+// every collision/passability query via getInfoFromStateID (and directly
+// elsewhere in this file), so the same unconditional-logging-compounds-
+// into-gigabytes concern applied here too, before the cache above made
+// most of those calls never reach this function at all.
+func (bsm *blockShapeManager) resolveBlockInfoFromStateID(blockStateID uint32) (string, map[string]string) {
 	if blockStateID == 0 {
 		return "minecraft:air", map[string]string{}
 	}

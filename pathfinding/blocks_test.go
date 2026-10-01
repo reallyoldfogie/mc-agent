@@ -80,3 +80,33 @@ func TestBlockShapeManagerBlockInfoFromStateIDSkipsLoggingByDefault(t *testing.T
 		t.Fatalf("blockInfoFromStateID logged %d bytes at Info level, want 0: %s", buf.Len(), buf.String())
 	}
 }
+
+// TestBlockShapeManagerBlockInfoFromStateIDMemoizes verifies the fix for a
+// live-run CPU bug (2026-10-01, found via pprof on an RL training run):
+// blockInfoFromStateID re-resolved its answer on every single call, and
+// became the single hottest function in the whole binary (>75% of CPU
+// time in one profile) once a separate pathfinding busy-wait bug was
+// fixed - every passability/mining/water-flow/HPA-cluster-scan check
+// funnels through it. It's cached per blockStateID now (bsm.blockInfoCache);
+// the only externally-observable sign a repeat call actually hit the
+// cache, rather than just recomputing an equal-looking result, is that it
+// returns the exact same props map instance - so this mutates the map
+// from the first call and confirms the second call's map reflects it,
+// and that a different state ID gets its own independent entry rather
+// than accidentally sharing one cache slot.
+func TestBlockShapeManagerBlockInfoFromStateIDMemoizes(t *testing.T) {
+	bsm := &blockShapeManager{}
+
+	_, props1 := bsm.blockInfoFromStateID(5)
+	props1["sentinel"] = "x"
+
+	_, props2 := bsm.blockInfoFromStateID(5)
+	if props2["sentinel"] != "x" {
+		t.Fatalf("second call for state ID 5 got a different props map (got %v); blockInfoFromStateID is not memoizing", props2)
+	}
+
+	_, props3 := bsm.blockInfoFromStateID(6)
+	if _, ok := props3["sentinel"]; ok {
+		t.Fatalf("state ID 6 shared state ID 5's cached props map: %v", props3)
+	}
+}
