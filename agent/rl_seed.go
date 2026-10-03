@@ -48,8 +48,13 @@ const (
 // must land to the requested destination to count as "arrived" — not
 // exact float equality, since the server may round/clamp the landing
 // spot (e.g. to solid ground).
+//
+// 2026-10-02: raised 2s -> 10s, matching seedSyncTimeout — see
+// craftConfirmTimeout's doc comment (agent/craft.go) for the live evidence
+// (shared-server load under multi-bot training) that motivated bringing
+// every client-sync wait in this file up to the same 10s deadline.
 const (
-	teleportSyncTimeout      = 2 * time.Second
+	teleportSyncTimeout      = 10 * time.Second
 	teleportSyncPollInterval = 100 * time.Millisecond
 	teleportSyncThreshold    = 0.5
 )
@@ -71,8 +76,10 @@ const (
 // actually losing. World.GetBlockAt's own loaded return is the correct
 // signal to wait on directly, so this closes the actual gap rather than
 // re-introducing incidental slowness as a workaround.
+//
+// 2026-10-02: raised 5s -> 10s, same pass as teleportSyncTimeout above.
 const (
-	chunkSyncTimeout      = 5 * time.Second
+	chunkSyncTimeout      = 10 * time.Second
 	chunkSyncPollInterval = 100 * time.Millisecond
 )
 

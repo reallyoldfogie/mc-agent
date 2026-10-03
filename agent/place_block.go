@@ -13,15 +13,15 @@ const (
 	// server to place a block, for it to show up in the bot's own world
 	// view before calling that attempt a failure.
 	//
-	// 2026-10-02: raised 1.5s -> 5s, same false-negative-under-load reasoning
-	// as craftConfirmTimeout/mineConfirmTimeout's bump to 10s (agent/craft.go,
-	// agent/actions.go) — this was the shortest client-sync deadline in the
-	// codebase. Kept below craft/mine's 10s rather than matched to it: unlike
-	// a timed-out craft/mine (handled below by the 2-attempts/4-cells retry
-	// wrapper regardless), a stuck PlaceHeldBlock already retries other cells
-	// on failure, so a shorter deadline here still lets it move on and try
-	// elsewhere rather than burning a full 10s per cell.
-	placeVerifyWait = 5000 * time.Millisecond
+	// 2026-10-02: raised 1.5s -> 10s, matching every other client-sync wait
+	// in the codebase (seedSyncTimeout, teleportSyncTimeout, chunkSyncTimeout
+	// in agent/rl_seed.go; craftConfirmTimeout, mineConfirmTimeout in
+	// agent/craft.go and agent/actions.go) — see craftConfirmTimeout's doc
+	// comment for the live evidence that motivated the pass. A timed-out
+	// placement still falls through to the existing cells/attempts retry
+	// wrapper below, so the longer deadline costs wall-clock on a stuck cell
+	// but doesn't change the retry behavior itself.
+	placeVerifyWait = 10 * time.Second
 
 	placePoll = 50 * time.Millisecond
 
