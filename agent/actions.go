@@ -1374,8 +1374,12 @@ func (a *agent) breakTimeScale() float64 {
 // see the pre-break block roughly half the time, with the resulting
 // confirmation misattributed to whichever *later* action happened to notice
 // it had finally arrived.
+//
+// 2026-10-02: raised 2s -> 10s, same reasoning and same value as
+// craftConfirmTimeout's bump (agent/craft.go) — matching SeedNearbyBlock's
+// 10s wait for the same class of client-sync race.
 const (
-	mineConfirmTimeout      = 2 * time.Second
+	mineConfirmTimeout      = 10 * time.Second
 	mineConfirmPollInterval = 50 * time.Millisecond
 )
 

@@ -693,8 +693,15 @@ func (a *agent) CraftItem(ctx context.Context, itemName string) error {
 // (100%), before this fix (docs/plans/RL_TRAINING_LOOP_PLAN.md's Status
 // section flagged this as the next place to check once the mine-task
 // equivalent was found and fixed).
+//
+// 2026-10-02: raised 2s -> 10s. Under live shared-server load, the "never
+// confirmed" error was firing often enough (and failure counts stayed near
+// zero) that most of these were false negatives, not genuine stuck crafts —
+// 2s was also the shortest deadline of any client-sync wait in this codebase
+// for the same class of race (SeedNearbyBlock's equivalent wait gets 10s;
+// TeleportTo's chunk-sync wait gets 5s). Matching SeedNearbyBlock's 10s here.
 const (
-	craftConfirmTimeout      = 2 * time.Second
+	craftConfirmTimeout      = 10 * time.Second
 	craftConfirmPollInterval = 50 * time.Millisecond
 )
 
