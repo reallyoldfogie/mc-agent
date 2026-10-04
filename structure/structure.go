@@ -4,8 +4,8 @@ package structure
 // (0,0,0) - not a world position. A plain int triple rather than models.V3
 // (which is float64, a world/physics position) because these are exact
 // grid cells read straight out of the file, and callers that need a world
-// position add a float64 origin to this later (see BuildStructure in
-// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md's Phase 2).
+// position add a float64 origin to this later (see BuildStructure,
+// docs/STRUCTURE_LOADER.md).
 type Pos struct {
 	X, Y, Z int
 }
@@ -18,9 +18,9 @@ func (p Pos) Add(o Pos) Pos {
 // PaletteEntry is one block type a Structure's blocks can reference: a
 // block name (e.g. "minecraft:oak_stairs") and its block-state properties
 // (e.g. {"facing": "north", "half": "bottom"}). Properties is read from the
-// source file but not currently used for placement - see the "Orientation /
-// block state" section of docs/plans/NBT_STRUCTURE_LOADER_PLAN.md for why
-// and what using it would take.
+// source file but not currently used for placement - see "Known
+// limitations" in docs/STRUCTURE_LOADER.md for why and what using it would
+// take.
 type PaletteEntry struct {
 	Name       string
 	Properties map[string]string

@@ -1,7 +1,7 @@
 // Package structure loads build-template files (vanilla Structure Block
 // .nbt, and in the future other formats such as Litematica) into a common,
 // format-agnostic in-memory representation the rest of the agent can place
-// block-by-block. See docs/plans/NBT_STRUCTURE_LOADER_PLAN.md.
+// block-by-block. See docs/STRUCTURE_LOADER.md.
 package structure
 
 import (

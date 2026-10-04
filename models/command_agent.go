@@ -142,8 +142,8 @@ type CommandAgent interface {
 	// inventory, or if no reachable/visible standing position exists. See
 	// the agent package implementation's doc comment for the full sequence.
 	// This was anticipated (see the formerly-commented-out line in
-	// models/agent_actions.go) before being built for
-	// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md's Phase 1.
+	// models/agent_actions.go) before being built - see
+	// docs/STRUCTURE_LOADER.md.
 	PlaceBlockAt(ctx context.Context, pos V3, itemName string) error
 
 	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
@@ -169,8 +169,8 @@ type CommandAgent interface {
 
 	// BuildStructure loads a structure/template file from path (any format
 	// structure.LoadFile recognizes - vanilla Structure Block .nbt today,
-	// see docs/plans/NBT_STRUCTURE_LOADER_PLAN.md) and builds it in-world
-	// via real client interaction (PlaceBlockAt), with origin added to each
+	// see docs/STRUCTURE_LOADER.md) and builds it in-world via real client
+	// interaction (PlaceBlockAt), with origin added to each
 	// block's local position. Checks every needed material is already in
 	// the inventory first (no auto-sourcing/crafting) and returns an error
 	// without placing anything if something is short. Otherwise places

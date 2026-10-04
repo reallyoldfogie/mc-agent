@@ -24,9 +24,9 @@ var skipPlacement = map[string]bool{
 // dependency graph): a structure with a genuine overhang - a block whose
 // only potential support is another block at the *same* Y as itself, placed
 // later in X/Z order - can still fail to find a support face when its turn
-// comes. BuildStructure (docs/plans/NBT_STRUCTURE_LOADER_PLAN.md, Phase 2)
-// reports that as a per-block placement failure and continues, rather than
-// this function trying to topologically sort arbitrary structures.
+// comes. BuildStructure (docs/STRUCTURE_LOADER.md) reports that as a
+// per-block placement failure and continues, rather than this function
+// trying to topologically sort arbitrary structures.
 func PlacementOrder(s *Structure) []BlockEntry {
 	out := make([]BlockEntry, 0, len(s.Blocks))
 	for _, b := range s.Blocks {

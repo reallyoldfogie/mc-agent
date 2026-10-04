@@ -10,8 +10,8 @@ import (
 
 // Format decodes one on-disk template format (vanilla Structure Block .nbt
 // today; Litematica .litematic, Sponge .schem, etc. in the future - see
-// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md) out of an already-parsed NBT tag
-// tree and into the format-agnostic Structure schema. Implementations
+// "Format support" in docs/STRUCTURE_LOADER.md) out of an already-parsed
+// NBT tag tree and into the format-agnostic Structure schema. Implementations
 // register themselves via RegisterFormat, typically from their own
 // package-level init() (see vanilla.go) - adding a new format is then
 // "write one file implementing this interface," with no changes needed
