@@ -10,9 +10,10 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1240,7 +1241,7 @@ const buildStructureSummaryMaxFailures = 5
 
 // BuildStructure loads a structure/template file and builds it in-world via
 // real block placement (models.CommandAgent.BuildStructure) - see
-// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md.
+// docs/STRUCTURE_LOADER.md.
 type BuildStructure struct{}
 
 func (BuildStructure) Name() string  { return "buildstructure" }
@@ -1304,6 +1305,80 @@ func buildStructureSummary(result models.BuildStructureResult) string {
 	msg := fmt.Sprintf("Build complete: placed %d blocks, %d failed: %s", result.Placed, len(result.Failed), strings.Join(parts, "; "))
 	if more > 0 {
 		msg += fmt.Sprintf(" (+%d more)", more)
+	}
+	return msg
+}
+
+// materialListSummaryMaxItems bounds how many distinct item types
+// MaterialList's chat line lists directly - same spam-avoidance reasoning
+// as buildStructureSummaryMaxFailures. The exported file (when a second
+// argument is given) always has the complete list regardless.
+const materialListSummaryMaxItems = 10
+
+// MaterialList loads a structure file and reports (and, optionally,
+// persists to a JSON file) everything it needs to build - the "what do I
+// need to gather" list a caller can check against the bot's current
+// inventory today, or - once a long-term-memory system exists - against
+// whatever's stored across chests/shulker boxes/barrels/etc., without this
+// command or the underlying structure.MaterialList needing to change; see
+// docs/STRUCTURE_LOADER.md. Doesn't need anything from the agent beyond
+// SendChat - the computation itself is pure file-and-math,
+// independent of world/inventory state.
+type MaterialList struct{}
+
+func (MaterialList) Name() string  { return "materiallist" }
+func (MaterialList) Usage() string { return "materialList <structurePath> [exportPath]" }
+func (MaterialList) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 && len(args) != 2 {
+		_ = agent.SendChat("Usage: materialList <structurePath> [exportPath]")
+		return models.Done(nil), nil
+	}
+
+	s, err := structure.LoadFile(args[0])
+	if err != nil {
+		_ = agent.SendChat("materialList error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	ml := structure.ComputeMaterialList(s)
+	ml.Source = args[0]
+
+	exported := len(args) == 2
+	if exported {
+		if err := ml.WriteJSON(args[1]); err != nil {
+			_ = agent.SendChat("materialList error: write " + args[1] + ": " + err.Error())
+			return models.Done(nil), nil
+		}
+	}
+
+	_ = agent.SendChat(materialListSummary(ml, exported))
+	return models.Done(nil), nil
+}
+
+// materialListSummary formats ml as a single chat line: total block count,
+// distinct item-type count, up to materialListSummaryMaxItems "<count>x
+// <item>" entries, and - if exported - a note that the complete list was
+// written to a file (the chat line itself may be truncated; the file never
+// is).
+func materialListSummary(ml structure.MaterialList, exported bool) string {
+	if len(ml.Items) == 0 {
+		return "Material list: structure is empty (no non-air blocks)"
+	}
+	shown := ml.Items
+	more := 0
+	if len(shown) > materialListSummaryMaxItems {
+		more = len(shown) - materialListSummaryMaxItems
+		shown = shown[:materialListSummaryMaxItems]
+	}
+	parts := make([]string, 0, len(shown))
+	for _, e := range shown {
+		parts = append(parts, fmt.Sprintf("%dx %s", e.Count, e.Item))
+	}
+	msg := fmt.Sprintf("Materials needed (%d blocks, %d item types): %s", ml.Total(), len(ml.Items), strings.Join(parts, ", "))
+	if more > 0 {
+		msg += fmt.Sprintf(" (+%d more types)", more)
+	}
+	if exported {
+		msg += " - full list written to file"
 	}
 	return msg
 }

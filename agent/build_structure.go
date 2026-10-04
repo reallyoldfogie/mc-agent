@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -59,7 +58,7 @@ func (a *agent) BuildStructure(ctx context.Context, path string, origin models.V
 func buildStructureWith(ctx context.Context, placer structurePlacer, s *structure.Structure, origin models.V3, onProgress func(placed, total int)) (models.BuildStructureResult, error) {
 	order := structure.PlacementOrder(s)
 
-	if missing := missingMaterials(placer, s, order); len(missing) > 0 {
+	if missing := missingMaterials(placer, s); len(missing) > 0 {
 		return models.BuildStructureResult{}, fmt.Errorf("build structure: missing materials: %s", formatMissingMaterials(missing))
 	}
 
@@ -90,42 +89,27 @@ func buildStructureWith(ctx context.Context, placer structurePlacer, s *structur
 	return result, nil
 }
 
-// missingMaterials counts, across order, how many more of each palette item
-// name the inventory needs than it currently has. Returns nil if nothing is
-// short. See BuildStructure's doc comment for the known block-name-vs-
-// item-name limitation this inherits.
-func missingMaterials(placer structurePlacer, s *structure.Structure, order []structure.BlockEntry) map[string]int {
-	need := map[string]int{}
-	for _, b := range order {
-		entry, ok := s.Block(b)
-		if !ok {
-			continue
-		}
-		need[entry.Name]++
-	}
-	missing := map[string]int{}
-	for name, count := range need {
-		if have := placer.InventoryCount(name); have < count {
-			missing[name] = count - have
-		}
-	}
-	if len(missing) == 0 {
-		return nil
-	}
-	return missing
+// missingMaterials reports which of s's required materials placer's
+// inventory is short on, and by how much. Built on structure.MaterialList -
+// the same computation (and, via MaterialList.Missing, the same have-count-
+// as-a-function abstraction) is reusable outside the agent package entirely
+// (see docs/STRUCTURE_LOADER.md) - placer.InventoryCount is just today's
+// "have" source; a long-term-memory system checking chests/shulker boxes/
+// barrels later is a different "have" function, not a different
+// comparison. Returns nil if nothing is short. See
+// BuildStructure's doc comment for the known block-name-vs-item-name
+// limitation this inherits.
+func missingMaterials(placer structurePlacer, s *structure.Structure) []structure.MaterialEntry {
+	return structure.ComputeMaterialList(s).Missing(placer.InventoryCount)
 }
 
 // formatMissingMaterials renders missing as "3x minecraft:oak_planks, 1x
-// minecraft:chest", sorted by name for deterministic error messages.
-func formatMissingMaterials(missing map[string]int) string {
-	names := make([]string, 0, len(missing))
-	for name := range missing {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	parts := make([]string, 0, len(names))
-	for _, name := range names {
-		parts = append(parts, fmt.Sprintf("%dx %s", missing[name], name))
+// minecraft:chest" - already sorted by name, since MaterialList.Missing
+// preserves ComputeMaterialList's own sorted order.
+func formatMissingMaterials(missing []structure.MaterialEntry) string {
+	parts := make([]string, 0, len(missing))
+	for _, e := range missing {
+		parts = append(parts, fmt.Sprintf("%dx %s", e.Count, e.Item))
 	}
 	return strings.Join(parts, ", ")
 }

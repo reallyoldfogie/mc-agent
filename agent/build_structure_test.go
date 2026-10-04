@@ -61,21 +61,19 @@ func TestMissingMaterials_ReportsShortfall(t *testing.T) {
 			{Pos: structure.Pos{X: 2, Y: 0, Z: 0}, PaletteIndex: 0},
 		},
 	}
-	order := structure.PlacementOrder(s)
 	placer := &fakeStructurePlacer{inventory: map[string]int{"minecraft:stone": 1}}
 
-	missing := missingMaterials(placer, s, order)
-	if got := missing["minecraft:stone"]; got != 2 {
-		t.Errorf("missing[minecraft:stone] = %d, want 2 (need 3, have 1)", got)
+	missing := missingMaterials(placer, s)
+	if len(missing) != 1 || missing[0].Item != "minecraft:stone" || missing[0].Count != 2 {
+		t.Errorf("missing = %+v, want [{minecraft:stone 2}] (need 3, have 1)", missing)
 	}
 }
 
 func TestMissingMaterials_NilWhenSufficient(t *testing.T) {
 	s := twoBlockStructure()
-	order := structure.PlacementOrder(s)
 	placer := &fakeStructurePlacer{inventory: map[string]int{"minecraft:stone": 2}}
 
-	if missing := missingMaterials(placer, s, order); missing != nil {
+	if missing := missingMaterials(placer, s); missing != nil {
 		t.Errorf("missingMaterials = %v, want nil", missing)
 	}
 }
@@ -226,9 +224,9 @@ func TestBuildStructureWith_ReportsProgress(t *testing.T) {
 }
 
 func TestFormatMissingMaterials_SortedDeterministic(t *testing.T) {
-	missing := map[string]int{
-		"minecraft:oak_planks": 3,
-		"minecraft:chest":      1,
+	missing := []structure.MaterialEntry{
+		{Item: "minecraft:chest", Count: 1},
+		{Item: "minecraft:oak_planks", Count: 3},
 	}
 	got := formatMissingMaterials(missing)
 	want := "1x minecraft:chest, 3x minecraft:oak_planks"
