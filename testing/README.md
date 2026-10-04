@@ -37,7 +37,9 @@ This framework provides:
 ## Prerequisites
 
 - Go 1.22+
-- Docker installed and running
+- Docker installed and running — locally (default), or on a remote host reached over SSH (see
+  [Running Against a Remote Docker Host](#running-against-a-remote-docker-host) below) if the
+  local machine doesn't have the resources to spare.
 - Network access for pulling Minecraft server images
 - Sufficient resources to run Minecraft servers (recommended: 4GB+ RAM)
 
@@ -111,7 +113,44 @@ TEST_KEEP_SERVER=1 go test ./testing -v
 
 # Skip integration tests (require Docker)
 SKIP_INTEGRATION=1 go test ./testing -v
+
+# Run against a remote Docker host over SSH instead of locally - see
+# "Running Against a Remote Docker Host" below
+DOCKER_HOST="ssh://user@remote-host" go test ./testing -v
 ```
+
+### Running Against a Remote Docker Host
+
+If the local machine doesn't have the spare CPU/RAM for a test server (e.g. something else is
+already using it), point the whole suite at a different machine's Docker daemon instead, over
+SSH, with no other changes:
+
+```bash
+export DOCKER_HOST="ssh://user@remote-host"
+go test ./testing -run TestNavigationFlatSuite/1.21.5 -v
+```
+
+This works because `Framework.StartServer` gets its `testenv.Manager` from
+`testenv.NewManager()` (in `mc-client-test-go`), which detects an `ssh://` `DOCKER_HOST` itself and
+opens a real SSH tunnel per container instead of trying to hand that URL to the Docker client
+directly (which has no real SSH transport). Everything - server start, RCON, mods/config
+directories via `DataDir`/`ModsDir`/`ConfigDir`, replay recording, cleanup - works exactly as it
+does locally; `Instance.Server.Host` comes back `127.0.0.1` either way, so no test code needs to
+know which mode is active. See `mc-client-test-go`'s own README
+(["Running Against a Remote Docker Host (SSH)"](https://github.com/reallyoldfogie/mc-client-test-go#running-against-a-remote-docker-host-ssh))
+for exactly how the tunnel and directory sync work, and its requirements (key-based SSH auth
+already working, `ssh`/`tar` available on both ends).
+
+Two things specific to running it this way from `mc-agent`:
+
+- `RequireIntegrationEnv` (the fast-skip precheck every `VersionWorldSuite`-based test runs before
+  starting a server) recognizes an `ssh://` `DOCKER_HOST` and skips its own raw connectivity check
+  in that case, deferring to `Start`'s own real, tunnel-aware one - so an unreachable SSH target
+  now surfaces as a test **failure** with a real `"ssh tunnel: ..."` error, not a silent skip.
+- Scope down to one version and one test method (as in the example above) rather than running a
+  full multi-version suite remotely - each version in `models.StandardVersionTests` starts its own
+  server sequentially, and a small remote box can be considerably more resource-constrained than a
+  typical dev machine.
 
 ### Parallel Execution
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,24 @@ const defaultTestServerImage = "itzg/minecraft-server:latest"
 // RequireIntegrationEnv skips the test when Docker or the test server image is unavailable.
 func RequireIntegrationEnv(t *testing.T, cfg ServerConfig) {
 	t.Helper()
+
+	if host := os.Getenv(client.EnvOverrideHost); strings.HasPrefix(host, "ssh://") {
+		// mc-client-test-go's testenv.Manager opens a dedicated SSH tunnel
+		// per container for this case rather than handing ssh:// to the
+		// Docker client directly (which has no real SSH transport -
+		// confirmed directly: it attempts a plain DNS lookup of the host,
+		// not an SSH connection). There's no cheap way to pre-check
+		// reachability here without actually opening a tunnel, which is
+		// more than this fast-skip precheck is worth doing - instead, skip
+		// straight to Framework.StartServer and let its own Start (via a
+		// real, tunnel-aware Ping with a clear error) be the first signal.
+		// This means an unreachable ssh:// target now surfaces as a test
+		// FAILURE rather than a graceful SKIP here - acceptable, since
+		// DOCKER_HOST is only ever set to ssh://... deliberately (never by
+		// a default config or CI), so failing loudly on a target someone
+		// explicitly asked to use is more useful than silently skipping.
+		return
+	}
 
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
