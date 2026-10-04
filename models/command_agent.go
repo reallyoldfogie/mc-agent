@@ -131,6 +131,21 @@ type CommandAgent interface {
 	// digging.
 	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
 
+	// PlaceBlockAt places itemName at the world cell pos — unlike
+	// BlockPlacer.PlaceHeldBlock (place_block.go), which puts a block on a
+	// standable cell beside the bot's *current* position, this places at an
+	// arbitrary absolute target: it picks a solid neighbor of pos to click
+	// against, walks to a reachable position with line of sight (see
+	// models.FindInteractPosition/TryInteractPositions), and places there,
+	// retrying the same way PlaceHeldBlock does. Returns an error if pos has
+	// no solid neighbor to support a placement, if itemName isn't in the
+	// inventory, or if no reachable/visible standing position exists. See
+	// the agent package implementation's doc comment for the full sequence.
+	// This was anticipated (see the formerly-commented-out line in
+	// models/agent_actions.go) before being built for
+	// docs/plans/NBT_STRUCTURE_LOADER_PLAN.md's Phase 1.
+	PlaceBlockAt(ctx context.Context, pos V3, itemName string) error
+
 	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
 	// within radius blocks that the agent has a clear line of sight to
 	// (the entity analogue of FindAllVisibleBlocksInSphere), sorted by
@@ -151,4 +166,27 @@ type CommandAgent interface {
 	// sequence and its known limitations (no rollback on partial failure,
 	// dynamic crafting_special_* recipes like armor dye out of scope).
 	CraftItem(ctx context.Context, itemName string) error
+
+	// BuildStructure loads a structure/template file from path (any format
+	// structure.LoadFile recognizes - vanilla Structure Block .nbt today,
+	// see docs/plans/NBT_STRUCTURE_LOADER_PLAN.md) and builds it in-world
+	// via real client interaction (PlaceBlockAt), with origin added to each
+	// block's local position. Checks every needed material is already in
+	// the inventory first (no auto-sourcing/crafting) and returns an error
+	// without placing anything if something is short. Otherwise places
+	// every block bottom-up, continuing past an individual placement
+	// failure rather than aborting the whole build - Result.Failed records
+	// exactly which cells didn't make it and why, so a caller can report or
+	// retry them specifically.
+	//
+	// Known v1 limitations: no block-state/orientation matching (a
+	// palette entry's Properties - stair facing, log axis, etc. - are
+	// ignored; vanilla's default placement orientation is whatever
+	// results), no block-entity content restoration (chest contents, sign
+	// text), and a structure's palette block name is assumed to equal the
+	// item name needed to place it - true for most blocks but not all
+	// (e.g. minecraft:wall_torch's item is minecraft:torch) - the same
+	// assumption the plain place <itemName> command already makes, not a
+	// new gap this introduces.
+	BuildStructure(ctx context.Context, path string, origin V3) (BuildStructureResult, error)
 }

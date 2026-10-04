@@ -51,7 +51,6 @@ type AgentActions interface { // Action helpers (used by plan runner)
 	LogInventory(output io.Writer)
 
 	MineBlockAt(ctx context.Context, pos V3, face BlockFace) error
-	// PlaceBlockAt(ctx context.Context, pos V3, blockName string) error
 	// AttackEntity sends a left-click attack against the tracked entity. The
 	// caller is responsible for selecting the weapon and positioning the agent;
 	// autonomous target selection and combat policy belong to the combat layer.
