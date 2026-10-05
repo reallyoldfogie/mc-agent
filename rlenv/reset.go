@@ -38,3 +38,15 @@ type BlockRestorer interface {
 type AreaClearer interface {
 	ClearAir(ctx context.Context, x1, y1, z1, x2, y2, z2 int) error
 }
+
+// AreaCloner is the optional capability Environment.Reset uses, with
+// Config.CloneAreaFrom, to restore the space around the reset origin to a
+// known-good template instead of merely clearing air above a computed
+// boundary (see AreaClearer, whose own history is exactly why this exists:
+// a boundary derived from a live position reading can misfire and destroy
+// the ground itself, not just the debris above it). CloneArea copies the
+// inclusive source box onto the inclusive destination box of the same
+// dimensions, via RCON's /clone.
+type AreaCloner interface {
+	CloneArea(ctx context.Context, srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1 int) error
+}

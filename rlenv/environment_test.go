@@ -398,6 +398,32 @@ func TestResetClearOriginYRoundsRatherThanFloors(t *testing.T) {
 	}
 }
 
+// TestResetClonesTheTemplateInsteadOfClearingWhenBothAreSet: CloneAreaFrom
+// takes priority over ClearAreaRadius - a destination Y comes from the
+// template, never from the live, possibly-imprecise ResetOrigin.
+func TestResetClonesTheTemplateInsteadOfClearingWhenBothAreSet(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10.5, -60.00003, 5.2} // a hair below -60 - must not affect the clone's Y at all
+	template := [3]float64{0, -61, 5000}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.ClearAreaRadius = 3 // set too, to prove it's ignored once CloneAreaFrom is set
+	cfg.CloneAreaFrom = &template
+	cfg.CloneAreaRadius = 3
+	cfg.CloneAreaDepth = 3
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.clearedBoxes) != 0 {
+		t.Fatalf("ClearAir must not be called once CloneAreaFrom is set: %v", agent.clearedBoxes)
+	}
+	want := clonedArea{-3, -64, 4997, 3, -57, 5003, 7, -64, 2}
+	if len(agent.clonedAreas) != 1 || agent.clonedAreas[0] != want {
+		t.Fatalf("cloned = %v, want exactly [%v]", agent.clonedAreas, want)
+	}
+}
+
 func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	origin := [3]float64{10, -60, 5}

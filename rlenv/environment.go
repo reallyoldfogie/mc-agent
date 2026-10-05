@@ -213,7 +213,11 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.restoreMinedBlocks(ctx)
 	e.removeFarSeeded(ctx)
 	e.clearChainDrops(ctx)
-	e.clearArea(ctx)
+	if e.cfg.CloneAreaFrom != nil {
+		e.cloneArea(ctx)
+	} else {
+		e.clearArea(ctx)
+	}
 	e.chainState, e.chainInv, e.chainTablePlaced, e.placedAt, e.placeAttempted = chainState{}, chainInventory{}, false, nil, false
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
@@ -887,6 +891,49 @@ func (e *Environment) clearArea(ctx context.Context) {
 	r := e.cfg.ClearAreaRadius
 	if err := clearer.ClearAir(ctx, x-r, y, z-r, x+r, y+height, z+r); err != nil {
 		log.Printf("rlenv: clearing area around (%d,%d,%d): %v", x, y, z, err)
+	}
+}
+
+// defaultCloneAreaDepth is Config.CloneAreaDepth's default.
+const defaultCloneAreaDepth = 3
+
+// cloneArea restores the space around ResetOrigin to a known-good template
+// (see Config.CloneAreaFrom's own doc comment for why this exists instead
+// of, or alongside, clearArea). Done before the teleport, same as
+// clearArea, while the area is still loaded around the bot. Best effort: a
+// failure is logged, never fails the Reset.
+func (e *Environment) cloneArea(ctx context.Context) {
+	if e.cfg.CloneAreaFrom == nil || e.cfg.ResetOrigin == nil {
+		return
+	}
+	cloner, ok := e.agent.(AreaCloner)
+	if !ok {
+		return
+	}
+	height := e.cfg.CloneAreaHeight
+	if height <= 0 {
+		height = defaultClearAreaHeight
+	}
+	depth := e.cfg.CloneAreaDepth
+	if depth <= 0 {
+		depth = defaultCloneAreaDepth
+	}
+	r := e.cfg.CloneAreaRadius
+	if r <= 0 {
+		r = e.cfg.ClearAreaRadius
+	}
+	if r <= 0 {
+		return
+	}
+	src := *e.cfg.CloneAreaFrom
+	sx, sy, sz := int(math.Floor(src[0])), int(math.Floor(src[1])), int(math.Floor(src[2]))
+	// dy is CloneAreaFrom's own Y, not ResetOrigin's - the entire point of
+	// cloning over clearing (see CloneAreaFrom's doc comment): no boundary
+	// is ever computed from the bot's own, possibly-imprecise position.
+	o := *e.cfg.ResetOrigin
+	dx, dz := int(math.Floor(o[0])), int(math.Floor(o[2]))
+	if err := cloner.CloneArea(ctx, sx-r, sy-depth, sz-r, sx+r, sy+height, sz+r, dx-r, sy-depth, dz-r); err != nil {
+		log.Printf("rlenv: cloning area from (%d,%d,%d) onto (%d,%d,%d): %v", sx, sy, sz, dx, sy, dz, err)
 	}
 }
 

@@ -43,6 +43,7 @@ type fakeAgent struct {
 	mineBlockName                      string
 	restoredBlocks                     []restoredBlock
 	clearedBoxes                       []clearedBox
+	clonedAreas                        []clonedArea
 	seedBlockAtCalls                   []farSeedCall
 	seedCraftAtCalls                   []farSeedCall
 	mineBlockX, mineBlockY, mineBlockZ float64
@@ -512,6 +513,17 @@ type clearedBox struct{ x1, y1, z1, x2, y2, z2 int }
 func (f *fakeAgent) ClearAir(_ context.Context, x1, y1, z1, x2, y2, z2 int) error {
 	f.mu.Lock()
 	f.clearedBoxes = append(f.clearedBoxes, clearedBox{x1, y1, z1, x2, y2, z2})
+	f.mu.Unlock()
+	return nil
+}
+
+// clonedArea records one CloneArea call.
+type clonedArea struct{ srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1 int }
+
+// CloneArea satisfies rlenv.AreaCloner, recording each call.
+func (f *fakeAgent) CloneArea(_ context.Context, srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1 int) error {
+	f.mu.Lock()
+	f.clonedAreas = append(f.clonedAreas, clonedArea{srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1})
 	f.mu.Unlock()
 	return nil
 }

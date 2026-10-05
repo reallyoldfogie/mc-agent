@@ -132,11 +132,55 @@ type Config struct {
 	// ClearAreaHeight further blocks - leaving the ground itself untouched.
 	// For flat training worlds; in real terrain it would delete trees and
 	// hills. Keep (2r+1)^2 * (height+1) under 32,768 (vanilla's fill limit).
-	// 0 (the default) disables it.
+	// 0 (the default) disables it. Ignored if CloneAreaFrom is also set -
+	// see its own doc comment for why that's the better choice when it's
+	// available at all.
 	ClearAreaRadius int
 	// ClearAreaHeight is how many blocks above ResetOrigin's Y to clear;
 	// 4 if left 0 while ClearAreaRadius is set.
 	ClearAreaHeight int
+
+	// CloneAreaFrom, if set (and ResetOrigin is set and the agent is an
+	// AreaCloner), replaces ClearAreaRadius's "fill air above a boundary
+	// computed from ResetOrigin" with "clone a known-good template region
+	// onto this episode's working area" each Reset: a pristine reference
+	// patch - ground layers and the air space above them - copied as one
+	// rigid unit. This heals ground damage the same pass that clears
+	// leftover placed-block debris, and - the actual point of it over
+	// ClearAreaRadius - never computes a destroy/preserve boundary from a
+	// live, possibly-imprecise position reading: CloneAreaFrom's own Y is
+	// used for the destination too, unconditionally, never ResetOrigin's.
+	// Found worth building live 2026-10-04: ClearAreaRadius's origin-Y
+	// floor rounding (since fixed - see clearArea's history) ate through
+	// an entire 3-block soil layer down to bedrock on two of ten bots over
+	// several days; cloning removes that whole hazard class rather than
+	// making one instance of it less likely.
+	//
+	// Same flat-world precondition ClearAreaRadius already documents,
+	// stated more precisely here because this field's correctness depends
+	// on it directly: every working area this episode's ResetOrigin could
+	// ever land in must share CloneAreaFrom's own ground height exactly.
+	// CloneAreaFrom's own X/Z must be a location no ResetOrigin (now or
+	// after -parallel-envs scales up) will ever land a working area on or
+	// near - e.g., mc-rsi-trainer's shared-server working areas
+	// (pkg/parallelenv.WorkingAreaOffset) only ever move along X, so
+	// anywhere on the Z axis is guaranteed untouched regardless of how
+	// many environments get added later.
+	CloneAreaFrom *[3]float64
+	// CloneAreaRadius is CloneAreaFrom's half-width/depth in blocks (both
+	// the source template and every destination working area use the same
+	// radius); 0 (the default) falls back to ClearAreaRadius if that's
+	// set, otherwise disables cloning.
+	CloneAreaRadius int
+	// CloneAreaHeight is how many blocks above CloneAreaFrom's own Y to
+	// include - the air-clearing portion, same role as ClearAreaHeight; 4
+	// if left 0 while CloneAreaFrom is set.
+	CloneAreaHeight int
+	// CloneAreaDepth is how many blocks below CloneAreaFrom's own Y to
+	// include - the ground-healing portion ClearAreaRadius never had; 3
+	// if left 0 while CloneAreaFrom is set (this run's own soil depth -
+	// stop short of bedrock, which never changes so never needs healing).
+	CloneAreaDepth int
 
 	// TimePenalty is the reward subtracted every step, independent of outcome
 	// (see reward.go's timePenalty for what it's for). 0 means the built-in

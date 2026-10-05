@@ -187,6 +187,36 @@ func (a *agent) ClearAir(ctx context.Context, x1, y1, z1, x2, y2, z2 int) error 
 	return nil
 }
 
+// CloneArea copies the box between the two source corners (inclusive) onto
+// the destination corner via RCON's /clone, restoring both ground damage
+// and leftover placed-block debris in one pass - see rlenv.AreaCloner and
+// Config.CloneAreaFrom's own doc comment for why this exists alongside
+// ClearAir. Deliberately omits /clone's "move" mode: the source template
+// must survive every call, since every future episode clones from it
+// again. The box (source, same as destination since they're equal in
+// size) must stay under vanilla's 32,768-block fill limit, same as
+// ClearAir. Training convenience only, same scope note as ClearAir;
+// requires RCON. A source or destination that isn't loaded is a harmless
+// no-op on the server side.
+func (a *agent) CloneArea(ctx context.Context, srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1 int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clone area: RCON not configured for this agent")
+	}
+	cmd := fmt.Sprintf("clone %d %d %d %d %d %d %d %d %d replace normal",
+		srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1)
+	resp, err := a.cfg.RCON.Exec(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("clone via RCON: %w", err)
+	}
+	// Same reasoning as ClearAir's own wait: give this bot's own world view
+	// time to receive the resulting block updates before the next thing
+	// Reset does (seeding a crafting table) runs against stale client state.
+	if strings.Contains(resp, "Successfully cloned") {
+		return sleepWithContext(ctx, clearAirSyncDelay)
+	}
+	return nil
+}
+
 // clearAirSyncDelay is how long ClearAir waits after a fill that removed
 // blocks for the resulting block-update packets to reach this bot.
 const clearAirSyncDelay = 300 * time.Millisecond
