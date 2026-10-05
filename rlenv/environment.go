@@ -867,8 +867,23 @@ func (e *Environment) clearArea(ctx context.Context) {
 	if height <= 0 {
 		height = defaultClearAreaHeight
 	}
+	// y uses Round, not Floor: o[1] is the bot's raw, server-reported
+	// feet-Y at the moment ResetOrigin was captured (applyAutoResetOrigin,
+	// mc-rsi-trainer's cmd/rsi-train/main.go), typically right after
+	// connecting - before physics has necessarily settled it to the clean
+	// integer a resting feet-Y always converges to (groundY+1). A capture
+	// landing a hair below that integer (e.g. -60.00003 instead of -60.0)
+	// still means "resting on the block at -61", but Floor rounds it down
+	// to -61 instead - the ground block itself, not the air cell above it
+	// - so the fill below (y to y+height) wipes the ground along with it.
+	// Found live 2026-10-04: repeated trainer restarts, each re-capturing
+	// ResetOrigin fresh, ate through an entire 3-block soil layer down to
+	// bedrock on two of ten bots over several days. Round has no such
+	// one-sided bias; X/Z keep Floor since an off-by-one there only
+	// shifts the clear box's footprint by a block, never reaches into the
+	// ground layer the way a mis-floored Y does.
 	o := *e.cfg.ResetOrigin
-	x, y, z := int(math.Floor(o[0])), int(math.Floor(o[1])), int(math.Floor(o[2]))
+	x, y, z := int(math.Floor(o[0])), int(math.Round(o[1])), int(math.Floor(o[2]))
 	r := e.cfg.ClearAreaRadius
 	if err := clearer.ClearAir(ctx, x-r, y, z-r, x+r, y+height, z+r); err != nil {
 		log.Printf("rlenv: clearing area around (%d,%d,%d): %v", x, y, z, err)

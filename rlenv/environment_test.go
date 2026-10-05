@@ -375,6 +375,29 @@ func TestResetClearsTheSpaceAboveTheGroundAroundTheOrigin(t *testing.T) {
 	}
 }
 
+// TestResetClearOriginYRoundsRatherThanFloors guards the bug found live
+// 2026-10-04: a resting feet-Y is always meant to be a clean integer
+// (groundY+1), but a capture taken before physics fully settles it can
+// land a hair below that integer. Flooring such a value rounded the clear
+// box's Y down into the ground block itself, wiping it - repeated trainer
+// restarts (each re-capturing ResetOrigin fresh) ate an entire 3-block
+// soil layer down to bedrock on two of ten bots over several days.
+func TestResetClearOriginYRoundsRatherThanFloors(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10.5, -60.00003, 5.2} // a hair below -60, not exactly -60
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.ClearAreaRadius = 3
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	want := clearedBox{7, -60, 2, 13, -56, 8} // must round to -60, not floor to -61
+	if len(agent.clearedBoxes) != 1 || agent.clearedBoxes[0] != want {
+		t.Fatalf("cleared = %v, want exactly [%v] (a Floor regression would clear y=-61, the ground block itself)", agent.clearedBoxes, want)
+	}
+}
+
 func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	origin := [3]float64{10, -60, 5}
