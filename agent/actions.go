@@ -1932,6 +1932,38 @@ func sampleAxis(min, max float64, samples int) []float64 {
 	return values
 }
 
+// blockNameForStateID resolves stateID's block name, preferring
+// a.shapeMgr.BlockName - which memoizes the a.blockMgr.BlockIDByStateID +
+// GetByID lookup behind it, in blockShapeManager's own blockInfoCache -
+// over calling blockMgr directly every time. Calling blockMgr directly on
+// every ray-occlusion check (once per FindVisibleBlock/refreshMineTarget
+// check, every environment step, across every parallel bot) made those
+// two interface calls responsible for ~374GB of a ~377GB total in a live
+// alloc pprof capture (2026-10-07): a concrete-type method call through
+// an interface boundary can't be inlined, and the compiler has to assume
+// the callee might retain a reference to the returned models.Block value,
+// so it escapes to the heap on every single call rather than staying on
+// the stack. Routing through the existing per-stateID cache instead means
+// only the first ray check against each distinct block type in the world
+// (there are only a handful in a typical flat world) ever pays that cost.
+// Falls back to the uncached direct lookup only when no shapeMgr is
+// configured, matching blockOccludesRayAccess/blockOccludesRay's own
+// pre-existing behavior for that case.
+func (a *agent) blockNameForStateID(stateID uint32) string {
+	if a.shapeMgr != nil {
+		return a.shapeMgr.BlockName(stateID)
+	}
+	blockID, ok := a.blockMgr.BlockIDByStateID(stateID)
+	if !ok {
+		return ""
+	}
+	block, ok := a.blockMgr.GetByID(blockID)
+	if !ok {
+		return ""
+	}
+	return block.Name
+}
+
 func (a *agent) blockOccludesRayAccess(_ context.Context, ix, iy, iz float64, ox, oy, oz, dx, dy, dz, maxDist float64) (bool, error) {
 	world := a.GetWorld()
 	stateID, loaded := world.GetBlockAt(float64(ix)+0.5, float64(iy)+0.5, float64(iz)+0.5)
@@ -1941,35 +1973,22 @@ func (a *agent) blockOccludesRayAccess(_ context.Context, ix, iy, iz float64, ox
 	if stateID == 0 {
 		return false, nil
 	}
-	if blockID, ok := a.blockMgr.BlockIDByStateID(stateID); ok {
-		if block, ok := a.blockMgr.GetByID(blockID); ok {
-			blockName := block.Name
-			if isAirBlockName(blockName) {
+	if blockName := a.blockNameForStateID(stateID); blockName != "" {
+		if isAirBlockName(blockName) {
+			return false, nil
+		}
+
+		// props is only ever read by isOpenPassThroughBlock just below,
+		// which only runs when a.shapeMgr == nil.
+		if a.shapeMgr == nil {
+			props := map[string]string{}
+			if a.stateProps != nil {
+				props = a.stateProps.GetProperties(stateID)
+			}
+			if isOpenPassThroughBlock(blockName, props) {
 				return false, nil
 			}
-
-			// props is only ever read by isOpenPassThroughBlock just below,
-			// which only runs when a.shapeMgr == nil - computing it
-			// unconditionally made this function (called once per
-			// FindVisibleBlock/refreshMineTarget check, every environment
-			// step, across every bot) the single largest source of
-			// allocation in an rsi-train process by a wide margin (99.67%
-			// of all heap allocations in a live CPU/alloc pprof capture,
-			// 2026-10-07) - almost entirely wasted, since a configured
-			// shapeMgr (the normal case) means this map and the
-			// GetProperties call behind it are built and then never
-			// examined before falling through to the GetCollisionBoxes
-			// path below.
-			if a.shapeMgr == nil {
-				props := map[string]string{}
-				if a.stateProps != nil {
-					props = a.stateProps.GetProperties(stateID)
-				}
-				if isOpenPassThroughBlock(blockName, props) {
-					return false, nil
-				}
-				return true, nil
-			}
+			return true, nil
 		}
 	}
 	boxes := a.shapeMgr.GetCollisionBoxes(stateID, int(ix), int(iy), int(iz))
@@ -1993,29 +2012,26 @@ func (a *agent) blockOccludesRay(_ context.Context, ix, iy, iz int, ox, oy, oz, 
 	if stateID == 0 {
 		return false, nil
 	}
-	if blockID, ok := a.blockMgr.BlockIDByStateID(stateID); ok {
-		if block, ok := a.blockMgr.GetByID(blockID); ok {
-			blockName := block.Name
-			if isAirBlockName(blockName) {
-				return false, nil
-			}
-			if isSeeThroughBlockName(blockName) {
-				return false, nil
-			}
+	if blockName := a.blockNameForStateID(stateID); blockName != "" {
+		if isAirBlockName(blockName) {
+			return false, nil
+		}
+		if isSeeThroughBlockName(blockName) {
+			return false, nil
+		}
 
-			// See blockOccludesRayAccess's own comment on this same
-			// pattern just above - props is unused whenever a.shapeMgr is
-			// set, which is the normal case.
-			if a.shapeMgr == nil {
-				props := map[string]string{}
-				if a.stateProps != nil {
-					props = a.stateProps.GetProperties(stateID)
-				}
-				if isOpenPassThroughBlock(blockName, props) {
-					return false, nil
-				}
-				return true, nil
+		// See blockOccludesRayAccess's own comment on this same pattern
+		// just above - props is unused whenever a.shapeMgr is set, which
+		// is the normal case.
+		if a.shapeMgr == nil {
+			props := map[string]string{}
+			if a.stateProps != nil {
+				props = a.stateProps.GetProperties(stateID)
 			}
+			if isOpenPassThroughBlock(blockName, props) {
+				return false, nil
+			}
+			return true, nil
 		}
 	}
 
