@@ -1948,11 +1948,23 @@ func (a *agent) blockOccludesRayAccess(_ context.Context, ix, iy, iz float64, ox
 				return false, nil
 			}
 
-			props := map[string]string{}
-			if a.stateProps != nil {
-				props = a.stateProps.GetProperties(stateID)
-			}
+			// props is only ever read by isOpenPassThroughBlock just below,
+			// which only runs when a.shapeMgr == nil - computing it
+			// unconditionally made this function (called once per
+			// FindVisibleBlock/refreshMineTarget check, every environment
+			// step, across every bot) the single largest source of
+			// allocation in an rsi-train process by a wide margin (99.67%
+			// of all heap allocations in a live CPU/alloc pprof capture,
+			// 2026-10-07) - almost entirely wasted, since a configured
+			// shapeMgr (the normal case) means this map and the
+			// GetProperties call behind it are built and then never
+			// examined before falling through to the GetCollisionBoxes
+			// path below.
 			if a.shapeMgr == nil {
+				props := map[string]string{}
+				if a.stateProps != nil {
+					props = a.stateProps.GetProperties(stateID)
+				}
 				if isOpenPassThroughBlock(blockName, props) {
 					return false, nil
 				}
@@ -1991,11 +2003,14 @@ func (a *agent) blockOccludesRay(_ context.Context, ix, iy, iz int, ox, oy, oz, 
 				return false, nil
 			}
 
-			props := map[string]string{}
-			if a.stateProps != nil {
-				props = a.stateProps.GetProperties(stateID)
-			}
+			// See blockOccludesRayAccess's own comment on this same
+			// pattern just above - props is unused whenever a.shapeMgr is
+			// set, which is the normal case.
 			if a.shapeMgr == nil {
+				props := map[string]string{}
+				if a.stateProps != nil {
+					props = a.stateProps.GetProperties(stateID)
+				}
 				if isOpenPassThroughBlock(blockName, props) {
 					return false, nil
 				}
