@@ -24,46 +24,55 @@ func block2Chunk(blockX, blockZ int64) (chunkX, chunkZ int64) {
 	return
 }
 
-// isObscuring checks if a block at the given coordinate is solid and blocks visibility
-func (a *agent) isObscuring(coord models.V3, world models.World) bool {
+// isObscuring checks if a block at the given coordinate is solid and blocks
+// visibility, returning the stateID it read along with the verdict - the
+// caller (traceRay, then findAllVisibleSurfaceBlocks) uses this same
+// stateID for the rest of the hit's lifetime instead of re-querying the
+// world later, which would risk reading back a *different* block if
+// something (e.g. a concurrent mine on a shared server) changed it in the
+// meantime. See findAllVisibleSurfaceBlocks' own doc comment for the
+// live-confirmed bug this closes.
+func (a *agent) isObscuring(coord models.V3, world models.World) (stateID uint32, obscuring bool) {
 	stateID, loaded := world.GetBlockAt(coord.X, coord.Y, coord.Z)
 	if stateID == 0 {
 		// chunkX, chunkZ := block2Chunk(int64(math.Floor(coord.X)), int64(math.Floor(coord.Z)))
 		// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is air", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
-		return false
+		return stateID, false
 	}
 
 	if !loaded {
 		// chunkX, chunkZ := block2Chunk(int64(math.Floor(coord.X)), int64(math.Floor(coord.Z)))
 		// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) chunk (%d, %d)) is not loaded", coord.X, coord.Y, coord.Z, chunkX, chunkZ)
-		return false
+		return stateID, false
 	}
 
 	// a.logf("[isObscuring] Block at (%.2f, %.2f, %.2f) has stateID %d (%s)", coord.X, coord.Y, coord.Z, stateID, a.shapeMgr.BlockName(stateID))
 
 	// Skip passable blocks (water, plants, etc.)
 	if a.shapeMgr != nil && a.shapeMgr.IsPassable(stateID) {
-		return false
+		return stateID, false
 	}
 
 	// Block is solid and obscures visibility
-	return true
+	return stateID, true
 }
 
-// traceRay finds the first obscuring block along a ray within radius R
-// Returns (blockCoord, found)
-func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, bool) {
+// traceRay finds the first obscuring block along a ray within radius R.
+// Returns (blockCoord, stateID, found) - stateID is isObscuring's own
+// read at hit time, carried through rather than re-read later (see its
+// own doc comment).
+func (a *agent) traceRay(ray Ray, R float64, world models.World) (models.V3, uint32, bool) {
 	walker := newVoxelRayWalker(ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X, ray.Direction.Y, ray.Direction.Z)
 
 	for {
 		x, y, z := walker.cell()
 		coord := models.V3{X: float64(x), Y: float64(y), Z: float64(z)}
 		if coord.DistanceTo(ray.Origin) > R {
-			return models.V3{}, false
+			return models.V3{}, 0, false
 		}
 
-		if a.isObscuring(coord, world) {
-			return coord, true
+		if stateID, obscuring := a.isObscuring(coord, world); obscuring {
+			return coord, stateID, true
 		}
 
 		walker.advance()
@@ -161,6 +170,16 @@ func findAllVisibleSurfaceBlocksWorkerCount(numTargets int) int {
 // slice of targets and accumulates its own hits into a local slice, so
 // there's no shared map/lock contention between workers - results are only
 // merged, sequentially, after every worker finishes.
+//
+// Each hit's stateID is captured once, at ray-trace time (see
+// isObscuring/traceRay), and reused for the rest of this function instead
+// of being re-read from the world a second time while building results.
+// Found live 2026-10-12: the old code did re-read it there, a real
+// TOCTOU race against any concurrent mine on a shared server - if another
+// bot mined that exact block between the ray hit and the later re-read,
+// the re-read saw air (stateID 0), and the result came back naming a
+// block the ray-trace itself had correctly found solid as "air" instead,
+// which the 3D dashboard rendered as a floating air cube.
 func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoord models.V3, R int) ([]models.VisibleBlockInfo, error) {
 	world := a.GetWorld()
 	if world == nil {
@@ -183,8 +202,23 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 	numWorkers := findAllVisibleSurfaceBlocksWorkerCount(len(targets))
 	chunkSize := (len(targets) + numWorkers - 1) / numWorkers
 
+	// visibleHit pairs a ray hit's coordinate with the stateID isObscuring
+	// read at that exact moment - carried through to the result-building
+	// loop below instead of re-querying world.GetBlockAt for it a second
+	// time. That second read was a real, live-confirmed race on a shared
+	// server: if another bot mines the hit block between the ray trace
+	// and the later re-read, the re-read sees air (stateID 0), and the
+	// result comes back naming a block the ray-trace itself correctly
+	// found solid as "air" instead - see worldstream.go's isAirBlockName
+	// for the symptom this produced (a floating "air" cube in the 3D
+	// dashboard view) before this was found and fixed at the source.
+	type visibleHit struct {
+		coord   models.V3
+		stateID uint32
+	}
+
 	type workerResult struct {
-		hits []models.V3
+		hits []visibleHit
 		err  error
 	}
 	workerResults := make([]workerResult, numWorkers)
@@ -201,7 +235,7 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 		wg.Add(1)
 		go func(w, start, end int) {
 			defer wg.Done()
-			var hits []models.V3
+			var hits []visibleHit
 			for _, target := range targets[start:end] {
 				if ctx.Err() != nil {
 					workerResults[w] = workerResult{err: ctx.Err()}
@@ -215,8 +249,8 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 				dir := calculateDirection(originEye, target.Add(models.V3{X: 0.5, Y: 0.5, Z: 0.5}))
 
 				// Trace ray to find first obscuring block
-				if hit, found := a.traceRay(Ray{originEye, dir}, float64(R), world); found {
-					hits = append(hits, hit)
+				if coord, stateID, found := a.traceRay(Ray{originEye, dir}, float64(R), world); found {
+					hits = append(hits, visibleHit{coord: coord, stateID: stateID})
 				}
 			}
 			workerResults[w] = workerResult{hits: hits}
@@ -224,24 +258,22 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 	}
 	wg.Wait()
 
-	visibleMap := make(map[models.V3]bool)
+	visibleMap := make(map[models.V3]uint32)
 	for _, res := range workerResults {
 		if res.err != nil {
 			return nil, fmt.Errorf("context cancelled in findAllVisibleSurfaceBlocks: %v", res.err)
 		}
 		for _, hit := range res.hits {
-			visibleMap[hit] = true
+			visibleMap[hit.coord] = hit.stateID
 		}
 	}
 
 	// Convert map to sorted slice
 	results := make([]models.VisibleBlockInfo, 0, len(visibleMap))
-	for coord := range visibleMap {
+	for coord, stateID := range visibleMap {
 		ix := int(math.Floor(coord.X))
 		iy := int(math.Floor(coord.Y))
 		iz := int(math.Floor(coord.Z))
-
-		stateID, _ := world.GetBlockAt(coord.X, coord.Y, coord.Z)
 
 		// Resolve block name
 		blockName := ""
