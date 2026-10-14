@@ -65,7 +65,7 @@ func (a *agent) PlaceHeldBlock(ctx context.Context, itemName string) (models.V3,
 		if tried >= placeMaxCells {
 			break
 		}
-		if !placementCellUsable(world, shapeMgr, c) {
+		if !placementCellUsable(world, shapeMgr, pos, c) {
 			unusable++
 			continue
 		}
@@ -206,14 +206,33 @@ func (a *agent) PlaceBlockAt(ctx context.Context, target models.V3, itemName str
 // placementCellUsable reports whether a block can go in c.Cell against
 // c.Floor: the cell (and the one above it, so it doesn't wall the bot in) is
 // passable and the floor is solid.
-func placementCellUsable(world models.World, shapeMgr models.BlockShapeManager, c models.PlacementCell) bool {
+func placementCellUsable(world models.World, shapeMgr models.BlockShapeManager, pos models.V3, c models.PlacementCell) bool {
 	cellID, cellOK := world.GetBlockAt(c.Cell.X+0.5, c.Cell.Y+0.5, c.Cell.Z+0.5)
 	aboveID, aboveOK := world.GetBlockAt(c.Cell.X+0.5, c.Cell.Y+1.5, c.Cell.Z+0.5)
 	floorID, floorOK := world.GetBlockAt(c.Floor.X+0.5, c.Floor.Y+0.5, c.Floor.Z+0.5)
 	if !cellOK || !aboveOK || !floorOK {
 		return false
 	}
-	return shapeMgr.IsPassable(cellID) && shapeMgr.IsPassable(aboveID) && !shapeMgr.IsPassable(floorID)
+	if !shapeMgr.IsPassable(cellID) || !shapeMgr.IsPassable(aboveID) || shapeMgr.IsPassable(floorID) {
+		return false
+	}
+	return !placementCellOverlapsBot(pos, c)
+}
+
+// placementCellOverlapsBot reports whether c's own cell overlaps the
+// placing bot's own hitbox at pos. Minecraft silently refuses a placement
+// there - confirmed live 2026-10-13 via diagnostic logging on
+// placeAgainst: 100% of sampled chain_place/chain_use failures showed
+// exactly this (the nearest candidate cell, one block from the bot's own
+// standing cell, is the one most likely to overlap a 0.6-wide hitbox if
+// the bot isn't centered in its own cell). placementCellUsable checks this
+// before ever attempting the cell, so PlaceHeldBlock moves straight on to
+// the next candidate instead of burning the full placeVerifyWait retry
+// budget (up to placeAttemptsPerCell attempts) on a placement that cannot
+// succeed no matter how many times it's retried.
+func placementCellOverlapsBot(pos models.V3, c models.PlacementCell) bool {
+	cellBB := models.NewAABB(c.Cell.X, c.Cell.Y, c.Cell.Z, c.Cell.X+1, c.Cell.Y+1, c.Cell.Z+1)
+	return models.NewPlayerAABB(pos).Intersects(cellBB)
 }
 
 // waitForBlock polls the bot's own world view until (x, y, z) shows want.

@@ -140,6 +140,30 @@ func TestFindSupportFace_NegativeCoordinates(t *testing.T) {
 	}
 }
 
+// TestPlacementCellOverlapsBot covers the live bug found 2026-10-13: a
+// bot standing near the edge of its own cell (not dead-center) has a
+// 0.6-wide hitbox that spills into the adjacent cell a PlacementCandidates
+// offset of (1,0) points at - a placement there is bound to silently fail
+// no matter how many times it's retried, since the hitbox never moves
+// away between attempts.
+func TestPlacementCellOverlapsBot(t *testing.T) {
+	candidate := models.PlacementCell{Cell: models.V3{X: 11, Y: 5, Z: 10}, Floor: models.V3{X: 11, Y: 4, Z: 10}}
+
+	t.Run("bot centered in its own cell, no overlap with the adjacent candidate", func(t *testing.T) {
+		pos := models.V3{X: 10.5, Y: 5, Z: 10.5}
+		if placementCellOverlapsBot(pos, candidate) {
+			t.Error("expected no overlap: a centered 0.6-wide hitbox stays within its own [10,11] cell")
+		}
+	})
+
+	t.Run("bot standing near the edge toward the candidate, hitbox spills over", func(t *testing.T) {
+		pos := models.V3{X: 10.9, Y: 5, Z: 10.5}
+		if !placementCellOverlapsBot(pos, candidate) {
+			t.Error("expected overlap: a 0.6-wide hitbox centered at x=10.9 reaches x=11.2, into the candidate's [11,12] cell")
+		}
+	})
+}
+
 func TestPlacementTookEffect(t *testing.T) {
 	const table = "minecraft:crafting_table"
 	tests := []struct {
