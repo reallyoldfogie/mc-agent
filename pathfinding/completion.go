@@ -26,8 +26,12 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 
 	// Movement-specific completion thresholds
 	switch targetStep.Movement {
-	case Descend:
-		// Drop down movements (1-3 blocks)
+	case Descend, MineDown:
+		// Drop down movements (1-3 blocks), or MineDown's single-block drop
+		// once the obstruction below is cleared - the physics executor
+		// never even calls IsComplete while a MineDown step is still
+		// waiting on the mine itself (see isMineActionStep), so by the time
+		// this runs, it's an ordinary drop into now-open space.
 		// Tighter horizontal tolerance, only check we're not above target.
 		// deltaPos.Y = target.Y - current.Y, so "not above target" means
 		// current.Y has come down to at or below target.Y, i.e. deltaPos.Y
@@ -164,7 +168,9 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 			deltaPos.Y <= 0.6 // Can be up to 0.6 blocks below target
 
 	default:
-		// Default completion threshold for Traverse, Ascend, DiagonalTraverse, etc.
+		// Default completion threshold for Traverse, Ascend, DiagonalTraverse,
+		// MineThrough (once its obstruction is cleared, it's an ordinary
+		// Traverse-shaped step), etc.
 		//
 		// Horizontal threshold: 0.18 blocks (allows some wiggle room)
 		// Vertical threshold: -0.065 to +0.08 (accounts for step height and ground detection)

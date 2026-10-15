@@ -45,6 +45,8 @@ const (
 	VehicleRailTraverse = models.VehicleRailTraverse
 	VehicleSwim         = models.VehicleSwim
 	VehicleFly3D        = models.VehicleFly3D
+	MineThrough         = models.MineThrough
+	MineDown            = models.MineDown
 )
 
 // PathStep is an alias to models.PathStep for backward compatibility.

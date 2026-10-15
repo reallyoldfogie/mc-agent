@@ -1094,6 +1094,139 @@ func (mv *MovementValidator) logTerrainAround(from models.V3) {
 	}
 }
 
+// mineBaseCostPerBlock/mineHardnessCostFactor set MineThrough/MineDown's
+// real per-step cost (see mineMoveCost) - deliberately well above any
+// walking detour (Traverse=1.0) so a path search almost always prefers
+// walking around, but still finite, so a bot with no walkable route left at
+// all (a straight 1x1 shaft, see MineDown's own doc comment) can still dig
+// itself out. hardness scales the cost on top of the flat premium so a
+// search offered a choice between mining through dirt vs. stone prefers the
+// softer block, same reasoning CalcBreakTime (agent/mining) already applies
+// to real break time - not calibrated against it directly, since the
+// pathfinder doesn't know what tool (if any) the bot is holding; see
+// mineObstructionAt's own doc comment for that scope note.
+const (
+	mineBaseCostPerBlock   = 8.0
+	mineHardnessCostFactor = 2.0
+)
+
+// mineMoveCost sums the pseudo-expensive cost of breaking every block in
+// hardnesses (1 for MineDown, 1 or 2 for MineThrough - see
+// PathStep.MineTargets' own doc comment).
+func mineMoveCost(hardnesses ...float64) float64 {
+	cost := 0.0
+	for _, h := range hardnesses {
+		if h < 0 {
+			h = 0
+		}
+		cost += mineBaseCostPerBlock + h*mineHardnessCostFactor
+	}
+	return cost
+}
+
+// mineObstructionAt reports whether pos holds a solid, diggable block worth
+// offering as a MineThrough/MineDown route - never for an already-passable
+// cell (nothing to mine), a fluid (Swim/WadeWater already cover water, and
+// mining into lava/magma is never a sane route - IsDangerous also excludes
+// fire, cacti, etc.), or anything GetMiningInfo reports as undiggable
+// (bedrock) or unbreakable (negative hardness, same convention
+// agent/mining.BlockMiningInfo.Hardness documents).
+//
+// Deliberately tool-agnostic: this only decides whether a route exists and
+// how it should be costed relative to walking, not whether the bot
+// currently holds a tool that can break this specific block in reasonable
+// time - that real-world enforcement already happens server-side (the live
+// server silently drops nothing for too-low a tool tier) and is out of
+// scope for a first version of this move, same as the rest of
+// docs/plans/14's "What's missing" list already treats tool-tier modeling
+// as a later concern.
+func (mv *MovementValidator) mineObstructionAt(pos models.V3) (hardness float64, ok bool) {
+	stateID, loaded := mv.getBlock(pos.X, pos.Y, pos.Z)
+	if !loaded || stateID == 0 {
+		return 0, false // air or unloaded chunk - nothing to mine
+	}
+	if mv.shapeMgr.IsPassable(stateID) {
+		return 0, false // already passable - not an obstruction
+	}
+	if mv.shapeMgr.IsFluid(stateID) || mv.shapeMgr.IsDangerous(stateID) {
+		return 0, false
+	}
+	h, _, diggable := mv.shapeMgr.GetMiningInfo(stateID)
+	if !diggable || h < 0 {
+		return 0, false
+	}
+	return h, true
+}
+
+// tryMineThrough checks whether MineThrough can replace an unavailable
+// Traverse/WadeWater move from `from` to the horizontally-adjacent `to`:
+// either or both of the feet-level cell (at `to`) and the head-level cell
+// (directly above it) may need breaking, but a cell that's solid yet
+// undiggable makes the whole move impossible, not just skips mining it
+// (mirrors CanTraverse's own isPositionPassable/hasGroundSupport
+// requirements for everything except "solid" itself).
+func (mv *MovementValidator) tryMineThrough(from, to models.V3) (PathStep, bool) {
+	if mv.destinationIsWater(to) {
+		return PathStep{}, false // WadeWater/Swim's territory, not mining's
+	}
+
+	head := to.Add(models.V3{X: 0, Y: 1, Z: 0})
+	feetHardness, feetBlocked := mv.mineObstructionAt(to)
+	headHardness, headBlocked := mv.mineObstructionAt(head)
+
+	if !feetBlocked && !headBlocked {
+		return PathStep{}, false // CanTraverse already covers every other reason this move is unavailable
+	}
+	if !feetBlocked && !mv.isBlockPassable(to) {
+		return PathStep{}, false // feet-level cell is solid but undiggable - no route at all
+	}
+	if !headBlocked && !mv.isBlockPassable(head) {
+		return PathStep{}, false // head-level cell is solid but undiggable - no route at all
+	}
+	if !mv.hasGroundSupport(to) {
+		return PathStep{}, false // same requirement CanTraverse enforces
+	}
+
+	targets := make([]models.V3, 0, 2)
+	hardnesses := make([]float64, 0, 2)
+	if feetBlocked {
+		targets = append(targets, to)
+		hardnesses = append(hardnesses, feetHardness)
+	}
+	if headBlocked {
+		targets = append(targets, head)
+		hardnesses = append(hardnesses, headHardness)
+	}
+
+	return PathStep{
+		Position:    to,
+		Movement:    MineThrough,
+		Cost:        mineMoveCost(hardnesses...),
+		MineTargets: targets,
+	}, true
+}
+
+// tryMineDown checks whether MineDown can offer a route one block straight
+// down from `from` (same X/Z column) when the block there is a solid,
+// diggable obstruction. No ground-support requirement on the far side,
+// unlike every other move here - the whole point is to keep digging through
+// more solid material below, which the next GetPossibleMoves call will
+// offer again on its own if that's also an obstruction (see MineDown's own
+// doc comment).
+func (mv *MovementValidator) tryMineDown(from models.V3) (PathStep, bool) {
+	straightDown := from.Add(models.V3{X: 0, Y: -1, Z: 0})
+	hardness, ok := mv.mineObstructionAt(straightDown)
+	if !ok {
+		return PathStep{}, false
+	}
+	return PathStep{
+		Position:    straightDown,
+		Movement:    MineDown,
+		Cost:        mineMoveCost(hardness),
+		MineTargets: []models.V3{straightDown},
+	}, true
+}
+
 // GetPossibleMoves returns all valid moves from a given position
 // Optionally filters moves based on goal to reduce search space (pass zero models.V3 to disable filtering)
 func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, prune *MovePruneConfig) []PathStep {
@@ -1124,6 +1257,8 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 				Movement: WadeWater,
 				Cost:     WadeWater.BaseCost(),
 			})
+		} else if step, ok := mv.tryMineThrough(from, to); ok {
+			moves = append(moves, step)
 		}
 
 		// Try ascend (1 block up)
@@ -1190,6 +1325,14 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 				Cost:     Jump2.BaseCost() + 0.5, // Slightly more expensive
 			})
 		}
+	}
+
+	// Mine straight down (same X/Z column) - deliberately outside the
+	// cardinalDirs loop above, since this is never direction-dependent: see
+	// MineDown's own doc comment for why no existing per-direction
+	// Ascend/Descend check ever covers this case.
+	if step, ok := mv.tryMineDown(from); ok {
+		moves = append(moves, step)
 	}
 
 	// Diagonal movements

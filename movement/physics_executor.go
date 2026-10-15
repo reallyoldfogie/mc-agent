@@ -249,6 +249,22 @@ type PhysicsMovementExecutor struct {
 	onPlaceVehicleRequired func(ctx context.Context, waterPos models.V3) error
 	waitingForPlacement    bool
 
+	// onMineRequired handles a MineThrough/MineDown step (see
+	// pathfinding.MineThrough/MineDown): break the block(s) at
+	// step.MineTargets. Completion is judged from the block's own world
+	// state (mineTargetsCleared), the same "ask the world, not a flag the
+	// callback sets" pattern CanDescend/CanTraverse already use elsewhere -
+	// not polled against a separate success flag the way isMounted is for
+	// the vehicle callbacks above. waitingForMine only prevents launching a
+	// second concurrent attempt while one is in flight; same stuck-if-the-
+	// callback-never-succeeds risk profile as waitingForMount/
+	// waitingForPlacement above, and same fix if that ever matters: never
+	// written by the onMineRequired goroutine itself, only by
+	// generateNavigationInputs' own tick-loop goroutine, so it stays as
+	// race-free as those two already are.
+	onMineRequired func(ctx context.Context, blockPos models.V3) error
+	waitingForMine bool
+
 	logger *slog.Logger
 }
 
@@ -667,6 +683,13 @@ func (pe *PhysicsMovementExecutor) SetMountCallbacks(
 ) {
 	pe.onMountRequired = onMount
 	pe.onDismountRequired = onDismount
+}
+
+// SetMineCallback sets the callback for a MineThrough/MineDown step (see
+// pathfinding.MineThrough/MineDown and onMineRequired's own doc comment):
+// break the real block at the given position.
+func (pe *PhysicsMovementExecutor) SetMineCallback(onMine func(ctx context.Context, blockPos models.V3) error) {
+	pe.onMineRequired = onMine
 }
 
 // SetPlaceVehicleCallback sets the callback for a PlaceVehicle step (place a
@@ -1599,6 +1622,52 @@ func isVehicleActionStep(m pathfinding.MovementType) bool {
 	return m == pathfinding.MountVehicle || m == pathfinding.DismountVehicle || m == pathfinding.PlaceVehicle
 }
 
+// isMineActionStep reports whether m is MineThrough/MineDown - handled by
+// its own early branch in generateNavigationInputs (see there), not by
+// isVehicleActionStep's switch/stuck-detection path: unlike a vehicle
+// action, a mine step still needs an ordinary walk/fall into Position once
+// its obstruction is cleared, so it can't just be dispatched to a single
+// handler and left alone.
+func isMineActionStep(m pathfinding.MovementType) bool {
+	return m == pathfinding.MineThrough || m == pathfinding.MineDown
+}
+
+// mineTargetsCleared reports whether every block step.MineTargets names is
+// no longer solid - the real completion signal for a mine step (see
+// onMineRequired's own doc comment), checked directly against current
+// world state rather than a flag set by the callback.
+func (pe *PhysicsMovementExecutor) mineTargetsCleared(step pathfinding.PathStep) bool {
+	for _, target := range step.MineTargets {
+		stateID, loaded := pe.world.GetBlockStatus(int(target.X), int(target.Y), int(target.Z))
+		if loaded && stateID != 0 && !pe.shapeProvider.IsPassable(stateID) {
+			return false
+		}
+	}
+	return true
+}
+
+// triggerMineRequest starts breaking step's MineTargets if nothing is
+// already in flight for this step - see waitingForMine's own doc comment
+// for why this never gets reset to false by the goroutine it starts.
+func (pe *PhysicsMovementExecutor) triggerMineRequest(step pathfinding.PathStep) {
+	if pe.waitingForMine {
+		return
+	}
+	pe.waitingForMine = true
+	if pe.onMineRequired == nil {
+		return
+	}
+	targets := step.MineTargets
+	go func() {
+		for _, target := range targets {
+			if err := pe.onMineRequired(pe.ctx, target); err != nil {
+				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Mine failed at %s: %v", target, err))
+				return
+			}
+		}
+	}()
+}
+
 // generateIdleInputs generates inputs for idle mode (just physics, no movement).
 func (pe *PhysicsMovementExecutor) generateIdleInputs() physics.Inputs {
 	// Get current position for pitch
@@ -1670,6 +1739,18 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	currentPos := models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+
+	// MineThrough/MineDown: stay idle and (re)trigger the real mine until
+	// every target block is actually gone - see isMineActionStep's own doc
+	// comment for why this can't just be dispatched like a vehicle action
+	// step below. Once cleared, fall through to the ordinary isComplete/
+	// stuck-detection/input-generation pipeline below exactly as if this
+	// had been a plain Traverse/Descend step all along.
+	if isMineActionStep(step.Movement) && !pe.mineTargetsCleared(step) {
+		pe.triggerMineRequest(step)
+		return pe.generateIdleInputs()
+	}
+	pe.waitingForMine = false
 
 	// Check if current step is complete
 	// For JumpToClimb, also verify the agent actually grabbed the climbable
@@ -1794,7 +1875,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.DescendStairs ||
 					step.Movement == pathfinding.Descend ||
 					step.Movement == pathfinding.AscendJump ||
-					step.Movement == pathfinding.DiagonalAscend
+					step.Movement == pathfinding.DiagonalAscend ||
+					step.Movement == pathfinding.MineDown
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2

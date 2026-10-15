@@ -48,6 +48,21 @@ const (
 	VehicleRailTraverse // Minecart on rail (forward only)
 	VehicleSwim         // Boat on water surface
 	VehicleFly3D        // Nautilus 3D underwater movement
+	// MineThrough breaks a solid, diggable block standing between `from`
+	// and an otherwise-impassable horizontally-adjacent cell, then moves
+	// into it - the cardinal-move analogue of Traverse, offered only when
+	// Traverse/WadeWater aren't already available. See docs/plans/14's
+	// narrow-shaft-navigability finding.
+	MineThrough
+	// MineDown breaks the solid, diggable block directly underfoot (same
+	// X/Z column, one block down) and drops into it - unlike every other
+	// move in this list, this is never offered by any ordinary
+	// passability-based check, since under normal terrain you'd never want
+	// to fall through your own floor. It exists specifically so a bot that
+	// has dug itself into a straight 1x1 vertical shaft - with no adjacent
+	// column left to use any horizontal move at all - has a way to
+	// continue, one layer at a time.
+	MineDown
 )
 
 // String returns the name of the movement type.
@@ -131,6 +146,10 @@ func (mt MovementType) String() string {
 		return "VehicleSwim"
 	case VehicleFly3D:
 		return "VehicleFly3D"
+	case MineThrough:
+		return "MineThrough"
+	case MineDown:
+		return "MineDown"
 	default:
 		return "Unknown"
 	}
@@ -215,6 +234,16 @@ func (mt MovementType) BaseCost() float64 {
 		return 0.60
 	case VehicleFly3D:
 		return 0.4
+	case MineThrough, MineDown:
+		// Representative only - pathfinding.mineMoveCost computes the real,
+		// hardness-scaled per-step cost at generation time (same pattern
+		// Jump2's "+0.5" variant already uses above). This flat value is a
+		// deliberately pseudo-expensive floor: well above any walking
+		// detour (Traverse=1.0), comparable to PlaceVehicle's 10.0 "real
+		// one-time cost," so a path search prefers walking around almost
+		// every time, but still finite - a bot with no walkable route left
+		// at all (a straight 1x1 shaft) can still dig itself out.
+		return 8.0
 	default:
 		return 1.0
 	}
@@ -226,6 +255,13 @@ type PathStep struct {
 	Movement        MovementType
 	Cost            float64
 	VehicleEntityID int32 // 0 = on foot; non-zero = entity ID of vehicle being ridden
+	// MineTargets is the block coordinate(s) that must be broken before this
+	// step can be completed - only set for MineThrough (1 or 2 entries: the
+	// feet-level cell at Position, and the head-level cell above it if that
+	// was also solid) and MineDown (always exactly 1: Position itself,
+	// since the destination cell IS the block being broken). nil/empty for
+	// every other movement type.
+	MineTargets []V3
 }
 
 // Path is a sequence of steps from start to goal.

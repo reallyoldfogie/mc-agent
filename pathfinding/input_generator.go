@@ -97,9 +97,12 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 		// Sprint on same level
 		out.Sprint = true
 
-	case Traverse, DiagonalTraverse:
+	case Traverse, DiagonalTraverse, MineThrough:
 		// Simple horizontal movement - default inputs are fine
-		// No special logic needed
+		// No special logic needed. MineThrough only ever reaches here once
+		// its obstruction is cleared (see isMineActionStep in
+		// movement/physics_executor.go), at which point it's walked exactly
+		// like Traverse.
 
 	case EnterClimb:
 		// Enter climbable block (vine/ladder) from the side
@@ -218,8 +221,10 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 			out.ClimbDirection = 1.0
 		}
 
-	case Descend:
-		// Drop down (1-3 blocks)
+	case Descend, MineDown:
+		// Drop down (1-3 blocks), or MineDown's single-block drop once its
+		// obstruction is cleared (reaches here for the same reason
+		// MineThrough reaches the Traverse case above).
 		// Just walk forward and let gravity do the work
 		// Default inputs are fine
 
@@ -382,9 +387,12 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 	// Estimate based on movement type
 	// These are rough estimates based on vanilla Minecraft speeds
 	switch step.Movement {
-	case Traverse, EnterClimb:
+	case Traverse, EnterClimb, MineThrough:
 		// Walking speed: ~4.3 blocks/second = ~0.215 blocks/tick (at 20 TPS)
-		// Add buffer for acceleration
+		// Add buffer for acceleration. Ignores the mining wait itself (this
+		// function has no real callers today - see MineThrough/MineDown's
+		// own note where they're added below - and the physics executor's
+		// own wait is unbounded/async, not tick-estimated anyway).
 		return int(dist/0.20) + 10
 
 	case Sprint:
@@ -409,7 +417,7 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		)
 		return int(horizontalDist/0.20) + 15
 
-	case Descend:
+	case Descend, MineDown:
 		// Falling: ~0.08 blocks/tick² (gravity)
 		// For 1 block: ~5 ticks, 2 blocks: ~7 ticks, 3 blocks: ~9 ticks
 		verticalDist := pos.Y - step.Position.Y

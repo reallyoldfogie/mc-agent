@@ -926,6 +926,23 @@ func (a *agent) Init(ctx context.Context) error {
 			a.logf("[Agent %s] Place-vehicle callback configured", a.cfg.Name)
 		}
 
+		// Set up the mine callback for MineThrough/MineDown steps (see
+		// docs/plans/14-buried-block-mining-and-memory-map.md's narrow-
+		// shaft-navigability finding). The face argument is ignored by
+		// MineBlockAt itself (it derives everything it needs - approach,
+		// look direction, actual face - from the agent's own live position
+		// relative to blockPos), so there's no real direction to pick here.
+		if mineCallbackSetter, ok := a.moveExec.(interface {
+			SetMineCallback(func(context.Context, models.V3) error)
+		}); ok {
+			mineCallbackSetter.SetMineCallback(
+				func(ctx context.Context, blockPos models.V3) error {
+					return a.MineBlockAt(ctx, blockPos, models.FaceUp)
+				},
+			)
+			a.logf("[Agent %s] Mine callback configured", a.cfg.Name)
+		}
+
 		// Wrap with HPA* for hierarchical pathfinding on long distances
 		// Larger cluster size = fewer clusters, faster building (but more entrances per cluster)
 		// 32x32x32 aligns with Minecraft chunks (16x16) and is power-of-2 for CPU efficiency
