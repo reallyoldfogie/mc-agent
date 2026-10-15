@@ -117,29 +117,29 @@ func TestChainPlaceLegal(t *testing.T) {
 
 func TestChainMilestonesPayOnceAndTheStageEndsOnItsOwnGoal(t *testing.T) {
 	var s chainState
-	if r, done := s.advance(ChainUse, chainInventory{}, false, false); r != 0 || done {
+	if r, done := s.advance(ChainUse, chainInventory{}, false, false, false); r != 0 || done {
 		t.Fatalf("empty: reward=%v done=%v", r, done)
 	}
-	if r, done := s.advance(ChainUse, chainInventory{logs: 1}, false, false); r != chainMilestoneBonus || done {
+	if r, done := s.advance(ChainUse, chainInventory{logs: 1}, false, false, false); r != chainMilestoneBonus || done {
 		t.Fatalf("first log: reward=%v done=%v, want one milestone", r, done)
 	}
-	if r, _ := s.advance(ChainUse, chainInventory{logs: 2}, false, false); r != 0 {
+	if r, _ := s.advance(ChainUse, chainInventory{logs: 2}, false, false, false); r != 0 {
 		t.Fatalf("more logs paid again: %v", r)
 	}
-	if r, _ := s.advance(ChainUse, chainInventory{planks: 4}, false, false); r != chainMilestoneBonus {
+	if r, _ := s.advance(ChainUse, chainInventory{planks: 4}, false, false, false); r != chainMilestoneBonus {
 		t.Fatalf("planks: %v", r)
 	}
 	// crafting and un-crafting the same thing must not farm it
-	if r, _ := s.advance(ChainUse, chainInventory{logs: 1}, false, false); r != 0 {
+	if r, _ := s.advance(ChainUse, chainInventory{logs: 1}, false, false, false); r != 0 {
 		t.Fatalf("logs reappearing paid again: %v", r)
 	}
-	if r, _ := s.advance(ChainUse, chainInventory{tables: 1}, false, false); r != chainMilestoneBonus {
+	if r, _ := s.advance(ChainUse, chainInventory{tables: 1}, false, false, false); r != chainMilestoneBonus {
 		t.Fatalf("table item: %v", r)
 	}
-	if r, done := s.advance(ChainUse, chainInventory{}, true, false); r != chainMilestoneBonus || done {
+	if r, done := s.advance(ChainUse, chainInventory{}, true, false, false); r != chainMilestoneBonus || done {
 		t.Fatalf("placed: reward=%v done=%v", r, done)
 	}
-	if r, done := s.advance(ChainUse, chainInventory{}, true, true); r != chainCompletionBonus || !done {
+	if r, done := s.advance(ChainUse, chainInventory{}, true, true, false); r != chainCompletionBonus || !done {
 		t.Fatalf("goal: reward=%v done=%v, want the completion bonus and done", r, done)
 	}
 }
@@ -156,18 +156,54 @@ func TestChainStagesEndOnTheirOwnMilestone(t *testing.T) {
 	}
 	for _, c := range cases {
 		var s chainState
-		_, done := s.advance(c.stage, c.inv, c.placd, false)
+		_, done := s.advance(c.stage, c.inv, c.placd, false, false)
 		if !done {
 			t.Errorf("stage %d did not end on its own milestone", c.stage)
 		}
 	}
 	// stage 3 must not end merely because the table was crafted
 	var s chainState
-	if _, done := s.advance(ChainPlace, chainInventory{tables: 1}, false, false); done {
+	if _, done := s.advance(ChainPlace, chainInventory{tables: 1}, false, false, false); done {
 		t.Error("stage 3 ended when the table was crafted, before it was placed")
 	}
 	// the sum of intermediate milestones stays below the completion bonus
 	if 3*chainMilestoneBonus >= chainCompletionBonus {
 		t.Error("intermediate milestones must sum to less than the completion bonus")
+	}
+}
+
+// TestChainMineStageMakesCraftingIntermediateAndMiningTerminal covers
+// ChainMine (docs/plans/14-buried-block-mining-and-memory-map.md,
+// mc-rsi-trainer, "Part 4"): unlike ChainUse, crafting the goal item no
+// longer ends the episode — it pays the ordinary intermediate milestone
+// bonus, and the episode instead ends once minedBuried fires. A second
+// craft later in the same episode (plausible: the seeded tree leaves a
+// spare log/materials margin) must not re-pay the milestone, which is
+// exactly why craftedGoal needs a persistent flag unlike the old
+// always-terminal goalCrafted shape.
+func TestChainMineStageMakesCraftingIntermediateAndMiningTerminal(t *testing.T) {
+	var s chainState
+	// Reach every milestone up through "placed" first, as any ChainMine
+	// episode would along the way.
+	s.advance(ChainMine, chainInventory{logs: 1}, false, false, false)
+	s.advance(ChainMine, chainInventory{planks: 4}, false, false, false)
+	s.advance(ChainMine, chainInventory{tables: 1}, false, false, false)
+	s.advance(ChainMine, chainInventory{}, true, false, false)
+
+	r, done := s.advance(ChainMine, chainInventory{}, true, true, false)
+	if done || r != chainMilestoneBonus {
+		t.Fatalf("crafting the goal: reward=%v done=%v, want only the intermediate milestone", r, done)
+	}
+	// A second craft (e.g. leftover spare materials) must not re-pay it.
+	if r, _ := s.advance(ChainMine, chainInventory{}, true, true, false); r != 0 {
+		t.Fatalf("re-crafting paid the milestone again: %v", r)
+	}
+	// Mining anything else first (minedBuried still false) changes nothing.
+	if r, done := s.advance(ChainMine, chainInventory{}, true, false, false); r != 0 || done {
+		t.Fatalf("no-op step: reward=%v done=%v, want neither", r, done)
+	}
+	r, done = s.advance(ChainMine, chainInventory{}, true, false, true)
+	if !done || r != chainCompletionBonus {
+		t.Fatalf("mining the buried block: reward=%v done=%v, want the completion bonus and done", r, done)
 	}
 }

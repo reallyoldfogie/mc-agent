@@ -47,6 +47,38 @@ type Config struct {
 	// validated here.
 	MineSearchRadius int
 
+	// MineRequiredTool, if set, is an item name (e.g.
+	// "minecraft:wooden_pickaxe") DefaultEpisodeSeeder ensures is in the
+	// bot's inventory before this episode's mining task starts (via
+	// SeedGiveItem) — see docs/plans/14-buried-block-mining-and-memory-map.md
+	// (mc-rsi-trainer) "Part 3": mc-agent's own mining code has no tool-tier
+	// gating, but the live server does, and the generic "mined" completion
+	// check alone can't tell a correctly-tooled success from a bare-handed
+	// one that drops nothing. Ignored if MineTargetBlock is empty, and only
+	// meaningful if the seeder in use actually implements ToolSeedAgent
+	// (DefaultEpisodeSeeder does; a seeder that doesn't is free to ignore
+	// this field entirely rather than fail the episode over it).
+	MineRequiredTool string
+
+	// MineTargetBuried, if true, tells DefaultEpisodeSeeder that
+	// MineTargetBlock is already present somewhere in the world (e.g.
+	// baked into a shared clone-reset template's underground stone band —
+	// docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer)
+	// rather than something it needs to place. Caught live, against a
+	// real server: without this, DefaultEpisodeSeeder's default behavior
+	// (SeedNearbyBlock, which places a visible instance beside the bot
+	// whenever FindVisibleBlock doesn't already see one) placed a second,
+	// immediately-visible instance right next to the bot every episode —
+	// the buried instance is never visible by design, so it always looked
+	// "missing" — defeating burial entirely. This mirrors the composite
+	// SeedAtGoal episode's own fix for the identical problem one level up
+	// (Environment.resetAttempt already blanks MineTargetBlock/
+	// CraftTargetItem before calling Seeder for exactly this reason), but
+	// expressed as its own flag since a buried mine task isn't a
+	// composite goto episode. Ignored if MineTargetBlock is empty; has no
+	// effect on MineRequiredTool's own seeding, which still runs.
+	MineTargetBuried bool
+
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's crafting task targets — enables ActionCraft, following
 	// MineTargetBlock's exact "environment poses the task" pattern
@@ -205,7 +237,8 @@ type Config struct {
 	// ChainStage, if non-zero, makes this a multi-step crafting-chain
 	// episode (chain.go): 1 gather a log, 2 ... craft planks and a table,
 	// 3 ... place the table, 4 ... craft CraftTargetItem (a chainGoals item)
-	// at the placed table. Enables ActionPlace, makes ActionCraft craft the
+	// at the placed table, 5 (ChainMine) ... then find and mine
+	// ChainMineTargetBlock. Enables ActionPlace, makes ActionCraft craft the
 	// next missing link toward the stage's goal instead of CraftTargetItem
 	// directly, replaces the mine and craft bonuses with milestone rewards,
 	// and adds the inventory-count features to the observation. Needs
@@ -213,6 +246,16 @@ type Config struct {
 	// implements ChainSeedAgent and FarSeedAgent (the tree is seeded out of
 	// sight, and the inventory and stray drops cleared each episode).
 	ChainStage int
+
+	// ChainMineTargetBlock, meaningful only at ChainStage ChainMine, is the
+	// block name (e.g. "minecraft:coal_ore") the chain switches to tracking
+	// once its goal item (a pickaxe) is actually crafted — see
+	// Environment.mineTargetBlockInUse. Kept separate from MineTargetBlock,
+	// which the gather stage keeps using for the tree's log throughout, so
+	// a chain_buried_mining episode's two mine targets (log, then buried
+	// block) don't collide (docs/plans/14-buried-block-mining-and-memory-map.md,
+	// mc-rsi-trainer).
+	ChainMineTargetBlock string
 
 	// CollectDrops makes a mine step also collect the drops it produced, so
 	// the mined item is in the inventory when the step's observation and
@@ -329,6 +372,9 @@ type TaskOverride struct {
 	// ChainStage is Config.ChainStage for this episode.
 	ChainStage int
 
+	// ChainMineTargetBlock is Config.ChainMineTargetBlock for this episode.
+	ChainMineTargetBlock string
+
 	// SeedAtGoal, for a composite episode (goto active alongside mine or
 	// craft), places the mine block or crafting table next to the goto
 	// target instead of beside the bot, so the bot has to travel to find
@@ -340,6 +386,8 @@ type TaskOverride struct {
 	TargetOffset       [3]float64
 	MineTargetBlock    string
 	MineSearchRadius   int
+	MineRequiredTool   string
+	MineTargetBuried   bool
 	CraftTargetItem    string
 	CraftSearchRadius  int
 }
@@ -369,7 +417,7 @@ func (c Config) validate() error {
 	if c.TimePenalty < 0 {
 		return errTimePenalty
 	}
-	if c.ChainStage < 0 || c.ChainStage > ChainUse {
+	if c.ChainStage < 0 || c.ChainStage > ChainMine {
 		return errChainStage
 	}
 	return nil

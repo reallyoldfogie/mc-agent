@@ -21,6 +21,17 @@ const (
 	// ChainUse: ... craft the goal item (Config.CraftTargetItem) at the
 	// placed table.
 	ChainUse = 4
+	// ChainMine: ... then find and mine Config.ChainMineTargetBlock, a
+	// block buried in the shared working-area template's underground
+	// stone band (docs/plans/14-buried-block-mining-and-memory-map.md,
+	// mc-rsi-trainer) — "chain_buried_mining": the agent starts from
+	// scratch and has to craft its own pickaxe before it can dig, as
+	// opposed to the simpler mine_buried task, which starts with one
+	// already in inventory. Reuses every earlier stage's gather/craft/
+	// place machinery unchanged; see Environment.mineTargetBlockInUse for
+	// how the mine-target tracking itself switches from the gathered log
+	// to the buried block once the goal item is crafted.
+	ChainMine = 5
 )
 
 const (
@@ -150,13 +161,24 @@ func chainPlaceLegal(stage int, inv chainInventory, tablePlaced bool) bool {
 // chainState tracks which milestones an episode has reached; each pays once.
 type chainState struct {
 	gotLog, gotPlanks, gotTable, placed bool
+	// craftedGoal is whether the goal item has already been crafted once
+	// this episode. Unlike the old ChainUse-only shape (where crafting the
+	// goal item was always the terminal milestone, ending the episode the
+	// instant it happened, so a persistent flag was never needed - a fresh
+	// per-call bool sufficed), ChainMine continues *past* this milestone:
+	// a persistent flag stops a second, incidental craft later in the same
+	// episode (plausible — the seeded tree deliberately leaves a spare
+	// log/materials margin) from re-paying chainMilestoneBonus.
+	craftedGoal bool
 }
 
 // advance folds the inventory and table state after a step into the state
 // and returns the reward it earns and whether the episode's stage is
 // complete. goalCrafted is whether the goal item's count rose this step
-// (only meaningful at ChainUse).
-func (s *chainState) advance(stage int, inv chainInventory, tablePlaced, goalCrafted bool) (reward float32, done bool) {
+// (meaningful at ChainUse and ChainMine); minedBuried is whether
+// Config.ChainMineTargetBlock was mined this step (only meaningful at
+// ChainMine, see Environment.mineTargetBlockInUse).
+func (s *chainState) advance(stage int, inv chainInventory, tablePlaced, goalCrafted, minedBuried bool) (reward float32, done bool) {
 	// Milestones in chain order; completion is whichever one the stage ends on.
 	type milestone struct {
 		reached bool
@@ -167,9 +189,10 @@ func (s *chainState) advance(stage int, inv chainInventory, tablePlaced, goalCra
 		{inv.planks > 0, &s.gotPlanks},
 		{inv.tables > 0 || tablePlaced, &s.gotTable},
 		{tablePlaced, &s.placed},
-		{goalCrafted, new(bool)}, // the goal has no persistent flag: it ends the episode
+		{goalCrafted, &s.craftedGoal},
+		{minedBuried, new(bool)}, // the buried block has no persistent flag: it always ends the episode (ChainMine is always terminal)
 	}
-	end := map[int]int{ChainGather: 0, ChainTable: 2, ChainPlace: 3, ChainUse: 4}[stage]
+	end := map[int]int{ChainGather: 0, ChainTable: 2, ChainPlace: 3, ChainUse: 4, ChainMine: 5}[stage]
 	for i, m := range ms {
 		if i > end || !m.reached || *m.flag {
 			continue

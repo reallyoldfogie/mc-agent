@@ -49,6 +49,14 @@ type fakeAgent struct {
 	mineBlockX, mineBlockY, mineBlockZ float64
 	mineBlockAtErr                     error
 	mineBlockAtCalls                   int
+	// mineBlockHidden, when true, makes FindVisibleBlock report
+	// mineBlockName as not found even though BlockNameAt still reports it
+	// at its real coordinates - simulates losing line-of-sight to a block
+	// that's still physically there (as opposed to setMineBlock("", ...),
+	// which simulates it no longer existing at all), for exercising the
+	// mine-target "memory" (docs/plans/14-buried-block-mining-and-memory-map.md,
+	// mc-rsi-trainer).
+	mineBlockHidden bool
 	collectDropsCalls                  int
 
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
@@ -91,6 +99,7 @@ type fakeAgent struct {
 	// seedErr to exercise Reset's error path.
 	seedNearbyBlockCalls      []seedNearbyBlockCall
 	seedCraftIngredientsCalls []string
+	seedGiveItemCalls         []seedGiveItemCall
 	seedErr                   error
 
 	// Teleport simulation (rlenv.Config.ResetOrigin): records calls so
@@ -129,6 +138,11 @@ type seedNearbyBlockCall struct {
 	radius    int
 }
 
+type seedGiveItemCall struct {
+	itemName string
+	count    int
+}
+
 type teleportCall struct {
 	x, y, z float64
 }
@@ -156,6 +170,13 @@ func (f *fakeAgent) setMineBlock(name string, x, y, z float64) {
 	f.mu.Lock()
 	f.mineBlockName = name
 	f.mineBlockX, f.mineBlockY, f.mineBlockZ = x, y, z
+	f.mu.Unlock()
+}
+
+// setMineBlockHidden toggles mineBlockHidden — see its own doc comment.
+func (f *fakeAgent) setMineBlockHidden(hidden bool) {
+	f.mu.Lock()
+	f.mineBlockHidden = hidden
 	f.mu.Unlock()
 }
 
@@ -345,7 +366,7 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 		f.tableSearchRadii = append(f.tableSearchRadii, radius)
 		return 0, 0, 0, f.tableVisible, nil
 	}
-	if f.mineBlockName == "" || f.mineBlockName != blockName {
+	if f.mineBlockHidden || f.mineBlockName == "" || f.mineBlockName != blockName {
 		return 0, 0, 0, false, nil
 	}
 	return f.mineBlockX, f.mineBlockY, f.mineBlockZ, true, nil
@@ -360,9 +381,18 @@ func (f *fakeAgent) MineBlockAt(_ context.Context, pos models.V3, _ models.Block
 	f.mineBlockAtCalls++
 	if f.chainBlocks != nil {
 		key := [3]int{int(pos.X), int(pos.Y), int(pos.Z)}
-		if f.chainBlocks[key] == "minecraft:oak_log" {
+		// Removing whatever's tracked there, not just oak_log, so a
+		// ChainMine-stage episode's buried block (docs/plans/14-buried-
+		// block-mining-and-memory-map.md, mc-rsi-trainer) can be "mined"
+		// in this simulation too - chainDrops stays oak_log-specific,
+		// feeding only the existing gather-stage log-collection
+		// simulation (CollectNearbyItems below), which nothing else
+		// needs generalizing for.
+		if name, ok := f.chainBlocks[key]; ok {
 			delete(f.chainBlocks, key)
-			f.chainDrops++
+			if name == "minecraft:oak_log" {
+				f.chainDrops++
+			}
 		}
 		f.mu.Unlock()
 		return nil
@@ -460,6 +490,15 @@ func (f *fakeAgent) SeedCraftIngredients(_ context.Context, itemName string) err
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seedCraftIngredientsCalls = append(f.seedCraftIngredientsCalls, itemName)
+	return f.seedErr
+}
+
+// --- rlenv.ToolSeedAgent (docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer) ---
+
+func (f *fakeAgent) SeedGiveItem(_ context.Context, itemName string, count int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedGiveItemCalls = append(f.seedGiveItemCalls, seedGiveItemCall{itemName: itemName, count: count})
 	return f.seedErr
 }
 

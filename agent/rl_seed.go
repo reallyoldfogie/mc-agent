@@ -221,14 +221,12 @@ func (a *agent) CloneArea(ctx context.Context, srcX1, srcY1, srcZ1, srcX2, srcY2
 // blocks for the resulting block-update packets to reach this bot.
 const clearAirSyncDelay = 300 * time.Millisecond
 
-// SeedCraftIngredients gives the bot, via its player command connection (with
-// an RCON fallback), one stack
+// SeedCraftIngredients gives the bot, via RCON, one stack
 // of each distinct ingredient itemName's recipe needs — the first
 // candidate per grid cell for a tag-gated ingredient (e.g. "any plank
 // variant"), not an attempt to grant exactly the minimum needed. Training
 // convenience only, same scope note as SeedNearbyBlock. Requires RCON for
-// inventory cleanup and a live player connection or RCON fallback for giving,
-// and itemName to have a known recipe (see
+// both inventory cleanup and giving, and itemName to have a known recipe (see
 // loadCraftingRecipes) — errors otherwise, since a seeding request that
 // silently does nothing would be more confusing than a clear failure.
 //
@@ -252,10 +250,15 @@ const clearAirSyncDelay = 300 * time.Millisecond
 // documented in RL_TRAINING_LOOP_PLAN.md rather than that file since it's
 // Craft-specific, not a Mine-task recurrence).
 //
-// The player-command path avoids RCON's shared response buffer and executes
-// the command as this bot, so the server sends the resulting inventory update
-// on the same connection we are already observing. RCON remains a fallback
-// for callers without a live command-capable connection.
+// Deliberately RCON-only, not a player/chat command: the latter requires
+// this bot to be opped (chat commands run at the issuing player's own
+// permission level), which training has no reason to require — found live
+// when a non-op test bot's chat "give" was silently rejected server-side
+// with no transport error to catch, so a chat-command-first design can
+// mask the failure entirely instead of surfacing it. RCON's "give <player>
+// ..." still targets this bot by name, so the server still pushes the
+// resulting inventory update to this bot's own connection — not a
+// console-side action with no client-visible effect.
 //
 // Waits (bounded by seedSyncTimeout) for every given item to actually
 // appear in this bot's own tracked inventory (InventoryCount) before
@@ -323,6 +326,46 @@ func (a *agent) SeedBlockAt(ctx context.Context, blockName string, x, y, z int) 
 	return nil
 }
 
+// SeedGiveItem ensures at least count of itemName is in the bot's own
+// inventory, giving it via RCON if not already present - see
+// rlenv.ToolSeedAgent. Deliberately RCON-only, not a player/chat command -
+// see SeedCraftIngredients' doc comment for why: training has no reason to
+// require this bot be opped. Unlike SeedCraftIngredients, this gives
+// itemName itself, not a recipe's ingredients, and never clears the rest of
+// the inventory first: mine tasks, unlike craft/chain tasks, have never
+// cleared it to begin with (DefaultEpisodeSeeder's MineTargetBlock branch
+// only calls SeedNearbyBlock). Idempotent on purpose - an episode that
+// starts with a durable tool already in inventory (left over from a
+// previous episode, since nothing clears it) is left alone, so this doesn't
+// hand out a fresh, redundant tool every single episode the way an
+// unconditional give would.
+func (a *agent) SeedGiveItem(ctx context.Context, itemName string, count int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed give item: RCON not configured for this agent")
+	}
+	if a.InventoryCount(itemName) >= count {
+		return nil
+	}
+
+	normalized := normalizeItemName(itemName)
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s %d", a.cfg.Name, normalized, count)); err != nil {
+		return fmt.Errorf("give %s via RCON: %w", normalized, err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for a.InventoryCount(itemName) == 0 {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("seed give item: gave %s but it never synced to this bot's inventory within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+	return nil
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()
@@ -359,15 +402,8 @@ func (a *agent) giveCraftIngredients(ctx context.Context, itemName string, recip
 			continue
 		}
 		given[candidate] = true
-		cmd := fmt.Sprintf("give @s %s %d", candidate, seedGiveCount)
-		if err := a.SendCommand(cmd); err != nil {
-			a.logf("SeedCraftIngredients: player command %q failed, falling back to RCON: %v", cmd, err)
-			if a.cfg.RCON == nil {
-				return fmt.Errorf("give %s via player command: %w", candidate, err)
-			}
-			if _, rconErr := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s %d", a.cfg.Name, candidate, seedGiveCount)); rconErr != nil {
-				return fmt.Errorf("give %s via player command (%v) or RCON: %w", candidate, err, rconErr)
-			}
+		if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s %d", a.cfg.Name, candidate, seedGiveCount)); err != nil {
+			return fmt.Errorf("give %s via RCON: %w", candidate, err)
 		}
 	}
 

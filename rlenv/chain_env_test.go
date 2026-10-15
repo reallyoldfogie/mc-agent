@@ -155,6 +155,102 @@ func TestChainUseEpisodeRunsTheWholeChain(t *testing.T) {
 	}
 }
 
+// TestChainMineEpisodeRunsTheWholeChain is TestChainUseEpisodeRunsTheWholeChain
+// extended through ChainMine (docs/plans/14-buried-block-mining-and-memory-map.md,
+// mc-rsi-trainer, "Part 4" — "chain_buried_mining"): the agent gathers wood,
+// crafts and places a table, crafts its own wooden_pickaxe from scratch (no
+// tool is ever given — unlike mine_buried), and only mining the buried
+// block afterward ends the episode. Crafting the pickaxe pays the ordinary
+// intermediate milestone, not the completion bonus.
+func TestChainMineEpisodeRunsTheWholeChain(t *testing.T) {
+	agent := newFakeAgent(0, -60, 0)
+	agent.chainInv = map[string]int{}
+	agent.chainBlocks = map[[3]int]string{}
+	// The buried block: present in this simulated world from the start,
+	// exactly like mine_buried's template-baked ore — nothing seeds it
+	// per-episode (docs/plans/14's Part 2: the clone-template already
+	// makes it "free" on every Reset).
+	const oreX, oreY, oreZ = 12, -60, 5
+	agent.chainBlocks[[3]int{oreX, oreY, oreZ}] = "minecraft:coal_ore"
+
+	cfg := testConfig()
+	cfg.TargetOffset = [3]float64{12, 0, 0}
+	cfg.ArrivalThreshold = 1.5
+	cfg.MineTargetBlock = "minecraft:oak_log"
+	cfg.MineSearchRadius = 8
+	cfg.CraftTargetItem = "minecraft:wooden_pickaxe"
+	cfg.ChainStage = rlenv.ChainMine
+	cfg.ChainMineTargetBlock = "minecraft:coal_ore"
+	cfg.CollectDrops = true
+	cfg.SeedAtGoal = true
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// Gather: mine every seeded log (3 needed + 1 spare, per
+	// ChainLogsNeeded/ChainTreeHeight for wooden_pickaxe).
+	step(t, env, rlenv.ActionGoToTarget)
+	for i := 0; i < 4; i++ {
+		r := step(t, env, rlenv.ActionMine)
+		if r.Done {
+			t.Fatalf("gathering log %d ended the episode", i+1)
+		}
+	}
+	if agent.chainInv["minecraft:oak_log"] != 4 {
+		t.Fatalf("logs held = %d, want 4", agent.chainInv["minecraft:oak_log"])
+	}
+
+	// Table: planks, then the table itself.
+	step(t, env, rlenv.ActionCraft)
+	step(t, env, rlenv.ActionCraft)
+	if agent.chainInv["minecraft:crafting_table"] != 1 {
+		t.Fatalf("after crafting the table: %v", agent.chainInv)
+	}
+	r := step(t, env, rlenv.ActionPlace)
+	if r.Done {
+		t.Fatal("placing the table ended a ChainMine episode")
+	}
+
+	// Pickaxe: planks for sticks, the sticks, more planks for the
+	// pickaxe itself, then the pickaxe — the resolver's own choices.
+	craftedPickaxe := false
+	for i := 0; i < 10 && !craftedPickaxe; i++ {
+		r = step(t, env, rlenv.ActionCraft)
+		if r.Done {
+			t.Fatalf("crafting the goal item ended a ChainMine episode (craft #%d)", i+1)
+		}
+		craftedPickaxe = agent.chainInv["minecraft:wooden_pickaxe"] >= 1
+	}
+	if !craftedPickaxe {
+		t.Fatalf("never crafted the pickaxe: %v", agent.chainInv)
+	}
+	if r.Reward > 5 {
+		t.Fatalf("crafting the pickaxe paid %v, want only the small intermediate milestone", r.Reward)
+	}
+
+	// The mine target has switched from the (now-irrelevant) log to the
+	// buried block — see Environment.mineTargetBlockInUse.
+	if dx, dz := r.Observation.Values[9], r.Observation.Values[11]; dx != oreX-12 || dz != oreZ-0 {
+		t.Fatalf("mineDx,mineDz after crafting = %v,%v, want the buried block's delta (%v,%v)", dx, dz, oreX-12, oreZ-0)
+	}
+	if !legal(env, rlenv.ActionMine) {
+		t.Fatal("mine not legal with the buried block tracked as the target")
+	}
+
+	// Mining it is what actually ends the episode.
+	r = step(t, env, rlenv.ActionMine)
+	if !r.Done || r.Reward < 9 {
+		t.Fatalf("mining the buried block: done=%v reward=%v, want the completion bonus and done", r.Done, r.Reward)
+	}
+	if _, stillThere := agent.chainBlocks[[3]int{oreX, oreY, oreZ}]; stillThere {
+		t.Error("the buried block is still tracked as present after being mined")
+	}
+}
+
 func TestChainGatherEndsOnTheFirstLogInTheInventory(t *testing.T) {
 	_, env := newChainEnv(t, rlenv.ChainGather, "")
 	if _, err := env.Reset(context.Background()); err != nil {

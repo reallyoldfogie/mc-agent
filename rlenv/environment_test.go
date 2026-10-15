@@ -751,6 +751,74 @@ func TestStepObservationReflectsMineTargetDeltaRegardlessOfAction(t *testing.T) 
 	}
 }
 
+// TestStepObservationPersistsMineTargetAfterLineOfSightIsLost is the core
+// new behavior docs/plans/14-buried-block-mining-and-memory-map.md's
+// "minimum viable" memory-map option adds: once Config.MineTargetBlock has
+// been visible at least once this episode, the observation keeps reporting
+// its last-known position even on a step where FindVisibleBlock currently
+// finds nothing (LOS lost, not the block itself gone) — a target glimpsed
+// once stays a navigable goal instead of vanishing from the policy's input
+// the instant current-step LOS is lost.
+func TestStepObservationPersistsMineTargetAfterLineOfSightIsLost(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:coal_ore", 3, 0, 4)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// Lose line-of-sight (the block itself is unchanged - BlockNameAt at
+	// (3,0,4) still reports minecraft:coal_ore, so this isn't "mined").
+	agent.setMineBlockHidden(true)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[12]; visible != 1 {
+		t.Fatalf("mineVisible after losing LOS = %v, want 1 (remembered from this episode)", visible)
+	}
+	if dx, dz := result.Observation.Values[9], result.Observation.Values[11]; dx != 3 || dz != 4 {
+		t.Fatalf("mineDx,mineDz after losing LOS = %v,%v, want 3,4 (remembered position)", dx, dz)
+	}
+
+	// The memory is observation-only: actually dispatching a mine action
+	// stays gated on genuinely-current visibility, unchanged by this
+	// feature - ActionMine must not be in the mask while LOS is lost, even
+	// though the observation itself still shows mineVisible=1.
+	mask := env.ActionMask()
+	if mask[rlenv.ActionMine] {
+		t.Fatalf("ActionMine legal while LOS is lost; want illegal (remembered position is observation-only)")
+	}
+}
+
+// TestResetClearsTheMineTargetMemoryAcrossEpisodes verifies the memory
+// doesn't leak into a later episode whose world state has since been
+// restored/reseeded - docs/plans/14's explicit "not X-ray, but a real
+// episode-boundary information leak" caution.
+func TestResetClearsTheMineTargetMemoryAcrossEpisodes(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:coal_ore", 3, 0, 4)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset (episode 1): %v", err)
+	}
+
+	// Episode 2: the target was never (re-)placed/found, so the memory
+	// from episode 1 must not carry over.
+	agent.setMineBlock("", 0, 0, 0)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset (episode 2): %v", err)
+	}
+	if visible := obs.Values[12]; visible != 0 {
+		t.Fatalf("mineVisible at the start of episode 2 = %v, want 0 (episode 1's memory must not leak)", visible)
+	}
+}
+
 func TestStepMineDoesNotAwardBonusWhenActionMineFailsToBreakIt(t *testing.T) {
 	// Judged from actual world state, not from the dispatched action: if
 	// MineBlockAt itself errors (e.g. the real implementation's server
@@ -977,6 +1045,95 @@ func TestResetSkipsSeedingUnconfiguredTasks(t *testing.T) {
 	}
 	if len(agent.seedCraftIngredientsCalls) != 0 {
 		t.Fatalf("SeedCraftIngredients calls = %d, want 0 (Config.CraftTargetItem unset)", len(agent.seedCraftIngredientsCalls))
+	}
+}
+
+// TestResetSeedsMineRequiredToolBeforeTheMineTarget mirrors
+// TestResetCallsSeederForConfiguredTasks for Config.MineRequiredTool
+// (docs/plans/14): DefaultEpisodeSeeder must give the tool via
+// SeedGiveItem whenever it's set alongside MineTargetBlock.
+func TestResetSeedsMineRequiredToolBeforeTheMineTarget(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineSearchRadius = 10
+	cfg.MineRequiredTool = "minecraft:wooden_pickaxe"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedGiveItemCalls) != 1 {
+		t.Fatalf("SeedGiveItem calls = %d, want 1", len(agent.seedGiveItemCalls))
+	}
+	if got := agent.seedGiveItemCalls[0]; got.itemName != "minecraft:wooden_pickaxe" || got.count != 1 {
+		t.Fatalf("SeedGiveItem call = %+v, want {minecraft:wooden_pickaxe 1}", got)
+	}
+}
+
+// TestResetSkipsSeedingMineRequiredToolWhenUnset mirrors
+// TestResetSkipsSeedingUnconfiguredTasks for MineRequiredTool: a plain mine
+// task (today's surface variety, never needing a tool) must not trigger
+// SeedGiveItem just because MineTargetBlock is set.
+func TestResetSkipsSeedingMineRequiredToolWhenUnset(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedGiveItemCalls) != 0 {
+		t.Fatalf("SeedGiveItem calls = %d, want 0 (Config.MineRequiredTool unset)", len(agent.seedGiveItemCalls))
+	}
+}
+
+// TestResetSkipsSeedNearbyBlockWhenMineTargetIsBuried covers
+// Config.MineTargetBuried (docs/plans/14-buried-block-mining-and-memory-map.md,
+// mc-rsi-trainer) — caught live, against a real server: without this,
+// DefaultEpisodeSeeder's SeedNearbyBlock placed a second, immediately-
+// visible instance right next to the bot every episode, since the real
+// buried instance is never visible to FindVisibleBlock by design,
+// defeating burial entirely.
+func TestResetSkipsSeedNearbyBlockWhenMineTargetIsBuried(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineRequiredTool = "minecraft:wooden_pickaxe"
+	cfg.MineTargetBuried = true
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedNearbyBlockCalls) != 0 {
+		t.Fatalf("SeedNearbyBlock calls = %d, want 0 (Config.MineTargetBuried: the target must already be in the world)", len(agent.seedNearbyBlockCalls))
+	}
+	// MineRequiredTool's own seeding is unaffected by MineTargetBuried.
+	if len(agent.seedGiveItemCalls) != 1 {
+		t.Fatalf("SeedGiveItem calls = %d, want 1 (MineTargetBuried must not also suppress tool seeding)", len(agent.seedGiveItemCalls))
+	}
+}
+
+// TestResetSeedsNearbyBlockWhenMineTargetIsNotBuried confirms the default
+// (MineTargetBuried false) still places a fresh instance as before —
+// MineTargetBuried changes behavior only when explicitly set.
+func TestResetSeedsNearbyBlockWhenMineTargetIsNotBuried(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:stone"
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedNearbyBlockCalls) != 1 {
+		t.Fatalf("SeedNearbyBlock calls = %d, want 1 (Config.MineTargetBuried is false)", len(agent.seedNearbyBlockCalls))
 	}
 }
 

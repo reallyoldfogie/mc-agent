@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,5 +94,74 @@ func TestClearAir_WaitsForBlockUpdatesOnlyWhenBlocksWereRemoved(t *testing.T) {
 	}
 	if time.Since(start) > clearAirSyncDelay/2 {
 		t.Errorf("took %v: a fill that changed nothing has nothing to wait for", time.Since(start))
+	}
+}
+
+// TestSeedGiveItem_GivesViaRCONNotPlayerCommand covers the 2026-10-14 fix:
+// SeedGiveItem used to try a player/chat "give @s ..." command first,
+// falling back to RCON only if that returned a transport error. Found live
+// against a real dev/test server: a non-op bot's chat "give" is silently
+// rejected server-side with no error at all, so the RCON fallback never
+// fired and the item never arrived — "op the bot" was the workaround, not
+// the fix. Training has no reason to require a bot be opped, so this now
+// goes straight to RCON, which still targets this bot by name and still
+// reaches its own connection with the resulting inventory update. There is
+// no live connection in this test to ever satisfy InventoryCount, so the
+// call is expected to time out via ctx — the point is confirming the one
+// and only command it issued was the RCON give, never a player command.
+func TestSeedGiveItem_GivesViaRCONNotPlayerCommand(t *testing.T) {
+	rc := &execOnlyRCON{response: "Gave 1 [Wooden Pickaxe] to BuriedSmoke"}
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", Name: "BuriedSmoke", RCON: rc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := agentInt.(*agent)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err = a.SeedGiveItem(ctx, "minecraft:wooden_pickaxe", 1)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SeedGiveItem error = %v, want context.DeadlineExceeded (no live connection in this test to sync inventory)", err)
+	}
+	if want := "give BuriedSmoke minecraft:wooden_pickaxe 1"; len(rc.cmds) != 1 || rc.cmds[0] != want {
+		t.Errorf("RCON commands = %v, want exactly [%s] — must give via RCON directly, never a player command first", rc.cmds, want)
+	}
+}
+
+// TestSeedCraftIngredients_GivesViaRCONNotPlayerCommand is
+// TestSeedGiveItem_GivesViaRCONNotPlayerCommand's counterpart for the craft
+// path (giveCraftIngredients) — same bug, same fix, same reasoning: see
+// that test's doc comment. minecraft:stick is used because its recipe fits
+// the player's own 2x2 grid, so no crafting table placement (and the
+// SeedNearbyBlock complexity that would add) is involved.
+func TestSeedCraftIngredients_GivesViaRCONNotPlayerCommand(t *testing.T) {
+	baseCacheDir, err := findAnyCachedVersionDataDir(t)
+	if err != nil {
+		t.Skipf("no cached data_generator output found on disk: %v", err)
+	}
+
+	rc := &execOnlyRCON{response: "ok"}
+	a := &agent{cfg: models.AgentConfig{Version: baseCacheDir.version, Name: "BuriedSmoke", RCON: rc}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err = a.SeedCraftIngredients(ctx, "minecraft:stick")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("SeedCraftIngredients error = %v, want context.DeadlineExceeded (no live connection in this test to sync inventory)", err)
+	}
+	if len(rc.cmds) == 0 || rc.cmds[0] != "clear BuriedSmoke" {
+		t.Fatalf("RCON commands = %v, want [0] = \"clear BuriedSmoke\"", rc.cmds)
+	}
+	foundGive := false
+	for _, cmd := range rc.cmds[1:] {
+		if strings.HasPrefix(cmd, "give BuriedSmoke minecraft:") {
+			foundGive = true
+		}
+		if strings.Contains(cmd, "@s") {
+			t.Errorf("RCON command %q looks like a player/chat command, not RCON's targeted form", cmd)
+		}
+	}
+	if !foundGive {
+		t.Errorf("RCON commands = %v, want at least one \"give BuriedSmoke minecraft:...\" — must give via RCON directly, never a player command first", rc.cmds)
 	}
 }

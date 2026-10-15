@@ -82,6 +82,34 @@ type Environment struct {
 	mineX, mineY, mineZ float64
 	mineVisible         bool
 
+	// mineKnownX/Y/Z/mineEverSeen are the minimum-viable "memory map"
+	// (docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer):
+	// the last position Config.MineTargetBlock was actually confirmed
+	// visible at THIS episode, kept even once e.mineX/Y/Z/mineVisible
+	// themselves revert to "not currently visible" because line-of-sight
+	// was lost (walked past, turned away, started digging into it so the
+	// bot's own body blocks the ray, ...). Read only by buildObservation
+	// (resolveDispatch/actionLegal deliberately keep reading the live
+	// e.mineX/Y/Z/mineVisible, unchanged): a target glimpsed once stays a
+	// navigable goal for the rest of the episode instead of vanishing from
+	// the policy's input the instant current-step LOS is lost, without
+	// changing which actions are legal or what coordinates an actual Mine
+	// dispatch targets. Cleared at Reset (see resetAttempt) — carrying it
+	// across episodes would let a later episode's policy "remember" a
+	// position from a world state that's since been restored/reseeded.
+	mineKnownX, mineKnownY, mineKnownZ float64
+	mineEverSeen                       bool
+
+	// mineTargetNameInUse is whichever block name the most recent
+	// refreshMineTarget call actually resolved against (see
+	// mineTargetBlockInUse) — tracked so a change mid-episode (a
+	// ChainMine-stage chain switching from the gathered log to the buried
+	// block once its goal item is crafted) can detect itself and clear
+	// mineKnownX/Y/Z/mineEverSeen: that remembered position belonged to
+	// the *old* target and would mislead the policy (and the observation's
+	// mineDx/Dy/Dz) if carried over to the new one.
+	mineTargetNameInUse string
+
 	// craftCount caches the last-known held count of Config.CraftTargetItem
 	// (see craftCountNow), read at the start of each Step as "before this
 	// step" state — the craft analogue of prevDistance/prevHealth's caching
@@ -271,6 +299,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.stepsWithoutObservationChange = 0
 	e.consecutiveStepTimeouts = 0
 	e.arrived = false
+	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
+	e.mineTargetNameInUse = ""
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -285,11 +315,14 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.TargetOffset = override.TargetOffset
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
+		e.cfg.MineRequiredTool = override.MineRequiredTool
+		e.cfg.MineTargetBuried = override.MineTargetBuried
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
 		e.cfg.CollectDrops = override.CollectDrops
 		e.cfg.ChainStage = override.ChainStage
+		e.cfg.ChainMineTargetBlock = override.ChainMineTargetBlock
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -422,7 +455,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftCount = e.craftCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -472,8 +505,21 @@ func (e *Environment) craftReadyNow(ctx context.Context) bool {
 // craftingTableBlock is the block Config.CraftSearchRadius looks for.
 const craftingTableBlock = "minecraft:crafting_table"
 
+// mineTargetBlockInUse resolves which block name refreshMineTarget actually
+// tracks right now: ordinarily Config.MineTargetBlock, but for a
+// ChainMine-stage chain episode, Config.ChainMineTargetBlock once the goal
+// item is already crafted — the gather stage's log is done with by then,
+// and the chain has moved on to finding the buried block (docs/plans/14-
+// buried-block-mining-and-memory-map.md, mc-rsi-trainer, "Part 4").
+func (e *Environment) mineTargetBlockInUse() string {
+	if e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal {
+		return e.cfg.ChainMineTargetBlock
+	}
+	return e.cfg.MineTargetBlock
+}
+
 // refreshMineTarget re-resolves the nearest currently-visible instance of
-// Config.MineTargetBlock and stores it into e.mineX/Y/Z/mineVisible, for
+// mineTargetBlockInUse() and stores it into e.mineX/Y/Z/mineVisible, for
 // observation/reward purposes. Called once at Reset and once per Step
 // (after that step's dispatch — see Step), not more: unlike TargetOffset's
 // fixed point, mining consumes its target, so the nearest visible instance
@@ -482,27 +528,38 @@ const craftingTableBlock = "minecraft:crafting_table"
 // but Step reads the *previous* call's cached result as "before this step"
 // state (see its mined-this-step check) rather than re-resolving twice per
 // call — the same caching shape prevDistance/prevHealth already use.
-// Leaves e.mineVisible=false without error if MineTargetBlock is unset (the
-// common case for instances that don't pose a mining task) or if
+// Leaves e.mineVisible=false without error if the resolved target is unset
+// (the common case for instances that don't pose a mining task) or if
 // FindVisibleBlock simply finds nothing in range; only a genuine
 // FindVisibleBlock error (e.g. world/block-manager not ready) is returned.
 //
 // Known cost tradeoff, not solved here: this runs FindVisibleBlock once per
-// step whenever MineTargetBlock is configured, regardless of which action
+// step whenever a target is configured, regardless of which action
 // was dispatched, plus a second FindVisibleBlock call inside the "mine"
 // action's own Execute on steps that actually dispatch ActionMine (see
 // action.go's resolveDispatch). Acceptable for now; revisit (e.g. shrinking
 // MineSearchRadius, or resolving less often) if it matters in practice.
 func (e *Environment) refreshMineTarget(ctx context.Context) error {
-	if e.cfg.MineTargetBlock == "" {
+	target := e.mineTargetBlockInUse()
+	if target != e.mineTargetNameInUse {
+		// The effective mine target just changed (a ChainMine-stage chain
+		// switching from the gathered log to the buried block, or a fresh
+		// episode) — any remembered position belonged to the old target.
+		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
+		e.mineTargetNameInUse = target
+	}
+	if target == "" {
 		e.mineX, e.mineY, e.mineZ, e.mineVisible = 0, 0, 0, false
 		return nil
 	}
-	x, y, z, found, err := e.agent.FindVisibleBlock(ctx, e.cfg.MineTargetBlock, e.cfg.MineSearchRadius)
+	x, y, z, found, err := e.agent.FindVisibleBlock(ctx, target, e.cfg.MineSearchRadius)
 	if err != nil {
 		return fmt.Errorf("rlenv: resolving mine target: %w", err)
 	}
 	e.mineX, e.mineY, e.mineZ, e.mineVisible = x, y, z, found
+	if found {
+		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = x, y, z, true
+	}
 	return nil
 }
 
@@ -606,12 +663,25 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
-	// rewards for the whole chain; see chain.go.
+	// rewards for the whole chain; see chain.go. goalCrafted feeds the
+	// craftedGoal milestone at both ChainUse (terminal there) and ChainMine
+	// (intermediate there — the chain continues on to mining); minedBuried
+	// feeds the new terminal milestone at ChainMine only. mined itself is
+	// generic — true whenever *whatever* mineTargetBlockInUse() currently
+	// resolves to just changed, the gathered log during the gather phase
+	// included — so minedBuried additionally requires e.chainState.
+	// craftedGoal (as of the end of the *previous* step, since this runs
+	// before chainState.advance below updates it): only once that's true
+	// has refreshMineTarget actually switched tracking to the buried
+	// block, so only then does a generic mined event mean *that* was
+	// mined, not a gathered log.
 	var chainReward float32
 	chainDone := false
 	if e.chainActive() {
 		e.refreshChain()
-		chainReward, chainDone = e.chainState.advance(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced, e.cfg.ChainStage == ChainUse && craftedThisStep)
+		goalCrafted := (e.cfg.ChainStage == ChainUse || e.cfg.ChainStage == ChainMine) && craftedThisStep
+		minedBuried := e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal && mined
+		chainReward, chainDone = e.chainState.advance(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced, goalCrafted, minedBuried)
 		craftedThisStep = false
 	}
 
@@ -683,7 +753,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineX, e.mineY, e.mineZ, e.mineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
