@@ -51,8 +51,21 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 	// This ensures the agent aims for the center of the target block, not the corner
 	targetPos := targetStep.Position
 	switch targetStep.Movement {
-	case AscendJump, DiagonalAscend, JumpToClimb, Jump2ToClimb:
-		// These movements need precise landing - aim for block center
+	case AscendJump, DiagonalAscend, JumpToClimb, Jump2ToClimb,
+		Descend, MineDown, MineDownDiagonal,
+		Drop2North, Drop2South, Drop2East, Drop2West:
+		// These movements need precise landing - aim for block center.
+		// Without this, a Descend/MineDown{,Diagonal} step whose raw target
+		// coordinate is the block's corner (not its center) can leave the
+		// agent's throttle direction collapsing toward zero right at the
+		// lip of the drop - close enough to the corner that horizontalDist
+		// drops under the dead-zone below, but still straddling the
+		// previous column's support with most of its hitbox, so it never
+		// commits past the ledge and just hovers there forever. Found live:
+		// a bot dug straight through MineDownDiagonal's target block, then
+		// sat at the edge re-pathfinding to the exact same spot every
+		// stuckThreshold indefinitely, because its grounded hitbox was
+		// still supported by the untouched source column underneath it.
 		targetPos = models.V3{
 			X: math.Floor(targetStep.Position.X) + 0.5,
 			Y: targetStep.Position.Y,

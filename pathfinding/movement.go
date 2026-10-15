@@ -1241,16 +1241,30 @@ func (mv *MovementValidator) tryMineDown(from models.V3) (PathStep, bool) {
 }
 
 // tryMineDownDiagonal checks whether MineDownDiagonal can offer a route one
-// block down AND one block over, in cardinal direction (dx, dz), when that
-// landing cell - and/or the cell directly above it, at `from`'s own Y,
-// which needs to be clear for the bot's head to fit there too - is a solid,
-// diggable obstruction. Deliberately never touches the block directly
-// underfoot (see MineDownDiagonal's own doc comment for why that's the
-// whole point): the column the bot is currently standing on stays
-// untouched, intact rock, regardless of what this move reveals one column
-// over.
+// block down AND one block over, in cardinal direction (dx, dz), when the
+// landing cell, or either of the two cells directly above it at and above
+// `from`'s own Y - both of which need to be clear for the bot's two-block
+// hitbox to fit while it's still walking across at `from`'s height, just
+// before it drops - is a solid, diggable obstruction. Deliberately never
+// touches the block directly underfoot (see MineDownDiagonal's own doc
+// comment for why that's the whole point): the column the bot is
+// currently standing on stays untouched, intact rock, regardless of what
+// this move reveals one column over.
 //
-// A solid-but-undiggable cell on either side makes the whole move
+// headroomAbove (from.Y+1) was missing for a while - headroom (from.Y)
+// alone matches the single cell tryMineThrough treats as "head-level," but
+// that's head-level relative to a move landing AT from.Y; here the bot is
+// still standing AT from.Y walking sideways before it falls, so the two
+// cells it actually occupies during the crossing are from.Y (feet) and
+// from.Y+1 (head), not from.Y and landing.Y+1=from.Y. Found live: a bot
+// could dig straight through a buried shaft on the first MineDownDiagonal
+// (approaching along flat ground, where from.Y+1 is always open sky), then
+// hang indefinitely re-pathfinding to the exact same spot on the very next
+// one once it was already standing inside its own dug-out shaft - at that
+// depth, the column one-over's from.Y+1 cell is ordinary undug terrain
+// far more often than not, and nothing was ever offering to clear it.
+//
+// A solid-but-undiggable cell on any of the three makes the whole move
 // impossible, same as tryMineThrough's identical reasoning for its own two
 // cells. No ground-support requirement below the landing cell, same as
 // tryMineDown - the next GetPossibleMoves call offers the next step (either
@@ -1259,11 +1273,13 @@ func (mv *MovementValidator) tryMineDown(from models.V3) (PathStep, bool) {
 func (mv *MovementValidator) tryMineDownDiagonal(from models.V3, dx, dz float64) (PathStep, bool) {
 	landing := from.Add(models.V3{X: dx, Y: -1, Z: dz})
 	headroom := from.Add(models.V3{X: dx, Y: 0, Z: dz})
+	headroomAbove := from.Add(models.V3{X: dx, Y: 1, Z: dz})
 
 	landingHardness, landingBlocked := mv.mineObstructionAt(landing)
 	headroomHardness, headroomBlocked := mv.mineObstructionAt(headroom)
+	headroomAboveHardness, headroomAboveBlocked := mv.mineObstructionAt(headroomAbove)
 
-	if !landingBlocked && !headroomBlocked {
+	if !landingBlocked && !headroomBlocked && !headroomAboveBlocked {
 		return PathStep{}, false // nothing to mine - an ordinary diagonal drop (the dropHeight=1 case this replaces) already covers it
 	}
 	if !landingBlocked && !mv.isBlockPassable(landing) {
@@ -1272,9 +1288,12 @@ func (mv *MovementValidator) tryMineDownDiagonal(from models.V3, dx, dz float64)
 	if !headroomBlocked && !mv.isBlockPassable(headroom) {
 		return PathStep{}, false // headroom cell is solid but undiggable - no route at all
 	}
+	if !headroomAboveBlocked && !mv.isBlockPassable(headroomAbove) {
+		return PathStep{}, false // headroomAbove cell is solid but undiggable - no route at all
+	}
 
-	targets := make([]models.V3, 0, 2)
-	hardnesses := make([]float64, 0, 2)
+	targets := make([]models.V3, 0, 3)
+	hardnesses := make([]float64, 0, 3)
 	if landingBlocked {
 		targets = append(targets, landing)
 		hardnesses = append(hardnesses, landingHardness)
@@ -1282,6 +1301,10 @@ func (mv *MovementValidator) tryMineDownDiagonal(from models.V3, dx, dz float64)
 	if headroomBlocked {
 		targets = append(targets, headroom)
 		hardnesses = append(hardnesses, headroomHardness)
+	}
+	if headroomAboveBlocked {
+		targets = append(targets, headroomAbove)
+		hardnesses = append(hardnesses, headroomAboveHardness)
 	}
 
 	return PathStep{

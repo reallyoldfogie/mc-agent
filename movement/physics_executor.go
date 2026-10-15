@@ -1750,6 +1750,19 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		pe.triggerMineRequest(step)
 		return pe.generateIdleInputs()
 	}
+	if pe.waitingForMine {
+		// Mining just finished this tick. The stuck-detection clock below
+		// (lastProgressTime/stepStartTime) was last reset when this step
+		// started, which can be many seconds (or minutes, for a hard block)
+		// before the dig actually completed - without this reset, the very
+		// next stuck check sees a stale timestamp and fires immediately,
+		// tearing down the in-flight path via attemptRepathRecovery before
+		// the bot has taken a single step toward the now-cleared target.
+		pe.lastProgressPos = currentPos
+		pe.lastProgressTime = time.Now()
+		pe.stepStartTime = time.Now()
+		pe.stepStartPos = currentPos
+	}
 	pe.waitingForMine = false
 
 	// Check if current step is complete
