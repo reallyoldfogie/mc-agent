@@ -49,7 +49,11 @@ type epeaNode struct {
 	pos      models.V3
 	parent   *epeaNode
 	movement MovementType
-	gCost    float64
+	// mineTargets carries PathStep.MineTargets through to the final
+	// reconstructed Path - see pathfinding/a_star.go's node.mineTargets,
+	// whose own doc comment explains the bug this avoids.
+	mineTargets []models.V3
+	gCost       float64
 	hCost    float64
 	fCost    float64
 	index    int
@@ -314,6 +318,7 @@ func (pf *epeaStarPathFinder) FindPath(ctx context.Context, start, goal models.V
 					pos:            neighborPos,
 					parent:         current,
 					movement:       neighborStep.Movement,
+					mineTargets:    neighborStep.MineTargets,
 					gCost:          tentativeGCost,
 					hCost:          tentativeHCost,
 					fCost:          tentativeFCost,
@@ -365,9 +370,10 @@ func (pf *epeaStarPathFinder) reconstructPath(goalNode *epeaNode, start, goal mo
 	current := goalNode
 	for current.parent != nil {
 		step := PathStep{
-			Position: current.pos,
-			Movement: current.movement,
-			Cost:     current.gCost - current.parent.gCost,
+			Position:    current.pos,
+			Movement:    current.movement,
+			Cost:        current.gCost - current.parent.gCost,
+			MineTargets: current.mineTargets,
 		}
 		steps = append(steps, step)
 		totalCost += step.Cost

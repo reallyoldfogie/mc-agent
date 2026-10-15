@@ -53,16 +53,25 @@ func snapGoalToReachableGrid(start, goal models.V3) models.V3 {
 }
 
 // goalUnreachable reports whether goal is *definitely* unreachable: no
-// walkable cell (passable feet+head, solid ground support) exists anywhere
-// within goalRadius of it. Cells in an unloaded chunk are treated as
-// "unknown" rather than unwalkable, so this never produces a false
-// negative that blocks a legitimately pending world - it only fires when
-// every candidate cell's data is available and none of them qualify.
+// walkable-or-mineable cell (feet+head each either already passable or a
+// solid, diggable block MineThrough/MineDown/MineDownDiagonal could open
+// up, with solid ground support below) exists anywhere within goalRadius
+// of it. Cells in an unloaded chunk are treated as "unknown" rather than
+// unwalkable, so this never produces a false negative that blocks a
+// legitimately pending world - it only fires when every candidate cell's
+// data is available and none of them qualify.
+//
+// Originally "passable feet+head" only, before mining moves existed
+// (docs/plans/14's narrow-shaft-navigability fix): a goal sitting on solid,
+// never-before-dug ground is reachable now, so this must not fail it fast
+// just because nothing there is open *yet* - blockMineable mirrors
+// MovementValidator.mineObstructionAt's own diggability gate (movement.go)
+// for exactly that reason.
 //
 // Shared by all A*-family pathfinders (plain A*, EPEA*, bidirectional A*)
 // so a search never burns its entire step budget on a goal that is
 // guaranteed to fail regardless of maxSteps or context deadline - e.g. a
-// caller passing a solid block's own coordinates as the target. See
+// caller passing bedrock's own coordinates as the target. See
 // docs/bugs/hpa-star-slowness.
 func goalUnreachable(world models.World, shapeMgr models.BlockShapeManager, goalRadius float64, goal models.V3) bool {
 	radius := int(math.Ceil(goalRadius))
@@ -79,11 +88,32 @@ func goalUnreachable(world models.World, shapeMgr models.BlockShapeManager, goal
 				if !feetLoaded || !headLoaded || !groundLoaded {
 					return false // unknown - don't block, let the real search decide
 				}
-				if shapeMgr.IsPassable(feetID) && shapeMgr.IsPassable(headID) && !shapeMgr.IsPassable(groundID) {
-					return false // found a walkable cell within goalRadius
+				feetOK := shapeMgr.IsPassable(feetID) || blockMineable(shapeMgr, feetID)
+				headOK := shapeMgr.IsPassable(headID) || blockMineable(shapeMgr, headID)
+				if feetOK && headOK && !shapeMgr.IsPassable(groundID) {
+					return false // found a walkable (possibly mineable) cell within goalRadius
 				}
 			}
 		}
 	}
 	return true
+}
+
+// blockMineable mirrors MovementValidator.mineObstructionAt's own
+// diggability gate (movement.go) without that method's per-call block-
+// state caching - this runs once, up front, not in the hot successor-
+// generation loop, so there's nothing worth caching here. Kept in sync
+// with mineObstructionAt's own exclusions: air (nothing to mine, and
+// already passable anyway), fluids and anything IsDangerous (never a sane
+// route), and anything GetMiningInfo reports undiggable or unbreakable
+// (negative hardness - bedrock and the like) all return false.
+func blockMineable(shapeMgr models.BlockShapeManager, stateID uint32) bool {
+	if stateID == 0 {
+		return false
+	}
+	if shapeMgr.IsFluid(stateID) || shapeMgr.IsDangerous(stateID) {
+		return false
+	}
+	hardness, _, diggable := shapeMgr.GetMiningInfo(stateID)
+	return diggable && hardness >= 0
 }

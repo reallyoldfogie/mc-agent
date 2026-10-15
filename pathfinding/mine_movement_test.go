@@ -1,6 +1,7 @@
 package pathfinding_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -190,6 +191,45 @@ func TestGetPossibleMoves_UndiggableBlockOffersNoMineDownDiagonalRoute(t *testin
 	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
 
 	require.False(t, hasMoveTo(moves, models.V3{X: 1, Y: 0, Z: 0}), "an undiggable landing cell must offer no route at all, got moves=%v", moves)
+}
+
+// TestFindPath_PreservesMineTargetsThroughReconstruction is a regression
+// test for a real live-confirmed bug: GetPossibleMoves correctly offered
+// MineDown/MineDownDiagonal/MineThrough with populated MineTargets, but
+// every search's own path reconstruction (a_star.go/epea_star.go/
+// bidir_a_star.go's internal node types, and hpa_pathfinder.go's
+// normalizePath) rebuilt each final PathStep from scratch without copying
+// that field - silently dropping it. The physics executor's
+// mineTargetsCleared then saw an empty MineTargets slice, read that as
+// "nothing left to mine, already cleared," and walked straight into solid
+// rock instead of ever calling the real mine callback - found live
+// against the real dev/test server (docs/plans/14), not merely
+// hypothesized. This test exercises the actual FindPath entry point (not
+// GetPossibleMoves directly) specifically because that's the boundary
+// where the bug lived.
+func TestFindPath_PreservesMineTargetsThroughReconstruction(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(0, 0, 0, stoneID).  // straight-down floor underfoot
+		SetBlockDirect(0, -1, 0, stoneID). // ground support once that floor is mined through
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	pathFinder := pathfinding.NewAStarPathFinder(world, shapeMgr, nil)
+
+	start := models.V3{X: 0, Y: 1, Z: 0}
+	goal := models.V3{X: 0, Y: 0, Z: 0} // inside the solid floor - only reachable by mining it
+
+	path, err := pathFinder.FindPath(context.Background(), start, goal, 1000)
+	require.NoError(t, err)
+	require.True(t, path.Found)
+	require.NotEmpty(t, path.Steps)
+
+	last := path.Steps[len(path.Steps)-1]
+	require.Equal(t, pathfinding.MineDown, last.Movement)
+	require.NotEmpty(t, last.MineTargets, "MineTargets must survive FindPath's own reconstruction, not just GetPossibleMoves")
+	require.Equal(t, []models.V3{{X: 0, Y: 0, Z: 0}}, last.MineTargets)
 }
 
 // TestGetPossibleMoves_OffersMineThroughWhenWalledIn covers MineThrough:

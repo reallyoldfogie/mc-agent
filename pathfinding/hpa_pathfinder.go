@@ -865,9 +865,10 @@ func (hpa *hpaPathFinder) normalizePath(ctx context.Context, path *Path) (*Path,
 		if ok {
 			// Direct move exists - use it
 			steps = append(steps, PathStep{
-				Position: step.Position,
-				Movement: move.Movement,
-				Cost:     move.Cost,
+				Position:    step.Position,
+				Movement:    move.Movement,
+				Cost:        move.Cost,
+				MineTargets: move.MineTargets,
 			})
 			totalCost += move.Cost
 			prev = step.Position

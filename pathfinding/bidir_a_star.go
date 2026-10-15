@@ -46,7 +46,15 @@ type bidirNode struct {
 	pos      models.V3
 	parent   *bidirNode
 	movement MovementType
-	gCost    float64 // Cost from search origin to this node
+	// mineTargets carries PathStep.MineTargets through to the final
+	// reconstructed Path - see pathfinding/a_star.go's node.mineTargets,
+	// whose own doc comment explains the bug this avoids. Only threaded
+	// through the forward search below (GetPossibleMoves-driven); the
+	// backward search's own move generator (getReverseMoves) doesn't call
+	// GetPossibleMoves at all and has no mining-move awareness yet - a
+	// pre-existing architectural split this fix doesn't attempt to close.
+	mineTargets []models.V3
+	gCost       float64 // Cost from search origin to this node
 	hCost    float64 // Heuristic cost to target
 	fCost    float64 // gCost + hCost
 	index    int     // Index in the priority queue
@@ -268,11 +276,12 @@ func (pf *bidirAStarPathFinder) FindPath(ctx context.Context, start, goal models
 					forwardGScores[neighborPos] = tentativeGCost
 
 					neighborNode := &bidirNode{
-						pos:      neighborPos,
-						parent:   current,
-						movement: neighborStep.Movement,
-						gCost:    tentativeGCost,
-						hCost:    heuristic(neighborPos, goal),
+						pos:         neighborPos,
+						parent:      current,
+						movement:    neighborStep.Movement,
+						mineTargets: neighborStep.MineTargets,
+						gCost:       tentativeGCost,
+						hCost:       heuristic(neighborPos, goal),
 					}
 					neighborNode.fCost = neighborNode.gCost + neighborNode.hCost
 					heap.Push(forwardOpen, neighborNode)
@@ -658,9 +667,10 @@ func (pf *bidirAStarPathFinder) reconstructBidirPath(mv *MovementValidator, forw
 	current := forwardNode
 	for current.parent != nil {
 		step := PathStep{
-			Position: current.pos,
-			Movement: current.movement,
-			Cost:     current.gCost - current.parent.gCost,
+			Position:    current.pos,
+			Movement:    current.movement,
+			Cost:        current.gCost - current.parent.gCost,
+			MineTargets: current.mineTargets,
 		}
 		forwardSteps = append(forwardSteps, step)
 		totalCost += step.Cost
@@ -696,18 +706,20 @@ func (pf *bidirAStarPathFinder) reconstructBidirPath(mv *MovementValidator, forw
 
 		if found {
 			step := PathStep{
-				Position: parentPos,
-				Movement: moveToParent.Movement,
-				Cost:     moveToParent.Cost,
+				Position:    parentPos,
+				Movement:    moveToParent.Movement,
+				Cost:        moveToParent.Cost,
+				MineTargets: moveToParent.MineTargets,
 			}
 			forwardSteps = append(forwardSteps, step)
 			totalCost += step.Cost
 		} else {
 			// Fallback: use the stored movement type with estimated cost
 			step := PathStep{
-				Position: parentPos,
-				Movement: current.movement,
-				Cost:     current.gCost - current.parent.gCost,
+				Position:    parentPos,
+				Movement:    current.movement,
+				Cost:        current.gCost - current.parent.gCost,
+				MineTargets: current.mineTargets,
 			}
 			forwardSteps = append(forwardSteps, step)
 			totalCost += step.Cost

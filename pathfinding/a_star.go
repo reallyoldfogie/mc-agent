@@ -45,10 +45,17 @@ type node struct {
 	pos      models.V3
 	parent   *node
 	movement MovementType
-	gCost    float64 // Cost from start to this node
-	hCost    float64 // Heuristic cost from this node to goal
-	fCost    float64 // gCost + hCost
-	index    int     // Index in the priority queue
+	// mineTargets carries PathStep.MineTargets through to reconstructPath -
+	// without it, a MineThrough/MineDown/MineDownDiagonal step reaching the
+	// final Path would silently lose which block(s) to break (found live,
+	// docs/plans/14's narrow-shaft-navigability fix: the physics executor's
+	// mineTargetsCleared saw an empty slice, read that as "already
+	// cleared," and walked straight into solid rock instead of mining it).
+	mineTargets []models.V3
+	gCost       float64 // Cost from start to this node
+	hCost       float64 // Heuristic cost from this node to goal
+	fCost       float64 // gCost + hCost
+	index       int     // Index in the priority queue
 }
 
 // nodeHeap implements heap.Interface for A* priority queue
@@ -346,11 +353,12 @@ func (pf *aStarPathFinder) FindPath(ctx context.Context, start, goal models.V3, 
 				gScores[neighborPos] = tentativeGCost
 
 				neighborNode := &node{
-					pos:      neighborPos,
-					parent:   current,
-					movement: neighborStep.Movement,
-					gCost:    tentativeGCost,
-					hCost:    heuristic(neighborPos, goal),
+					pos:         neighborPos,
+					parent:      current,
+					movement:    neighborStep.Movement,
+					mineTargets: neighborStep.MineTargets,
+					gCost:       tentativeGCost,
+					hCost:       heuristic(neighborPos, goal),
 				}
 				neighborNode.fCost = neighborNode.gCost + neighborNode.hCost
 
@@ -383,9 +391,10 @@ func (pf *aStarPathFinder) reconstructPath(goalNode *node, start, goal models.V3
 	current := goalNode
 	for current.parent != nil {
 		step := PathStep{
-			Position: current.pos,
-			Movement: current.movement,
-			Cost:     current.gCost - current.parent.gCost,
+			Position:    current.pos,
+			Movement:    current.movement,
+			Cost:        current.gCost - current.parent.gCost,
+			MineTargets: current.mineTargets,
 		}
 		steps = append(steps, step)
 		totalCost += step.Cost
