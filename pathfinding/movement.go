@@ -1108,6 +1108,18 @@ func (mv *MovementValidator) logTerrainAround(from models.V3) {
 const (
 	mineBaseCostPerBlock   = 8.0
 	mineHardnessCostFactor = 2.0
+
+	// mineStraightDownRiskSurcharge makes plain MineDown strictly pricier
+	// than MineDownDiagonal's otherwise-identical per-block cost (operator
+	// direction, 2026-10-14): mining the exact block directly underfoot
+	// commits to whatever it reveals - a cave, lava - with no fallback,
+	// since the bot was never standing anywhere else. MineDownDiagonal
+	// mines one column over instead, so a search should prefer it by
+	// default and only fall back to plain MineDown when there's no room
+	// for the diagonal pattern at all (a shaft already dug 1-wide). Not
+	// calibrated against any real quantity - purely a preference knob, the
+	// same way the rest of this file's mine costs already are.
+	mineStraightDownRiskSurcharge = 6.0
 )
 
 // mineMoveCost sums the pseudo-expensive cost of breaking every block in
@@ -1212,7 +1224,8 @@ func (mv *MovementValidator) tryMineThrough(from, to models.V3) (PathStep, bool)
 // unlike every other move here - the whole point is to keep digging through
 // more solid material below, which the next GetPossibleMoves call will
 // offer again on its own if that's also an obstruction (see MineDown's own
-// doc comment).
+// doc comment). Carries mineStraightDownRiskSurcharge on top of the
+// ordinary per-block cost - see that constant's own doc comment for why.
 func (mv *MovementValidator) tryMineDown(from models.V3) (PathStep, bool) {
 	straightDown := from.Add(models.V3{X: 0, Y: -1, Z: 0})
 	hardness, ok := mv.mineObstructionAt(straightDown)
@@ -1222,8 +1235,60 @@ func (mv *MovementValidator) tryMineDown(from models.V3) (PathStep, bool) {
 	return PathStep{
 		Position:    straightDown,
 		Movement:    MineDown,
-		Cost:        mineMoveCost(hardness),
+		Cost:        mineMoveCost(hardness) + mineStraightDownRiskSurcharge,
 		MineTargets: []models.V3{straightDown},
+	}, true
+}
+
+// tryMineDownDiagonal checks whether MineDownDiagonal can offer a route one
+// block down AND one block over, in cardinal direction (dx, dz), when that
+// landing cell - and/or the cell directly above it, at `from`'s own Y,
+// which needs to be clear for the bot's head to fit there too - is a solid,
+// diggable obstruction. Deliberately never touches the block directly
+// underfoot (see MineDownDiagonal's own doc comment for why that's the
+// whole point): the column the bot is currently standing on stays
+// untouched, intact rock, regardless of what this move reveals one column
+// over.
+//
+// A solid-but-undiggable cell on either side makes the whole move
+// impossible, same as tryMineThrough's identical reasoning for its own two
+// cells. No ground-support requirement below the landing cell, same as
+// tryMineDown - the next GetPossibleMoves call offers the next step (either
+// MineDownDiagonal again, continuing the stagger, or MineDown as a
+// fallback) on its own.
+func (mv *MovementValidator) tryMineDownDiagonal(from models.V3, dx, dz float64) (PathStep, bool) {
+	landing := from.Add(models.V3{X: dx, Y: -1, Z: dz})
+	headroom := from.Add(models.V3{X: dx, Y: 0, Z: dz})
+
+	landingHardness, landingBlocked := mv.mineObstructionAt(landing)
+	headroomHardness, headroomBlocked := mv.mineObstructionAt(headroom)
+
+	if !landingBlocked && !headroomBlocked {
+		return PathStep{}, false // nothing to mine - an ordinary diagonal drop (the dropHeight=1 case this replaces) already covers it
+	}
+	if !landingBlocked && !mv.isBlockPassable(landing) {
+		return PathStep{}, false // landing cell is solid but undiggable - no route at all
+	}
+	if !headroomBlocked && !mv.isBlockPassable(headroom) {
+		return PathStep{}, false // headroom cell is solid but undiggable - no route at all
+	}
+
+	targets := make([]models.V3, 0, 2)
+	hardnesses := make([]float64, 0, 2)
+	if landingBlocked {
+		targets = append(targets, landing)
+		hardnesses = append(hardnesses, landingHardness)
+	}
+	if headroomBlocked {
+		targets = append(targets, headroom)
+		hardnesses = append(hardnesses, headroomHardness)
+	}
+
+	return PathStep{
+		Position:    landing,
+		Movement:    MineDownDiagonal,
+		Cost:        mineMoveCost(hardnesses...),
+		MineTargets: targets,
 	}, true
 }
 
@@ -1293,6 +1358,7 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 			})
 		} else {
 			// Fall back to Descend (dropping 1-3 blocks)
+			found := false
 			for dropHeight := float64(1); dropHeight <= 3; dropHeight++ {
 				toDropDown := from.Add(models.V3{X: dir.dx, Y: -dropHeight, Z: dir.dz})
 				if mv.CanDescend(from, toDropDown) {
@@ -1301,7 +1367,18 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 						Movement: Descend,
 						Cost:     Descend.BaseCost(),
 					})
+					found = true
 					break // Only take the first valid drop height
+				}
+			}
+			// No ordinary 1-3 block drop at all in this direction - try
+			// MineDownDiagonal, the safer alternative to straight-down
+			// MineDown (see its own doc comment), specifically for the
+			// 1-block-down-1-over shape (dropHeight=1's own failure is
+			// exactly what makes room for this).
+			if !found {
+				if step, ok := mv.tryMineDownDiagonal(from, dir.dx, dir.dz); ok {
+					moves = append(moves, step)
 				}
 			}
 		}

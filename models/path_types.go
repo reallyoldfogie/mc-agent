@@ -62,7 +62,29 @@ const (
 	// has dug itself into a straight 1x1 vertical shaft - with no adjacent
 	// column left to use any horizontal move at all - has a way to
 	// continue, one layer at a time.
+	//
+	// Deliberately the pricier of the two ways to mine downward (see
+	// MineDownDiagonal) - mining the exact block directly underfoot means
+	// committing to whatever's revealed (a cave, lava) with no fallback,
+	// since the bot was never anywhere else. Kept only as the last-resort
+	// option for when there's no room for MineDownDiagonal's two-column
+	// pattern at all (a shaft already dug 1-wide).
 	MineDown
+	// MineDownDiagonal breaks the solid, diggable block one level down AND
+	// one cardinal direction over (never the block directly underfoot) -
+	// the safer default way to mine downward (operator direction,
+	// 2026-10-14): a bot digging straight down with plain MineDown commits
+	// blind to whatever a broken block reveals (a cave, lava) with nowhere
+	// else to have been standing. By always landing in the *other* of two
+	// adjacent columns instead, the bot is never the one mining the exact
+	// block it's currently standing on - each break happens one column
+	// over from wherever its feet actually are, so the column it's
+	// standing on right now is always still intact, unexplored rock, not
+	// something it just blindly broke into. Chained across repeated calls
+	// this naturally staggers between two columns one level at a time
+	// (hence "2x1"), each diagonal step a fresh, independent check against
+	// real world state, not a lookahead/X-ray guess at what's below.
+	MineDownDiagonal
 )
 
 // String returns the name of the movement type.
@@ -150,6 +172,8 @@ func (mt MovementType) String() string {
 		return "MineThrough"
 	case MineDown:
 		return "MineDown"
+	case MineDownDiagonal:
+		return "MineDownDiagonal"
 	default:
 		return "Unknown"
 	}
@@ -234,7 +258,7 @@ func (mt MovementType) BaseCost() float64 {
 		return 0.60
 	case VehicleFly3D:
 		return 0.4
-	case MineThrough, MineDown:
+	case MineThrough, MineDown, MineDownDiagonal:
 		// Representative only - pathfinding.mineMoveCost computes the real,
 		// hardness-scaled per-step cost at generation time (same pattern
 		// Jump2's "+0.5" variant already uses above). This flat value is a

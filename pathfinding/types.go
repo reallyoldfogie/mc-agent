@@ -47,6 +47,7 @@ const (
 	VehicleFly3D        = models.VehicleFly3D
 	MineThrough         = models.MineThrough
 	MineDown            = models.MineDown
+	MineDownDiagonal    = models.MineDownDiagonal
 )
 
 // PathStep is an alias to models.PathStep for backward compatibility.

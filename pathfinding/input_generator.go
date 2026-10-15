@@ -221,9 +221,9 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 			out.ClimbDirection = 1.0
 		}
 
-	case Descend, MineDown:
-		// Drop down (1-3 blocks), or MineDown's single-block drop once its
-		// obstruction is cleared (reaches here for the same reason
+	case Descend, MineDown, MineDownDiagonal:
+		// Drop down (1-3 blocks), or MineDown/MineDownDiagonal's single-level
+		// drop once their obstruction(s) are cleared (reaches here for the same reason
 		// MineThrough reaches the Traverse case above).
 		// Just walk forward and let gravity do the work
 		// Default inputs are fine
@@ -417,7 +417,7 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		)
 		return int(horizontalDist/0.20) + 15
 
-	case Descend, MineDown:
+	case Descend, MineDown, MineDownDiagonal:
 		// Falling: ~0.08 blocks/tick² (gravity)
 		// For 1 block: ~5 ticks, 2 blocks: ~7 ticks, 3 blocks: ~9 ticks
 		verticalDist := pos.Y - step.Position.Y

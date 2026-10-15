@@ -83,8 +83,8 @@ func TestGetPossibleMoves_OffersMineDownThroughTheFloor(t *testing.T) {
 	mineDown := findMove(moves, pathfinding.MineDown, target)
 	require.NotNil(t, mineDown, "expected a MineDown move to %v, got moves=%v", target, moves)
 	require.Equal(t, []models.V3{target}, mineDown.MineTargets)
-	require.InDelta(t, 8.0+1.5*2.0, mineDown.Cost, 0.001,
-		"MineDown cost should be the flat premium plus hardness scaling, not BaseCost()'s representative 8.0 alone")
+	require.InDelta(t, 8.0+1.5*2.0+6.0, mineDown.Cost, 0.001,
+		"MineDown cost should be the flat premium plus hardness scaling plus the straight-down risk surcharge, not BaseCost()'s representative 8.0 alone")
 }
 
 // TestGetPossibleMoves_DoesNotOfferMineDownOverOpenFloor confirms MineDown
@@ -108,6 +108,88 @@ func TestGetPossibleMoves_DoesNotOfferMineDownOverOpenFloor(t *testing.T) {
 	for _, m := range moves {
 		require.NotEqual(t, pathfinding.MineDown, m.Movement, "MineDown should never be offered when the floor is already open: %v", m)
 	}
+}
+
+// TestGetPossibleMoves_OffersMineDownDiagonalCheaperThanMineDown is a
+// regression test for the operator's 2026-10-14 safety direction: mining
+// straight down through the exact block underfoot commits to whatever it
+// reveals (a cave, lava) with no fallback, so the safer MineDownDiagonal -
+// which lands in an *adjacent* column instead, never the one the bot is
+// currently standing on - must be strictly cheaper, not just an equally
+// weighted alternative. Sets up both routes at once (stone directly
+// underfoot for MineDown, stone one block east-and-down for
+// MineDownDiagonal, with open headroom there so only the landing cell
+// itself needs breaking) and checks the ordering directly, not just that
+// both exist.
+func TestGetPossibleMoves_OffersMineDownDiagonalCheaperThanMineDown(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(0, 0, 0, stoneID). // straight-down floor (MineDown's target)
+		SetBlockDirect(1, 0, 0, stoneID). // diagonal landing, east (MineDownDiagonal's target)
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	mineDown := findMove(moves, pathfinding.MineDown, models.V3{X: 0, Y: 0, Z: 0})
+	mineDownDiagonal := findMove(moves, pathfinding.MineDownDiagonal, models.V3{X: 1, Y: 0, Z: 0})
+	require.NotNil(t, mineDown, "expected MineDown, got moves=%v", moves)
+	require.NotNil(t, mineDownDiagonal, "expected MineDownDiagonal, got moves=%v", moves)
+
+	require.Equal(t, []models.V3{{X: 1, Y: 0, Z: 0}}, mineDownDiagonal.MineTargets,
+		"headroom at (1,1,0) is open by default, so only the landing cell itself should need breaking")
+	require.InDelta(t, 8.0+1.5*2.0, mineDownDiagonal.Cost, 0.001)
+	require.Greater(t, mineDown.Cost, mineDownDiagonal.Cost,
+		"MineDown must be strictly more expensive than MineDownDiagonal so a search prefers the safer route by default")
+}
+
+// TestGetPossibleMoves_DoesNotOfferMineDownDiagonalWhenNormalDropExists
+// confirms MineDownDiagonal, like every other Mine* move, is only offered
+// as a fallback - never redundantly alongside an already-available ordinary
+// drop.
+func TestGetPossibleMoves_DoesNotOfferMineDownDiagonalWhenNormalDropExists(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	grassID := registry.GetStateID("minecraft:grass_block", nil)
+
+	// Open 1-block drop to the east (nothing solid at the landing or above
+	// it) with real ground support two levels down.
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, -1, 0, grassID).
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	for _, m := range moves {
+		require.NotEqual(t, pathfinding.MineDownDiagonal, m.Movement, "MineDownDiagonal should never be offered when an ordinary drop already exists: %v", m)
+	}
+	require.NotNil(t, findMove(moves, pathfinding.Descend, models.V3{X: 1, Y: 0, Z: 0}), "the ordinary drop itself should still be offered")
+}
+
+// TestGetPossibleMoves_UndiggableBlockOffersNoMineDownDiagonalRoute is
+// MineDownDiagonal's counterpart to the plain-obstruction undiggable test
+// above: a bedrock-like landing cell must block the route entirely, not
+// just skip mining it.
+func TestGetPossibleMoves_UndiggableBlockOffersNoMineDownDiagonalRoute(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	bedrockID := registry.GetStateID("minecraft:bedrock", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, 0, 0, bedrockID). // diagonal landing, east
+		Build()
+	shapeMgr := &undiggableOverride{MockShapeManager: mctesting.NewMockShapeManager(), undiggableStateID: bedrockID}
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	require.False(t, hasMoveTo(moves, models.V3{X: 1, Y: 0, Z: 0}), "an undiggable landing cell must offer no route at all, got moves=%v", moves)
 }
 
 // TestGetPossibleMoves_OffersMineThroughWhenWalledIn covers MineThrough:
