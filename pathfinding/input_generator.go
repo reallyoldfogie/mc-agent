@@ -52,7 +52,7 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 	targetPos := targetStep.Position
 	switch targetStep.Movement {
 	case AscendJump, DiagonalAscend, JumpToClimb, Jump2ToClimb,
-		Descend, MineDown, MineDownDiagonal,
+		Descend, MineDown, MineDownDiagonal, MineNeighborFloor,
 		Drop2North, Drop2South, Drop2East, Drop2West:
 		// These movements need precise landing - aim for block center.
 		// Without this, a Descend/MineDown{,Diagonal} step whose raw target
@@ -234,9 +234,10 @@ func (ig *DefaultInputGenerator) GenerateInputs(
 			out.ClimbDirection = 1.0
 		}
 
-	case Descend, MineDown, MineDownDiagonal:
-		// Drop down (1-3 blocks), or MineDown/MineDownDiagonal's single-level
-		// drop once their obstruction(s) are cleared (reaches here for the same reason
+	case Descend, MineDown, MineDownDiagonal, MineNeighborFloor:
+		// Drop down (1-3 blocks), or MineDown/MineDownDiagonal/
+		// MineNeighborFloor's single-level (or two-level) drop once their
+		// obstruction(s) are cleared (reaches here for the same reason
 		// MineThrough reaches the Traverse case above).
 		// Just walk forward and let gravity do the work
 		// Default inputs are fine
@@ -430,7 +431,7 @@ func (ig *DefaultInputGenerator) EstimateTicksRequired(
 		)
 		return int(horizontalDist/0.20) + 15
 
-	case Descend, MineDown, MineDownDiagonal:
+	case Descend, MineDown, MineDownDiagonal, MineNeighborFloor:
 		// Falling: ~0.08 blocks/tick² (gravity)
 		// For 1 block: ~5 ticks, 2 blocks: ~7 ticks, 3 blocks: ~9 ticks
 		verticalDist := pos.Y - step.Position.Y

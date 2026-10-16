@@ -48,6 +48,7 @@ const (
 	MineThrough         = models.MineThrough
 	MineDown            = models.MineDown
 	MineDownDiagonal    = models.MineDownDiagonal
+	MineNeighborFloor   = models.MineNeighborFloor
 )
 
 // PathStep is an alias to models.PathStep for backward compatibility.

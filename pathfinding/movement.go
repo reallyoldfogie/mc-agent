@@ -1315,6 +1315,86 @@ func (mv *MovementValidator) tryMineDownDiagonal(from models.V3, dx, dz float64)
 	}, true
 }
 
+// tryMineNeighborFloor checks whether MineNeighborFloor can offer a route
+// down into an adjacent column that's already walkable at `from`'s own
+// height - typically the column the bot just entered from (after an
+// ordinary MineThrough step mined the wall between them), but checked
+// directly against world state, not path history (see below for why): mine
+// that column's floor - and, if that's also a genuine obstruction, the
+// block one level beneath it too - then drop into it, landing at whichever
+// depth (1 or 2 blocks) turned out to need mining. The bot is never the one
+// mining the exact block it's currently standing on with nothing else
+// holding it up (the specific risk plain MineDown has) - it's standing in
+// the ADJACENT column throughout the mining, only moving once both the dig
+// and the landing cell's own ground support are confirmed.
+//
+// This move's own safety property is structural, the same shape
+// MineDownDiagonal already established - not hazard detection. Lava/cave
+// avoidance at the final landing spot is, as always, ordinary
+// ground-support-required passability (mv.hasGroundSupport, checked below
+// before this move is ever offered), the same requirement CanDescend
+// already applies to every ordinary drop; this move doesn't add or weaken
+// that, it just lets a floor that needed mining first reach the same
+// check.
+//
+// An earlier attempt at this feature tried to represent "the bot is
+// already straddling two columns" as a precondition and relocate it only
+// at the very end, after both columns' floors were mined. That doesn't
+// work in this search: every node here is a plain integer models.V3 (see
+// a_star.go's gScores/closedSet, keyed purely on position), so a PathStep
+// whose Position doesn't change from `from` is a self-loop the search
+// closes out and never actually selects (closedSet[from] is already true
+// by the time GetPossibleMoves' own successors are considered - confirmed
+// by reading a_star.go's loop, not just suspected). This version sidesteps
+// that entirely by changing position in the same step that does the
+// mining, exactly like every other move here already does.
+func (mv *MovementValidator) tryMineNeighborFloor(from models.V3, dx, dz float64) (PathStep, bool) {
+	colA := from.Add(models.V3{X: dx, Y: 0, Z: dz})
+
+	// colA must already be walkable at `from`'s own height - true right
+	// after entering from this same direction via an ordinary MineThrough
+	// step, but this checks current world state directly, not history:
+	// there's no path history available to this function anyway (see its
+	// own doc comment), and it doesn't need any - a neighbor that's
+	// already open at this height for any other reason (e.g. a genuine
+	// cave opening) is just as valid a route down.
+	if !mv.isPositionPassable(colA) {
+		return PathStep{}, false
+	}
+
+	level1 := colA.Add(models.V3{X: 0, Y: -1, Z: 0})
+	hardness1, blocked1 := mv.mineObstructionAt(level1)
+	if !blocked1 {
+		return PathStep{}, false // nothing to mine - an ordinary Descend already covers this
+	}
+
+	targets := []models.V3{level1}
+	hardnesses := []float64{hardness1}
+	landing := level1
+
+	// "...followed by the block under it (if there is one)" - only extend
+	// one level deeper when that cell is itself a genuine, diggable
+	// obstruction. Already-open (a cave) or solid-but-undiggable both
+	// correctly leave the hole exactly one block deep.
+	level2 := level1.Add(models.V3{X: 0, Y: -1, Z: 0})
+	if hardness2, blocked2 := mv.mineObstructionAt(level2); blocked2 {
+		targets = append(targets, level2)
+		hardnesses = append(hardnesses, hardness2)
+		landing = level2
+	}
+
+	if !mv.hasGroundSupport(landing) {
+		return PathStep{}, false // no confirmed solid ground at the resulting depth - decline rather than guess deeper
+	}
+
+	return PathStep{
+		Position:    landing,
+		Movement:    MineNeighborFloor,
+		Cost:        mineMoveCost(hardnesses...),
+		MineTargets: targets,
+	}, true
+}
+
 // GetPossibleMoves returns all valid moves from a given position
 // Optionally filters moves based on goal to reduce search space (pass zero models.V3 to disable filtering)
 func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, prune *MovePruneConfig) []PathStep {
@@ -1401,6 +1481,14 @@ func (mv *MovementValidator) GetPossibleMoves(from models.V3, goal models.V3, pr
 			// exactly what makes room for this).
 			if !found {
 				if step, ok := mv.tryMineDownDiagonal(from, dir.dx, dir.dz); ok {
+					moves = append(moves, step)
+				}
+				// MineNeighborFloor only applies when the adjacent column
+				// is already walkable at this height (see its own doc
+				// comment) - a cheap, self-contained check everywhere
+				// else, so trying it unconditionally alongside
+				// MineDownDiagonal costs nothing when it doesn't apply.
+				if step, ok := mv.tryMineNeighborFloor(from, dir.dx, dir.dz); ok {
 					moves = append(moves, step)
 				}
 			}

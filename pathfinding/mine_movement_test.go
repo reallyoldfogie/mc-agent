@@ -193,6 +193,115 @@ func TestGetPossibleMoves_UndiggableBlockOffersNoMineDownDiagonalRoute(t *testin
 	require.False(t, hasMoveTo(moves, models.V3{X: 1, Y: 0, Z: 0}), "an undiggable landing cell must offer no route at all, got moves=%v", moves)
 }
 
+// TestGetPossibleMoves_OffersMineNeighborFloorOneLevel is the simpler,
+// position-changing successor to the straddle-based design discussed live
+// (docs/plans/14): the adjacent column (east) is already open at the bot's
+// own height - as it would be right after an ordinary MineThrough step
+// walked it there - with one diggable floor block, and undiggable-but-solid
+// bedrock below that. MineNeighborFloor should land exactly one level down,
+// targeting only the diggable cell, never touching bedrock.
+func TestGetPossibleMoves_OffersMineNeighborFloorOneLevel(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+	bedrockID := registry.GetStateID("minecraft:bedrock", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, 0, 0, stoneID).    // neighbor's floor - diggable
+		SetBlockDirect(1, -1, 0, bedrockID). // one level further down - solid, undiggable: stops the dig at one level
+		Build()
+	shapeMgr := &undiggableOverride{MockShapeManager: mctesting.NewMockShapeManager(), undiggableStateID: bedrockID}
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	landing := models.V3{X: 1, Y: 0, Z: 0}
+	move := findMove(moves, pathfinding.MineNeighborFloor, landing)
+	require.NotNil(t, move, "expected a MineNeighborFloor move to %v, got moves=%v", landing, moves)
+	require.Equal(t, []models.V3{landing}, move.MineTargets, "bedrock below must not be mined")
+	require.InDelta(t, 8.0+1.5*2.0, move.Cost, 0.001)
+}
+
+// TestGetPossibleMoves_OffersMineNeighborFloorTwoLevels is the "two works
+// also" case the operator confirmed: both the neighbor's floor and the
+// block beneath that are diggable, with real ground support one level
+// further down still - MineNeighborFloor should mine both and land two
+// levels down, not stop at one just because one level was already enough
+// for an ordinary single-block drop.
+func TestGetPossibleMoves_OffersMineNeighborFloorTwoLevels(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+	grassID := registry.GetStateID("minecraft:grass_block", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, 0, 0, stoneID).  // neighbor's floor - diggable
+		SetBlockDirect(1, -1, 0, stoneID). // one level deeper - also diggable
+		SetBlockDirect(1, -2, 0, grassID). // real ground support at the bottom
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	landing := models.V3{X: 1, Y: -1, Z: 0}
+	move := findMove(moves, pathfinding.MineNeighborFloor, landing)
+	require.NotNil(t, move, "expected a 2-level MineNeighborFloor move to %v, got moves=%v", landing, moves)
+	require.Equal(t, []models.V3{{X: 1, Y: 0, Z: 0}, {X: 1, Y: -1, Z: 0}}, move.MineTargets)
+	require.InDelta(t, (8.0+1.5*2.0)*2, move.Cost, 0.001)
+}
+
+// TestGetPossibleMoves_DoesNotOfferMineNeighborFloorThroughAWall confirms
+// the precondition that actually makes this move safe: the adjacent column
+// must already be open at the bot's current height (as it would be right
+// after walking there via MineThrough) - a bot that's never actually been
+// next to that column shouldn't get offered a move that assumes it's
+// standing there already.
+func TestGetPossibleMoves_DoesNotOfferMineNeighborFloorThroughAWall(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, 1, 0, stoneID). // solid wall at the bot's own height, east - never cleared
+		SetBlockDirect(1, 0, 0, stoneID). // would otherwise be a diggable floor
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	for _, m := range moves {
+		require.NotEqual(t, pathfinding.MineNeighborFloor, m.Movement, "MineNeighborFloor must not be offered through a solid, uncleared wall: %v", m)
+	}
+}
+
+// TestGetPossibleMoves_DoesNotOfferMineNeighborFloorIntoACaveVoid is the
+// actual safety property this move exists for: mining the neighbor's floor
+// must not be offered at all if nothing confirms solid ground waiting
+// underneath it - an unloaded/open cell there (a cave) fails
+// hasGroundSupport, and this move declines rather than dropping the bot
+// into the unknown.
+func TestGetPossibleMoves_DoesNotOfferMineNeighborFloorIntoACaveVoid(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(1, 0, 0, stoneID). // neighbor's floor - diggable
+		// (1, -1, 0) deliberately left unset: open air, a cave void with no
+		// ground support once (1, 0, 0) is mined.
+		Build()
+	shapeMgr := mctesting.NewMockShapeManager()
+	mv := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 1, Z: 0}
+	moves := mv.GetPossibleMoves(from, models.V3{}, nil)
+
+	for _, m := range moves {
+		require.NotEqual(t, pathfinding.MineNeighborFloor, m.Movement, "MineNeighborFloor must not be offered over a confirmed cave void: %v", m)
+	}
+}
+
 // TestFindPath_PreservesMineTargetsThroughReconstruction is a regression
 // test for a real live-confirmed bug: GetPossibleMoves correctly offered
 // MineDown/MineDownDiagonal/MineThrough with populated MineTargets, but

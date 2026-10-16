@@ -26,9 +26,10 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 
 	// Movement-specific completion thresholds
 	switch targetStep.Movement {
-	case Descend, MineDown, MineDownDiagonal:
-		// Drop down movements (1-3 blocks), or MineDown/MineDownDiagonal's
-		// single-level drop once the obstruction(s) are cleared - the
+	case Descend, MineDown, MineDownDiagonal, MineNeighborFloor:
+		// Drop down movements (1-3 blocks), or MineDown/MineDownDiagonal/
+		// MineNeighborFloor's single- or two-level drop once the
+		// obstruction(s) are cleared - the
 		// physics executor never even calls IsComplete while a Mine* step is
 		// still waiting on the mine itself (see isMineActionStep), so by the time
 		// this runs, it's an ordinary drop into now-open space.

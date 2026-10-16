@@ -85,6 +85,21 @@ const (
 	// (hence "2x1"), each diagonal step a fresh, independent check against
 	// real world state, not a lookahead/X-ray guess at what's below.
 	MineDownDiagonal
+	// MineNeighborFloor digs down into an adjacent column that's already
+	// walkable at the bot's current height - typically the column it just
+	// entered from via an ordinary MineThrough step (operator design,
+	// 2026-10-15, a 2-wide-shaft safe-mining technique): mine that
+	// column's floor - and, if also diggable, one more level beneath it -
+	// then drop into it, landing 1 or 2 blocks down depending on which
+	// turned out to need mining. The bot is never the one mining the exact
+	// block it's currently standing on with nothing else holding it up -
+	// the specific risk plain MineDown has - because it's standing in the
+	// adjacent column throughout the dig, only moving once the landing
+	// cell's ground support is confirmed. See
+	// pathfinding.tryMineNeighborFloor's own doc comment for why this
+	// needs to both mine and move in the same step, unlike an earlier,
+	// straddle-based design for the same idea that didn't work out.
+	MineNeighborFloor
 )
 
 // String returns the name of the movement type.
@@ -174,6 +189,8 @@ func (mt MovementType) String() string {
 		return "MineDown"
 	case MineDownDiagonal:
 		return "MineDownDiagonal"
+	case MineNeighborFloor:
+		return "MineNeighborFloor"
 	default:
 		return "Unknown"
 	}
@@ -258,7 +275,7 @@ func (mt MovementType) BaseCost() float64 {
 		return 0.60
 	case VehicleFly3D:
 		return 0.4
-	case MineThrough, MineDown, MineDownDiagonal:
+	case MineThrough, MineDown, MineDownDiagonal, MineNeighborFloor:
 		// Representative only - pathfinding.mineMoveCost computes the real,
 		// hardness-scaled per-step cost at generation time (same pattern
 		// Jump2's "+0.5" variant already uses above). This flat value is a
@@ -282,8 +299,12 @@ type PathStep struct {
 	// MineTargets is the block coordinate(s) that must be broken before this
 	// step can be completed - only set for MineThrough (1 or 2 entries: the
 	// feet-level cell at Position, and the head-level cell above it if that
-	// was also solid) and MineDown (always exactly 1: Position itself,
-	// since the destination cell IS the block being broken). nil/empty for
+	// was also solid), MineDown (always exactly 1: Position itself,
+	// since the destination cell IS the block being broken), MineDownDiagonal
+	// (1-3 entries: the landing cell plus whichever headroom cells needed
+	// clearing), and MineNeighborFloor (1-2 entries: the adjacent column's
+	// floor cell, plus one more level beneath it if that also needed
+	// clearing - see pathfinding.tryMineNeighborFloor). nil/empty for
 	// every other movement type.
 	MineTargets []V3
 }

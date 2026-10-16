@@ -1629,7 +1629,7 @@ func isVehicleActionStep(m pathfinding.MovementType) bool {
 // its obstruction is cleared, so it can't just be dispatched to a single
 // handler and left alone.
 func isMineActionStep(m pathfinding.MovementType) bool {
-	return m == pathfinding.MineThrough || m == pathfinding.MineDown || m == pathfinding.MineDownDiagonal
+	return m == pathfinding.MineThrough || m == pathfinding.MineDown || m == pathfinding.MineDownDiagonal || m == pathfinding.MineNeighborFloor
 }
 
 // mineTargetsCleared reports whether every block step.MineTargets names is
@@ -1890,7 +1890,8 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.AscendJump ||
 					step.Movement == pathfinding.DiagonalAscend ||
 					step.Movement == pathfinding.MineDown ||
-					step.Movement == pathfinding.MineDownDiagonal
+					step.Movement == pathfinding.MineDownDiagonal ||
+					step.Movement == pathfinding.MineNeighborFloor
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2
