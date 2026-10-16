@@ -285,14 +285,17 @@ func (s *ContainerTestSuite) spawnContainerAgent(name, replayPrefix string) {
 func (s *ContainerTestSuite) buildTestWorld(setupAgent *WorkingAreaAgent) map[string]models.V3 {
 	containers := make(map[string]models.V3)
 
-	// Base Y level (ground level)
+	// Base Y level (ground level) - s.origin.Y is already the bot's own
+	// settled standing height for this suite's flat world (WorldGenFlat),
+	// whatever that is for the running version's own world-height
+	// convention (see FlatWorldServerConfig's doc comment: not always a
+	// fixed constant). A dead special case that clamped this to a
+	// pre-1.18, min-Y=0-world constant (64) - unreachable on any version
+	// this suite actually runs against, and wrong for the ones it would
+	// have fired on - was removed here, 2026-10-16.
 	baseX := int(math.Floor(s.origin.X))
 	baseY := math.Floor(s.origin.Y)
 	baseZ := int(math.Floor(s.origin.Z))
-	if s.origin.Y >= 65 {
-		// For flat worlds, ground is at Y=64.
-		baseY = 64
-	}
 
 	// Ensure ground is clear
 	s.T().Log("clearing ground...")

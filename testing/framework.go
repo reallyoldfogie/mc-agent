@@ -409,7 +409,14 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 	if cfg.WorldGen == WorldGenFlat || cfg.WorldGen == WorldGenControlled {
 		// Use the flat world preset: "minecraft:flat"
 		extraEnv["LEVEL_TYPE"] = "flat"
-		// Flat world preset: grass block at y=64 for testing
+		// Flat world preset: bedrock, 59 stone, 3 dirt, 1 grass, bottom-up
+		// from the version's own world floor - NOT always y=64. Versions
+		// with the extended world height (min-Y=-64, e.g. 1.18+) put the
+		// grass top at y=-1 and the bot's standing feet at y=0; only a
+		// pre-1.18 min-Y=0 world puts it at the old y=63/64. Confirmed live,
+		// 2026-10: a 1.21.5 flat-world suite reported leader.Origin.Y=0, not
+		// 64 - callers should float.Floor(leader.Origin.Y) rather than
+		// assume a fixed constant.
 		extraEnv["GENERATOR_SETTINGS"] = `{
 			"layers":[
 				{
