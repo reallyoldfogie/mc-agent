@@ -1358,6 +1358,9 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 	hasPose := false           // Whether any result included a Pose entry
 	poseOrdinal := int32(0)    // EntityPose wire varint
 	poseName := ""             // Lowercased enum name (or "unknown_<n>")
+	itemID := int32(0)
+	itemCount := int32(0)
+	hasItem := false
 
 	for _, result := range metadataResults {
 		// Apply health from metadata result
@@ -1390,6 +1393,11 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			hasPose = true
 			poseOrdinal = result.Pose
 			poseName = result.PoseName
+		}
+		if result.HasItem {
+			itemID = result.ItemID
+			itemCount = result.ItemCount
+			hasItem = true
 		}
 	}
 
@@ -1438,6 +1446,11 @@ func (a *agent) onSetEntityMetadata(p pk.Packet) error {
 			e.Pose = poseOrdinal
 			e.PoseName = poseName
 			e.HasPose = true
+		}
+		if hasItem {
+			e.ItemID = itemID
+			e.ItemCount = itemCount
+			e.HasItem = true
 		}
 
 		// Handle boat-specific metadata

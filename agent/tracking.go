@@ -62,6 +62,10 @@ type trackedEntity struct {
 	Pose     int32
 	PoseName string
 	HasPose  bool
+	// Dropped-item stack metadata, populated for item entities.
+	ItemID    int32
+	ItemCount int32
+	HasItem   bool
 	// HorseFlags is the AbstractHorseEntity flags byte (metadata key 17),
 	// carrying tamed/saddled/bred/eating/angry bits. Only populated for
 	// saddleable mounts, and only meaningful before 1.21.5 where it is the
@@ -534,6 +538,9 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 			Pose:       e.Pose,
 			PoseName:   e.PoseName,
 			HasPose:    e.HasPose,
+			ItemID:     e.ItemID,
+			ItemCount:  e.ItemCount,
+			HasItem:    e.HasItem,
 		}
 	}
 	return out

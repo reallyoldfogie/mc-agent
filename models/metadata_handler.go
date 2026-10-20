@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"log/slog"
+	"reflect"
 
 	pk "github.com/Tnze/go-mc/net/packet"
 )
@@ -28,6 +29,9 @@ type MetadataProcessResult struct {
 	HasPierce   bool        // Whether pierce level was extracted
 	HasColor    bool        // Whether potion color was extracted
 	HasPose     bool        // Whether a pose entry was present in this update
+	ItemID      int32       // Item ID when an item-stack metadata entry is present
+	ItemCount   int32       // Item count when an item-stack metadata entry is present
+	HasItem     bool        // Whether an item-stack metadata entry was present
 }
 
 // MetadataHandler processes entity metadata updates
@@ -104,6 +108,8 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 
 	// Extract common values and populate result
 	switch entry.HandlerID {
+	case HandlerItemStack:
+		result.ItemID, result.ItemCount, result.HasItem = metadataItemStack(entry.Value)
 	case HandlerByte:
 		if val, ok := entry.Value.(*pk.Byte); ok {
 			p.handleByteMetadata(entityID, entry.Key, uint8(*val))
@@ -174,6 +180,64 @@ func (p *BasicMetadataProcessor) HandleMetadata(entityID int32, entry MetadataEn
 	}
 
 	return result, nil
+}
+
+// metadataItemStack extracts the stable item ID/count fields from the
+// version-generated protocol Slot type. Generated Slot types differ between
+// protocol versions, so this uses their common field names without importing
+// one version's generated package into models.
+func metadataItemStack(value any) (itemID, count int32, present bool) {
+	v := reflect.ValueOf(value)
+	for v.IsValid() && (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) {
+		if v.IsNil() {
+			return 0, 0, false
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() || v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	count, ok := metadataInt32(v.FieldByName("ItemCount"))
+	if !ok {
+		return 0, 0, false
+	}
+	if count <= 0 {
+		return 0, count, true
+	}
+	nested := v.FieldByName("UnnamedType0001")
+	for nested.IsValid() && (nested.Kind() == reflect.Pointer || nested.Kind() == reflect.Interface) {
+		if nested.IsNil() {
+			return 0, count, true
+		}
+		nested = nested.Elem()
+	}
+	if nested.IsValid() && nested.Kind() == reflect.Struct {
+		itemID, _ = metadataInt32(nested.FieldByName("ItemId"))
+		if itemID == 0 {
+			itemID, _ = metadataInt32(nested.FieldByName("ItemID"))
+		}
+	}
+	return itemID, count, true
+}
+
+func metadataInt32(v reflect.Value) (int32, bool) {
+	for v.IsValid() && (v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface) {
+		if v.IsNil() {
+			return 0, false
+		}
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return 0, false
+	}
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int32(v.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int32(v.Uint()), true
+	default:
+		return 0, false
+	}
 }
 
 // handleByteMetadata processes byte metadata (flags, counts, etc.)
