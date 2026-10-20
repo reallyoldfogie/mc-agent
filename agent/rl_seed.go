@@ -8,10 +8,12 @@ import (
 	"time"
 )
 
-// seedBlockOffset is how far in front of the bot (along +X, at the bot's
-// own Y level) SeedNearbyBlock places a block — simple and deterministic,
-// not an attempt to find a "nice" or context-appropriate spot; good enough
-// for training convenience, not a real world-building capability.
+// seedBlockOffset is how far in front of the bot (along +X) SeedNearbyBlock
+// places a block.  The seed is placed on the floor beneath the bot's feet,
+// rather than at the bot's feet: in the modern flat-world layout used by the
+// trainer, player feet are at Y=0 and a block at Y=0 intersects the player.
+// Keeping the seed one block below the player makes the placement safe while
+// leaving it within the requested search radius.
 const seedBlockOffset = 2
 
 // seedGiveCount is how many units of each ingredient SeedCraftIngredients
@@ -84,13 +86,13 @@ const (
 )
 
 // seedBlockCoords is where SeedNearbyBlock places its block for a bot at
-// (x, y, z): seedBlockOffset cells along +X, in the cell containing the
+// (x, y, z): seedBlockOffset cells along +X, in the floor cell below the
 // bot's feet. Floor, not int64() truncation: truncation rounds negative
 // coordinates toward zero, so a bot at y=-59.5 (mid-fall after a teleport,
-// in a superflat world whose ground is negative) got the block placed one
-// cell too high - floating two above the floor and unreachable.
+// in a superflat world whose ground is negative) must still seed against the
+// floor below its current feet cell.
 func seedBlockCoords(x, y, z float64) (int64, int64, int64) {
-	return int64(math.Floor(x)) + seedBlockOffset, int64(math.Floor(y)), int64(math.Floor(z))
+	return int64(math.Floor(x)) + seedBlockOffset, int64(math.Floor(y)) - 1, int64(math.Floor(z))
 }
 
 // SeedNearbyBlock ensures a block named blockName exists within radius

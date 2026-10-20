@@ -152,6 +152,42 @@ type Environment struct {
 	episode int
 }
 
+const selfPreservationDistance = 3.0
+
+// moveAwayFromDamage gives a live agent an immediate escape attempt when its
+// health has fallen since the previous environment step. This is primarily
+// for environmental damage such as suffocation: the policy's next action may
+// be ActionWait, or may keep targeting the same blocked location, while the
+// server continues applying damage. The normal reward still charges the
+// health loss.
+func (e *Environment) moveAwayFromDamage(ctx context.Context) {
+	if !e.prevHealthKnown {
+		return
+	}
+	health, _, _, known := e.agent.Health()
+	if !known || health <= 0 || health >= e.prevHealth {
+		return
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return
+	}
+	moveCtx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
+	defer cancel()
+	e.cancelInflight()
+	for _, target := range [][3]float64{
+		{pos.X + selfPreservationDistance, pos.Y, pos.Z},
+		{pos.X, pos.Y, pos.Z + selfPreservationDistance},
+	} {
+		if err := e.agent.MoveTo(moveCtx, target[0], target[1], target[2], false); err == nil {
+			return
+		}
+		if moveCtx.Err() != nil {
+			return
+		}
+	}
+}
+
 // New constructs an Environment. registry is typically actions.NewRegistry()
 // (or a test double registering only what's needed); it must dispatch
 // "movetoquiet" the way actions.MoveToQuiet does (parseFloat'd x/y/z args,
@@ -607,6 +643,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if _, _, _, ok := e.agent.GetPosition(); !ok {
 		return rl.StepResult{}, errPositionUnknown
 	}
+	e.moveAwayFromDamage(ctx)
 
 	dispatch, shouldDispatch, err := e.resolveDispatch(action)
 	if err != nil {
@@ -1161,9 +1198,10 @@ func (e *Environment) notePlacedTable(b farSeededBlock) {
 	e.farSeeded = append(e.farSeeded, b)
 }
 
-// seedChain prepares a chain episode at (x, y, z), the cell beside the goto
-// target: an empty inventory, no stray drops, and a tree (a column of logs
-// tall enough for the chain plus a spare) standing there for the bot to find.
+// seedChain prepares a chain episode at (x, y, z), the cell two blocks beyond
+// the goto target: an empty inventory, no stray drops, and a tree (a column
+// of logs tall enough for the chain plus a spare) standing there for the bot
+// to find.
 func (e *Environment) seedChain(ctx context.Context, far FarSeedAgent, x, y, z int) error {
 	chain, ok := e.agent.(ChainSeedAgent)
 	if !ok {
@@ -1245,16 +1283,22 @@ func (e *Environment) seedAtGoal() bool {
 // farSeededBlock is a block seedFarTargets placed.
 type farSeededBlock struct{ x, y, z int }
 
+// farSeedOffset leaves a full block of horizontal clearance between the goto
+// target and a seeded block. A one-block offset is reachable, but a player
+// navigating to the target can still enter the seeded block's collision box.
+const farSeedOffset = 2
+
 // seedFarTargets places this composite episode's mine block and/or crafting
-// table (and the craft ingredients) next to the goto target, on the cell one
-// block +X of it, so the bot must travel to find them. Placed blocks are
-// recorded and removed at the next Reset.
+// table (and the craft ingredients) next to the goto target, on the cell two
+// blocks +X of it, so the bot must travel to find them without being spawned
+// inside the placement. Placed blocks are recorded and removed at the next
+// Reset.
 func (e *Environment) seedFarTargets(ctx context.Context) error {
 	far, ok := e.agent.(FarSeedAgent)
 	if !ok {
 		return errFarSeedRequiresFarSeedAgent
 	}
-	x, y, z := int(math.Floor(e.targetX))+1, int(math.Floor(e.targetY)), int(math.Floor(e.targetZ))
+	x, y, z := int(math.Floor(e.targetX))+farSeedOffset, int(math.Floor(e.targetY)), int(math.Floor(e.targetZ))
 	if e.cfg.ChainStage > 0 {
 		return e.seedChain(ctx, far, x, y, z)
 	}

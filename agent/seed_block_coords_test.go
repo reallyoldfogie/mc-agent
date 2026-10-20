@@ -18,10 +18,10 @@ func TestSeedBlockCoords_FloorsNegativeCoordinates(t *testing.T) {
 		x, y, z    float64
 		wx, wy, wz int64
 	}{
-		{"on the floor", 10.5, -60, 3.2, 12, -60, 3},
-		{"mid-fall over negative ground", 10.5, -59.5, 3.2, 12, -60, 3},
-		{"negative x and z", -0.5, -60, -3.2, 1, -60, -4},
-		{"positive coordinates", 4.9, 64.1, 7.5, 6, 64, 7},
+		{"on the floor", 10.5, -60, 3.2, 12, -61, 3},
+		{"mid-fall over negative ground", 10.5, -59.5, 3.2, 12, -61, 3},
+		{"negative x and z", -0.5, -60, -3.2, 1, -61, -4},
+		{"positive coordinates", 4.9, 64.1, 7.5, 6, 63, 7},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			x, y, z := seedBlockCoords(tc.x, tc.y, tc.z)

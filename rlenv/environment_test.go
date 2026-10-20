@@ -528,8 +528,8 @@ func TestSeedAtGoalPlacesTargetsNextToTheGotoTargetAndRemovesThemNextReset(t *te
 	if len(agent.seedNearbyBlockCalls) != 0 {
 		t.Fatalf("SeedNearbyBlock was called %d times: a far episode must not seed beside the bot", len(agent.seedNearbyBlockCalls))
 	}
-	if len(agent.seedBlockAtCalls) != 1 || agent.seedBlockAtCalls[0] != (farSeedCall{"minecraft:sand", 31, 0, 0}) {
-		t.Fatalf("SeedBlockAt calls = %v, want sand one block +X of the goto target (30,0,0)", agent.seedBlockAtCalls)
+	if len(agent.seedBlockAtCalls) != 1 || agent.seedBlockAtCalls[0] != (farSeedCall{"minecraft:sand", 32, 0, 0}) {
+		t.Fatalf("SeedBlockAt calls = %v, want sand two blocks +X of the goto target (30,0,0)", agent.seedBlockAtCalls)
 	}
 
 	if _, err := env.Reset(ctx); err != nil {
@@ -537,7 +537,7 @@ func TestSeedAtGoalPlacesTargetsNextToTheGotoTargetAndRemovesThemNextReset(t *te
 	}
 	removed := false
 	for _, r := range agent.restoredBlocks {
-		if r == (restoredBlock{31, 0, 0, "minecraft:air"}) {
+		if r == (restoredBlock{32, 0, 0, "minecraft:air"}) {
 			removed = true
 		}
 	}
