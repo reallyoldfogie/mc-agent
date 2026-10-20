@@ -764,6 +764,7 @@ func TestStepObservationPersistsMineTargetAfterLineOfSightIsLost(t *testing.T) {
 	agent.setMineBlock("minecraft:coal_ore", 3, 0, 4)
 	cfg := testConfig()
 	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineTargetBuried = true
 	env := newTestEnvironment(t, agent, cfg)
 	if _, err := env.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)

@@ -22,4 +22,10 @@ type TrackedEntityInfo struct {
 	Pose     int32  // Raw wire ordinal from protocol
 	PoseName string // Lowercased Java enum name (e.g., "standing", "sitting")
 	HasPose  bool   // True if at least one pose update has been received
+
+	// Dropped-item stack metadata. HasItem is true after the server sends the
+	// item entity's item-stack metadata, including an empty-stack update.
+	ItemID    int32
+	ItemCount int32
+	HasItem   bool
 }

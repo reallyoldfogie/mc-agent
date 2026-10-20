@@ -33,6 +33,11 @@ type Environment struct {
 	prevHealth                float32
 	prevHealthKnown           bool
 	episodeStarted            bool
+	// lastDoneReason explains the most recent Step that returned Done=true.
+	// It is intentionally separate from rl.StepResult, whose public shape is
+	// only observation/reward/done. Callers such as the trainer can use this
+	// diagnostic without changing cRL-go's interface.
+	lastDoneReason string
 
 	// minedBlocks are the blocks this environment's mined-target detection
 	// has seen broken since the last Reset, restored at the start of the
@@ -203,6 +208,7 @@ func (e *Environment) ActionSpace() int { return NumActions }
 // one exception - retrying past the caller's own cancellation would be
 // pure waste.
 func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
+	e.lastDoneReason = ""
 	// episodeIndex is captured once, before any retrying, and passed
 	// explicitly to every resetAttempt call below rather than letting it
 	// read e.episode itself - this is what keeps TaskSelector's "0 for the
@@ -455,7 +461,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftCount = e.craftCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -516,6 +523,21 @@ func (e *Environment) mineTargetBlockInUse() string {
 		return e.cfg.ChainMineTargetBlock
 	}
 	return e.cfg.MineTargetBlock
+}
+
+// mineTargetMemoryEnabled keeps the last-seen target coordinates for buried
+// mining, where the target is expected to disappear behind blocks, but leaves
+// ordinary mine tasks on the pre-buried behavior: their observation reports
+// only a target that is currently visible.
+func (e *Environment) mineTargetMemoryEnabled() bool {
+	return e.cfg.MineTargetBuried || e.cfg.ChainStage == ChainMine
+}
+
+func (e *Environment) observationMineTarget() (x, y, z float64, visible bool) {
+	if e.mineTargetMemoryEnabled() {
+		return e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen
+	}
+	return e.mineX, e.mineY, e.mineZ, e.mineVisible
 }
 
 // refreshMineTarget re-resolves the nearest currently-visible instance of
@@ -704,6 +726,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		healthKnownBefore: e.prevHealthKnown,
 		healthKnownAfter:  newHealthKnown,
 	})
+	doneReason := ""
+	if done {
+		doneReason = "reward"
+	}
 	if gotoActive && newDistance <= e.cfg.ArrivalThreshold {
 		if e.compositeGotoTask() {
 			// "Go there, then mine/craft": reaching the target pays once
@@ -716,12 +742,14 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		} else {
 			reward += arrivalBonus
 			done = true
+			doneReason = "goto"
 		}
 	}
 	if mined {
 		if !e.chainActive() {
 			reward += mineRewardBonus
 			done = true
+			doneReason = "mine"
 		}
 		if restorableBlockName(prevMineBlockName) {
 			e.minedBlocks = append(e.minedBlocks, minedBlock{int(prevMineX), int(prevMineY), int(prevMineZ), prevMineBlockName})
@@ -730,10 +758,12 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if craftedThisStep {
 		reward += craftRewardBonus
 		done = true
+		doneReason = "craft"
 	}
 	reward += chainReward
 	if chainDone {
 		done = true
+		doneReason = "chain"
 	}
 	e.prevDistance = newDistance
 	e.prevHealth, e.prevHealthKnown = newHealth, newHealthKnown
@@ -753,7 +783,8 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
@@ -766,12 +797,25 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.lastObsValues = append(e.lastObsValues[:0], obs.Values...)
 	if e.cfg.StuckTimeout > 0 && e.stepsWithoutObservationChange >= e.cfg.StuckTimeout {
 		done = true
+		doneReason = "stuck_timeout"
 	}
 	if e.cfg.MaxConsecutiveStepTimeouts > 0 && e.consecutiveStepTimeouts >= e.cfg.MaxConsecutiveStepTimeouts {
 		done = true
+		doneReason = "step_timeout"
+	}
+	if done {
+		e.lastDoneReason = doneReason
 	}
 
 	return rl.StepResult{Observation: obs, Reward: reward, Done: done}, nil
+}
+
+// DoneReason reports why the most recent Step returned Done=true. It returns
+// an empty string while the current episode is still active. This is a
+// diagnostic extension; rl.Environment consumers do not need to know about
+// it.
+func (e *Environment) DoneReason() string {
+	return e.lastDoneReason
 }
 
 // maxJitterRetries bounds Reset's already-arrived guard (see its call
