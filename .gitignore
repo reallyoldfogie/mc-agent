@@ -41,6 +41,7 @@ testing/vehicles/versions
 /old/
 /src/
 /code-archive/ 
+code-archive.tar
 
 # Go coverage and test files
 *.coverprofile
