@@ -49,19 +49,21 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 23 (21 before the equip block, 17 before the chain block, 14 before
-	// the goal block): indices 0-13 are the original per-task numeric
-	// features; 14-16 are the goal-conditioning block (goalGoToActive/
-	// goalMineActive/goalCraftActive) added by
+	// 28 (23 before the pickup block, 21 before the equip block, 17 before
+	// the chain block, 14 before the goal block): indices 0-13 are the
+	// original per-task numeric features; 14-16 are the goal-conditioning
+	// block (goalGoToActive/goalMineActive/goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
 	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
-	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1)
-	// — see observation.go's own doc comment on observationSize for the
-	// full layout. This exact value is also what makes cmd/rl-train's
-	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
-	// reject an old checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 23 {
-		t.Fatalf("ObservationSize() = %d, want 23", got)
+	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1);
+	// 23-27 are the pickup block (pickupDx/Dy/Dz/pickupVisible/
+	// goalPickupActive, that plan's Phase 2) — see observation.go's own doc
+	// comment on observationSize for the full layout. This exact value is
+	// also what makes cmd/rl-train's EnvironmentID
+	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
+	// checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 28 {
+		t.Fatalf("ObservationSize() = %d, want 28", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -76,8 +78,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 23 {
-		t.Fatalf("len(obs.Values) = %d, want 23 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 28 {
+		t.Fatalf("len(obs.Values) = %d, want 28 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1150,6 +1152,158 @@ func TestActionMaskEquipAndUseItemLegalOnlyWhenConfigured(t *testing.T) {
 	}
 	if legal := configured.ActionMask()[rlenv.ActionUseItem]; !legal {
 		t.Fatalf("ActionUseItem legal = false, want true (Config.EquipTargetItem set)")
+	}
+}
+
+// --- ActionPickUpItem (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2) ---
+
+func TestStepPickUpWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPickupItem("minecraft:stick", 3, 0, 0) // present in the world, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPickUpItem)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (Config.PickupTargetItem unset, safe no-op like ActionWait)", agent.moveToWithChatCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[26]; visible != 0 {
+		t.Fatalf("pickupVisible = %v, want 0 (no task configured)", visible)
+	}
+}
+
+func TestStepPickUpWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PickupTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPickUpItem)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (nothing visible to pick up)", agent.moveToWithChatCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[26]; visible != 0 {
+		t.Fatalf("pickupVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepPickUpActionCollectsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPickupItem("minecraft:stick", 3, 0, 0)
+	cfg := testConfig()
+	cfg.PickupTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPickUpItem)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 1 {
+		t.Fatalf("MoveToWithChat calls = %d, want 1", agent.moveToWithChatCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target item was collected)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (pickupRewardBonus)", result.Reward)
+	}
+	if got := agent.InventoryCount("minecraft:stick"); got != 1 {
+		t.Fatalf("held count after Step = %d, want 1", got)
+	}
+}
+
+func TestStepObservationReflectsPickupTargetDeltaRegardlessOfAction(t *testing.T) {
+	// pickupVisible is populated every step once configured, not only on
+	// steps that dispatch ActionPickUpItem — mirrors mineVisible's
+	// equivalent test.
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPickupItem("minecraft:stick", 3, 0, 0)
+	cfg := testConfig()
+	cfg.PickupTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[26]; visible != 1 {
+		t.Fatalf("pickupVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[27]; active != 1 {
+		t.Fatalf("goalPickupActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[23]; dx != 3 {
+		t.Fatalf("pickupDx at Reset = %v, want 3", dx)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (ActionWait doesn't dispatch pickupitem)", agent.moveToWithChatCalls)
+	}
+	if visible := result.Observation.Values[26]; visible != 1 {
+		t.Fatalf("pickupVisible after ActionWait = %v, want 1 (still visible, nothing consumed)", visible)
+	}
+}
+
+func TestActionMaskPickUpItemLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PickupTargetItem = "minecraft:stick"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionPickUpItem]; legal {
+		t.Fatalf("ActionPickUpItem legal = true, want false (configured but nothing visible yet)")
+	}
+	// Cross-check the mask against what Step actually does with it.
+	if _, err := env.Step(context.Background(), rlenv.ActionPickUpItem); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (mask reported ActionPickUpItem illegal)", agent.moveToWithChatCalls)
+	}
+
+	agent.setPickupItem("minecraft:stick", 3, 0, 0)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[26]; visible != 1 {
+		t.Fatalf("pickupVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionPickUpItem]; !legal {
+		t.Fatalf("ActionPickUpItem legal = false, want true (target now visible)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionPickUpItem]; legal {
+		t.Fatalf("ActionPickUpItem legal = true, want false (Config.PickupTargetItem unset, even though visible)")
 	}
 }
 

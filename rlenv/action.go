@@ -93,8 +93,21 @@ const (
 	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1's note on why.
 	ActionUseItem
 
+	// ActionPickUpItem dispatches "pickupitem <x> <y> <z>" at Environment's
+	// own already-resolved e.pickupX/Y/Z (see refreshPickupTarget) — not
+	// "pickupitem <itemName>" by name, for the same reason ActionMine
+	// dispatches resolved coordinates rather than redispatching by name
+	// (see ActionMine's own doc comment): avoids a second, independently-
+	// radius'd FindNearestVisibleItemOfType search inside the dispatched
+	// action. A safe no-op when Config.PickupTargetItem is unset or
+	// nothing is currently visible (!e.pickupVisible) — this environment
+	// poses at most one pickup task per instance, mirroring
+	// Config.MineTargetBlock's own "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+	ActionPickUpItem
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionUseItem) + 1
+	NumActions = int(ActionPickUpItem) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -109,13 +122,14 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName  = "movetoquiet"
-	mineActionName    = "mine"
-	craftActionName   = "craft"
-	placeActionName   = "place"
-	equipActionName   = "equip"
-	useItemActionName = "useitem"
-	useItemOffhandArg = "offhand"
+	moveToActionName     = "movetoquiet"
+	mineActionName       = "mine"
+	craftActionName      = "craft"
+	placeActionName      = "place"
+	equipActionName      = "equip"
+	useItemActionName    = "useitem"
+	useItemOffhandArg    = "offhand"
+	pickUpItemActionName = "pickupitem"
 )
 
 // actionDispatch describes what Step should send through the
@@ -191,6 +205,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			args = []string{useItemOffhandArg}
 		}
 		return actionDispatch{name: useItemActionName, args: args}, true, nil
+	case ActionPickUpItem:
+		if !e.actionLegal(ActionPickUpItem) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: pickUpItemActionName, args: coordArgs(e.pickupX, e.pickupY, e.pickupZ)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -237,6 +256,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// Both gated on the same field — see Config.EquipTargetItem's own
 		// doc comment for why ActionUseItem has no independent enable flag.
 		return e.cfg.EquipTargetItem != ""
+	case ActionPickUpItem:
+		return e.cfg.PickupTargetItem != "" && e.pickupVisible
 	default:
 		return false
 	}

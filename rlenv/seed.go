@@ -98,6 +98,22 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			return fmt.Errorf("seeding craft ingredients: %w", err)
 		}
 	}
+	if cfg.PickupTargetItem != "" {
+		// Optional, like ToolSeedAgent above: a SeedAgent that doesn't also
+		// implement ItemDropSeedAgent is free to leave this task unseeded
+		// rather than fail the episode over it (docs/plans/
+		// RL_ACTION_SPACE_EXPANSION_II.md Phase 2) — *agent implements both,
+		// so this only matters for a SeedAgent implementation that doesn't.
+		if itemSeeder, ok := agent.(ItemDropSeedAgent); ok {
+			radius := cfg.PickupSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().PickupSearchRadius
+			}
+			if err := itemSeeder.SeedDroppedItem(ctx, cfg.PickupTargetItem, radius); err != nil {
+				return fmt.Errorf("seeding pickup target: %w", err)
+			}
+		}
+	}
 	return nil
 }
 

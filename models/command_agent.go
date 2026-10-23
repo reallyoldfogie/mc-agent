@@ -157,6 +157,18 @@ type CommandAgent interface {
 	// none was located.
 	FindNearestVisibleItem(ctx context.Context, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 
+	// FindNearestVisibleItemOfType is FindNearestVisibleItem filtered to
+	// dropped-item entities actually carrying itemName (e.g.
+	// "minecraft:stick") — FindNearestVisibleItem itself only filters by
+	// entity type, so it can't tell one dropped item apart from another.
+	// found is false if none was located (including if itemName's stack
+	// content can't be resolved, e.g. the entity metadata hasn't arrived
+	// yet). Note: vanilla auto-collects ANY item (not just itemName) the
+	// agent walks close enough to (with inventory space, and not standing
+	// on a block above it) — this only resolves which position to aim for,
+	// it doesn't prevent incidental pickup of something else along the way.
+	FindNearestVisibleItemOfType(ctx context.Context, itemName string, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
+
 	// CraftItem crafts itemName (e.g. "minecraft:stick") using the player's
 	// own 2x2 inventory grid when the recipe fits it, or a nearby crafting
 	// table's 3x3 grid otherwise. Returns an error if no known recipe

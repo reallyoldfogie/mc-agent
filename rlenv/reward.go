@@ -52,6 +52,13 @@ const (
 	// ActionUseItem deliberately has no reward component of its own — see
 	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
 	equipRewardBonus float32 = 10.0
+	// pickupRewardBonus is added once, the step Config.PickupTargetItem's
+	// held inventory count is observed to increase (see Environment.Step's
+	// before/after InventoryCount comparison) — same magnitude/philosophy
+	// as craftRewardBonus, not mineRewardBonus: there's no position whose
+	// content to diff (the item entity disappears entirely once collected),
+	// so this is judged the same way craftRewardBonus is.
+	pickupRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

@@ -141,6 +141,35 @@ type fakeAgent struct {
 	heldItem     string
 	useItemCalls int
 	useItemHands []models.Hand
+
+	// Item Pickup simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 2): a single target item, pickupTargetName, dropped at
+	// (pickupItemX,Y,Z), visible while pickupItemPresent. MoveTo/
+	// MoveToWithChat reaching within pickupRange of it "collects" it
+	// (clears pickupItemPresent, increments pickupHeldCount) — mirrors
+	// vanilla's own walk-near-it auto-collect behavior the real
+	// PickUpItem/pickUpNearbyItem commands rely on, and mineBlockName's
+	// "actually mutates state" precedent rather than a no-op stub.
+	pickupTargetName                      string
+	pickupItemX, pickupItemY, pickupItemZ float64
+	pickupItemPresent                     bool
+	pickupHeldCount                       int
+	findItemOfTypeCalls                   int
+}
+
+// pickupRange is how close MoveTo must land to the simulated pickup item
+// to "collect" it — mirrors vanilla's actual pickup-range generosity
+// (collects without landing exactly on the drop's cell).
+const pickupRange = 1.5
+
+// setPickupItem configures the simulated Item Pickup target — see
+// pickupTargetName's own doc comment.
+func (f *fakeAgent) setPickupItem(name string, x, y, z float64) {
+	f.mu.Lock()
+	f.pickupTargetName = name
+	f.pickupItemX, f.pickupItemY, f.pickupItemZ = x, y, z
+	f.pickupItemPresent = true
+	f.mu.Unlock()
 }
 
 type seedNearbyBlockCall struct {
@@ -302,6 +331,13 @@ func (f *fakeAgent) MoveTo(ctx context.Context, x, y, z float64, _ bool) error {
 	if err == nil {
 		f.mu.Lock()
 		f.x, f.y, f.z = x, y, z
+		if f.pickupItemPresent {
+			dx, dy, dz := x-f.pickupItemX, y-f.pickupItemY, z-f.pickupItemZ
+			if dx*dx+dy*dy+dz*dz <= pickupRange*pickupRange {
+				f.pickupItemPresent = false
+				f.pickupHeldCount++
+			}
+		}
 		f.mu.Unlock()
 	}
 	return err
@@ -493,6 +529,9 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	if f.craftTargetName != "" && itemName == f.craftTargetName {
 		return f.craftHeldCount
 	}
+	if f.pickupTargetName != "" && itemName == f.pickupTargetName {
+		return f.pickupHeldCount
+	}
 	return 0
 }
 
@@ -511,6 +550,21 @@ func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]
 
 func (f *fakeAgent) FindNearestVisibleItem(context.Context, float64) (entityID int32, x, y, z float64, found bool, err error) {
 	return 0, 0, 0, 0, false, nil
+}
+
+// FindNearestVisibleItemOfType reports the simulated pickup item's position
+// only when its name matches and it's still present — mirrors
+// FindVisibleBlock's "finds the nearest visible instance of that specific
+// name" contract closely enough to exercise rlenv's real dispatch/
+// observation logic without a live server.
+func (f *fakeAgent) FindNearestVisibleItemOfType(_ context.Context, itemName string, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findItemOfTypeCalls++
+	if !f.pickupItemPresent || f.pickupTargetName == "" || itemName != f.pickupTargetName {
+		return 0, 0, 0, 0, false, nil
+	}
+	return 1, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
 }
 
 // --- rlenv.SeedAgent (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---

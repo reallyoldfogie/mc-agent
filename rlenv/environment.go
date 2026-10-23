@@ -131,6 +131,21 @@ type Environment struct {
 	// the caller.
 	equipReady bool
 
+	// pickupX/Y/Z/pickupVisible cache the last-resolved nearest visible
+	// Config.PickupTargetItem instance (see refreshPickupTarget) — the
+	// pickup-task analogue of mineX/Y/Z/mineVisible, same caching shape
+	// and same reason (refreshed once per Step/Reset, read as "before this
+	// step" state).
+	pickupX, pickupY, pickupZ float64
+	pickupVisible             bool
+
+	// pickupCount caches the last-known held count of
+	// Config.PickupTargetItem (see pickupCountNow) — the pickup-task
+	// analogue of craftCount, read at the start of each Step as "before
+	// this step" state for the reward check (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+	pickupCount int
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -373,6 +388,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.ChainStage = override.ChainStage
 		e.cfg.ChainMineTargetBlock = override.ChainMineTargetBlock
 		e.cfg.EquipTargetItem = override.EquipTargetItem
+		e.cfg.PickupTargetItem = override.PickupTargetItem
+		e.cfg.PickupSearchRadius = override.PickupSearchRadius
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -502,12 +519,16 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshPickupTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
+	e.pickupCount = e.pickupCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -565,6 +586,38 @@ func (e *Environment) equipReadyNow() bool {
 		return false
 	}
 	return e.agent.IsEquipped(e.cfg.EquipTargetItem)
+}
+
+// pickupCountNow returns the bot's current held count of
+// Config.PickupTargetItem (see LiveAgent.InventoryCount), or 0 if
+// Config.PickupTargetItem is unset — mirrors craftCountNow's
+// empty-target handling.
+func (e *Environment) pickupCountNow() int {
+	if e.cfg.PickupTargetItem == "" {
+		return 0
+	}
+	return e.agent.InventoryCount(e.cfg.PickupTargetItem)
+}
+
+// refreshPickupTarget re-resolves the nearest currently-visible instance of
+// Config.PickupTargetItem and stores it into e.pickupX/Y/Z/pickupVisible,
+// for observation/dispatch purposes — the pickup-task analogue of
+// refreshMineTarget (see its own doc comment for why this is called once
+// at Reset and once per Step, reading the *previous* call's cached result
+// as "before this step" state). Leaves e.pickupVisible=false without error
+// if Config.PickupTargetItem is unset or nothing matching is currently
+// visible; only a genuine FindNearestVisibleItemOfType error is returned.
+func (e *Environment) refreshPickupTarget(ctx context.Context) error {
+	if e.cfg.PickupTargetItem == "" {
+		e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = 0, 0, 0, false
+		return nil
+	}
+	_, x, y, z, found, err := e.agent.FindNearestVisibleItemOfType(ctx, e.cfg.PickupTargetItem, float64(e.cfg.PickupSearchRadius))
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving pickup target: %w", err)
+	}
+	e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = x, y, z, found
+	return nil
 }
 
 // mineTargetBlockInUse resolves which block name refreshMineTarget actually
@@ -687,6 +740,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.equipReady mirrors prevCraftCount's own reasoning above, for the
 	// equip task.
 	prevEquipReady := e.equipReady
+	// e.pickupCount mirrors prevCraftCount's own reasoning above, for the
+	// pickup task.
+	prevPickupCount := e.pickupCount
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -748,6 +804,13 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// reward.go's equipRewardBonus doc comment).
 	newEquipReady := e.equipReadyNow()
 	equippedThisStep := e.cfg.EquipTargetItem != "" && newEquipReady && !prevEquipReady
+
+	// pickedUpThisStep is judged from an actual InventoryCount increase,
+	// not from whether ActionPickUpItem was the dispatched action —
+	// mirrors craftedThisStep's own reasoning above (see reward.go's
+	// pickupRewardBonus doc comment).
+	newPickupCount := e.pickupCountNow()
+	pickedUpThisStep := e.cfg.PickupTargetItem != "" && newPickupCount > prevPickupCount
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
@@ -831,6 +894,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "equip"
 	}
+	if pickedUpThisStep {
+		reward += pickupRewardBonus
+		done = true
+		doneReason = "pickup"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -847,6 +915,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshPickupTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -855,8 +926,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = newEquipReady
+	e.pickupCount = newPickupCount
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

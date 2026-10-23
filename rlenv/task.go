@@ -103,6 +103,29 @@ type Config struct {
 	// applies no table condition. Ignored if CraftTargetItem is empty.
 	CraftSearchRadius int
 
+	// PickupTargetItem, if set, is the item name (e.g. "minecraft:stick")
+	// this episode's item-pickup task targets — enables ActionPickUpItem,
+	// following MineTargetBlock's exact "environment poses the task"
+	// pattern (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2). Empty
+	// (the default) means this Environment instance doesn't pose a pickup
+	// task: ActionPickUpItem becomes a safe no-op, not an error — see
+	// action.go's resolveDispatch. Unlike MineTargetBlock, there's no
+	// position-based reward check possible here (the item entity simply
+	// disappears once collected — there's no "did this position's content
+	// change" the way a mined block's position still exists, now as air):
+	// reward is judged from an InventoryCount increase instead, the same
+	// shape CraftTargetItem's own reward already uses.
+	PickupTargetItem string
+
+	// PickupSearchRadius bounds FindNearestVisibleItemOfType's search when
+	// locating the nearest visible PickupTargetItem instance, in blocks.
+	// Ignored if PickupTargetItem is empty. <= 0 means unbounded (mirrors
+	// FindNearestVisibleItemOfType's own "maxDistance <= 0 disables the
+	// limit" convention, unlike MineSearchRadius's "<=0 defers to a built-in
+	// default" — FindNearestVisibleItemOfType has no such built-in default
+	// to defer to) — see DefaultConfig's own default for a reasonable value.
+	PickupSearchRadius int
+
 	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
 	// this episode's equip task wants held (a tool/weapon) or worn (armor/
 	// elytra) — enables ActionEquip and ActionUseItem, following
@@ -413,6 +436,11 @@ type TaskOverride struct {
 
 	// EquipTargetItem is Config.EquipTargetItem for this episode.
 	EquipTargetItem string
+
+	// PickupTargetItem is Config.PickupTargetItem for this episode.
+	PickupTargetItem string
+	// PickupSearchRadius is Config.PickupSearchRadius for this episode.
+	PickupSearchRadius int
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -427,6 +455,10 @@ func DefaultConfig() Config {
 		// the "mine <blockName>" chat command — kept as a separate literal
 		// here since that constant is unexported.
 		MineSearchRadius: 32,
+		// Matches actions/commands.go's own pickUpItemDefaultMaxDistance
+		// default for the "pickUpItem <itemName>" chat command — same
+		// reasoning as MineSearchRadius above.
+		PickupSearchRadius: 8,
 	}
 }
 

@@ -85,6 +85,23 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          simpler and matches how the chain block (17-20) itself was
 //	          appended rather than interleaved.
 //
+//	index 23: pickupDx — nearest visible instance of Config.PickupTargetItem
+//	          (resolved via LiveAgent.FindNearestVisibleItemOfType) minus
+//	          current X (blocks); 0 if not visible/not configured.
+//	index 24: pickupDy — same, Y.
+//	index 25: pickupDz — same, Z.
+//	index 26: pickupVisible — 1.0 if Config.PickupTargetItem is set and a
+//	          visible instance was found this step, 0.0 otherwise. Mirrors
+//	          mineVisible's role exactly (indices 9-12) — gates pickupDx/
+//	          Dy/Dz the same way, and also doubles as ActionPickUpItem's
+//	          legality/mask condition (see action.go's actionLegal), same
+//	          dual role mineVisible already plays for ActionMine.
+//	index 27: goalPickupActive — 1.0 if ActionPickUpItem is legal this
+//	          episode (Config.PickupTargetItem set), 0.0 otherwise. Same
+//	          active-vs-ready distinction goalMineActive/goalCraftActive
+//	          have against their own ready bits (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -128,7 +145,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 23
+const observationSize = 28
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -150,7 +167,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -162,6 +179,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	ready := float32(0)
 	if craftReady {
 		ready = 1
+	}
+	pickupDx, pickupDy, pickupDz, pickupVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if pickupVisible {
+		pickupDx, pickupDy, pickupDz, pickupVisibleFlag = float32(pickupX-x), float32(pickupY-y), float32(pickupZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -189,6 +210,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				boolToFloat32(chain.placed),
 				boolToFloat32(equipReady),
 				boolToFloat32(equipActive),
+				pickupDx / obsDistanceScale,
+				pickupDy / obsDistanceScale,
+				pickupDz / obsDistanceScale,
+				pickupVisibleFlag,
+				boolToFloat32(pickupActive),
 			},
 		}
 	}
@@ -217,6 +243,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			boolToFloat32(chain.placed),
 			boolToFloat32(equipReady),
 			boolToFloat32(equipActive),
+			pickupDx,
+			pickupDy,
+			pickupDz,
+			pickupVisibleFlag,
+			boolToFloat32(pickupActive),
 		},
 	}
 }

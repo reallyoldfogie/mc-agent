@@ -854,6 +854,70 @@ func (a *agent) FindNearestVisibleItem(ctx context.Context, maxDistance float64)
 	return a.FindVisibleEntity(ctx, itemTypeID, maxDistance)
 }
 
+// FindNearestVisibleItemOfType is FindNearestVisibleItem filtered to
+// dropped-item entities actually carrying itemName — see
+// models.CommandAgent's own doc comment for why FindNearestVisibleItem
+// alone can't do this (it only filters by entity type, not stack content).
+// A dropped item's stack contents (ItemID/HasItem, trackedEntity,
+// tracking.go) arrive via ClientboundSetEntityMetadata the same way health
+// does for a mob — already parsed and stored for every other purpose
+// (GetTrackedEntities' own TrackedEntityInfo already carries them), just
+// never filtered on before this existed. found is false (not an error) if
+// itemName's stack content hasn't been resolved yet for any candidate
+// entity (metadata simply hasn't arrived), the same "not ready yet, not
+// broken" treatment FindVisibleBlock gives an unloaded chunk.
+func (a *agent) FindNearestVisibleItemOfType(ctx context.Context, itemName string, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error) {
+	itemTypeID, ok := a.GetEntityTypeID("minecraft:item")
+	if !ok {
+		return 0, 0, 0, 0, false, errors.New("minecraft:item entity type not found in registry")
+	}
+	a.itemMgrMu.RLock()
+	itemMgr := a.itemMgr
+	a.itemMgrMu.RUnlock()
+	if itemMgr == nil {
+		return 0, 0, 0, 0, false, errors.New("item manager not ready")
+	}
+	normalized := normalizeItemName(itemName)
+
+	entities := a.GetTrackedEntities()
+	pos, _, _, posOK := a.GetPosition()
+	if !posOK {
+		return 0, 0, 0, 0, false, errors.New("position not initialized")
+	}
+
+	bestDist := math.MaxFloat64
+	var bestID int32
+	var bestX, bestY, bestZ float64
+	for _, ent := range entities {
+		if ent.Removed || ent.EntityType != itemTypeID || !ent.HasItem {
+			continue
+		}
+		if normalizeItemName(itemMgr.GetItemNameByID(ent.ItemID)) != normalized {
+			continue
+		}
+		d := pos.DistanceTo(models.V3{X: ent.X, Y: ent.Y, Z: ent.Z})
+		if maxDistance > 0 && d > maxDistance {
+			continue
+		}
+		visible, visErr := a.HasLineOfSight(ctx, ent.X, ent.Y, ent.Z)
+		if visErr != nil {
+			return 0, 0, 0, 0, false, visErr
+		}
+		if !visible {
+			continue
+		}
+		if d < bestDist {
+			bestDist = d
+			bestID = ent.EntityID
+			bestX, bestY, bestZ = ent.X, ent.Y, ent.Z
+		}
+	}
+	if bestDist == math.MaxFloat64 {
+		return 0, 0, 0, 0, false, nil
+	}
+	return bestID, bestX, bestY, bestZ, true, nil
+}
+
 // shellOffsetsCache memoizes computeShellOffsets by radius - see
 // shellOffsets' own doc comment on why this is safe and worth doing.
 var (
