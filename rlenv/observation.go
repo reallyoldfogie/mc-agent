@@ -68,6 +68,23 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // change the checkpoint environment ID, so old checkpoints are refused
 // rather than misread.
 //
+//	index 21: equipReady — 1.0 if Config.EquipTargetItem is set and
+//	          currently equipped (see LiveAgent.IsEquipped), 0.0 otherwise.
+//	          Plays the same role for the equip task that craftReady plays
+//	          for craft: no position/distance to encode (an item equips
+//	          from wherever it is in the inventory), so "is the task already
+//	          done" is the useful signal instead — see
+//	          docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
+//	index 22: goalEquipActive — 1.0 if ActionEquip/ActionUseItem are legal
+//	          this episode (Config.EquipTargetItem set), 0.0 otherwise.
+//	          Same active-vs-ready distinction as goalMineActive/
+//	          goalCraftActive (indices 15-16) have against their own ready
+//	          bits, kept here as a trailing pair instead of inside the
+//	          original indices 9-16 block since no trained checkpoint
+//	          existed yet to make reordering worth avoiding — appending was
+//	          simpler and matches how the chain block (17-20) itself was
+//	          appended rather than interleaved.
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -111,7 +128,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 21
+const observationSize = 23
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -133,7 +150,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -170,6 +187,8 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				float32(chain.planks) / chainInventoryCountNorm,
 				float32(chain.tables) / chainInventoryCountNorm,
 				boolToFloat32(chain.placed),
+				boolToFloat32(equipReady),
+				boolToFloat32(equipActive),
 			},
 		}
 	}
@@ -196,6 +215,8 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			float32(chain.planks),
 			float32(chain.tables),
 			boolToFloat32(chain.placed),
+			boolToFloat32(equipReady),
+			boolToFloat32(equipActive),
 		},
 	}
 }

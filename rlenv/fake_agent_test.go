@@ -56,8 +56,8 @@ type fakeAgent struct {
 	// which simulates it no longer existing at all), for exercising the
 	// mine-target "memory" (docs/plans/14-buried-block-mining-and-memory-map.md,
 	// mc-rsi-trainer).
-	mineBlockHidden bool
-	collectDropsCalls                  int
+	mineBlockHidden   bool
+	collectDropsCalls int
 
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
@@ -131,6 +131,16 @@ type fakeAgent struct {
 	// candidates the reachability gate tried, not just how many.
 	findPathUnreachable func(x, y, z float64) bool
 	findPathCalls       []models.V3
+
+	// Equip/UseItem simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 1): heldItem is whatever Equip was last called with — mirrors
+	// mineBlockName's "actually mutates state" precedent, so Environment's
+	// real equip dispatch/reward logic is exercised for real rather than
+	// stubbed out. useItemCalls/useItemHands record every UseItem call so
+	// tests can assert dispatch args reached it correctly.
+	heldItem     string
+	useItemCalls int
+	useItemHands []models.Hand
 }
 
 type seedNearbyBlockCall struct {
@@ -323,8 +333,34 @@ func (f *fakeAgent) MountEntity(context.Context, int32) error   { return nil }
 func (f *fakeAgent) MountNearest(context.Context, string) error { return nil }
 func (f *fakeAgent) DismountEntity() error                      { return nil }
 func (f *fakeAgent) JumpVehicle(context.Context, int32) error   { return nil }
-func (f *fakeAgent) Equip(context.Context, string) error        { return nil }
-func (f *fakeAgent) UseItem(context.Context, models.Hand) error { return nil }
+
+// Equip "equips" itemName by recording it as heldItem — see heldItem's own
+// doc comment for why this mutates state rather than being a no-op stub.
+func (f *fakeAgent) Equip(_ context.Context, itemName string) error {
+	f.mu.Lock()
+	f.heldItem = itemName
+	f.mu.Unlock()
+	return nil
+}
+
+// UseItem records the call and which hand it was sent for, so tests can
+// assert ActionUseItem's dispatch reached it with the right args.
+func (f *fakeAgent) UseItem(_ context.Context, hand models.Hand) error {
+	f.mu.Lock()
+	f.useItemCalls++
+	f.useItemHands = append(f.useItemHands, hand)
+	f.mu.Unlock()
+	return nil
+}
+
+// IsEquipped reports whether itemName matches heldItem — mirrors the real
+// implementation's "worn or held" contract closely enough for this
+// package's equip-task tests, which only ever equip one item at a time.
+func (f *fakeAgent) IsEquipped(itemName string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heldItem != "" && f.heldItem == itemName
+}
 func (f *fakeAgent) FlyTo(context.Context, float64, float64, float64) error {
 	return nil
 }

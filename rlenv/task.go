@@ -103,6 +103,26 @@ type Config struct {
 	// applies no table condition. Ignored if CraftTargetItem is empty.
 	CraftSearchRadius int
 
+	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
+	// this episode's equip task wants held (a tool/weapon) or worn (armor/
+	// elytra) — enables ActionEquip and ActionUseItem, following
+	// MineTargetBlock's exact "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1). Empty (the
+	// default) means this Environment instance doesn't pose an equip task:
+	// both actions become safe no-ops, the same way ActionMine/ActionCraft
+	// already do for an unconfigured instance — see action.go's
+	// resolveDispatch. ActionUseItem is gated on this field too, not given
+	// its own independent enable flag: using an item only makes sense once
+	// something is equipped to use, so this one field poses both halves of
+	// the task (see that plan document's own note on why ActionUseItem gets
+	// no standalone reward component).
+	EquipTargetItem string
+
+	// UseItemOffhand selects which hand ActionUseItem sends "useItem" for
+	// — true dispatches "useitem offhand", false (the default) dispatches
+	// "useitem" (main hand). Ignored if EquipTargetItem is empty.
+	UseItemOffhand bool
+
 	// Seeder, if set, is called once per Reset to prepare the world for
 	// this episode's configured task(s) — see EpisodeSeeder's doc comment
 	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) for exactly what this
@@ -390,6 +410,9 @@ type TaskOverride struct {
 	MineTargetBuried   bool
 	CraftTargetItem    string
 	CraftSearchRadius  int
+
+	// EquipTargetItem is Config.EquipTargetItem for this episode.
+	EquipTargetItem string
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

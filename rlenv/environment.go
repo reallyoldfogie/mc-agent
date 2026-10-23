@@ -124,6 +124,13 @@ type Environment struct {
 	craftCount int
 	craftReady bool
 
+	// equipReady caches the last-computed LiveAgent.IsEquipped(Config.
+	// EquipTargetItem) result — the equip-task analogue of craftReady,
+	// read at the start of each Step as "before this step" state (see
+	// Step's equippedThisStep check) and for the observation returned to
+	// the caller.
+	equipReady bool
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -365,6 +372,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.CollectDrops = override.CollectDrops
 		e.cfg.ChainStage = override.ChainStage
 		e.cfg.ChainMineTargetBlock = override.ChainMineTargetBlock
+		e.cfg.EquipTargetItem = override.EquipTargetItem
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -497,8 +505,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftCount = e.craftCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
+	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -547,6 +556,16 @@ func (e *Environment) craftReadyNow(ctx context.Context) bool {
 
 // craftingTableBlock is the block Config.CraftSearchRadius looks for.
 const craftingTableBlock = "minecraft:crafting_table"
+
+// equipReadyNow reports whether Config.EquipTargetItem (if any) is
+// currently equipped (see LiveAgent.IsEquipped), or false if it's unset —
+// mirrors craftReadyNow's empty-target handling.
+func (e *Environment) equipReadyNow() bool {
+	if e.cfg.EquipTargetItem == "" {
+		return false
+	}
+	return e.agent.IsEquipped(e.cfg.EquipTargetItem)
+}
 
 // mineTargetBlockInUse resolves which block name refreshMineTarget actually
 // tracks right now: ordinarily Config.MineTargetBlock, but for a
@@ -665,6 +684,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// of whether that action was ActionCraft (mirrors prevMineVisible's own
 	// reasoning above).
 	prevCraftCount := e.craftCount
+	// e.equipReady mirrors prevCraftCount's own reasoning above, for the
+	// equip task.
+	prevEquipReady := e.equipReady
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -719,6 +741,13 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// "increased."
 	newCraftCount := e.craftCountNow()
 	craftedThisStep := e.cfg.CraftTargetItem != "" && newCraftCount > prevCraftCount
+
+	// equippedThisStep is judged from an actual IsEquipped transition
+	// (false -> true), not from whether ActionEquip was the dispatched
+	// action — mirrors craftedThisStep's own reasoning above (see
+	// reward.go's equipRewardBonus doc comment).
+	newEquipReady := e.equipReadyNow()
+	equippedThisStep := e.cfg.EquipTargetItem != "" && newEquipReady && !prevEquipReady
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
@@ -797,6 +826,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "craft"
 	}
+	if equippedThisStep {
+		reward += equipRewardBonus
+		done = true
+		doneReason = "equip"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -820,8 +854,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
+	e.equipReady = newEquipReady
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

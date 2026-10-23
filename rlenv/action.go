@@ -74,8 +74,27 @@ const (
 	// the original four so their numbers never change.
 	ActionPlace
 
+	// ActionEquip dispatches "equip <Config.EquipTargetItem>" — mc-agent's
+	// own Equip action (actions/commands.go) finds the item anywhere in the
+	// inventory and readies it (wears armor/elytra, holds anything else).
+	// A safe no-op (like an unconfigured ActionMine/ActionCraft) when
+	// Config.EquipTargetItem is unset — docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 1, mirroring ActionMine/ActionCraft's "environment poses the
+	// task" pattern exactly. Appended after ActionPlace so earlier actions'
+	// numbers never change.
+	ActionEquip
+	// ActionUseItem dispatches "useitem" (or "useitem offhand" if
+	// Config.UseItemOffhand) — mc-agent's own UseItem action, a plain
+	// right-click interaction with whatever is held. Gated on
+	// Config.EquipTargetItem being set, the same as ActionEquip: using an
+	// item only makes sense as part of an equip task, not as an
+	// independent one (see Config.EquipTargetItem's own doc comment).
+	// Deliberately has no reward component of its own — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1's note on why.
+	ActionUseItem
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionPlace) + 1
+	NumActions = int(ActionUseItem) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -90,10 +109,13 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName = "movetoquiet"
-	mineActionName   = "mine"
-	craftActionName  = "craft"
-	placeActionName  = "place"
+	moveToActionName  = "movetoquiet"
+	mineActionName    = "mine"
+	craftActionName   = "craft"
+	placeActionName   = "place"
+	equipActionName   = "equip"
+	useItemActionName = "useitem"
+	useItemOffhandArg = "offhand"
 )
 
 // actionDispatch describes what Step should send through the
@@ -155,6 +177,20 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+	case ActionEquip:
+		if !e.actionLegal(ActionEquip) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: equipActionName, args: []string{e.cfg.EquipTargetItem}}, true, nil
+	case ActionUseItem:
+		if !e.actionLegal(ActionUseItem) {
+			return actionDispatch{}, false, nil
+		}
+		args := []string{}
+		if e.cfg.UseItemOffhand {
+			args = []string{useItemOffhandArg}
+		}
+		return actionDispatch{name: useItemActionName, args: args}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -197,6 +233,10 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.CraftTargetItem != "" && e.craftReady
 	case ActionPlace:
 		return e.cfg.ChainStage > 0 && chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+	case ActionEquip, ActionUseItem:
+		// Both gated on the same field — see Config.EquipTargetItem's own
+		// doc comment for why ActionUseItem has no independent enable flag.
+		return e.cfg.EquipTargetItem != ""
 	default:
 		return false
 	}

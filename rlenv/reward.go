@@ -45,6 +45,13 @@ const (
 	// rather than which action was chosen — see
 	// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1d.
 	craftRewardBonus float32 = 10.0
+	// equipRewardBonus is added once, the step Config.EquipTargetItem is
+	// observed to become equipped (see Environment.Step's before/after
+	// IsEquipped comparison) — same magnitude as mineRewardBonus/
+	// craftRewardBonus, marking "this episode's task was accomplished."
+	// ActionUseItem deliberately has no reward component of its own — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
+	equipRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

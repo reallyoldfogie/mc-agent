@@ -49,16 +49,19 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 21 (17 before the chain block, 14 before the goal block): indices 0-13 are the original per-task numeric features;
-	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
-	// goalCraftActive) added by
-	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md
+	// 23 (21 before the equip block, 17 before the chain block, 14 before
+	// the goal block): indices 0-13 are the original per-task numeric
+	// features; 14-16 are the goal-conditioning block (goalGoToActive/
+	// goalMineActive/goalCraftActive) added by
+	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
+	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
+	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1)
 	// — see observation.go's own doc comment on observationSize for the
 	// full layout. This exact value is also what makes cmd/rl-train's
 	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
-	// reject an old checkpoint trained against the pre-goal-block size.
-	if got := env.ObservationSize(); got != 21 {
-		t.Fatalf("ObservationSize() = %d, want 21", got)
+	// reject an old checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 23 {
+		t.Fatalf("ObservationSize() = %d, want 23", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -73,8 +76,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 21 {
-		t.Fatalf("len(obs.Values) = %d, want 21 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 23 {
+		t.Fatalf("len(obs.Values) = %d, want 23 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -989,6 +992,164 @@ func TestStepCraftDoesNotAwardBonusWhenActionCraftFailsToProduceIt(t *testing.T)
 	}
 	if result.Done {
 		t.Fatalf("Done = true, want false (nothing was actually crafted)")
+	}
+}
+
+// --- ActionEquip / ActionUseItem (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1) ---
+
+func TestStepEquipWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionEquip)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.heldItem != "" {
+		t.Fatalf("heldItem = %q, want empty (Config.EquipTargetItem unset, safe no-op like ActionWait)", agent.heldItem)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if ready := result.Observation.Values[21]; ready != 0 {
+		t.Fatalf("equipReady = %v, want 0 (no task configured)", ready)
+	}
+	if active := result.Observation.Values[22]; active != 0 {
+		t.Fatalf("goalEquipActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepUseItemWithNoConfiguredEquipTargetIsNoOp(t *testing.T) {
+	// ActionUseItem is gated on Config.EquipTargetItem, not an independent
+	// flag — see Config.EquipTargetItem's own doc comment.
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionUseItem); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.useItemCalls != 0 {
+		t.Fatalf("UseItem calls = %d, want 0 (Config.EquipTargetItem unset)", agent.useItemCalls)
+	}
+}
+
+func TestStepEquipActionEquipsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.EquipTargetItem = "minecraft:elytra"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionEquip)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.heldItem != "minecraft:elytra" {
+		t.Fatalf("heldItem = %q, want minecraft:elytra", agent.heldItem)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target item was equipped)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (equipRewardBonus)", result.Reward)
+	}
+	if ready := result.Observation.Values[21]; ready != 1 {
+		t.Fatalf("equipReady = %v, want 1", ready)
+	}
+}
+
+func TestStepObservationReflectsEquipReadyRegardlessOfAction(t *testing.T) {
+	// equipReady is populated every step once configured, not only on steps
+	// that dispatch ActionEquip — mirrors craftReady's equivalent test.
+	agent := newFakeAgent(0, 0, 0)
+	agent.heldItem = "minecraft:elytra" // already equipped before the episode starts
+	cfg := testConfig()
+	cfg.EquipTargetItem = "minecraft:elytra"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if ready := obs.Values[21]; ready != 1 {
+		t.Fatalf("equipReady at Reset = %v, want 1", ready)
+	}
+	if active := obs.Values[22]; active != 1 {
+		t.Fatalf("goalEquipActive at Reset = %v, want 1", active)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.useItemCalls != 0 {
+		t.Fatalf("UseItem calls = %d, want 0 (ActionWait doesn't dispatch useitem)", agent.useItemCalls)
+	}
+	if ready := result.Observation.Values[21]; ready != 1 {
+		t.Fatalf("equipReady after ActionWait = %v, want 1 (still equipped)", ready)
+	}
+	// Reset already satisfied the equip task (heldItem was pre-set), so
+	// Reset's own buildObservation call already saw equipReady=1 — the
+	// transition reward only fires on a false->true change, which happened
+	// before Step ever ran. No further bonus/Done from a step that changed
+	// nothing.
+	if result.Done {
+		t.Fatalf("Done = true, want false (already equipped before this episode's first step)")
+	}
+}
+
+func TestStepUseItemDispatchesWithConfiguredHand(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.EquipTargetItem = "minecraft:elytra"
+	cfg.UseItemOffhand = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionUseItem); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.useItemCalls != 1 {
+		t.Fatalf("UseItem calls = %d, want 1", agent.useItemCalls)
+	}
+	if len(agent.useItemHands) != 1 || agent.useItemHands[0] != models.OffHand {
+		t.Fatalf("useItemHands = %v, want [OffHand]", agent.useItemHands)
+	}
+}
+
+func TestActionMaskEquipAndUseItemLegalOnlyWhenConfigured(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionEquip]; legal {
+		t.Fatalf("ActionEquip legal = true, want false (Config.EquipTargetItem unset)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionUseItem]; legal {
+		t.Fatalf("ActionUseItem legal = true, want false (Config.EquipTargetItem unset)")
+	}
+
+	cfg := testConfig()
+	cfg.EquipTargetItem = "minecraft:elytra"
+	configured := newTestEnvironment(t, newFakeAgent(0, 0, 0), cfg)
+	if _, err := configured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := configured.ActionMask()[rlenv.ActionEquip]; !legal {
+		t.Fatalf("ActionEquip legal = false, want true (Config.EquipTargetItem set)")
+	}
+	if legal := configured.ActionMask()[rlenv.ActionUseItem]; !legal {
+		t.Fatalf("ActionUseItem legal = false, want true (Config.EquipTargetItem set)")
 	}
 }
 

@@ -39,4 +39,12 @@ type LiveAgent interface {
 	// guarantee). Used by the craftReady observation feature
 	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1c).
 	Craftable(itemName string) bool
+
+	// IsEquipped reports whether itemName is currently equipped — worn in
+	// an armor slot, or held in the main hand — mirroring the two things
+	// agent.Equip itself can do (wear armor/elytra, hold anything else).
+	// Used by the equipReady observation feature and ActionEquip's reward
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1), the equip-task
+	// analogue of Craftable's role for the craft task.
+	IsEquipped(itemName string) bool
 }
