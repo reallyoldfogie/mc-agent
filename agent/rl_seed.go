@@ -589,3 +589,179 @@ func (a *agent) ClearDroppedItems(ctx context.Context, x, y, z, radius int) erro
 	}
 	return nil
 }
+
+// seedEntityOffset mirrors seedBlockOffset: how far in front of the bot
+// (along +X) SeedEntity/SeedVehicle/SeedDroppedItem spawn their entity.
+// Unlike a block seed, an entity stands ON the ground rather than
+// replacing it, so it spawns at the bot's own feet level (seedBlockCoords'
+// y-1 would place it a block too low).
+const seedEntityOffset = 2
+
+// seedEntitySyncRadius bounds how far from the spawn point SeedEntity/
+// SeedVehicle looks for the entity it just summoned, independent of the
+// caller's own radius argument (which instead answers "does a suitable
+// instance already exist nearby" — a separate question). Generous enough
+// to comfortably cover any summon-position rounding, small enough that a
+// second, unrelated, same-type entity already in the world couldn't be
+// mistaken for the one just summoned in the common case.
+const seedEntitySyncRadius = 8.0
+
+// seedEntityCoords is where SeedEntity/SeedVehicle/SeedDroppedItem spawn
+// their entity for a bot at (x, y, z) — see seedEntityOffset's own doc
+// comment. Floor, not truncation, for the same negative-coordinate reason
+// seedBlockCoords uses it.
+func seedEntityCoords(x, y, z float64) (int64, int64, int64) {
+	return int64(math.Floor(x)) + seedEntityOffset, int64(math.Floor(y)), int64(math.Floor(z))
+}
+
+// SeedEntity ensures a live instance of mobType exists within radius blocks
+// of the bot, via RCON "summon" — training convenience only, the entity
+// analogue of SeedNearbyBlock (same scope note: never used by any chat
+// command or real gameplay path), for Combat/Mob-Riding episode seeding
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0). nbt, if non-empty,
+// must be a full NBT compound including its own braces (e.g.
+// "{NoAI:1b,PersistenceRequired:1b}") — passed through to
+// testenv.RCONHelper.SummonEntity unchanged; empty means no NBT at all,
+// not an empty compound. Requires RCON.
+//
+// A no-op (returning the existing instance's ID) if FindNearestEntityByType
+// already finds one within radius — doesn't stack an extra mob onto a
+// world that already has one, mirroring SeedNearbyBlock's own "already
+// there" check.
+//
+// Waits (bounded by seedSyncTimeout) for the summoned entity to actually
+// become visible to this bot's own tracking before returning, within
+// seedEntitySyncRadius of the spawn point — the same client-sync race
+// SeedNearbyBlock's doc comment describes for a block-update packet, here
+// for a SpawnEntity packet.
+func (a *agent) SeedEntity(ctx context.Context, mobType string, radius int, nbt string) (int32, error) {
+	if a.cfg.RCON == nil {
+		return 0, fmt.Errorf("seed entity: RCON not configured for this agent")
+	}
+	normalized := normalizeItemName(mobType)
+	typeID, ok := a.GetEntityTypeID(normalized)
+	if !ok {
+		return 0, fmt.Errorf("seed entity: unknown entity type %q", mobType)
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return 0, fmt.Errorf("seed entity: position not yet known")
+	}
+	if entityID, distance, found := a.FindNearestEntityByType(typeID, pos.X, pos.Y, pos.Z, true); found && distance <= float64(radius) {
+		return entityID, nil
+	}
+
+	x, y, z := seedEntityCoords(pos.X, pos.Y, pos.Z)
+	// Built directly via Exec (matching testenv.RCONHelper.SummonEntity's
+	// own "summon %s %f %f %f %s" format exactly) rather than chained
+	// through SummonEntity(...).Exec(ctx): the latter's returned
+	// *testenv.RCONResult binds to its originating *rconHelper via an
+	// unexported field this package cannot populate in a test double, so
+	// a unit test could never verify the command it sends — see
+	// agent/rl_seed_test.go.
+	cmd := fmt.Sprintf("summon %s %d %d %d %s", normalized, x, y, z, nbt)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return 0, fmt.Errorf("summon %s via RCON: %w", normalized, err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for {
+		if entityID, distance, found := a.FindNearestEntityByType(typeID, float64(x), float64(y), float64(z), true); found && distance <= seedEntitySyncRadius {
+			return entityID, nil
+		}
+		if !time.Now().Before(deadline) {
+			return 0, fmt.Errorf("seed entity: summoned %s but it never became visible to this bot within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+}
+
+// vehicleTameNBT is the NBT compound SeedVehicle passes when tame is true —
+// an untamed horse/donkey/mule refuses mounting (confirmed by
+// testing/vehicles' own {Tame:1b} convention), so this is the only NBT a
+// mob-riding episode's seeding needs beyond what SeedEntity already does.
+const vehicleTameNBT = "{Tame:1b}"
+
+// SeedVehicle is SeedEntity for a rideable vehicle, tame controlling
+// whether the summoned instance is tamed (see vehicleTameNBT) — the
+// mob-riding analogue of SeedEntity's combat-mob role
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/4).
+func (a *agent) SeedVehicle(ctx context.Context, vehicleType string, radius int, tame bool) (int32, error) {
+	nbt := ""
+	if tame {
+		nbt = vehicleTameNBT
+	}
+	return a.SeedEntity(ctx, vehicleType, radius, nbt)
+}
+
+// SeedDroppedItem drops one itemName on the ground within radius blocks of
+// the bot, via RCON "summon minecraft:item" — the item-entity analogue of
+// SeedNearbyBlock/SeedEntity, for an Item Pickup episode posed from a cold
+// inventory rather than piggybacking on a mine task's own drop
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/2). The
+// `Item:{id:"...",Count:1}` NBT shape matches testing/lookaround_test.go's
+// own already-live-tested convention. Training convenience only; requires
+// RCON. A no-op if FindNearestVisibleItem already finds something within
+// radius.
+func (a *agent) SeedDroppedItem(ctx context.Context, itemName string, radius int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed dropped item: RCON not configured for this agent")
+	}
+	if _, _, _, _, found, err := a.FindNearestVisibleItem(ctx, float64(radius)); err == nil && found {
+		return nil
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return fmt.Errorf("seed dropped item: position not yet known")
+	}
+	normalized := normalizeItemName(itemName)
+	x, y, z := seedEntityCoords(pos.X, pos.Y, pos.Z)
+	nbt := fmt.Sprintf(`{Item:{id:"%s",Count:1}}`, normalized)
+	cmd := fmt.Sprintf("summon minecraft:item %d %d %d %s", x, y, z, nbt)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("summon item via RCON: %w", err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for {
+		if _, _, _, _, found, err := a.FindNearestVisibleItem(ctx, float64(radius)); err == nil && found {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("seed dropped item: dropped %s but it never became visible to this bot within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+}
+
+// ClearEntitiesOfType kills every live instance of mobType within radius
+// blocks of (x, y, z) via RCON — the Reset-time cleanup counterpart to
+// SeedEntity/SeedVehicle (see rlenv.EntitySeedAgent/VehicleSeedAgent): a
+// mob or vehicle a Combat/Mob-Riding episode didn't account for (the
+// policy chose Wait all episode, or combat failed) would otherwise persist
+// into the next Reset, the same "working area turns into an obstacle
+// course" failure mode ClearDroppedItems/ClearAir already exist to prevent
+// for drops/blocks (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0).
+// A type+radius kill, not an ID-specific one: precise per-episode-entity
+// targeting (to avoid a shared-server episode's cleanup killing another
+// bot's own seeded entity) is deferred to whichever of Phase 4/5 actually
+// needs it, not solved speculatively here — see that plan's own note.
+func (a *agent) ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clear entities of type: RCON not configured")
+	}
+	normalized := normalizeItemName(mobType)
+	cmd := fmt.Sprintf("execute positioned %d %d %d run kill @e[type=%s,distance=..%d]", x, y, z, normalized, radius)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("clear entities of type via RCON: %w", err)
+	}
+	return nil
+}

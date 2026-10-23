@@ -115,6 +115,48 @@ type FarSeedAgent interface {
 	SeedCraftIngredientsAt(ctx context.Context, itemName string, x, y, z int) error
 }
 
+// EntitySeedAgent is the optional capability a Combat episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/5): summoning a
+// hostile mob to fight, and cleaning it up at Reset if the episode didn't
+// kill it. Not folded into SeedAgent: a chat-command-only session without
+// RCON must never be required to implement it, same reasoning as
+// ToolSeedAgent/FarSeedAgent.
+type EntitySeedAgent interface {
+	// SeedEntity ensures a live instance of mobType exists within radius
+	// blocks of the bot (summoning one via RCON if none is), returning its
+	// entity ID — see agent.SeedEntity's doc comment for exactly how nbt
+	// is used.
+	SeedEntity(ctx context.Context, mobType string, radius int, nbt string) (entityID int32, err error)
+	// ClearEntitiesOfType kills every live instance of mobType within
+	// radius blocks of (x, y, z) — see agent.ClearEntitiesOfType's doc
+	// comment.
+	ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error
+}
+
+// VehicleSeedAgent is the optional capability a Mob Riding episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/4): summoning a
+// rideable vehicle, and cleaning it up at Reset. ClearEntitiesOfType has
+// the same shape as EntitySeedAgent's own method of that name (a type+
+// radius kill works identically for a vehicle as for a hostile mob) — an
+// agent implementing both only needs one real method to satisfy both
+// interfaces.
+type VehicleSeedAgent interface {
+	// SeedVehicle ensures a (if tame, tamed) instance of vehicleType
+	// exists within radius blocks of the bot, returning its entity ID —
+	// see agent.SeedVehicle's doc comment.
+	SeedVehicle(ctx context.Context, vehicleType string, radius int, tame bool) (entityID int32, err error)
+	ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error
+}
+
+// ItemDropSeedAgent is the optional capability an Item Pickup episode needs
+// when posed from a cold inventory rather than piggybacking on a mine
+// task's own drop (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/2).
+type ItemDropSeedAgent interface {
+	// SeedDroppedItem drops one itemName on the ground within radius
+	// blocks of the bot — see agent.SeedDroppedItem's doc comment.
+	SeedDroppedItem(ctx context.Context, itemName string, radius int) error
+}
+
 // ChainSeedAgent is the optional capability multi-step chain episodes
 // (Config.ChainStage) need on top of FarSeedAgent: starting each one from an
 // empty inventory and with no stray drops lying around. A drop a previous
