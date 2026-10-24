@@ -509,10 +509,16 @@ func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityType
 func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.combatVisible || entityID != f.combatEntityID {
-		return 0, false
+	if f.combatVisible && entityID == f.combatEntityID {
+		return f.combatHealth, true
 	}
-	return f.combatHealth, true
+	// The simulated pickup item has no meaningful health — only "found"
+	// matters for Config.PickupAnyItem's own reward check (see
+	// pickupItemEntityID's own doc comment).
+	if f.pickupItemPresent && entityID == pickupItemEntityID {
+		return 0, true
+	}
+	return 0, false
 }
 
 // RunCombat "fights" the simulated combat target by killing it (see
@@ -709,8 +715,17 @@ func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]
 	return nil, nil
 }
 
-func (f *fakeAgent) FindNearestVisibleItem(context.Context, float64) (entityID int32, x, y, z float64, found bool, err error) {
-	return 0, 0, 0, 0, false, nil
+// FindNearestVisibleItem reports the simulated pickup item regardless of
+// its name — the unfiltered counterpart to FindNearestVisibleItemOfType,
+// used by Config.PickupAnyItem's own tests (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+func (f *fakeAgent) FindNearestVisibleItem(_ context.Context, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.pickupItemPresent {
+		return 0, 0, 0, 0, false, nil
+	}
+	return pickupItemEntityID, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
 }
 
 // FindNearestVisibleItemOfType reports the simulated pickup item's position
@@ -725,8 +740,15 @@ func (f *fakeAgent) FindNearestVisibleItemOfType(_ context.Context, itemName str
 	if !f.pickupItemPresent || f.pickupTargetName == "" || itemName != f.pickupTargetName {
 		return 0, 0, 0, 0, false, nil
 	}
-	return 1, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
+	return pickupItemEntityID, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
 }
+
+// pickupItemEntityID is the fixed simulated entity ID FindNearestVisibleItem/
+// FindNearestVisibleItemOfType report for the simulated pickup item — also
+// recognized by GetEntityHealth, so Config.PickupAnyItem's reward check
+// (which asks "is this entity ID still tracked") works against the fake the
+// same way it does against the real agent.
+const pickupItemEntityID = 1
 
 // --- rlenv.SeedAgent (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
 

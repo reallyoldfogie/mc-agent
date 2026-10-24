@@ -132,11 +132,17 @@ type Environment struct {
 	equipReady bool
 
 	// pickupX/Y/Z/pickupVisible cache the last-resolved nearest visible
-	// Config.PickupTargetItem instance (see refreshPickupTarget) — the
-	// pickup-task analogue of mineX/Y/Z/mineVisible, same caching shape
+	// Config.PickupTargetItem (or, for Config.PickupAnyItem, whatever's
+	// nearest regardless of content) instance (see refreshPickupTarget) —
+	// the pickup-task analogue of mineX/Y/Z/mineVisible, same caching shape
 	// and same reason (refreshed once per Step/Reset, read as "before this
-	// step" state).
+	// step" state). pickupEntityID additionally backs PickupAnyItem's own
+	// reward check (see Step's pickedUpThisStep) — an entity-ID-based
+	// "still tracked" check, the only reward shape available when there's
+	// no single item name to run an InventoryCount delta against
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1).
 	pickupX, pickupY, pickupZ float64
+	pickupEntityID            int32
 	pickupVisible             bool
 
 	// pickupCount caches the last-known held count of
@@ -429,6 +435,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.EquipTargetItem = override.EquipTargetItem
 		e.cfg.PickupTargetItem = override.PickupTargetItem
 		e.cfg.PickupSearchRadius = override.PickupSearchRadius
+		e.cfg.PickupAnyItem = override.PickupAnyItem
 		e.cfg.FlyTargetOffset = override.FlyTargetOffset
 		e.cfg.FlyTargetActive = override.FlyTargetActive
 		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
@@ -599,7 +606,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -676,24 +683,46 @@ func (e *Environment) pickupCountNow() int {
 	return e.agent.InventoryCount(e.cfg.PickupTargetItem)
 }
 
+// pickupTaskActive reports whether this episode poses a pickup task at
+// all, either named (Config.PickupTargetItem) or unnamed
+// (Config.PickupAnyItem) — shared by actionLegal and both buildObservation
+// call sites so the two conditions can't drift apart (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+func (e *Environment) pickupTaskActive() bool {
+	return e.cfg.PickupTargetItem != "" || e.cfg.PickupAnyItem
+}
+
 // refreshPickupTarget re-resolves the nearest currently-visible instance of
-// Config.PickupTargetItem and stores it into e.pickupX/Y/Z/pickupVisible,
-// for observation/dispatch purposes — the pickup-task analogue of
-// refreshMineTarget (see its own doc comment for why this is called once
-// at Reset and once per Step, reading the *previous* call's cached result
-// as "before this step" state). Leaves e.pickupVisible=false without error
-// if Config.PickupTargetItem is unset or nothing matching is currently
-// visible; only a genuine FindNearestVisibleItemOfType error is returned.
+// Config.PickupTargetItem (or, for Config.PickupAnyItem, the nearest visible
+// item of any content) and stores it (with its entity ID) into
+// e.pickupEntityID/pickupX/Y/Z/pickupVisible, for observation/dispatch
+// purposes — the pickup-task analogue of refreshMineTarget (see its own doc
+// comment for why this is called once at Reset and once per Step, reading
+// the *previous* call's cached result as "before this step" state). Leaves
+// e.pickupVisible=false without error if neither field is set or nothing
+// matching is currently visible; only a genuine
+// FindNearestVisibleItemOfType/FindNearestVisibleItem error is returned.
 func (e *Environment) refreshPickupTarget(ctx context.Context) error {
-	if e.cfg.PickupTargetItem == "" {
-		e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = 0, 0, 0, false
-		return nil
+	switch {
+	case e.cfg.PickupTargetItem != "":
+		id, x, y, z, found, err := e.agent.FindNearestVisibleItemOfType(ctx, e.cfg.PickupTargetItem, float64(e.cfg.PickupSearchRadius))
+		if err != nil {
+			return fmt.Errorf("rlenv: resolving pickup target: %w", err)
+		}
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = id, x, y, z, found
+	case e.cfg.PickupAnyItem:
+		// FindNearestVisibleItem is the unfiltered predecessor
+		// FindNearestVisibleItemOfType was built on top of — still here,
+		// never removed, exactly what "any item" needs (docs/plans/
+		// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+		id, x, y, z, found, err := e.agent.FindNearestVisibleItem(ctx, float64(e.cfg.PickupSearchRadius))
+		if err != nil {
+			return fmt.Errorf("rlenv: resolving pickup target (any item): %w", err)
+		}
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = id, x, y, z, found
+	default:
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = 0, 0, 0, 0, false
 	}
-	_, x, y, z, found, err := e.agent.FindNearestVisibleItemOfType(ctx, e.cfg.PickupTargetItem, float64(e.cfg.PickupSearchRadius))
-	if err != nil {
-		return fmt.Errorf("rlenv: resolving pickup target: %w", err)
-	}
-	e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = x, y, z, found
 	return nil
 }
 
@@ -933,6 +962,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.pickupCount mirrors prevCraftCount's own reasoning above, for the
 	// pickup task.
 	prevPickupCount := e.pickupCount
+	// prevPickupEntityID/prevPickupVisible back Config.PickupAnyItem's own
+	// reward check (see pickedUpThisStep below) — captured before dispatch
+	// for the same reason prevCombatEntityID is.
+	prevPickupEntityID := e.pickupEntityID
+	prevPickupVisible := e.pickupVisible
 	// e.mounted mirrors prevEquipReady's own reasoning above, for the
 	// ride task.
 	prevMounted := e.mounted
@@ -1004,12 +1038,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	newEquipReady := e.equipReadyNow()
 	equippedThisStep := e.cfg.EquipTargetItem != "" && newEquipReady && !prevEquipReady
 
-	// pickedUpThisStep is judged from an actual InventoryCount increase,
-	// not from whether ActionPickUpItem was the dispatched action —
-	// mirrors craftedThisStep's own reasoning above (see reward.go's
-	// pickupRewardBonus doc comment).
+	// pickedUpThisStep is judged from an actual world-state change, not
+	// from whether ActionPickUpItem was the dispatched action — mirrors
+	// craftedThisStep's own reasoning above (see reward.go's
+	// pickupRewardBonus doc comment). Config.PickupTargetItem judges this
+	// via an InventoryCount increase (there's one specific item name to
+	// check); Config.PickupAnyItem has no such name, so it judges from the
+	// resolved item entity no longer being tracked instead (reusing
+	// GetEntityHealth purely for its "found" signal — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1).
 	newPickupCount := e.pickupCountNow()
 	pickedUpThisStep := e.cfg.PickupTargetItem != "" && newPickupCount > prevPickupCount
+	if e.cfg.PickupAnyItem && prevPickupVisible {
+		_, stillTracked := e.agent.GetEntityHealth(prevPickupEntityID)
+		pickedUpThisStep = pickedUpThisStep || !stillTracked
+	}
 
 	// mountedThisStep is judged from an actual IsMounted transition
 	// (false -> true), not from whether ActionMount was the dispatched
@@ -1178,7 +1221,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.mounted = newMounted
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

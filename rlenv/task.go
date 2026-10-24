@@ -126,6 +126,17 @@ type Config struct {
 	// to defer to) — see DefaultConfig's own default for a reasonable value.
 	PickupSearchRadius int
 
+	// PickupAnyItem, if true (and PickupTargetItem is empty), poses the
+	// pickup task as "collect whatever's nearest, regardless of content" —
+	// the generalized form of the "pickupnearbyitem" chat command, mirroring
+	// FindNearestVisibleItem's own unfiltered search (the predecessor
+	// FindNearestVisibleItemOfType was built on top of — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1). Mutually
+	// exclusive with PickupTargetItem in practice: if both are set,
+	// PickupTargetItem's name-filtered resolution takes precedence (see
+	// refreshPickupTarget).
+	PickupAnyItem bool
+
 	// FlyTargetOffset is added to the bot's position at Reset to produce
 	// this episode's elytra-flight target (Environment.flyTargetX/Y/Z) —
 	// the flight-task analogue of TargetOffset, but a genuine 3D offset
@@ -507,6 +518,8 @@ type TaskOverride struct {
 	PickupTargetItem string
 	// PickupSearchRadius is Config.PickupSearchRadius for this episode.
 	PickupSearchRadius int
+	// PickupAnyItem is Config.PickupAnyItem for this episode.
+	PickupAnyItem bool
 
 	// FlyTargetOffset is Config.FlyTargetOffset for this episode.
 	FlyTargetOffset [3]float64

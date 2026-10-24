@@ -336,7 +336,7 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// doc comment for why ActionUseItem has no independent enable flag.
 		return e.cfg.EquipTargetItem != ""
 	case ActionPickUpItem:
-		return e.cfg.PickupTargetItem != "" && e.pickupVisible
+		return e.pickupTaskActive() && e.pickupVisible
 	case ActionFlyTo:
 		// Gated on an elytra currently being equipped, the same masking-
 		// efficiency reasoning ActionCraft's craftReady gate already

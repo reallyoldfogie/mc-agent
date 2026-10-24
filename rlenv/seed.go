@@ -59,6 +59,12 @@ type EpisodeSeeder func(ctx context.Context, agent SeedAgent, cfg Config) error
 // ingredient-count copy from seedGiveCount.
 const defaultMineRequiredToolCount = 1
 
+// anyItemPickupSeedItem is what DefaultEpisodeSeeder drops for
+// Config.PickupAnyItem — a cheap, common item, since there's no specific
+// name to seed for an "any item" task (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+const anyItemPickupSeedItem = "minecraft:stick"
+
 // DefaultEpisodeSeeder implements EpisodeSeeder's minimum-viable contract:
 // if Config.MineTargetBlock is set, ensures an instance exists within
 // Config.MineSearchRadius (agent.SeedNearbyBlock) — unless
@@ -111,6 +117,22 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 			if err := itemSeeder.SeedDroppedItem(ctx, cfg.PickupTargetItem, radius); err != nil {
 				return fmt.Errorf("seeding pickup target: %w", err)
+			}
+		}
+	} else if cfg.PickupAnyItem {
+		// No specific item name to drop for "any item" mode — seeds a
+		// fixed, cheap placeholder (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 1) so the task is still seedable standalone, the same way
+		// every other task's seeder picks something concrete rather than
+		// leaving the episode to depend on whatever happens to already be
+		// lying around.
+		if itemSeeder, ok := agent.(ItemDropSeedAgent); ok {
+			radius := cfg.PickupSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().PickupSearchRadius
+			}
+			if err := itemSeeder.SeedDroppedItem(ctx, anyItemPickupSeedItem, radius); err != nil {
+				return fmt.Errorf("seeding pickup target (any item): %w", err)
 			}
 		}
 	}

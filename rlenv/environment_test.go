@@ -1823,6 +1823,110 @@ func TestActionMaskCombatLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
 	}
 }
 
+// --- Config.PickupAnyItem (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1) ---
+
+func TestStepPickupAnyItemCollectsWhateverIsNearestAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPickupItem("minecraft:rotten_flesh", 3, 0, 0) // content is irrelevant to this mode
+	cfg := testConfig()
+	cfg.PickupAnyItem = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPickUpItem)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 1 {
+		t.Fatalf("MoveToWithChat calls = %d, want 1", agent.moveToWithChatCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (something was collected)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (pickupRewardBonus)", result.Reward)
+	}
+}
+
+func TestStepPickupAnyItemWithNoneVisibleDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PickupAnyItem = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPickUpItem)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (nothing visible)", agent.moveToWithChatCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+}
+
+// TestStepPickupAnyItemRewardJudgedByWorldStateNotDispatchedAction mirrors
+// TestStepCombatRewardJudgedByWorldStateNotDispatchedAction: PickupAnyItem
+// has no single item name to run an InventoryCount delta against, so it's
+// judged from the resolved entity no longer being tracked — correct
+// regardless of what caused that (picked up by vanilla auto-collect while
+// walking somewhere else entirely, expired, anything), not just a
+// dispatched ActionPickUpItem.
+func TestStepPickupAnyItemRewardJudgedByWorldStateNotDispatchedAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPickupItem("minecraft:rotten_flesh", 3, 0, 0)
+	cfg := testConfig()
+	cfg.PickupAnyItem = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.mu.Lock()
+	agent.pickupItemPresent = false // collected by something other than ActionPickUpItem
+	agent.mu.Unlock()
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveToWithChat calls = %d, want 0 (ActionWait doesn't dispatch pickupitem)", agent.moveToWithChatCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (the resolved item is gone, regardless of cause)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (pickupRewardBonus)", result.Reward)
+	}
+}
+
+func TestActionMaskPickUpItemLegalForAnyItemModeToo(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PickupAnyItem = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionPickUpItem]; legal {
+		t.Fatalf("ActionPickUpItem legal = true, want false (nothing visible yet)")
+	}
+
+	agent.setPickupItem("minecraft:rotten_flesh", 3, 0, 0)
+	if _, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionPickUpItem]; !legal {
+		t.Fatalf("ActionPickUpItem legal = false, want true (something now visible, PickupAnyItem mode)")
+	}
+}
+
 // --- Config.Seeder (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
 
 func TestResetWithNoSeederConfiguredDoesNotSeed(t *testing.T) {
