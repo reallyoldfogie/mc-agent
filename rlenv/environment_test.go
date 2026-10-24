@@ -68,12 +68,14 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// (placeReady/goalPlaceStandaloneActive, docs/plans/
 	// RL_ACTION_SPACE_EXPANSION_III.md item 2); 48-50 are the follow block
 	// (followTargetVisible/isFollowing/goalFollowActive, that plan's item
-	// 4) — see observation.go's own doc comment on observationSize for the
-	// full layout. This exact value is also what makes cmd/rl-train's
+	// 4); 51-55 are the creeper-gunpowder block (creeperDx/Dy/Dz/
+	// creeperVisible/goalCreeperGunpowderActive, that plan's item 5) — see
+	// observation.go's own doc comment on observationSize for the full
+	// layout. This exact value is also what makes cmd/rl-train's
 	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
 	// reject an old checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 51 {
-		t.Fatalf("ObservationSize() = %d, want 51", got)
+	if got := env.ObservationSize(); got != 56 {
+		t.Fatalf("ObservationSize() = %d, want 56", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -88,8 +90,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 51 {
-		t.Fatalf("len(obs.Values) = %d, want 51 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 56 {
+		t.Fatalf("len(obs.Values) = %d, want 56 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -2291,6 +2293,220 @@ func TestActionMaskFollowStopFollowGating(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionStopFollow]; legal {
 		t.Fatalf("ActionStopFollow legal = true, want false (Config.FollowTargetPlayerName unset)")
+	}
+}
+
+// --- Config.CreeperGunpowderActive (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5) ---
+
+const creeperGunpowderWeaponItemName = "minecraft:iron_sword"
+
+func TestStepKillCreeperForGunpowderWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCreeperTarget(21, 5, 0, 0, true) // present in the world, but Config never asks for it
+	if err := agent.Equip(context.Background(), creeperGunpowderWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionKillCreeperForGunpowder)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !agent.creeperVisible {
+		t.Fatalf("creeperVisible = false, want true (Config.CreeperGunpowderActive unset, safe no-op like ActionWait)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[55]; active != 0 {
+		t.Fatalf("goalCreeperGunpowderActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepKillCreeperForGunpowderWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	if err := agent.Equip(context.Background(), creeperGunpowderWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionKillCreeperForGunpowder)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (nothing visible to fight)")
+	}
+	if visible := result.Observation.Values[54]; visible != 0 {
+		t.Fatalf("creeperVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepKillCreeperForGunpowderWithoutWeaponDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCreeperTarget(21, 5, 0, 0, true)
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionKillCreeperForGunpowder)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !agent.creeperVisible {
+		t.Fatalf("creeperVisible = false, want true (no weapon equipped, dispatch must not have reached KillCreeperForGunpowder)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+}
+
+func TestStepKillCreeperForGunpowderActionCollectsGunpowderAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCreeperTarget(21, 5, 0, 0, true)
+	if err := agent.Equip(context.Background(), creeperGunpowderWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionKillCreeperForGunpowder)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.creeperVisible {
+		t.Fatalf("creeperVisible = true, want false (creeper was fought)")
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (gunpowder was collected)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (creeperGunpowderRewardBonus)", result.Reward)
+	}
+	if got := agent.InventoryCount("minecraft:gunpowder"); got != 1 {
+		t.Fatalf("held gunpowder count after Step = %d, want 1", got)
+	}
+}
+
+// TestStepKillCreeperForGunpowderNoDropEncounterDoesNotEndEpisode exercises
+// agent.KillCreeperForGunpowder's own documented "no-drop encounter" outcome
+// (a valid result, not an error): the reward/done check is judged from an
+// actual InventoryCount increase, not from whether the dispatch succeeded,
+// mirroring craftRewardBonus/pickupRewardBonus's own philosophy — a kill
+// with no drop earns nothing (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 5).
+func TestStepKillCreeperForGunpowderNoDropEncounterDoesNotEndEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCreeperTarget(21, 5, 0, 0, false)
+	if err := agent.Equip(context.Background(), creeperGunpowderWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionKillCreeperForGunpowder)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.creeperVisible {
+		t.Fatalf("creeperVisible = true, want false (creeper was fought)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (no-drop encounter, a valid outcome)")
+	}
+	if got := agent.InventoryCount("minecraft:gunpowder"); got != 0 {
+		t.Fatalf("held gunpowder count after Step = %d, want 0", got)
+	}
+}
+
+func TestStepObservationReflectsCreeperStateRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCreeperTarget(21, 5, 0, 0, true)
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[54]; visible != 1 {
+		t.Fatalf("creeperVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[55]; active != 1 {
+		t.Fatalf("goalCreeperGunpowderActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[51]; dx != 5 {
+		t.Fatalf("creeperDx at Reset = %v, want 5", dx)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !agent.creeperVisible {
+		t.Fatalf("creeperVisible = false, want true (ActionWait doesn't dispatch killcreeperforgunpowder)")
+	}
+	if visible := result.Observation.Values[54]; visible != 1 {
+		t.Fatalf("creeperVisible after ActionWait = %v, want 1 (still visible)", visible)
+	}
+}
+
+func TestActionMaskKillCreeperForGunpowderGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.CreeperGunpowderActive = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; legal {
+		t.Fatalf("ActionKillCreeperForGunpowder legal = true, want false (configured but nothing visible, no weapon)")
+	}
+
+	agent.setCreeperTarget(21, 5, 0, 0, true)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[54]; visible != 1 {
+		t.Fatalf("creeperVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; legal {
+		t.Fatalf("ActionKillCreeperForGunpowder legal = true, want false (visible but no weapon equipped yet)")
+	}
+
+	if err := agent.Equip(context.Background(), creeperGunpowderWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; !legal {
+		t.Fatalf("ActionKillCreeperForGunpowder legal = false, want true (now visible and weapon equipped)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; legal {
+		t.Fatalf("ActionKillCreeperForGunpowder legal = true, want false (Config.CreeperGunpowderActive unset, even though visible and equipped)")
 	}
 }
 

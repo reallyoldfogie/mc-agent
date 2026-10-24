@@ -444,6 +444,42 @@ func (a *agent) SeedCombatMob(ctx context.Context, mobType string, radius int) (
 	return entityID, nil
 }
 
+// creeperGunpowderMobType is the entity type SeedCreeperForGunpowder
+// always summons — KillCreeperForGunpowder itself is hardcoded to
+// creepers by design (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+// 5), so there's no mob-type parameter here, unlike SeedCombatMob's own.
+const creeperGunpowderMobType = "minecraft:creeper"
+
+// SeedCreeperForGunpowder ensures a live creeper exists within radius
+// blocks of the bot (via SeedEntity) and that a supported melee weapon is
+// equipped, via RCON — training convenience for KillCreeperForGunpowder
+// episode seeding, the creeper-gunpowder-task analogue of SeedCombatMob.
+// Deliberately NOT NoAI-tagged (empty nbt), unlike SeedCombatMob's own
+// combatMobNBT — the one real design decision that differs from Combat's
+// own seeding philosophy: this task's entire point is managing a live,
+// explosive threat safely (KillCreeperForGunpowder's own health-
+// cancellation guard exists for exactly that); tagging the seeded
+// creeper NoAI would remove the actual skill being trained. Reuses
+// combatSeedWeapon (not a second weapon constant) — same reasoning as
+// SeedCombatMob's own doc comment on why the weapon choice is a fixed
+// constant, not configurable, for a first pass. Requires RCON (via
+// SeedEntity/SeedGiveItem).
+func (a *agent) SeedCreeperForGunpowder(ctx context.Context, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, creeperGunpowderMobType, radius, "")
+	if err != nil {
+		return 0, fmt.Errorf("seed creeper for gunpowder: %w", err)
+	}
+	if !a.IsEquipped(combatSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, combatSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed creeper for gunpowder: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, combatSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed creeper for gunpowder: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()

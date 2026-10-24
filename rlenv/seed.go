@@ -177,6 +177,21 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.CreeperGunpowderActive {
+		// Optional, same pattern as the other task branches above.
+		if creeperSeeder, ok := agent.(CreeperSeedAgent); ok {
+			radius := cfg.CreeperGunpowderRadius
+			if radius <= 0 {
+				radius = DefaultConfig().CreeperGunpowderRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshCreeperTarget.
+			if _, err := creeperSeeder.SeedCreeperForGunpowder(ctx, int(radius)); err != nil {
+				return fmt.Errorf("seeding creeper for gunpowder: %w", err)
+			}
+		}
+	}
 	if cfg.ChainStage == 0 && cfg.PlaceTargetItem != "" {
 		// ToolSeedAgent is the base SeedAgent's own optional capability
 		// already used for Config.MineRequiredTool — reused as-is, no new
@@ -264,6 +279,16 @@ type CombatSeedAgent interface {
 	// blocks of the bot (via SeedEntity) and a weapon equipped — see
 	// agent.SeedCombatMob's own doc comment.
 	SeedCombatMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+}
+
+// CreeperSeedAgent is the optional capability a creeper-gunpowder episode
+// needs (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5): summoning a
+// live creeper and equipping a melee weapon, in one call.
+type CreeperSeedAgent interface {
+	// SeedCreeperForGunpowder ensures a live creeper within radius blocks
+	// of the bot (via SeedEntity) and a melee weapon equipped — see
+	// agent.SeedCreeperForGunpowder's own doc comment.
+	SeedCreeperForGunpowder(ctx context.Context, radius int) (entityID int32, err error)
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

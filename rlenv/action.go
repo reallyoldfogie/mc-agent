@@ -168,8 +168,20 @@ const (
 	// ActionDismount's own gating exactly.
 	ActionStopFollow
 
+	// ActionKillCreeperForGunpowder dispatches "killcreeperforgunpowder"
+	// (no args) — mc-agent's own complete, hardcoded-to-creepers encounter
+	// (agent.KillCreeperForGunpowder), which resolves its own target
+	// internally rather than being aimed at one resolved entity, the same
+	// shape ActionCombat's own dispatch already has. Environment's own
+	// e.creeperEntityID (see refreshCreeperTarget) exists purely to gate
+	// legality/feed the observation, not to steer the dispatch. A safe
+	// no-op when Config.CreeperGunpowderActive is false, nothing is
+	// currently visible, or the required melee weapon isn't equipped
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	ActionKillCreeperForGunpowder
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionStopFollow) + 1
+	NumActions = int(ActionKillCreeperForGunpowder) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -184,22 +196,23 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName         = "movetoquiet"
-	mineActionName           = "mine"
-	craftActionName          = "craft"
-	placeActionName          = "place"
-	equipActionName          = "equip"
-	useItemActionName        = "useitem"
-	useItemOffhandArg        = "offhand"
-	pickUpItemActionName     = "pickupitem"
-	flyToActionName          = "flyto"
-	mountActionName          = "mount"
-	dismountActionName       = "dismount"
-	vehicleJumpActionName    = "vehiclejump"
-	combatActionName         = "runcombat"
-	followActionName         = "follow"
-	stopFollowActionName     = "stopfollow"
-	moveToAndSneakActionName = "movetoandsneakquiet"
+	moveToActionName                  = "movetoquiet"
+	mineActionName                    = "mine"
+	craftActionName                   = "craft"
+	placeActionName                   = "place"
+	equipActionName                   = "equip"
+	useItemActionName                 = "useitem"
+	useItemOffhandArg                 = "offhand"
+	pickUpItemActionName              = "pickupitem"
+	flyToActionName                   = "flyto"
+	mountActionName                   = "mount"
+	dismountActionName                = "dismount"
+	vehicleJumpActionName             = "vehiclejump"
+	combatActionName                  = "runcombat"
+	followActionName                  = "follow"
+	stopFollowActionName              = "stopfollow"
+	moveToAndSneakActionName          = "movetoandsneakquiet"
+	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
 )
 
 // actionDispatch describes what Step should send through the
@@ -332,6 +345,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: stopFollowActionName, args: nil}, true, nil
+	case ActionKillCreeperForGunpowder:
+		if !e.actionLegal(ActionKillCreeperForGunpowder) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: killCreeperForGunpowderActionName, args: nil}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -404,6 +422,14 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.FollowTargetPlayerName != "" && !e.agent.IsFollowing() && e.followTargetVisible
 	case ActionStopFollow:
 		return e.cfg.FollowTargetPlayerName != "" && e.agent.IsFollowing()
+	case ActionKillCreeperForGunpowder:
+		// Gated on the required melee weapon currently equipped, the same
+		// masking-efficiency reasoning ActionFlyTo's elytra gate uses:
+		// agent.KillCreeperForGunpowder itself already fails gracefully
+		// without one (not a crash, see agent.validateCreeperWeapon), but
+		// letting the mask stay permissive here would waste probability
+		// mass on an attempt that deterministically fails.
+		return e.cfg.CreeperGunpowderActive && e.creeperVisible && e.agent.IsEquipped(creeperGunpowderWeaponName)
 	default:
 		return false
 	}

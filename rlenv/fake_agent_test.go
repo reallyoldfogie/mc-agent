@@ -210,6 +210,20 @@ type fakeAgent struct {
 	// task's own precondition describes); following backs IsFollowing.
 	followablePlayerName string
 	following            bool
+
+	// Creeper-gunpowder simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 5): a single creeper, visible at (creeperX,Y,Z) with entity ID
+	// creeperEntityID while creeperVisible. KillCreeperForGunpowder
+	// "fights" it by clearing creeperVisible (mirrors killCombatTarget's
+	// own "actually mutates state" precedent) and, if
+	// creeperDropsGunpowder, increments gunpowderHeldCount — the real
+	// method's own documented "no-drop encounter" is a valid outcome, so
+	// this defaults to true rather than always dropping.
+	creeperX, creeperY, creeperZ float64
+	creeperEntityID              int32
+	creeperVisible               bool
+	creeperDropsGunpowder        bool
+	gunpowderHeldCount           int
 }
 
 // setFollowablePlayer configures the simulated resolvable player — see
@@ -217,6 +231,18 @@ type fakeAgent struct {
 func (f *fakeAgent) setFollowablePlayer(name string) {
 	f.mu.Lock()
 	f.followablePlayerName = name
+	f.mu.Unlock()
+}
+
+// setCreeperTarget configures the simulated creeper — see creeperX's own
+// doc comment. dropsGunpowder controls whether a subsequent
+// KillCreeperForGunpowder call yields a drop.
+func (f *fakeAgent) setCreeperTarget(entityID int32, x, y, z float64, dropsGunpowder bool) {
+	f.mu.Lock()
+	f.creeperEntityID = entityID
+	f.creeperX, f.creeperY, f.creeperZ = x, y, z
+	f.creeperVisible = true
+	f.creeperDropsGunpowder = dropsGunpowder
 	f.mu.Unlock()
 }
 
@@ -581,6 +607,9 @@ func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityType
 	if f.combatVisible && f.combatTargetType != "" && entityTypeName == f.combatTargetType {
 		return f.combatEntityID, f.combatX, f.combatY, f.combatZ, true, nil
 	}
+	if f.creeperVisible && entityTypeName == "minecraft:creeper" {
+		return f.creeperEntityID, f.creeperX, f.creeperY, f.creeperZ, true, nil
+	}
 	return 0, 0, 0, 0, false, nil
 }
 
@@ -617,6 +646,29 @@ func (f *fakeAgent) RunCombat(_ context.Context, radius float64, includeNeutral 
 	}
 	f.mu.Unlock()
 	return nil
+}
+
+// KillCreeperForGunpowder "fights" the simulated creeper by clearing
+// creeperVisible and, if creeperDropsGunpowder, incrementing
+// gunpowderHeldCount — mirrors RunCombat's own "actually mutates state"
+// precedent so rlenv's real ActionKillCreeperForGunpowder dispatch/reward
+// logic is exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 5). Errors if nothing is currently configured as the creeper
+// target, matching the real method's own "not found" contract rather than
+// a silent no-op (unlike RunCombat, this method always resolves one
+// specific creeper, so there is no "empty radius" equivalent).
+func (f *fakeAgent) KillCreeperForGunpowder(_ context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.creeperVisible {
+		return false, errors.New("kill creeper: creeper not found")
+	}
+	f.creeperVisible = false
+	if f.creeperDropsGunpowder {
+		f.gunpowderHeldCount++
+		return true, nil
+	}
+	return false, nil
 }
 
 // IsMounted reports the simulated mount state — see MountEntity/
@@ -795,6 +847,9 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	}
 	if f.placeTargetName != "" && itemName == f.placeTargetName {
 		return f.placeHeldCount
+	}
+	if itemName == "minecraft:gunpowder" {
+		return f.gunpowderHeldCount
 	}
 	return 0
 }

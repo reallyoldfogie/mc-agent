@@ -196,6 +196,26 @@ type Environment struct {
 	combatX, combatY, combatZ float64
 	combatVisible             bool
 
+	// creeperEntityID/creeperX/Y/Z/creeperVisible cache the last-resolved
+	// nearest visible creeper instance (see refreshCreeperTarget) — the
+	// creeper-gunpowder-task analogue of combatEntityID/combatX/Y/Z/
+	// combatVisible, same caching shape (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 5). Unlike combatEntityID,
+	// never dispatched against: ActionKillCreeperForGunpowder dispatches
+	// "killcreeperforgunpowder" with no args (agent.KillCreeperForGunpowder
+	// resolves its own target internally) — this exists purely to gate
+	// ActionKillCreeperForGunpowder's legality/mask and feed the
+	// observation's distance features.
+	creeperEntityID              int32
+	creeperX, creeperY, creeperZ float64
+	creeperVisible               bool
+
+	// gunpowderCount caches the last-known held count of
+	// "minecraft:gunpowder" (see gunpowderCountNow) — the creeper-
+	// gunpowder-task analogue of craftCount, read at the start of each
+	// Step as "before this step" state for the reward check.
+	gunpowderCount int
+
 	// followTargetVisible/followed cache Config.FollowTargetPlayerName's
 	// own resolvability (see refreshFollowTarget) and the last-computed
 	// CommandAgent.IsFollowing() result — the follow-task analogues of
@@ -463,6 +483,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.RideSearchRadius = override.RideSearchRadius
 		e.cfg.CombatTargetMobType = override.CombatTargetMobType
 		e.cfg.CombatRadius = override.CombatRadius
+		e.cfg.CreeperGunpowderActive = override.CreeperGunpowderActive
+		e.cfg.CreeperGunpowderRadius = override.CreeperGunpowderRadius
 		e.cfg.FollowTargetPlayerName = override.FollowTargetPlayerName
 	}
 
@@ -619,12 +641,16 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshCombatTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshCreeperTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	if err := e.refreshFollowTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
 	e.craftCount = e.craftCountNow()
 	e.pickupCount = e.pickupCountNow()
 	e.placeCount = e.placeCountNow()
+	e.gunpowderCount = e.gunpowderCountNow()
 	e.mounted = e.agent.IsMounted()
 	e.followed = e.agent.IsFollowing()
 	e.refreshChain()
@@ -632,7 +658,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive)
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -682,11 +708,46 @@ func (e *Environment) craftReadyNow(ctx context.Context) bool {
 // craftingTableBlock is the block Config.CraftSearchRadius looks for.
 const craftingTableBlock = "minecraft:crafting_table"
 
+// gunpowderCountNow returns the bot's current held count of
+// "minecraft:gunpowder" (see LiveAgent.InventoryCount), or 0 if
+// Config.CreeperGunpowderActive is false — mirrors craftCountNow's
+// empty-target handling, except gated on the task's own active flag
+// rather than an item-name field (there is none — see
+// Config.CreeperGunpowderActive's own doc comment).
+func (e *Environment) gunpowderCountNow() int {
+	if !e.cfg.CreeperGunpowderActive {
+		return 0
+	}
+	return e.agent.InventoryCount(creeperGunpowderItemName)
+}
+
 // elytraItemName is the item ActionFlyTo's legality/observation checks
 // (LiveAgent.IsEquipped/agent.FlyTo itself) require worn — the one and
 // only item Flight cares about, so it's a fixed constant, not a Config
 // field (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
 const elytraItemName = "minecraft:elytra"
+
+// creeperGunpowderMobType is the entity type
+// ActionKillCreeperForGunpowder's legality/observation checks search for —
+// the method itself is hardcoded to creepers by design (see
+// Config.CreeperGunpowderActive's own doc comment), so this is a fixed
+// constant, not a Config field, mirroring elytraItemName's own reasoning.
+const creeperGunpowderMobType = "minecraft:creeper"
+
+// creeperGunpowderWeaponName mirrors agent's own unexported
+// combatSeedWeapon constant (agent/rl_seed.go) — this package can't
+// import that directly (unexported, different package), so the value is
+// duplicated here deliberately, the same way elytraItemName duplicates
+// agent.elytraItemName's own value rather than importing it.
+// ActionKillCreeperForGunpowder's legality requires this exact item
+// equipped, matching agent.validateCreeperWeapon's own real requirement
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+const creeperGunpowderWeaponName = "minecraft:iron_sword"
+
+// creeperGunpowderItemName is the item gunpowderCountNow's InventoryCount
+// check and reward.go's creeperGunpowderRewardBonus delta watch — the
+// drop agent.KillCreeperForGunpowder collects.
+const creeperGunpowderItemName = "minecraft:gunpowder"
 
 // equipReadyNow reports whether Config.EquipTargetItem (if any) is
 // currently equipped (see LiveAgent.IsEquipped), or false if it's unset —
@@ -813,6 +874,31 @@ func (e *Environment) refreshCombatTarget(ctx context.Context) error {
 		return fmt.Errorf("rlenv: resolving combat target: %w", err)
 	}
 	e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshCreeperTarget re-resolves the nearest currently-visible creeper
+// and stores it (with its entity ID) into e.creeperEntityID/creeperX/Y/Z/
+// creeperVisible — the creeper-gunpowder-task analogue of
+// refreshCombatTarget, same caching shape, hardcoded mob type instead of
+// a Config field (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+// Leaves e.creeperVisible=false without error if Config.CreeperGunpowderActive
+// is false or nothing matching is currently visible; only a genuine
+// FindNearestVisibleEntityOfType error is returned.
+func (e *Environment) refreshCreeperTarget(ctx context.Context) error {
+	if !e.cfg.CreeperGunpowderActive {
+		e.creeperEntityID, e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.CreeperGunpowderRadius
+	if radius <= 0 {
+		radius = DefaultConfig().CreeperGunpowderRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, creeperGunpowderMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving creeper-gunpowder target: %w", err)
+	}
+	e.creeperEntityID, e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible = id, x, y, z, found
 	return nil
 }
 
@@ -1059,6 +1145,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.placeCount mirrors prevPickupCount's own reasoning above, for the
 	// standalone placement task.
 	prevPlaceCount := e.placeCount
+	// e.gunpowderCount mirrors prevPlaceCount's own reasoning above, for
+	// the creeper-gunpowder task.
+	prevGunpowderCount := e.gunpowderCount
 	// prevPickupEntityID/prevPickupVisible back Config.PickupAnyItem's own
 	// reward check (see pickedUpThisStep below) — captured before dispatch
 	// for the same reason prevCombatEntityID is.
@@ -1163,6 +1252,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// false then — docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
 	newPlaceCount := e.placeCountNow()
 	placedStandaloneThisStep := e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && newPlaceCount < prevPlaceCount
+
+	// gunpowderCollectedThisStep is judged from an actual InventoryCount
+	// increase, not from whether ActionKillCreeperForGunpowder was the
+	// dispatched action — mirrors craftedThisStep's own reasoning above.
+	// Faithful to the real encounter's uncertain drop rate: a kill with no
+	// drop (a valid, documented outcome of agent.KillCreeperForGunpowder)
+	// earns nothing here, matching how a real player farming creepers
+	// experiences it (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	newGunpowderCount := e.gunpowderCountNow()
+	gunpowderCollectedThisStep := e.cfg.CreeperGunpowderActive && newGunpowderCount > prevGunpowderCount
 
 	// mountedThisStep is judged from an actual IsMounted transition
 	// (false -> true), not from whether ActionMount was the dispatched
@@ -1285,6 +1384,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "place"
 	}
+	if gunpowderCollectedThisStep {
+		reward += creeperGunpowderRewardBonus
+		done = true
+		doneReason = "creepergunpowder"
+	}
 	if e.cfg.FlyTargetActive {
 		arrivalRadius := e.cfg.FlyArrivalRadius
 		if arrivalRadius <= 0 {
@@ -1336,6 +1440,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshCombatTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshCreeperTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	if err := e.refreshFollowTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
@@ -1349,11 +1456,12 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.equipReady = newEquipReady
 	e.pickupCount = newPickupCount
 	e.placeCount = newPlaceCount
+	e.gunpowderCount = newGunpowderCount
 	e.mounted = newMounted
 	e.followed = newFollowed
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive)
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

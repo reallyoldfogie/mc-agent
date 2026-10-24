@@ -213,6 +213,28 @@ type Config struct {
 	// default radius (16).
 	CombatRadius float64
 
+	// CreeperGunpowderActive, if true, enables
+	// ActionKillCreeperForGunpowder — a complete, already-built encounter
+	// (agent.KillCreeperForGunpowder) that fights the nearest creeper with
+	// whatever melee weapon is already equipped and collects a gunpowder
+	// drop if one appears, following MineTargetBlock's exact "environment
+	// poses the task" pattern. Unlike CombatTargetMobType, there is no mob-
+	// type field: the method itself is hardcoded to creepers by design
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5). Empty/false
+	// (the default) means no creeper-gunpowder task. Bot death is already
+	// handled generically regardless of this field — same reasoning as
+	// CombatTargetMobType's own doc comment.
+	CreeperGunpowderActive bool
+
+	// CreeperGunpowderRadius bounds FindNearestVisibleEntityOfType's
+	// search for the nearest visible creeper (also the radius
+	// SeedCreeperForGunpowder checks before summoning one). <= 0 defers to
+	// DefaultConfig's own default — no existing chat-command default to
+	// mirror (the real method's own search loop is unbounded, polling
+	// until a creeper happens to be found), same reasoning as
+	// RideSearchRadius's own doc comment.
+	CreeperGunpowderRadius float64
+
 	// FollowTargetPlayerName, if set, is the player name (not an entity
 	// type/block to search for — agent.Follow's own target-selection only
 	// resolves players by name, following/manager.go's Start(targetPlayerName
@@ -577,6 +599,13 @@ type TaskOverride struct {
 	// CombatRadius is Config.CombatRadius for this episode.
 	CombatRadius float64
 
+	// CreeperGunpowderActive is Config.CreeperGunpowderActive for this
+	// episode.
+	CreeperGunpowderActive bool
+	// CreeperGunpowderRadius is Config.CreeperGunpowderRadius for this
+	// episode.
+	CreeperGunpowderRadius float64
+
 	// FollowTargetPlayerName is Config.FollowTargetPlayerName for this
 	// episode.
 	FollowTargetPlayerName string
@@ -608,6 +637,10 @@ func DefaultConfig() Config {
 		// Matches actions/commands.go's own runCombat default radius —
 		// same reasoning as MineSearchRadius above.
 		CombatRadius: 16,
+		// No existing chat-command default to mirror (see
+		// CreeperGunpowderRadius's own doc comment) — matches CombatRadius's
+		// own default, a reasonable search distance for a hostile mob.
+		CreeperGunpowderRadius: 16,
 	}
 }
 

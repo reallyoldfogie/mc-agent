@@ -111,6 +111,15 @@ const (
 	// doesn't foreclose, just doesn't build speculatively (docs/plans/
 	// RL_ACTION_SPACE_EXPANSION_III.md item 4).
 	followRewardBonus float32 = 10.0
+	// creeperGunpowderRewardBonus is added once, the step
+	// "minecraft:gunpowder"'s held inventory count is observed to
+	// increase during a Config.CreeperGunpowderActive episode — same
+	// magnitude/philosophy as craftRewardBonus/pickupRewardBonus. Faithful
+	// to the real encounter's uncertain drop rate: a kill with no drop (a
+	// valid, documented outcome of agent.KillCreeperForGunpowder) earns
+	// nothing, matching how a real player farming creepers experiences it
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	creeperGunpowderRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

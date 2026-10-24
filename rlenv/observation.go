@@ -190,6 +190,23 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          set, 0.0 otherwise. Same role as goalRideActive/
 //	          goalCombatActive above.
 //
+//	index 51: creeperDx — nearest visible creeper's X minus current X
+//	          (blocks); 0 if not visible/Config.CreeperGunpowderActive is
+//	          false. Unlike CombatTargetMobType, there is no mob-type
+//	          field: the search is always for "minecraft:creeper" (see
+//	          Config.CreeperGunpowderActive's own doc comment).
+//	index 52: creeperDy — same, Y.
+//	index 53: creeperDz — same, Z.
+//	index 54: creeperVisible — 1.0 if Config.CreeperGunpowderActive is
+//	          true and a visible creeper was found this step, 0.0
+//	          otherwise. Mirrors combatVisible's dual role — gates
+//	          creeperDx/Dy/Dz and doubles as
+//	          ActionKillCreeperForGunpowder's legality/mask condition.
+//	index 55: goalCreeperGunpowderActive — 1.0 if
+//	          Config.CreeperGunpowderActive is true, 0.0 otherwise. Same
+//	          role as goalCombatActive/goalRideActive above (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 5).
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -233,7 +250,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 51
+const observationSize = 56
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -255,7 +272,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -283,6 +300,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag := float32(0), float32(0), float32(0), float32(0), float32(0)
 	if combatVisible {
 		combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag = float32(combatX-x), float32(combatY-y), float32(combatZ-z), combatHealth, 1
+	}
+	creeperDx, creeperDy, creeperDz, creeperVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if creeperVisible {
+		creeperDx, creeperDy, creeperDz, creeperVisibleFlag = float32(creeperX-x), float32(creeperY-y), float32(creeperZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -338,6 +359,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				boolToFloat32(followTargetVisible),
 				boolToFloat32(isFollowing),
 				boolToFloat32(followActive),
+				creeperDx / obsDistanceScale,
+				creeperDy / obsDistanceScale,
+				creeperDz / obsDistanceScale,
+				creeperVisibleFlag,
+				boolToFloat32(creeperActive),
 			},
 		}
 	}
@@ -394,6 +420,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			boolToFloat32(followTargetVisible),
 			boolToFloat32(isFollowing),
 			boolToFloat32(followActive),
+			creeperDx,
+			creeperDy,
+			creeperDz,
+			creeperVisibleFlag,
+			boolToFloat32(creeperActive),
 		},
 	}
 }
