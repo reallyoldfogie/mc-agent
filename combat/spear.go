@@ -55,6 +55,18 @@ const (
 	SpearCharge
 )
 
+// SpearMinReach/SpearMaxReach mirror combat.MaceMinReach/MaceMaxReach's
+// own doc comment — vanilla's PLAYER_ENTITY_INTERACTION_RANGE, unchanged
+// by the Spear's own mechanics. Exported so agent/combat_spear.go's
+// hardcoded request-building literals and agent/combat_approach.go's
+// approach-range wait (SpearChargeAtWithApproach needs to know how close
+// is "close enough" before invoking the charge) share one definition
+// instead of two independently-maintained copies of the same number.
+const (
+	SpearMinReach = 1.0
+	SpearMaxReach = 6.0
+)
+
 // SpearChargeStage is the server-visible phase of a held spear charge.
 type SpearChargeStage uint8
 

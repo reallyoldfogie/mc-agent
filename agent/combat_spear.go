@@ -45,7 +45,7 @@ func (a *agent) spearRequestForEntity(targetID int32, itemName string, mode comb
 	combatTarget := combat.Target{EntityID: targetID, X: target.X, Y: target.Y, Z: target.Z, Distance: distance}
 	request := combat.SpearAttackRequest{
 		TargetID: targetID, ItemName: itemName, Mode: mode, Distance: distance,
-		MinReach: 1, MaxReach: 6, TargetPosition: models.V3{X: target.X, Y: target.Y, Z: target.Z},
+		MinReach: combat.SpearMinReach, MaxReach: combat.SpearMaxReach, TargetPosition: models.V3{X: target.X, Y: target.Y, Z: target.Z},
 		ViewAlignment: 1, RelativeSpeed: minSpeed, MinSpeed: minSpeed, MinAlignment: minAlignment,
 		HoldDuration: holdDuration,
 		Profile:      combat.SpearChargeProfile{EngagedDuration: engagedDuration, TiredDuration: tiredDuration},
@@ -65,7 +65,7 @@ func (a *agent) spearRequestForEntity(targetID int32, itemName string, mode comb
 // separately-orchestrated movement command (docs/plans/
 // RL_ACTION_SPACE_EXPANSION_III.md item 6).
 func (a *agent) SpearChargeAtWithApproach(ctx context.Context, targetID int32, itemName string, holdDuration, engagedDuration, tiredDuration time.Duration, minSpeed, minAlignment float64) error {
-	return a.approachTargetWhileAttacking(ctx, targetID, true, func(attackCtx context.Context) error {
+	return a.approachTargetWhileAttacking(ctx, targetID, true, combat.SpearMaxReach, func(attackCtx context.Context) error {
 		return a.SpearChargeAt(attackCtx, targetID, itemName, holdDuration, engagedDuration, tiredDuration, minSpeed, minAlignment)
 	})
 }
@@ -76,8 +76,8 @@ func spearJabRequestForTarget(target combat.Target, itemName string) (combat.Spe
 		ItemName:       itemName,
 		Mode:           combat.SpearJab,
 		Distance:       target.Distance,
-		MinReach:       1,
-		MaxReach:       6,
+		MinReach:       combat.SpearMinReach,
+		MaxReach:       combat.SpearMaxReach,
 		TargetPosition: models.V3{X: target.X, Y: target.Y, Z: target.Z},
 	}
 	return request, request.Validate()

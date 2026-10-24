@@ -74,7 +74,7 @@ func (a *agent) MaceAttackAt(ctx context.Context, targetID int32, itemName strin
 // position at exactly the edge the smash needs the bot to fall from
 // (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
 func (a *agent) MaceSmashAtWithApproach(ctx context.Context, targetID int32, itemName string) error {
-	return a.approachTargetWhileAttacking(ctx, targetID, false, func(attackCtx context.Context) error {
+	return a.approachTargetWhileAttacking(ctx, targetID, false, 0, func(attackCtx context.Context) error {
 		return a.MaceSmashAt(attackCtx, targetID, itemName)
 	})
 }
