@@ -167,19 +167,20 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName      = "movetoquiet"
-	mineActionName        = "mine"
-	craftActionName       = "craft"
-	placeActionName       = "place"
-	equipActionName       = "equip"
-	useItemActionName     = "useitem"
-	useItemOffhandArg     = "offhand"
-	pickUpItemActionName  = "pickupitem"
-	flyToActionName       = "flyto"
-	mountActionName       = "mount"
-	dismountActionName    = "dismount"
-	vehicleJumpActionName = "vehiclejump"
-	combatActionName      = "runcombat"
+	moveToActionName         = "movetoquiet"
+	mineActionName           = "mine"
+	craftActionName          = "craft"
+	placeActionName          = "place"
+	equipActionName          = "equip"
+	useItemActionName        = "useitem"
+	useItemOffhandArg        = "offhand"
+	pickUpItemActionName     = "pickupitem"
+	flyToActionName          = "flyto"
+	mountActionName          = "mount"
+	dismountActionName       = "dismount"
+	vehicleJumpActionName    = "vehiclejump"
+	combatActionName         = "runcombat"
+	moveToAndSneakActionName = "movetoandsneakquiet"
 )
 
 // actionDispatch describes what Step should send through the
@@ -221,6 +222,14 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 	case ActionGoToTarget:
 		if !e.actionLegal(ActionGoToTarget) {
 			return actionDispatch{}, false, nil
+		}
+		// Config.ArriveSneaking (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 3) is purely a dispatch-time choice — arrival detection
+		// itself (distance-based, in Step) is unaffected either way, so
+		// there's no separate action/reward for this, just which quiet
+		// movement primitive gets dispatched.
+		if e.cfg.ArriveSneaking {
+			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 		}
 		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
 	case ActionMine:

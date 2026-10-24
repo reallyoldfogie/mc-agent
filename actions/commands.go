@@ -315,6 +315,40 @@ func (MoveToAndSneak) Execute(ctx context.Context, agent models.CommandAgent, ar
 	return completion, nil
 }
 
+// MoveToAndSneakQuiet is MoveToAndSneak without chat narration — mirrors
+// MoveToQuiet's own relationship to MoveTo exactly (agent.MoveToAndSneak
+// itself sends no chat; only this command's own non-quiet sibling adds
+// it). Built for rlenv's sneak-on-arrival mode (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 3) — dispatching the non-quiet
+// form every Step would reintroduce the exact chat-spam server-kick risk
+// movetoquiet already exists to avoid for plain movement.
+type MoveToAndSneakQuiet struct{}
+
+func (MoveToAndSneakQuiet) Name() string  { return "movetoandsneakquiet" }
+func (MoveToAndSneakQuiet) Usage() string { return "movetoandsneakquiet <x> <y> <z>" }
+func (MoveToAndSneakQuiet) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 3 {
+		return models.Done(fmt.Errorf("movetoandsneakquiet: usage: movetoandsneakquiet <x> <y> <z>")), nil
+	}
+	tx, err := parseFloat(args[0])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoandsneakquiet: invalid X coordinate: %w", err)), nil
+	}
+	ty, err := parseFloat(args[1])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoandsneakquiet: invalid Y coordinate: %w", err)), nil
+	}
+	tz, err := parseFloat(args[2])
+	if err != nil {
+		return models.Done(fmt.Errorf("movetoandsneakquiet: invalid Z coordinate: %w", err)), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		resolve(agent.MoveToAndSneak(ctx, tx, ty, tz))
+	}()
+	return completion, nil
+}
+
 type LineToAndSneak struct{}
 
 func (LineToAndSneak) Name() string  { return "linetoandsneak" }

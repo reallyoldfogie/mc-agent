@@ -1927,6 +1927,72 @@ func TestActionMaskPickUpItemLegalForAnyItemModeToo(t *testing.T) {
 	}
 }
 
+// --- Config.ArriveSneaking (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 3) ---
+
+func TestStepGoToTargetArriveSneakingDispatchesSneakVariant(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.ArriveSneaking = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToAndSneakCalls != 1 {
+		t.Fatalf("MoveToAndSneak calls = %d, want 1", agent.moveToAndSneakCalls)
+	}
+	if agent.moveToWithChatCalls != 0 {
+		t.Fatalf("MoveTo calls = %d, want 0 (should dispatch the sneak variant instead)", agent.moveToWithChatCalls)
+	}
+	if !agent.sneaking {
+		t.Fatalf("sneaking = false, want true (arrived via the sneak variant)")
+	}
+}
+
+func TestStepGoToTargetWithoutArriveSneakingDispatchesNormalVariant(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	env := newTestEnvironment(t, agent, testConfig()) // ArriveSneaking defaults false
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.moveToAndSneakCalls != 0 {
+		t.Fatalf("MoveToAndSneak calls = %d, want 0 (ArriveSneaking is false, unchanged behavior)", agent.moveToAndSneakCalls)
+	}
+	if agent.moveToWithChatCalls != 1 {
+		t.Fatalf("MoveTo calls = %d, want 1", agent.moveToWithChatCalls)
+	}
+}
+
+// TestResetStopsSneakingLeftOverFromThePreviousEpisode mirrors
+// dismountForReset's own test precedent: a persistent toggle from a
+// previous episode (here, Config.ArriveSneaking having left the bot
+// sneaking) must never survive into the next episode, regardless of the
+// next episode's own Config.
+func TestResetStopsSneakingLeftOverFromThePreviousEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.mu.Lock()
+	agent.sneaking = true // leftover from a previous episode
+	agent.mu.Unlock()
+	env := newTestEnvironment(t, agent, testConfig())
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if agent.stopSneakingCalls < 1 {
+		t.Fatalf("StopSneaking calls = %d, want at least 1", agent.stopSneakingCalls)
+	}
+	if agent.sneaking {
+		t.Fatalf("sneaking = true, want false after Reset")
+	}
+}
+
 // --- Config.PlaceTargetItem, standalone (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2) ---
 
 func TestStepPlaceStandaloneWithNoConfiguredTargetIsNoOp(t *testing.T) {

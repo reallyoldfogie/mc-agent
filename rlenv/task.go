@@ -450,6 +450,15 @@ type Config struct {
 	// below for the mechanism that actually sets this per episode.
 	GoToTargetDisabled bool
 
+	// ArriveSneaking, if true, makes ActionGoToTarget dispatch
+	// "movetoandsneakquiet" instead of "movetoquiet" — the bot ends the
+	// movement sneaking at the destination, instead of standing normally.
+	// Purely a dispatch-time choice: arrival detection itself (Step's own
+	// distance-based check) is unaffected either way, so there's no
+	// separate reward for this (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 3). False (the default) preserves today's behavior exactly.
+	ArriveSneaking bool
+
 	// TaskSelector, if set, is called once per Reset (after any
 	// Config.ResetOrigin teleport, before this episode's target/jitter is
 	// computed) to choose which task(s) are active this specific episode,
@@ -513,13 +522,15 @@ type TaskOverride struct {
 	SeedAtGoal bool
 
 	GoToTargetDisabled bool
-	TargetOffset       [3]float64
-	MineTargetBlock    string
-	MineSearchRadius   int
-	MineRequiredTool   string
-	MineTargetBuried   bool
-	CraftTargetItem    string
-	CraftSearchRadius  int
+	// ArriveSneaking is Config.ArriveSneaking for this episode.
+	ArriveSneaking    bool
+	TargetOffset      [3]float64
+	MineTargetBlock   string
+	MineSearchRadius  int
+	MineRequiredTool  string
+	MineTargetBuried  bool
+	CraftTargetItem   string
+	CraftSearchRadius int
 
 	// EquipTargetItem is Config.EquipTargetItem for this episode.
 	EquipTargetItem string

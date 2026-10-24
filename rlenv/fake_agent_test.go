@@ -195,6 +195,14 @@ type fakeAgent struct {
 	// keeps using chainInv, unaffected by this).
 	placeTargetName string
 	placeHeldCount  int
+
+	// Sneak-on-arrival simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 3): sneaking backs StopSneaking's own no-op-when-not-sneaking
+	// contract closely enough for tests; moveToAndSneakCalls/
+	// stopSneakingCalls record call counts for dispatch assertions.
+	sneaking            bool
+	moveToAndSneakCalls int
+	stopSneakingCalls   int
 }
 
 // setPlaceTarget configures the simulated standalone-placement target —
@@ -365,14 +373,36 @@ func (f *fakeAgent) IsGliding() bool {
 func (f *fakeAgent) MoveForward(context.Context, float64) error    { return nil }
 func (f *fakeAgent) MoveUp(context.Context, float64) error         { return nil }
 func (f *fakeAgent) MoveUpAndSneak(context.Context, float64) error { return nil }
-func (f *fakeAgent) MoveToAndSneak(context.Context, float64, float64, float64) error {
+
+// MoveToAndSneak moves the tracked position to (x, y, z) and marks the bot
+// sneaking — mirrors MoveTo's own "actually mutates state" precedent, so
+// rlenv's real ActionGoToTarget dispatch (Config.ArriveSneaking,
+// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 3) is exercised for
+// real rather than stubbed out.
+func (f *fakeAgent) MoveToAndSneak(_ context.Context, x, y, z float64) error {
+	f.mu.Lock()
+	f.x, f.y, f.z = x, y, z
+	f.sneaking = true
+	f.moveToAndSneakCalls++
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeAgent) LineToAndSneak(context.Context, float64, float64, float64) error {
 	return nil
 }
-func (f *fakeAgent) StartSneaking() error { return nil }
-func (f *fakeAgent) StopSneaking() error  { return nil }
+func (f *fakeAgent) StartSneaking() error {
+	f.mu.Lock()
+	f.sneaking = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) StopSneaking() error {
+	f.mu.Lock()
+	f.sneaking = false
+	f.stopSneakingCalls++
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeAgent) FindPath(_ context.Context, x, y, z float64) (*models.Path, error) {
 	f.mu.Lock()
 	f.findPathCalls = append(f.findPathCalls, models.V3{X: x, Y: y, Z: z})

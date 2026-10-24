@@ -353,6 +353,7 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	e.cancelInflight()
 	e.dismountForReset()
+	e.stopSneakForReset()
 	e.clearRideVehicle(ctx)
 	e.restoreMinedBlocks(ctx)
 	e.removeFarSeeded(ctx)
@@ -428,6 +429,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if e.cfg.TaskSelector != nil {
 		override := e.cfg.TaskSelector(episodeIndex, e.rng)
 		e.cfg.GoToTargetDisabled = override.GoToTargetDisabled
+		e.cfg.ArriveSneaking = override.ArriveSneaking
 		e.cfg.TargetOffset = override.TargetOffset
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
@@ -825,6 +827,19 @@ func (e *Environment) dismountForReset() {
 	}
 	if err := e.agent.DismountEntity(); err != nil {
 		log.Printf("rlenv: dismounting before reset: %v", err)
+	}
+}
+
+// stopSneakForReset clears sneaking before any teleport/cleanup runs —
+// unconditional, the same reasoning dismountForReset's own doc comment
+// gives for mounting: a persistent toggle (here, from a previous episode's
+// Config.ArriveSneaking) must never survive into the next episode
+// regardless of this episode's own Config (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 3). Best effort: a failure is
+// logged, never fails the Reset.
+func (e *Environment) stopSneakForReset() {
+	if err := e.agent.StopSneaking(); err != nil {
+		log.Printf("rlenv: stopping sneak before reset: %v", err)
 	}
 }
 

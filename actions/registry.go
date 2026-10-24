@@ -22,6 +22,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(MoveUp{})
 	reg.Register(MoveUpAndSneak{})
 	reg.Register(MoveToAndSneak{})
+	reg.Register(MoveToAndSneakQuiet{})
 	reg.Register(LineToAndSneak{})
 	reg.Register(StopSneak{})
 	reg.Register(FindPath{})
