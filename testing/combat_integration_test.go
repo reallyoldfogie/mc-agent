@@ -49,6 +49,11 @@ type maceSmashApproachRunner interface {
 	MaceSmashAtWithApproach(context.Context, int32, string) error
 }
 
+type maceSeedRunner interface {
+	SeedMaceMob(context.Context, string, int) (int32, error)
+	SeedElevatedPlatform(context.Context, string, int) error
+}
+
 type CombatFlatSuite struct {
 	VersionWorldSuite
 }
@@ -1069,6 +1074,39 @@ func (s *CombatFlatSuite) TestMaceSmashWithApproach() {
 
 	after := waitForTrackedDamage(s, leader, targetID, before.Health, 10)
 	require.Greater(s.T(), before.Health-after.Health, float32(10), "falling Mace attack with approach should include smash bonus damage")
+}
+
+// TestMaceSmashWithApproachWalksOffPlatform validates
+// agent.SeedElevatedPlatform's own walk-off geometry live, end to end —
+// the one thing TestMaceSmashWithApproach's teleport-into-open-air setup
+// deliberately did not exercise (see that test's own doc comment and
+// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7's "live-tuning
+// flag"). Seeds the mace mob and its platform through the real
+// production RCON-seeding path (agent.SeedMaceMob/SeedElevatedPlatform —
+// the same methods rlenv.DefaultEpisodeSeeder calls, never exercised
+// live before this), then dispatches MaceSmashAtWithApproach with no
+// other setup: the bot must walk off the platform's edge on its own,
+// fall, and land the smash for this to pass.
+func (s *CombatFlatSuite) TestMaceSmashWithApproachWalksOffPlatform() {
+	leader, err := s.SpawnWorkingAreaAgent("MacePlatformBot", "combat_mace_platform")
+	require.NoError(s.T(), err, "spawn agent")
+
+	seeder, ok := leader.Agent.(maceSeedRunner)
+	require.True(s.T(), ok, "agent should expose SeedMaceMob/SeedElevatedPlatform")
+	_, err = seeder.SeedMaceMob(s.Ctx, "minecraft:husk", 16)
+	require.NoError(s.T(), err, "seed mace mob")
+	require.NoError(s.T(), seeder.SeedElevatedPlatform(s.Ctx, "minecraft:husk", 16), "seed elevated platform")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:husk")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "mace target should have a health snapshot before attack")
+
+	runner, ok := leader.Agent.(maceSmashApproachRunner)
+	require.True(s.T(), ok, "agent should expose MaceSmashAtWithApproach")
+	require.NoError(s.T(), runner.MaceSmashAtWithApproach(s.Ctx, targetID, "minecraft:mace"), "walk off the seeded platform and smash")
+
+	after := waitForTrackedDamage(s, leader, targetID, before.Health, 10)
+	require.Greater(s.T(), before.Health-after.Health, float32(10), "walking off the seeded elevated platform should produce a falling Mace smash")
 }
 
 func zombieIDForTest(s *CombatFlatSuite, leader *WorkingAreaAgent, typeName string) int32 {
