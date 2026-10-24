@@ -237,6 +237,26 @@ type fakeAgent struct {
 	spearHealth            float32
 	spearVisible           bool
 	spearChargeCalls       []spearChargeCall
+
+	// Mace-smash simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 7): a single target mob type, maceTargetType, visible at
+	// (maceX,Y,Z) with entity ID maceEntityID and health maceHealth while
+	// maceVisible. MaceSmashAtWithApproach "smashes" it by setting
+	// maceHealth to 0 — mirrors spearTargetType's own "actually mutates
+	// state" precedent.
+	maceTargetType      string
+	maceX, maceY, maceZ float64
+	maceEntityID        int32
+	maceHealth          float32
+	maceVisible         bool
+	maceSmashCalls      []maceSmashCall
+}
+
+// maceSmashCall records one MaceSmashAtWithApproach call's args, so tests
+// can assert rlenv's real dispatch reached it with the right values.
+type maceSmashCall struct {
+	targetID int32
+	itemName string
 }
 
 // spearChargeCall records one SpearChargeAtWithApproach call's args, so
@@ -286,6 +306,26 @@ func (f *fakeAgent) setSpearTarget(entityType string, entityID int32, x, y, z fl
 func (f *fakeAgent) killSpearTarget() {
 	f.mu.Lock()
 	f.spearHealth = 0
+	f.mu.Unlock()
+}
+
+// setMaceTarget configures the simulated mace-smash target — see
+// maceTargetType's own doc comment.
+func (f *fakeAgent) setMaceTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.maceTargetType = entityType
+	f.maceEntityID = entityID
+	f.maceX, f.maceY, f.maceZ = x, y, z
+	f.maceHealth = health
+	f.maceVisible = true
+	f.mu.Unlock()
+}
+
+// killMaceTarget mirrors killCombatTarget's own doc comment, for the
+// mace-smash target.
+func (f *fakeAgent) killMaceTarget() {
+	f.mu.Lock()
+	f.maceHealth = 0
 	f.mu.Unlock()
 }
 
@@ -656,6 +696,9 @@ func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityType
 	if f.spearVisible && f.spearTargetType != "" && entityTypeName == f.spearTargetType {
 		return f.spearEntityID, f.spearX, f.spearY, f.spearZ, true, nil
 	}
+	if f.maceVisible && f.maceTargetType != "" && entityTypeName == f.maceTargetType {
+		return f.maceEntityID, f.maceX, f.maceY, f.maceZ, true, nil
+	}
 	return 0, 0, 0, 0, false, nil
 }
 
@@ -670,6 +713,9 @@ func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool)
 	}
 	if f.spearVisible && entityID == f.spearEntityID {
 		return f.spearHealth, true
+	}
+	if f.maceVisible && entityID == f.maceEntityID {
+		return f.maceHealth, true
 	}
 	// The simulated pickup item has no meaningful health — only "found"
 	// matters for Config.PickupAnyItem's own reward check (see
@@ -731,6 +777,21 @@ func (f *fakeAgent) SpearChargeAtWithApproach(_ context.Context, targetID int32,
 	f.spearChargeCalls = append(f.spearChargeCalls, spearChargeCall{targetID, itemName, hold, engaged, tired, minSpeed, minAlignment})
 	if f.spearVisible && targetID == f.spearEntityID {
 		f.spearHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// MaceSmashAtWithApproach "smashes" the simulated mace target by zeroing
+// its health — mirrors SpearChargeAtWithApproach's own "actually mutates
+// state" precedent. A no-op (recording the call only) if nothing is
+// currently configured as the mace target, matching a real call against
+// an untracked/vanished target.
+func (f *fakeAgent) MaceSmashAtWithApproach(_ context.Context, targetID int32, itemName string) error {
+	f.mu.Lock()
+	f.maceSmashCalls = append(f.maceSmashCalls, maceSmashCall{targetID: targetID, itemName: itemName})
+	if f.maceVisible && targetID == f.maceEntityID {
+		f.maceHealth = 0
 	}
 	f.mu.Unlock()
 	return nil

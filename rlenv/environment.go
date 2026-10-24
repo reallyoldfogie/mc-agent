@@ -228,6 +228,15 @@ type Environment struct {
 	spearX, spearY, spearZ float64
 	spearVisible           bool
 
+	// maceEntityID/maceX/Y/Z/maceVisible cache the last-resolved nearest
+	// visible Config.MaceSmashTargetMobType instance (see
+	// refreshMaceTarget) — the mace-smash-task analogue of spearEntityID/
+	// spearX/Y/Z/spearVisible, same caching shape and same by-ID dispatch
+	// reasoning (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceEntityID        int32
+	maceX, maceY, maceZ float64
+	maceVisible         bool
+
 	// followTargetVisible/followed cache Config.FollowTargetPlayerName's
 	// own resolvability (see refreshFollowTarget) and the last-computed
 	// CommandAgent.IsFollowing() result — the follow-task analogues of
@@ -499,6 +508,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.CreeperGunpowderRadius = override.CreeperGunpowderRadius
 		e.cfg.SpearChargeTargetMobType = override.SpearChargeTargetMobType
 		e.cfg.SpearChargeRadius = override.SpearChargeRadius
+		e.cfg.MaceSmashTargetMobType = override.MaceSmashTargetMobType
+		e.cfg.MaceSmashRadius = override.MaceSmashRadius
 		e.cfg.FollowTargetPlayerName = override.FollowTargetPlayerName
 	}
 
@@ -661,6 +672,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshSpearTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshMaceTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	if err := e.refreshFollowTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
@@ -675,7 +689,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -799,6 +813,13 @@ const (
 	spearChargeMinSpeed        = 0.05
 	spearChargeMinAlignment    = 0.9
 )
+
+// maceSmashWeaponName mirrors agent's own unexported maceSeedWeapon
+// constant (agent/rl_seed.go) — this package can't import that directly,
+// same reasoning as spearChargeWeaponName's own doc comment.
+// ActionMaceSmashWithApproach's dispatch/legality both require this exact
+// item equipped (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+const maceSmashWeaponName = "minecraft:mace"
 
 // equipReadyNow reports whether Config.EquipTargetItem (if any) is
 // currently equipped (see LiveAgent.IsEquipped), or false if it's unset —
@@ -975,6 +996,31 @@ func (e *Environment) refreshSpearTarget(ctx context.Context) error {
 		return fmt.Errorf("rlenv: resolving spear-charge target: %w", err)
 	}
 	e.spearEntityID, e.spearX, e.spearY, e.spearZ, e.spearVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshMaceTarget re-resolves the nearest currently-visible instance of
+// Config.MaceSmashTargetMobType and stores it (with its entity ID) into
+// e.maceEntityID/maceX/Y/Z/maceVisible — the mace-smash-task analogue of
+// refreshSpearTarget, same caching shape (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 7). Leaves e.maceVisible=false
+// without error if Config.MaceSmashTargetMobType is unset or nothing
+// matching is currently visible; only a genuine
+// FindNearestVisibleEntityOfType error is returned.
+func (e *Environment) refreshMaceTarget(ctx context.Context) error {
+	if e.cfg.MaceSmashTargetMobType == "" {
+		e.maceEntityID, e.maceX, e.maceY, e.maceZ, e.maceVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.MaceSmashRadius
+	if radius <= 0 {
+		radius = DefaultConfig().MaceSmashRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.MaceSmashTargetMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving mace-smash target: %w", err)
+	}
+	e.maceEntityID, e.maceX, e.maceY, e.maceZ, e.maceVisible = id, x, y, z, found
 	return nil
 }
 
@@ -1245,6 +1291,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// reasoning above, for the spear-charge task.
 	prevSpearEntityID := e.spearEntityID
 	prevSpearVisible := e.spearVisible
+	// prevMaceEntityID/prevMaceVisible mirror prevSpearEntityID's own
+	// reasoning above, for the mace-smash task.
+	prevMaceEntityID := e.maceEntityID
+	prevMaceVisible := e.maceVisible
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -1381,6 +1431,15 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		spearKilledThisStep = !found || health <= 0
 	}
 
+	// maceKilledThisStep mirrors spearKilledThisStep's own reasoning
+	// above, for the mace-smash task (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceKilledThisStep := false
+	if e.cfg.MaceSmashTargetMobType != "" && prevMaceVisible {
+		health, found := e.agent.GetEntityHealth(prevMaceEntityID)
+		maceKilledThisStep = !found || health <= 0
+	}
+
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
 	// rewards for the whole chain; see chain.go. goalCrafted feeds the
@@ -1509,6 +1568,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "spearcharge"
 	}
+	if maceKilledThisStep {
+		reward += maceSmashRewardBonus
+		done = true
+		doneReason = "macesmash"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -1540,6 +1604,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshSpearTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshMaceTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	if err := e.refreshFollowTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
@@ -1558,7 +1625,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.followed = newFollowed
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

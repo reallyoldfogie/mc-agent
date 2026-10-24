@@ -195,8 +195,18 @@ const (
 	// RL_ACTION_SPACE_EXPANSION_III.md item 6).
 	ActionSpearChargeWithApproach
 
+	// ActionMaceSmashWithApproach dispatches
+	// "macesmashwithapproach <entityID> <itemName>" at Environment's own
+	// already-resolved e.maceEntityID (see refreshMaceTarget) — same
+	// by-ID-not-by-name reasoning as ActionSpearChargeWithApproach.
+	// itemName is a fixed constant (maceSmashWeaponName), not a Config
+	// knob. A safe no-op when Config.MaceSmashTargetMobType is unset,
+	// nothing is currently visible, or the required mace isn't equipped
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	ActionMaceSmashWithApproach
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionSpearChargeWithApproach) + 1
+	NumActions = int(ActionMaceSmashWithApproach) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -229,6 +239,7 @@ const (
 	moveToAndSneakActionName          = "movetoandsneakquiet"
 	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
 	spearChargeWithApproachActionName = "spearchargewithapproach"
+	maceSmashWithApproachActionName   = "macesmashwithapproach"
 )
 
 // actionDispatch describes what Step should send through the
@@ -379,6 +390,14 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			fmt.Sprintf("%.4f", spearChargeMinSpeed),
 			fmt.Sprintf("%.4f", spearChargeMinAlignment),
 		}}, true, nil
+	case ActionMaceSmashWithApproach:
+		if !e.actionLegal(ActionMaceSmashWithApproach) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: maceSmashWithApproachActionName, args: []string{
+			fmt.Sprintf("%d", e.maceEntityID),
+			maceSmashWeaponName,
+		}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -464,6 +483,11 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// masking-efficiency reasoning ActionKillCreeperForGunpowder's own
 		// weapon gate uses.
 		return e.cfg.SpearChargeTargetMobType != "" && e.spearVisible && e.agent.IsEquipped(spearChargeWeaponName)
+	case ActionMaceSmashWithApproach:
+		// Gated on the required mace currently equipped, the same
+		// masking-efficiency reasoning ActionSpearChargeWithApproach's own
+		// weapon gate uses.
+		return e.cfg.MaceSmashTargetMobType != "" && e.maceVisible && e.agent.IsEquipped(maceSmashWeaponName)
 	default:
 		return false
 	}

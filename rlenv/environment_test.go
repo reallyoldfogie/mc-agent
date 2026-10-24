@@ -71,13 +71,15 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// 4); 51-55 are the creeper-gunpowder block (creeperDx/Dy/Dz/
 	// creeperVisible/goalCreeperGunpowderActive, that plan's item 5); 56-60
 	// are the spear-charge block (spearDx/Dy/Dz/spearVisible/
-	// goalSpearChargeActive, that plan's item 6) — see observation.go's
-	// own doc comment on observationSize for the full layout. This exact
-	// value is also what makes cmd/rl-train's EnvironmentID
+	// goalSpearChargeActive, that plan's item 6); 61-65 are the
+	// mace-smash block (maceDx/Dy/Dz/maceVisible/goalMaceSmashActive,
+	// that plan's item 7) — see observation.go's own doc comment on
+	// observationSize for the full layout. This exact value is also what
+	// makes cmd/rl-train's EnvironmentID
 	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
 	// checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 61 {
-		t.Fatalf("ObservationSize() = %d, want 61", got)
+	if got := env.ObservationSize(); got != 66 {
+		t.Fatalf("ObservationSize() = %d, want 66", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -92,8 +94,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 61 {
-		t.Fatalf("len(obs.Values) = %d, want 61 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 66 {
+		t.Fatalf("len(obs.Values) = %d, want 66 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -2744,6 +2746,242 @@ func TestActionMaskSpearChargeGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionSpearChargeWithApproach]; legal {
 		t.Fatalf("ActionSpearChargeWithApproach legal = true, want false (Config.SpearChargeTargetMobType unset, even though visible and equipped)")
+	}
+}
+
+// --- Config.MaceSmashTargetMobType (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7) ---
+
+const maceSmashWeaponItemName = "minecraft:mace"
+
+func TestStepMaceSmashWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20) // present in the world, but Config never asks for it
+	if err := agent.Equip(context.Background(), maceSmashWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMaceSmashWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 0 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (Config.MaceSmashTargetMobType unset, safe no-op like ActionWait)", agent.maceSmashCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[65]; active != 0 {
+		t.Fatalf("goalMaceSmashActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepMaceSmashWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	if err := agent.Equip(context.Background(), maceSmashWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMaceSmashWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 0 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (nothing visible to smash)", agent.maceSmashCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[64]; visible != 0 {
+		t.Fatalf("maceVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepMaceSmashWithoutWeaponDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMaceSmashWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 0 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (no mace equipped)", agent.maceSmashCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+}
+
+func TestStepMaceSmashDispatchesWithResolvedEntityAndFixedWeapon(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	if err := agent.Equip(context.Background(), maceSmashWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionMaceSmashWithApproach); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 1 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want exactly 1", agent.maceSmashCalls)
+	}
+	call := agent.maceSmashCalls[0]
+	if call.targetID != 41 {
+		t.Fatalf("targetID = %d, want 41 (Environment's own resolved entity, not a by-name search)", call.targetID)
+	}
+	if call.itemName != maceSmashWeaponItemName {
+		t.Fatalf("itemName = %q, want %q", call.itemName, maceSmashWeaponItemName)
+	}
+}
+
+func TestStepMaceSmashActionKillsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	if err := agent.Equip(context.Background(), maceSmashWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMaceSmashWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target was killed)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (maceSmashRewardBonus)", result.Reward)
+	}
+}
+
+// TestStepMaceSmashRewardJudgedByWorldStateNotDispatchedAction mirrors
+// TestStepSpearChargeRewardJudgedByWorldStateNotDispatchedAction's own
+// reasoning: the target dying from something other than the dispatched
+// action still counts, since the reward is judged from the resolved
+// entity's own health, not from whether ActionMaceSmashWithApproach was
+// chosen this step.
+func TestStepMaceSmashRewardJudgedByWorldStateNotDispatchedAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.killMaceTarget() // died from something other than the mace smash
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 0 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the smash)", agent.maceSmashCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (the resolved target died, regardless of cause)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (maceSmashRewardBonus)", result.Reward)
+	}
+}
+
+func TestStepObservationReflectsMaceTargetVisibilityRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[64]; visible != 1 {
+		t.Fatalf("maceVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[65]; active != 1 {
+		t.Fatalf("goalMaceSmashActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[61]; dx != 5 {
+		t.Fatalf("maceDx at Reset = %v, want 5", dx)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.maceSmashCalls) != 0 {
+		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the smash)", agent.maceSmashCalls)
+	}
+	if visible := result.Observation.Values[64]; visible != 1 {
+		t.Fatalf("maceVisible after ActionWait = %v, want 1 (still visible)", visible)
+	}
+}
+
+func TestActionMaskMaceSmashGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.MaceSmashTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMaceSmashWithApproach]; legal {
+		t.Fatalf("ActionMaceSmashWithApproach legal = true, want false (configured but nothing visible, no weapon)")
+	}
+
+	agent.setMaceTarget("minecraft:zombie", 41, 5, 0, 0, 20)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[64]; visible != 1 {
+		t.Fatalf("maceVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMaceSmashWithApproach]; legal {
+		t.Fatalf("ActionMaceSmashWithApproach legal = true, want false (visible but no weapon equipped yet)")
+	}
+
+	if err := agent.Equip(context.Background(), maceSmashWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMaceSmashWithApproach]; !legal {
+		t.Fatalf("ActionMaceSmashWithApproach legal = false, want true (now visible and weapon equipped)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionMaceSmashWithApproach]; legal {
+		t.Fatalf("ActionMaceSmashWithApproach legal = true, want false (Config.MaceSmashTargetMobType unset, even though visible and equipped)")
 	}
 }
 

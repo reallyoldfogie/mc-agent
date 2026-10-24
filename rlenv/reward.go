@@ -127,6 +127,11 @@ const (
 	// check, not "was ActionSpearChargeWithApproach the dispatched
 	// action" (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6).
 	spearChargeRewardBonus float32 = 10.0
+	// maceSmashRewardBonus is added once, the step Environment's resolved
+	// mace-smash target is observed to die — same magnitude/philosophy as
+	// spearChargeRewardBonus/combatRewardBonus, a world-state-delta check
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceSmashRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

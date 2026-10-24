@@ -45,6 +45,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(SpearChargeWithApproach{})
 	reg.Register(MaceAttack{})
 	reg.Register(MaceSmash{})
+	reg.Register(MaceSmashWithApproach{})
 	reg.Register(RunCombat{})
 	reg.Register(RunCombatWithPolicy{})
 	reg.Register(Mount{})

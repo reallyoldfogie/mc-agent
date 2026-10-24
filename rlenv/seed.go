@@ -207,6 +207,26 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.MaceSmashTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if maceSeeder, ok := agent.(MaceSeedAgent); ok {
+			radius := cfg.MaceSmashRadius
+			if radius <= 0 {
+				radius = DefaultConfig().MaceSmashRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshMaceTarget. SeedElevatedPlatform re-resolves the same
+			// mob to place its platform, called only once the mob itself
+			// is known to exist.
+			if _, err := maceSeeder.SeedMaceMob(ctx, cfg.MaceSmashTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding mace mob: %w", err)
+			}
+			if err := maceSeeder.SeedElevatedPlatform(ctx, cfg.MaceSmashTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding mace elevated platform: %w", err)
+			}
+		}
+	}
 	if cfg.ChainStage == 0 && cfg.PlaceTargetItem != "" {
 		// ToolSeedAgent is the base SeedAgent's own optional capability
 		// already used for Config.MineRequiredTool — reused as-is, no new
@@ -314,6 +334,23 @@ type SpearSeedAgent interface {
 	// blocks of the bot (via SeedEntity) and a spear equipped — see
 	// agent.SeedSpearMob's own doc comment.
 	SeedSpearMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+}
+
+// MaceSeedAgent is the optional capability a MaceSmash episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7): summoning a live
+// mob and equipping a mace, plus building the elevated platform the
+// smash's own falling-attack window depends on.
+type MaceSeedAgent interface {
+	// SeedMaceMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a mace equipped — see
+	// agent.SeedMaceMob's own doc comment.
+	SeedMaceMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+	// SeedElevatedPlatform builds the platform a MaceSmash episode falls
+	// from, positioned relative to the nearest live mobType instance
+	// within radius blocks of the bot — see agent.SeedElevatedPlatform's
+	// own doc comment. Called only after SeedMaceMob has ensured that mob
+	// exists.
+	SeedElevatedPlatform(ctx context.Context, mobType string, radius int) error
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

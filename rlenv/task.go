@@ -257,6 +257,23 @@ type Config struct {
 	// own doc comment.
 	SpearChargeRadius float64
 
+	// MaceSmashTargetMobType, if set, is the entity type name this
+	// episode's mace-smash task targets — enables
+	// ActionMaceSmashWithApproach, following SpearChargeTargetMobType's
+	// exact "environment poses the task" pattern, same by-ID dispatch
+	// reasoning (agent.MaceSmashAtWithApproach needs one specific
+	// targetID too). Empty (the default) means no mace-smash task (docs/
+	// plans/RL_ACTION_SPACE_EXPANSION_III.md item 7). Bot death is
+	// already handled generically regardless of this field.
+	MaceSmashTargetMobType string
+
+	// MaceSmashRadius bounds both FindNearestVisibleEntityOfType's
+	// search when locating the nearest visible MaceSmashTargetMobType
+	// instance and the radius SeedMaceMob/SeedElevatedPlatform check
+	// before summoning/building. <= 0 defers to DefaultConfig's own
+	// default, same reasoning as SpearChargeRadius's own doc comment.
+	MaceSmashRadius float64
+
 	// FollowTargetPlayerName, if set, is the player name (not an entity
 	// type/block to search for — agent.Follow's own target-selection only
 	// resolves players by name, following/manager.go's Start(targetPlayerName
@@ -634,6 +651,12 @@ type TaskOverride struct {
 	// SpearChargeRadius is Config.SpearChargeRadius for this episode.
 	SpearChargeRadius float64
 
+	// MaceSmashTargetMobType is Config.MaceSmashTargetMobType for this
+	// episode.
+	MaceSmashTargetMobType string
+	// MaceSmashRadius is Config.MaceSmashRadius for this episode.
+	MaceSmashRadius float64
+
 	// FollowTargetPlayerName is Config.FollowTargetPlayerName for this
 	// episode.
 	FollowTargetPlayerName string
@@ -673,6 +696,10 @@ func DefaultConfig() Config {
 		// SpearChargeRadius's own doc comment) — matches CombatRadius's
 		// own default, same reasoning.
 		SpearChargeRadius: 16,
+		// No existing chat-command default to mirror (see
+		// MaceSmashRadius's own doc comment) — matches CombatRadius's own
+		// default, same reasoning.
+		MaceSmashRadius: 16,
 	}
 }
 

@@ -511,6 +511,108 @@ func (a *agent) SeedSpearMob(ctx context.Context, mobType string, radius int) (i
 	return entityID, nil
 }
 
+// maceSeedWeapon is the weapon SeedMaceMob equips before an episode's
+// mace-smash task — fixed, not configurable, for a first pass, same
+// reasoning as combatSeedWeapon's own doc comment (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 7).
+const maceSeedWeapon = "minecraft:mace"
+
+// SeedMaceMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a mace is
+// equipped, via RCON — training convenience for MaceSmash episode
+// seeding, the mace-task analogue of SeedCombatMob/SeedSpearMob.
+// NoAI-tagged like those two: a falling-attack timing window is hard
+// enough to hit without also fighting a reactive opponent. Requires RCON
+// (via SeedEntity/SeedGiveItem). See SeedElevatedPlatform for the other
+// half of this task's seeding (the terrain the smash actually needs).
+func (a *agent) SeedMaceMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed mace mob: %w", err)
+	}
+	if !a.IsEquipped(maceSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, maceSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed mace mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, maceSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed mace mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
+// seedElevatedPlatformHeight/seedElevatedPlatformOffset/
+// seedElevatedPlatformBlock control where/how SeedElevatedPlatform builds
+// its platform relative to the seeded mace mob's own position:
+// seedElevatedPlatformHeight blocks straight up, seedElevatedPlatformOffset
+// blocks horizontally to one side. Chosen so a bot standing at the
+// platform's center and walking toward the mob (approachCombatTarget's own
+// continuous direction-to-live-target behavior — see
+// agent.MaceSmashAtWithApproach) steps off the near edge within its first
+// couple of movement ticks and falls comfortably past
+// combat.MaceAdditionalDamageFall's threshold while closing within
+// combat.MaceMaxReach by the time it lands. These exact values are a
+// first-pass estimate, not derived from the real falling-physics
+// trajectory (which this package doesn't simulate) — documented here as
+// the thing to retune first if live testing shows the window is missed
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7 flags this as
+// needing live validation once a server running a mace-supporting version
+// is available).
+const (
+	seedElevatedPlatformHeight = 5
+	seedElevatedPlatformOffset = 2
+	seedElevatedPlatformBlock  = "minecraft:stone"
+)
+
+// SeedElevatedPlatform locates the nearest live instance of mobType within
+// radius blocks of the bot (the same FindNearestEntityByType primitive
+// SeedEntity itself uses — this does not seed the mob; call SeedMaceMob
+// first) and places a small 3x3 stone platform seedElevatedPlatformHeight
+// blocks above it, seedElevatedPlatformOffset blocks to one side, then
+// teleports the bot onto its center — training convenience for MaceSmash
+// episode seeding (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7):
+// agent.MaceSmashAt itself only waits for a falling-attack window, never
+// creates one, so without this seeding step a smash can never succeed (the
+// bot starts on flat ground beside the mob, nothing to fall from).
+// Requires RCON (via raw /fill, mirroring ClearAir's own RCON machinery —
+// not SeedEntity/SeedVehicle, which summon entities, not place blocks) and
+// TeleportTo.
+func (a *agent) SeedElevatedPlatform(ctx context.Context, mobType string, radius int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed elevated platform: RCON not configured for this agent")
+	}
+	normalized := normalizeItemName(mobType)
+	typeID, ok := a.GetEntityTypeID(normalized)
+	if !ok {
+		return fmt.Errorf("seed elevated platform: unknown entity type %q", mobType)
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return fmt.Errorf("seed elevated platform: position not yet known")
+	}
+	entityID, distance, found := a.FindNearestEntityByType(typeID, pos.X, pos.Y, pos.Z, true)
+	if !found || distance > float64(radius) {
+		return fmt.Errorf("seed elevated platform: no %s within %d blocks to build toward", mobType, radius)
+	}
+	target, tracked := a.GetTrackedEntities()[entityID]
+	if !tracked {
+		return fmt.Errorf("seed elevated platform: resolved %s is no longer tracked", mobType)
+	}
+
+	platformX := target.X + seedElevatedPlatformOffset
+	platformY := target.Y + seedElevatedPlatformHeight
+	platformZ := target.Z
+	minX, maxX := int64(math.Floor(platformX))-1, int64(math.Floor(platformX))+1
+	minZ, maxZ := int64(math.Floor(platformZ))-1, int64(math.Floor(platformZ))+1
+	y := int64(math.Floor(platformY))
+	cmd := fmt.Sprintf("fill %d %d %d %d %d %d %s", minX, y, minZ, maxX, y, maxZ, seedElevatedPlatformBlock)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("fill via RCON: %w", err)
+	}
+
+	return a.TeleportTo(ctx, platformX, platformY+1, platformZ)
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()
