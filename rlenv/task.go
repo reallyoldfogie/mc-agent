@@ -153,6 +153,25 @@ type Config struct {
 	// DefaultConfig's own default for the exact value it mirrors.
 	FlyArrivalRadius float64
 
+	// RideVehicleType, if set, is the entity type name (e.g.
+	// "minecraft:horse") this episode's mob-riding task targets — enables
+	// ActionMount/ActionDismount/ActionVehicleJump, following
+	// MineTargetBlock's exact "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4). Empty (the
+	// default) means no riding task: all three actions become safe
+	// no-ops — see action.go's resolveDispatch.
+	RideVehicleType string
+
+	// RideSearchRadius bounds FindNearestVisibleEntityOfType's search when
+	// locating the nearest visible RideVehicleType instance, in blocks
+	// (also the radius SeedVehicle checks before summoning one — see
+	// DefaultEpisodeSeeder). Ignored if RideVehicleType is empty. <= 0
+	// means unbounded. No existing chat-command default to mirror here —
+	// unlike mine/pickup, "mount <entityType>" (MountNearest) has no
+	// radius concept of its own at all — see DefaultConfig's own default
+	// for the value chosen instead.
+	RideSearchRadius int
+
 	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
 	// this episode's equip task wants held (a tool/weapon) or worn (armor/
 	// elytra) — enables ActionEquip and ActionUseItem, following
@@ -475,6 +494,11 @@ type TaskOverride struct {
 	FlyTargetActive bool
 	// FlyArrivalRadius is Config.FlyArrivalRadius for this episode.
 	FlyArrivalRadius float64
+
+	// RideVehicleType is Config.RideVehicleType for this episode.
+	RideVehicleType string
+	// RideSearchRadius is Config.RideSearchRadius for this episode.
+	RideSearchRadius int
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -496,6 +520,10 @@ func DefaultConfig() Config {
 		// Matches agent.FlyTo's own internal arrivalRadius constant
 		// (agent/flight.go) — same reasoning as MineSearchRadius above.
 		FlyArrivalRadius: 5,
+		// No existing chat-command default to mirror (see
+		// RideSearchRadius's own doc comment) — chosen generously for a
+		// vehicle-sized target, larger than a block/item's own defaults.
+		RideSearchRadius: 16,
 	}
 }
 

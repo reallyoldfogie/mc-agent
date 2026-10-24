@@ -68,6 +68,15 @@ const (
 	// the episode notices, arrival ends the episode on the very first
 	// step it's observed, so there's no later step to re-pay it on.
 	flyRewardBonus float32 = 10.0
+	// rideRewardBonus is added once, the step LiveAgent.IsMounted() is
+	// observed to become true (see Environment.Step's before/after
+	// comparison) — same magnitude/philosophy as equipRewardBonus: a
+	// one-shot transition check, ending the episode immediately like
+	// every other task bonus. Mounting alone (not riding anywhere) is a
+	// complete, testable task for a first pass — see docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note on why "ride
+	// somewhere" is left as a future composite task, not built here.
+	rideRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

@@ -49,23 +49,25 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 34 (28 before the fly block, 23 before the pickup block, 21 before
-	// the equip block, 17 before the chain block, 14 before the goal
-	// block): indices 0-13 are the original per-task numeric features;
-	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
-	// goalCraftActive) added by
+	// 40 (34 before the ride block, 28 before the fly block, 23 before
+	// the pickup block, 21 before the equip block, 17 before the chain
+	// block, 14 before the goal block): indices 0-13 are the original
+	// per-task numeric features; 14-16 are the goal-conditioning block
+	// (goalGoToActive/goalMineActive/goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
 	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
 	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1);
 	// 23-27 are the pickup block (pickupDx/Dy/Dz/pickupVisible/
 	// goalPickupActive, that plan's Phase 2); 28-33 are the fly block
-	// (flyDx/Dy/Dz/isFlying/hasElytra/goalFlyActive, that plan's Phase 3)
-	// — see observation.go's own doc comment on observationSize for the
-	// full layout. This exact value is also what makes cmd/rl-train's
-	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
-	// reject an old checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 34 {
-		t.Fatalf("ObservationSize() = %d, want 34", got)
+	// (flyDx/Dy/Dz/isFlying/hasElytra/goalFlyActive, that plan's Phase 3);
+	// 34-39 are the ride block (rideDx/Dy/Dz/rideVisible/isMounted/
+	// goalRideActive, that plan's Phase 4) — see observation.go's own doc
+	// comment on observationSize for the full layout. This exact value is
+	// also what makes cmd/rl-train's EnvironmentID
+	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
+	// checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 40 {
+		t.Fatalf("ObservationSize() = %d, want 40", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -80,8 +82,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 34 {
-		t.Fatalf("len(obs.Values) = %d, want 34 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 40 {
+		t.Fatalf("len(obs.Values) = %d, want 40 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1446,6 +1448,198 @@ func TestActionMaskFlyToLegalOnlyWhenActiveAndElytraEquipped(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionFlyTo]; legal {
 		t.Fatalf("ActionFlyTo legal = true, want false (Config.FlyTargetActive is false, even with an elytra equipped)")
+	}
+}
+
+// --- ActionMount / ActionDismount / ActionVehicleJump (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4) ---
+
+func TestStepMountWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setRideVehicle("minecraft:horse", 7, 3, 0, 0) // present in the world, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMount)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsMounted() {
+		t.Fatalf("IsMounted() = true, want false (Config.RideVehicleType unset, safe no-op like ActionWait)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[39]; active != 0 {
+		t.Fatalf("goalRideActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepMountWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.RideVehicleType = "minecraft:horse"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMount)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsMounted() {
+		t.Fatalf("IsMounted() = true, want false (nothing visible to mount)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[37]; visible != 0 {
+		t.Fatalf("rideVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepMountActionMountsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setRideVehicle("minecraft:horse", 7, 3, 0, 0)
+	cfg := testConfig()
+	cfg.RideVehicleType = "minecraft:horse"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMount)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !agent.IsMounted() {
+		t.Fatalf("IsMounted() = false, want true")
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target vehicle was mounted)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (rideRewardBonus)", result.Reward)
+	}
+	if mounted := result.Observation.Values[38]; mounted != 1 {
+		t.Fatalf("isMounted = %v, want 1", mounted)
+	}
+}
+
+func TestStepObservationReflectsRideStateRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setRideVehicle("minecraft:horse", 7, 3, 0, 0)
+	cfg := testConfig()
+	cfg.RideVehicleType = "minecraft:horse"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[37]; visible != 1 {
+		t.Fatalf("rideVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[39]; active != 1 {
+		t.Fatalf("goalRideActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[34]; dx != 3 {
+		t.Fatalf("rideDx at Reset = %v, want 3", dx)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsMounted() {
+		t.Fatalf("IsMounted() = true, want false (ActionWait doesn't dispatch mount)")
+	}
+	if visible := result.Observation.Values[37]; visible != 1 {
+		t.Fatalf("rideVisible after ActionWait = %v, want 1 (still visible)", visible)
+	}
+}
+
+func TestStepDismountAndVehicleJumpDispatchWhileMounted(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setRideVehicle("minecraft:horse", 7, 3, 0, 0)
+	cfg := testConfig()
+	cfg.RideVehicleType = "minecraft:horse"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionMount); err != nil {
+		t.Fatalf("Step (mount): %v", err)
+	}
+	if !agent.IsMounted() {
+		t.Fatalf("IsMounted() = false, want true (setup failed)")
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionVehicleJump); err != nil {
+		t.Fatalf("Step (vehicle jump): %v", err)
+	}
+	if agent.vehicleJumpCalls != 1 {
+		t.Fatalf("JumpVehicle calls = %d, want 1", agent.vehicleJumpCalls)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionDismount); err != nil {
+		t.Fatalf("Step (dismount): %v", err)
+	}
+	if agent.IsMounted() {
+		t.Fatalf("IsMounted() = true, want false (dismounted)")
+	}
+}
+
+func TestActionMaskMountDismountVehicleJumpGating(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.RideVehicleType = "minecraft:horse"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMount]; legal {
+		t.Fatalf("ActionMount legal = true, want false (configured but nothing visible yet)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionDismount]; legal {
+		t.Fatalf("ActionDismount legal = true, want false (not mounted)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionVehicleJump]; legal {
+		t.Fatalf("ActionVehicleJump legal = true, want false (not mounted)")
+	}
+
+	agent.setRideVehicle("minecraft:horse", 7, 3, 0, 0)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[37]; visible != 1 {
+		t.Fatalf("rideVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMount]; !legal {
+		t.Fatalf("ActionMount legal = false, want true (target now visible)")
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionMount); err != nil {
+		t.Fatalf("Step (mount): %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMount]; legal {
+		t.Fatalf("ActionMount legal = true, want false (already mounted)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionDismount]; !legal {
+		t.Fatalf("ActionDismount legal = false, want true (now mounted)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionVehicleJump]; !legal {
+		t.Fatalf("ActionVehicleJump legal = false, want true (now mounted)")
+	}
+
+	unconfigured := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionMount]; legal {
+		t.Fatalf("ActionMount legal = true, want false (Config.RideVehicleType unset)")
 	}
 }
 

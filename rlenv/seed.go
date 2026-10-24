@@ -122,6 +122,24 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.RideVehicleType != "" {
+		// Optional, same pattern as the other task branches above.
+		if vehicleSeeder, ok := agent.(VehicleSeedAgent); ok {
+			radius := cfg.RideSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().RideSearchRadius
+			}
+			// tame=true unconditionally: an untamed horse/donkey/mule
+			// refuses mounting at all (see agent.SeedVehicle's own doc
+			// comment), so there's no real-episode case where an
+			// untamed instance would be useful here. The resulting
+			// entity ID isn't needed here — Environment resolves its
+			// own target position/ID separately via refreshRideTarget.
+			if _, err := vehicleSeeder.SeedVehicle(ctx, cfg.RideVehicleType, radius, true); err != nil {
+				return fmt.Errorf("seeding ride vehicle: %w", err)
+			}
+		}
+	}
 	return nil
 }
 

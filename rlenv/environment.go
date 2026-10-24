@@ -154,6 +154,22 @@ type Environment struct {
 	// Phase 3).
 	flyTargetX, flyTargetY, flyTargetZ float64
 
+	// rideEntityID/rideX/Y/Z/rideVisible cache the last-resolved nearest
+	// visible Config.RideVehicleType instance (see refreshRideTarget) —
+	// the ride-task analogue of mineX/Y/Z/mineVisible, same caching shape
+	// and reason, plus the entity ID ActionMount dispatches against
+	// (mount <entityID>, not by type name — see ActionMount's own doc
+	// comment).
+	rideEntityID        int32
+	rideX, rideY, rideZ float64
+	rideVisible         bool
+
+	// mounted caches the last-computed LiveAgent.IsMounted() result — the
+	// ride-task analogue of equipReady, read at the start of each Step as
+	// "before this step" state for the reward transition check
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	mounted bool
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -310,6 +326,8 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 // (see its doc comment), passed through unchanged for Config.TaskSelector.
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	e.cancelInflight()
+	e.dismountForReset()
+	e.clearRideVehicle(ctx)
 	e.restoreMinedBlocks(ctx)
 	e.removeFarSeeded(ctx)
 	e.clearChainDrops(ctx)
@@ -401,6 +419,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.FlyTargetOffset = override.FlyTargetOffset
 		e.cfg.FlyTargetActive = override.FlyTargetActive
 		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
+		e.cfg.RideVehicleType = override.RideVehicleType
+		e.cfg.RideSearchRadius = override.RideSearchRadius
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -550,13 +570,17 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshRideTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
 	e.pickupCount = e.pickupCountNow()
+	e.mounted = e.agent.IsMounted()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName))
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -652,6 +676,84 @@ func (e *Environment) refreshPickupTarget(ctx context.Context) error {
 	}
 	e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = x, y, z, found
 	return nil
+}
+
+// refreshRideTarget re-resolves the nearest currently-visible instance of
+// Config.RideVehicleType and stores it (with its entity ID) into
+// e.rideEntityID/rideX/Y/Z/rideVisible — the ride-task analogue of
+// refreshMineTarget/refreshPickupTarget. Leaves e.rideVisible=false
+// without error if Config.RideVehicleType is unset or nothing matching is
+// currently visible; only a genuine FindNearestVisibleEntityOfType error
+// is returned.
+func (e *Environment) refreshRideTarget(ctx context.Context) error {
+	if e.cfg.RideVehicleType == "" {
+		e.rideEntityID, e.rideX, e.rideY, e.rideZ, e.rideVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.RideVehicleType, float64(e.cfg.RideSearchRadius))
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving ride target: %w", err)
+	}
+	e.rideEntityID, e.rideX, e.rideY, e.rideZ, e.rideVisible = id, x, y, z, found
+	return nil
+}
+
+// dismountForReset dismounts the bot if currently mounted, before any
+// teleport/cleanup runs — unconditional, not gated on
+// Config.RideVehicleType, since a Reset must never leave a Config change
+// (e.g. a TaskSelector that stopped posing the ride task) carrying a
+// stale mount across episode boundaries. A Reset that teleported the bot
+// away while still mounted risks the same class of desync BlockRestorer's
+// own doc comment warns about for mining pits — moving the bot out from
+// under its own tracked vehicle rather than off of it cleanly. Best
+// effort: a failed dismount is logged, never fails the Reset.
+func (e *Environment) dismountForReset() {
+	if !e.agent.IsMounted() {
+		return
+	}
+	if err := e.agent.DismountEntity(); err != nil {
+		log.Printf("rlenv: dismounting before reset: %v", err)
+	}
+}
+
+// rideVehicleCleanupRadius is how far around the bot's own current
+// position clearRideVehicle looks for Config.RideVehicleType instances to
+// remove — see that method's own doc comment for why "current position,"
+// not the stale reset origin.
+const rideVehicleCleanupRadius = 16
+
+// clearRideVehicle kills every live instance of the *previous* episode's
+// Config.RideVehicleType near wherever the bot currently is (called
+// before Config.TaskSelector's override runs, so this still reads the
+// previous episode's value — see resetAttempt's own ordering) — the
+// Reset-time cleanup counterpart to SeedVehicle. Deliberately centered on
+// the bot's own current position, not a remembered seed location: riding
+// could have carried the bot (and its mount) far from wherever it was
+// seeded, the same reason dismountForReset runs first, so the vehicle is
+// still right where the bot just dismounted it. Not ID-specific — see
+// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0's own note on why
+// precise per-episode-entity targeting (to avoid a shared-server
+// episode's cleanup killing another bot's own mount) is deferred, not
+// solved here: a position-bounded kill centered on this bot's own
+// position is a reasonable, simple approximation of that precision for a
+// single-bot (or well-separated shared-server working area) training
+// run. Best effort: a failure is logged, never fails the Reset.
+func (e *Environment) clearRideVehicle(ctx context.Context) {
+	if e.cfg.RideVehicleType == "" {
+		return
+	}
+	clearer, ok := e.agent.(EntitySeedAgent)
+	if !ok {
+		return
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return
+	}
+	x, y, z := int(math.Floor(pos.X)), int(math.Floor(pos.Y)), int(math.Floor(pos.Z))
+	if err := clearer.ClearEntitiesOfType(ctx, x, y, z, rideVehicleCleanupRadius, e.cfg.RideVehicleType); err != nil {
+		log.Printf("rlenv: clearing ridden vehicle at (%d,%d,%d): %v", x, y, z, err)
+	}
 }
 
 // mineTargetBlockInUse resolves which block name refreshMineTarget actually
@@ -777,6 +879,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.pickupCount mirrors prevCraftCount's own reasoning above, for the
 	// pickup task.
 	prevPickupCount := e.pickupCount
+	// e.mounted mirrors prevEquipReady's own reasoning above, for the
+	// ride task.
+	prevMounted := e.mounted
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -845,6 +950,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// pickupRewardBonus doc comment).
 	newPickupCount := e.pickupCountNow()
 	pickedUpThisStep := e.cfg.PickupTargetItem != "" && newPickupCount > prevPickupCount
+
+	// mountedThisStep is judged from an actual IsMounted transition
+	// (false -> true), not from whether ActionMount was the dispatched
+	// action — mirrors equippedThisStep's own reasoning above (see
+	// reward.go's rideRewardBonus doc comment). Not narrowed to "mounted
+	// specifically e.rideEntityID": a first pass has nothing else to
+	// mount in a normal single-vehicle-seeded episode, so this is judged
+	// sufficient without tracking which entity was actually boarded — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note.
+	newMounted := e.agent.IsMounted()
+	mountedThisStep := e.cfg.RideVehicleType != "" && newMounted && !prevMounted
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
@@ -944,6 +1060,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			doneReason = "fly"
 		}
 	}
+	if mountedThisStep {
+		reward += rideRewardBonus
+		done = true
+		doneReason = "ride"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -963,6 +1084,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshRideTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -972,8 +1096,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = newEquipReady
 	e.pickupCount = newPickupCount
+	e.mounted = newMounted
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName))
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

@@ -47,4 +47,10 @@ type LiveAgent interface {
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1), the equip-task
 	// analogue of Craftable's role for the craft task.
 	IsEquipped(itemName string) bool
+
+	// IsMounted reports whether the bot is currently riding a vehicle —
+	// see agent.IsMounted's own doc comment. Used by the isMounted
+	// observation feature and ActionMount's reward (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	IsMounted() bool
 }

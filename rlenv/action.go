@@ -119,8 +119,25 @@ const (
 	// RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
 	ActionFlyTo
 
+	// ActionMount dispatches "mount <entityID>" at Environment's own
+	// already-resolved e.rideEntityID (see refreshRideTarget) — not
+	// "mount <entityType>" by name, the same lesson ActionMine's own doc
+	// comment already establishes (avoids a second, independently-
+	// resolved search). A safe no-op when Config.RideVehicleType is
+	// unset, nothing matching is currently visible, or the bot is already
+	// mounted (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	ActionMount
+	// ActionDismount dispatches "dismount". Legal only while mounted and
+	// Config.RideVehicleType is set.
+	ActionDismount
+	// ActionVehicleJump dispatches "vehiclejump" (default/max power —
+	// this discrete action space doesn't expose a continuous power
+	// parameter). Legal only while mounted and Config.RideVehicleType is
+	// set, the same condition as ActionDismount.
+	ActionVehicleJump
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionFlyTo) + 1
+	NumActions = int(ActionVehicleJump) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -135,15 +152,18 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName     = "movetoquiet"
-	mineActionName       = "mine"
-	craftActionName      = "craft"
-	placeActionName      = "place"
-	equipActionName      = "equip"
-	useItemActionName    = "useitem"
-	useItemOffhandArg    = "offhand"
-	pickUpItemActionName = "pickupitem"
-	flyToActionName      = "flyto"
+	moveToActionName      = "movetoquiet"
+	mineActionName        = "mine"
+	craftActionName       = "craft"
+	placeActionName       = "place"
+	equipActionName       = "equip"
+	useItemActionName     = "useitem"
+	useItemOffhandArg     = "offhand"
+	pickUpItemActionName  = "pickupitem"
+	flyToActionName       = "flyto"
+	mountActionName       = "mount"
+	dismountActionName    = "dismount"
+	vehicleJumpActionName = "vehiclejump"
 )
 
 // actionDispatch describes what Step should send through the
@@ -229,6 +249,21 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: flyToActionName, args: coordArgs(e.flyTargetX, e.flyTargetY, e.flyTargetZ)}, true, nil
+	case ActionMount:
+		if !e.actionLegal(ActionMount) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: mountActionName, args: []string{fmt.Sprintf("%d", e.rideEntityID)}}, true, nil
+	case ActionDismount:
+		if !e.actionLegal(ActionDismount) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: dismountActionName, args: nil}, true, nil
+	case ActionVehicleJump:
+		if !e.actionLegal(ActionVehicleJump) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: vehicleJumpActionName, args: nil}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -285,6 +320,10 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// waste probability mass on an attempt that deterministically
 		// fails — see docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
 		return e.cfg.FlyTargetActive && e.agent.IsEquipped(elytraItemName)
+	case ActionMount:
+		return e.cfg.RideVehicleType != "" && !e.agent.IsMounted() && e.rideVisible
+	case ActionDismount, ActionVehicleJump:
+		return e.cfg.RideVehicleType != "" && e.agent.IsMounted()
 	default:
 		return false
 	}

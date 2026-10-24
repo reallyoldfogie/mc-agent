@@ -123,6 +123,23 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          otherwise. Same role as goalPickupActive/goalEquipActive
 //	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
 //
+//	index 34: rideDx — nearest visible instance of Config.RideVehicleType
+//	          (resolved via LiveAgent.FindNearestVisibleEntityOfType)
+//	          minus current X (blocks); 0 if not visible/not configured.
+//	index 35: rideDy — same, Y.
+//	index 36: rideDz — same, Z.
+//	index 37: rideVisible — 1.0 if Config.RideVehicleType is set and a
+//	          visible instance was found this step, 0.0 otherwise. Mirrors
+//	          mineVisible's dual role exactly — gates rideDx/Dy/Dz and
+//	          doubles as ActionMount's legality/mask condition.
+//	index 38: isMounted — 1.0 if LiveAgent.IsMounted(), 0.0 otherwise.
+//	          Reflects real bot state unconditionally (not gated on
+//	          Config.RideVehicleType), same reasoning as isFlying/
+//	          hasElytra above.
+//	index 39: goalRideActive — 1.0 if Config.RideVehicleType is set, 0.0
+//	          otherwise. Same role as goalFlyActive/goalPickupActive above
+//	          (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -166,7 +183,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 34
+const observationSize = 40
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -188,7 +205,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -208,6 +225,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	flyDx, flyDy, flyDz := float32(0), float32(0), float32(0)
 	if flyActive {
 		flyDx, flyDy, flyDz = float32(flyTargetX-x), float32(flyTargetY-y), float32(flyTargetZ-z)
+	}
+	rideDx, rideDy, rideDz, rideVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if rideVisible {
+		rideDx, rideDy, rideDz, rideVisibleFlag = float32(rideX-x), float32(rideY-y), float32(rideZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -246,6 +267,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				boolToFloat32(isFlying),
 				boolToFloat32(hasElytra),
 				boolToFloat32(flyActive),
+				rideDx / obsDistanceScale,
+				rideDy / obsDistanceScale,
+				rideDz / obsDistanceScale,
+				rideVisibleFlag,
+				boolToFloat32(isMounted),
+				boolToFloat32(rideActive),
 			},
 		}
 	}
@@ -285,6 +312,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			boolToFloat32(isFlying),
 			boolToFloat32(hasElytra),
 			boolToFloat32(flyActive),
+			rideDx,
+			rideDy,
+			rideDz,
+			rideVisibleFlag,
+			boolToFloat32(isMounted),
+			boolToFloat32(rideActive),
 		},
 	}
 }

@@ -918,6 +918,26 @@ func (a *agent) FindNearestVisibleItemOfType(ctx context.Context, itemName strin
 	return bestID, bestX, bestY, bestZ, true, nil
 }
 
+// FindNearestVisibleEntityOfType searches for the nearest visible entity
+// of entityTypeName (e.g. "minecraft:horse", "minecraft:zombie") within
+// maxDistance blocks — a thin wrapper around FindVisibleEntity that
+// resolves the entity type ID itself, mirroring FindNearestVisibleItem's
+// own shape exactly (the item-content-aware FindNearestVisibleItemOfType
+// above needed real filtering logic because dropped items all share one
+// entity type; a mob/vehicle type IS the entity type, so this is a
+// straight pass-through once the name is resolved). Needed for rlenv's
+// Mob Riding (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4) and
+// Combat (that plan's Phase 5) tasks, to resolve/observe a SPECIFIC
+// entity type rather than "whatever's nearest" the way
+// FindAllVisibleEntitiesInSphere reports everything unfiltered.
+func (a *agent) FindNearestVisibleEntityOfType(ctx context.Context, entityTypeName string, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error) {
+	typeID, ok := a.GetEntityTypeID(normalizeItemName(entityTypeName))
+	if !ok {
+		return 0, 0, 0, 0, false, fmt.Errorf("%s entity type not found in registry", entityTypeName)
+	}
+	return a.FindVisibleEntity(ctx, typeID, maxDistance)
+}
+
 // shellOffsetsCache memoizes computeShellOffsets by radius - see
 // shellOffsets' own doc comment on why this is safe and worth doing.
 var (

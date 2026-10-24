@@ -169,6 +169,12 @@ type CommandAgent interface {
 	// it doesn't prevent incidental pickup of something else along the way.
 	FindNearestVisibleItemOfType(ctx context.Context, itemName string, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
 
+	// FindNearestVisibleEntityOfType searches for the nearest visible
+	// entity of entityTypeName (e.g. "minecraft:horse") within
+	// maxDistance blocks. found is false if none was located (including
+	// if entityTypeName isn't a known entity type).
+	FindNearestVisibleEntityOfType(ctx context.Context, entityTypeName string, maxDistance float64) (entityID int32, x, y, z float64, found bool, err error)
+
 	// CraftItem crafts itemName (e.g. "minecraft:stick") using the player's
 	// own 2x2 inventory grid when the recipe fits it, or a nearby crafting
 	// table's 3x3 grid otherwise. Returns an error if no known recipe

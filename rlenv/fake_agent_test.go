@@ -3,6 +3,7 @@ package rlenv_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -159,6 +160,31 @@ type fakeAgent struct {
 	// gliding backs IsGliding — see FlyTo's own doc comment
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
 	gliding bool
+
+	// Mob Riding simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 4): a single target vehicle type, rideTargetType, visible at
+	// (rideX,Y,Z) with entity ID rideEntityID while rideVisible.
+	// MountEntity "mounts" it (mirrors mineBlockName's "actually mutates
+	// state" precedent) only when given that exact entity ID — matching
+	// ActionMount's own dispatch-by-resolved-ID contract, not by name.
+	rideTargetType        string
+	rideX, rideY, rideZ   float64
+	rideEntityID          int32
+	rideVisible           bool
+	mounted               bool
+	vehicleJumpCalls      int
+	findEntityOfTypeCalls int
+}
+
+// setRideVehicle configures the simulated Mob Riding target — see
+// rideTargetType's own doc comment.
+func (f *fakeAgent) setRideVehicle(entityType string, entityID int32, x, y, z float64) {
+	f.mu.Lock()
+	f.rideTargetType = entityType
+	f.rideEntityID = entityID
+	f.rideX, f.rideY, f.rideZ = x, y, z
+	f.rideVisible = true
+	f.mu.Unlock()
 }
 
 // pickupRange is how close MoveTo must land to the simulated pickup item
@@ -373,10 +399,32 @@ func (f *fakeAgent) FireBow(context.Context) error  { return nil }
 func (f *fakeAgent) FireBowAt(context.Context, float64, float64, float64, ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
 	return nil, nil
 }
-func (f *fakeAgent) MountEntity(context.Context, int32) error   { return nil }
+
+// MountEntity "mounts" entityID if it matches the simulated ride target —
+// mirrors mineBlockName's "actually mutates state" precedent (see
+// rideTargetType's own doc comment).
+func (f *fakeAgent) MountEntity(_ context.Context, entityID int32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rideTargetType == "" || !f.rideVisible || entityID != f.rideEntityID {
+		return fmt.Errorf("entity %d not found", entityID)
+	}
+	f.mounted = true
+	return nil
+}
 func (f *fakeAgent) MountNearest(context.Context, string) error { return nil }
-func (f *fakeAgent) DismountEntity() error                      { return nil }
-func (f *fakeAgent) JumpVehicle(context.Context, int32) error   { return nil }
+func (f *fakeAgent) DismountEntity() error {
+	f.mu.Lock()
+	f.mounted = false
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) JumpVehicle(context.Context, int32) error {
+	f.mu.Lock()
+	f.vehicleJumpCalls++
+	f.mu.Unlock()
+	return nil
+}
 
 // Equip "equips" itemName by recording it as heldItem — see heldItem's own
 // doc comment for why this mutates state rather than being a no-op stub.
@@ -395,6 +443,28 @@ func (f *fakeAgent) UseItem(_ context.Context, hand models.Hand) error {
 	f.useItemHands = append(f.useItemHands, hand)
 	f.mu.Unlock()
 	return nil
+}
+
+// FindNearestVisibleEntityOfType reports the simulated ride vehicle's
+// position/ID only when its type matches and it's still present — mirrors
+// FindNearestVisibleItemOfType's own contract (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityTypeName string, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findEntityOfTypeCalls++
+	if !f.rideVisible || f.rideTargetType == "" || entityTypeName != f.rideTargetType {
+		return 0, 0, 0, 0, false, nil
+	}
+	return f.rideEntityID, f.rideX, f.rideY, f.rideZ, true, nil
+}
+
+// IsMounted reports the simulated mount state — see MountEntity/
+// DismountEntity's own doc comments.
+func (f *fakeAgent) IsMounted() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mounted
 }
 
 // IsEquipped reports whether itemName matches heldItem — mirrors the real
