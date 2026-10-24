@@ -151,8 +151,25 @@ const (
 	// Config.CombatTargetMobType's own doc comment.
 	ActionCombat
 
+	// ActionFollow dispatches "follow <name>" — mc-agent's own following
+	// manager (following/manager.go), a continuous background behavior
+	// (sprint/sneak distance thresholds, stuck recovery, continuous path
+	// recalculation toward a moving target) with no natural "done" state,
+	// structurally unlike every other task in this package. Legal only
+	// when not already following and the named player is currently
+	// resolvable — mirrors ActionMount's own gating exactly
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4). Real
+	// precondition, not solvable by this package: a second real connected
+	// player (or bot) with Config.FollowTargetPlayerName must already be
+	// in the session — see that Config field's own doc comment.
+	ActionFollow
+	// ActionStopFollow dispatches "stopfollow". Legal only while
+	// following and Config.FollowTargetPlayerName is set — mirrors
+	// ActionDismount's own gating exactly.
+	ActionStopFollow
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionCombat) + 1
+	NumActions = int(ActionStopFollow) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -180,6 +197,8 @@ const (
 	dismountActionName       = "dismount"
 	vehicleJumpActionName    = "vehiclejump"
 	combatActionName         = "runcombat"
+	followActionName         = "follow"
+	stopFollowActionName     = "stopfollow"
 	moveToAndSneakActionName = "movetoandsneakquiet"
 )
 
@@ -303,6 +322,16 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			radius = DefaultConfig().CombatRadius
 		}
 		return actionDispatch{name: combatActionName, args: []string{fmt.Sprintf("%.4f", radius), "false"}}, true, nil
+	case ActionFollow:
+		if !e.actionLegal(ActionFollow) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: followActionName, args: []string{e.cfg.FollowTargetPlayerName}}, true, nil
+	case ActionStopFollow:
+		if !e.actionLegal(ActionStopFollow) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: stopFollowActionName, args: nil}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -371,6 +400,10 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.RideVehicleType != "" && e.agent.IsMounted()
 	case ActionCombat:
 		return e.cfg.CombatTargetMobType != "" && e.combatVisible
+	case ActionFollow:
+		return e.cfg.FollowTargetPlayerName != "" && !e.agent.IsFollowing() && e.followTargetVisible
+	case ActionStopFollow:
+		return e.cfg.FollowTargetPlayerName != "" && e.agent.IsFollowing()
 	default:
 		return false
 	}

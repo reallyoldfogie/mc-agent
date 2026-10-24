@@ -174,6 +174,22 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          set and Config.ChainStage == 0, 0.0 otherwise. Same
 //	          active-vs-ready distinction as goalCraftActive/craftReady.
 //
+//	index 48: followTargetVisible — 1.0 if Config.FollowTargetPlayerName is
+//	          set and currently resolvable (CommandAgent.FindPlayerByName),
+//	          0.0 otherwise. Mirrors mineVisible's dual role — doubles as
+//	          ActionFollow's legality/mask condition. No position features
+//	          accompany this (unlike mine/pickup/ride/combat): the target's
+//	          own position isn't something the policy acts on directly once
+//	          following/manager.go takes over (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 4).
+//	index 49: isFollowing — 1.0 if CommandAgent.IsFollowing(), 0.0
+//	          otherwise. Reflects real bot state unconditionally (not
+//	          gated on Config.FollowTargetPlayerName), same reasoning as
+//	          isFlying/hasElytra/isMounted above.
+//	index 50: goalFollowActive — 1.0 if Config.FollowTargetPlayerName is
+//	          set, 0.0 otherwise. Same role as goalRideActive/
+//	          goalCombatActive above.
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -217,7 +233,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 48
+const observationSize = 51
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -239,7 +255,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -319,6 +335,9 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				boolToFloat32(combatActive),
 				boolToFloat32(placeReady),
 				boolToFloat32(placeActive),
+				boolToFloat32(followTargetVisible),
+				boolToFloat32(isFollowing),
+				boolToFloat32(followActive),
 			},
 		}
 	}
@@ -372,6 +391,9 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			boolToFloat32(combatActive),
 			boolToFloat32(placeReady),
 			boolToFloat32(placeActive),
+			boolToFloat32(followTargetVisible),
+			boolToFloat32(isFollowing),
+			boolToFloat32(followActive),
 		},
 	}
 }

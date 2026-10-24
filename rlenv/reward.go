@@ -97,6 +97,20 @@ const (
 	// magnitude/philosophy as craftRewardBonus, just the opposite
 	// direction (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
 	placeRewardBonus float32 = 10.0
+	// followRewardBonus is added once, the step CommandAgent.IsFollowing()
+	// is observed to transition false->true — same magnitude/philosophy
+	// as rideRewardBonus: a one-shot start-transition, not continuous
+	// proximity-shaping. Following/manager.go's own control loop
+	// (sprint/sneak distance thresholds, stuck recovery, continuous path
+	// recalculation) is an open-ended background behavior with no
+	// natural "done" state, structurally unlike every other task in this
+	// package — rather than extending computeReward with a second,
+	// independent distance-shaping stream for one task, this mirrors
+	// ActionMount's own shape instead. Sustained "follow well" as a
+	// richer, continuous reward is a legitimate future enhancement this
+	// doesn't foreclose, just doesn't build speculatively (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4).
+	followRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

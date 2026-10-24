@@ -203,6 +203,21 @@ type fakeAgent struct {
 	sneaking            bool
 	moveToAndSneakCalls int
 	stopSneakingCalls   int
+
+	// Follow simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+	// 4): followablePlayerName is the one name FindPlayerByName resolves
+	// (empty = nobody resolvable, the common "no second player" case this
+	// task's own precondition describes); following backs IsFollowing.
+	followablePlayerName string
+	following            bool
+}
+
+// setFollowablePlayer configures the simulated resolvable player — see
+// followablePlayerName's own doc comment.
+func (f *fakeAgent) setFollowablePlayer(name string) {
+	f.mu.Lock()
+	f.followablePlayerName = name
+	f.mu.Unlock()
 }
 
 // setPlaceTarget configures the simulated standalone-placement target —
@@ -415,9 +430,24 @@ func (f *fakeAgent) FindPath(_ context.Context, x, y, z float64) (*models.Path, 
 }
 func (f *fakeAgent) ExecutePath(context.Context, *models.Path) error         { return nil }
 func (f *fakeAgent) LookAt(context.Context, float64, float64, float64) error { return nil }
-func (f *fakeAgent) Follow(context.Context, string) error                    { return nil }
-func (f *fakeAgent) StopFollow(context.Context) error                        { return nil }
-func (f *fakeAgent) FollowStatus(context.Context) string                     { return "" }
+
+// Follow "starts" following — mirrors mineBlockName's own "actually
+// mutates state" precedent, so rlenv's real ActionFollow dispatch/reward
+// logic is exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 4).
+func (f *fakeAgent) Follow(_ context.Context, _ string) error {
+	f.mu.Lock()
+	f.following = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) StopFollow(_ context.Context) error {
+	f.mu.Lock()
+	f.following = false
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) FollowStatus(context.Context) string { return "" }
 
 // --- models.CommandAgent (beyond MovementAgent/ChatOperations) ---
 
@@ -476,9 +506,13 @@ func (f *fakeAgent) TestMove()              {}
 func (f *fakeAgent) TestPath()              {}
 func (f *fakeAgent) StartTracking()         {}
 func (f *fakeAgent) StopTracking()          {}
-func (f *fakeAgent) HasFollowManager() bool { return false }
-func (f *fakeAgent) IsFollowing() bool      { return false }
-func (f *fakeAgent) IsSprinting() bool      { return false }
+func (f *fakeAgent) HasFollowManager() bool { return true }
+func (f *fakeAgent) IsFollowing() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.following
+}
+func (f *fakeAgent) IsSprinting() bool { return false }
 func (f *fakeAgent) PlanStatus(context.Context) models.PlanStatus {
 	return models.PlanStatus{}
 }
@@ -617,8 +651,21 @@ func (f *fakeAgent) FlyTo(_ context.Context, x, y, z float64) error {
 func (f *fakeAgent) NearestPlayerInfo(context.Context, bool) (models.NearestPlayerInfo, bool) {
 	return models.NearestPlayerInfo{}, false
 }
-func (f *fakeAgent) FindPlayerByName(context.Context, string) (x, y, z float64, found bool, err error) {
-	return 0, 0, 0, false, nil
+
+// FindPlayerByName reports the simulated resolvable player only when the
+// queried name matches followablePlayerName — mirrors the real contract
+// deliberately: returns an error (not found=false) when the name doesn't
+// resolve, matching agent.FindPlayerByName's own "not found" behavior,
+// since Environment.refreshFollowTarget is specifically built to treat
+// that as routine rather than fatal (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 4).
+func (f *fakeAgent) FindPlayerByName(_ context.Context, name string) (x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.followablePlayerName == "" || name != f.followablePlayerName {
+		return 0, 0, 0, false, errors.New("player not found")
+	}
+	return 0, 0, 0, true, nil
 }
 func (f *fakeAgent) GetPlayerAbilities() (models.PlayerAbilities, bool) {
 	return models.PlayerAbilities{}, false

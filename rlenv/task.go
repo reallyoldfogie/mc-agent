@@ -213,6 +213,21 @@ type Config struct {
 	// default radius (16).
 	CombatRadius float64
 
+	// FollowTargetPlayerName, if set, is the player name (not an entity
+	// type/block to search for — agent.Follow's own target-selection only
+	// resolves players by name, following/manager.go's Start(targetPlayerName
+	// string)) this episode's following task targets — enables
+	// ActionFollow/ActionStopFollow, following MineTargetBlock's exact
+	// "environment poses the task" pattern. Empty (the default) means no
+	// following task.
+	//
+	// Real precondition, not solvable by this package: a second real
+	// connected player (or bot) with this name must already be in the
+	// session. There is no RCON way to seed "another player exists" — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4 for the full
+	// reasoning and why this isn't worked around.
+	FollowTargetPlayerName string
+
 	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
 	// this episode's equip task wants held (a tool/weapon) or worn (armor/
 	// elytra) — enables ActionEquip and ActionUseItem, following
@@ -561,6 +576,10 @@ type TaskOverride struct {
 	CombatTargetMobType string
 	// CombatRadius is Config.CombatRadius for this episode.
 	CombatRadius float64
+
+	// FollowTargetPlayerName is Config.FollowTargetPlayerName for this
+	// episode.
+	FollowTargetPlayerName string
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

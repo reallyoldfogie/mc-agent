@@ -196,6 +196,16 @@ type Environment struct {
 	combatX, combatY, combatZ float64
 	combatVisible             bool
 
+	// followTargetVisible/followed cache Config.FollowTargetPlayerName's
+	// own resolvability (see refreshFollowTarget) and the last-computed
+	// CommandAgent.IsFollowing() result — the follow-task analogues of
+	// mineVisible/mounted, same caching shape (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4). No position is cached: the
+	// target's own position isn't something the policy acts on directly
+	// once following/manager.go takes over.
+	followTargetVisible bool
+	followed            bool
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -453,6 +463,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.RideSearchRadius = override.RideSearchRadius
 		e.cfg.CombatTargetMobType = override.CombatTargetMobType
 		e.cfg.CombatRadius = override.CombatRadius
+		e.cfg.FollowTargetPlayerName = override.FollowTargetPlayerName
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -608,16 +619,20 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshCombatTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshFollowTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
 	e.pickupCount = e.pickupCountNow()
 	e.placeCount = e.placeCountNow()
 	e.mounted = e.agent.IsMounted()
+	e.followed = e.agent.IsFollowing()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -798,6 +813,41 @@ func (e *Environment) refreshCombatTarget(ctx context.Context) error {
 		return fmt.Errorf("rlenv: resolving combat target: %w", err)
 	}
 	e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshFollowTarget re-resolves whether Config.FollowTargetPlayerName is
+// currently connected/resolvable and stores it into
+// e.followTargetVisible — the follow-task analogue of refreshCombatTarget.
+// Leaves e.followTargetVisible=false without error if
+// Config.FollowTargetPlayerName is unset, this agent has no follow
+// subsystem at all (HasFollowManager), or the named player simply isn't
+// currently resolvable.
+//
+// FindPlayerByName's own contract differs from FindVisibleBlock/
+// FindNearestVisibleEntityOfType's "found=false, err=nil for nothing
+// there": it returns a real error for "not found," not just found=false
+// (agent/command_actions.go wraps the target selector's own error
+// through unchanged). A routine "the other player/bot isn't connected
+// right now" is exactly the common case this task's own precondition
+// describes (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4) — it
+// must not be treated as fatal to Step/Reset the way a genuine error
+// would be for every other task's own refresh. Only a caller-context
+// cancellation propagates as a real error here.
+func (e *Environment) refreshFollowTarget(ctx context.Context) error {
+	if e.cfg.FollowTargetPlayerName == "" || !e.agent.HasFollowManager() {
+		e.followTargetVisible = false
+		return nil
+	}
+	_, _, _, found, err := e.agent.FindPlayerByName(ctx, e.cfg.FollowTargetPlayerName)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("rlenv: resolving follow target: %w", err)
+		}
+		e.followTargetVisible = false
+		return nil
+	}
+	e.followTargetVisible = found
 	return nil
 }
 
@@ -1017,6 +1067,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.mounted mirrors prevEquipReady's own reasoning above, for the
 	// ride task.
 	prevMounted := e.mounted
+	// e.followed mirrors prevMounted's own reasoning above, for the
+	// follow task.
+	prevFollowed := e.followed
 	// prevCombatEntityID/prevCombatVisible mirror prevMounted's own
 	// reasoning above, for the combat task — captured before dispatch so
 	// Step's post-dispatch check asks "did THIS entity die," not
@@ -1121,6 +1174,13 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note.
 	newMounted := e.agent.IsMounted()
 	mountedThisStep := e.cfg.RideVehicleType != "" && newMounted && !prevMounted
+
+	// followedThisStep mirrors mountedThisStep's own reasoning above, for
+	// the follow task — a one-shot IsFollowing() transition, not
+	// continuous proximity-shaping (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4's own note on why).
+	newFollowed := e.agent.IsFollowing()
+	followedThisStep := e.cfg.FollowTargetPlayerName != "" && newFollowed && !prevFollowed
 
 	// combatKilledThisStep is judged from the specific entity resolved
 	// before this step dying — not visible/tracked at all, or tracked
@@ -1241,6 +1301,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "ride"
 	}
+	if followedThisStep {
+		reward += followRewardBonus
+		done = true
+		doneReason = "follow"
+	}
 	if combatKilledThisStep {
 		reward += combatRewardBonus
 		done = true
@@ -1271,6 +1336,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshCombatTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshFollowTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -1282,9 +1350,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.pickupCount = newPickupCount
 	e.placeCount = newPlaceCount
 	e.mounted = newMounted
+	e.followed = newFollowed
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

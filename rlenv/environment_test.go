@@ -64,13 +64,16 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// 34-39 are the ride block (rideDx/Dy/Dz/rideVisible/isMounted/
 	// goalRideActive, that plan's Phase 4); 40-45 are the combat block
 	// (combatDx/Dy/Dz/combatTargetHealth/combatVisible/goalCombatActive,
-	// that plan's Phase 5) — see observation.go's own doc comment on
-	// observationSize for the full layout. This exact value is also what
-	// makes cmd/rl-train's EnvironmentID
-	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
-	// checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 48 {
-		t.Fatalf("ObservationSize() = %d, want 48", got)
+	// that plan's Phase 5); 46-47 are the standalone-place block
+	// (placeReady/goalPlaceStandaloneActive, docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 2); 48-50 are the follow block
+	// (followTargetVisible/isFollowing/goalFollowActive, that plan's item
+	// 4) — see observation.go's own doc comment on observationSize for the
+	// full layout. This exact value is also what makes cmd/rl-train's
+	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
+	// reject an old checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 51 {
+		t.Fatalf("ObservationSize() = %d, want 51", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -85,8 +88,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 48 {
-		t.Fatalf("len(obs.Values) = %d, want 48 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 51 {
+		t.Fatalf("len(obs.Values) = %d, want 51 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -2116,6 +2119,178 @@ func TestActionMaskPlaceStandaloneLegalOnlyWhenConfiguredAndHeld(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionPlace]; legal {
 		t.Fatalf("ActionPlace legal = true, want false (Config.PlaceTargetItem unset, even though held)")
+	}
+}
+
+// --- Config.FollowTargetPlayerName (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4) ---
+
+func TestStepFollowWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setFollowablePlayer("Other") // resolvable, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFollow)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = true, want false (Config.FollowTargetPlayerName unset, safe no-op like ActionWait)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[50]; active != 0 {
+		t.Fatalf("goalFollowActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepFollowWithUnresolvableTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.FollowTargetPlayerName = "Other"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFollow)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = true, want false (named player never resolvable)")
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[48]; visible != 0 {
+		t.Fatalf("followTargetVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepFollowActionStartsFollowingAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setFollowablePlayer("Other")
+	cfg := testConfig()
+	cfg.FollowTargetPlayerName = "Other"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFollow)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = false, want true")
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (follow started)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (followRewardBonus)", result.Reward)
+	}
+	if following := result.Observation.Values[49]; following != 1 {
+		t.Fatalf("isFollowing = %v, want 1", following)
+	}
+}
+
+func TestStepObservationReflectsFollowStateRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setFollowablePlayer("Other")
+	cfg := testConfig()
+	cfg.FollowTargetPlayerName = "Other"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[48]; visible != 1 {
+		t.Fatalf("followTargetVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[50]; active != 1 {
+		t.Fatalf("goalFollowActive at Reset = %v, want 1", active)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = true, want false (ActionWait doesn't dispatch follow)")
+	}
+	if visible := result.Observation.Values[48]; visible != 1 {
+		t.Fatalf("followTargetVisible after ActionWait = %v, want 1 (still resolvable)", visible)
+	}
+}
+
+func TestStepStopFollowDispatchesWhileFollowing(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setFollowablePlayer("Other")
+	cfg := testConfig()
+	cfg.FollowTargetPlayerName = "Other"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionFollow); err != nil {
+		t.Fatalf("Step (follow): %v", err)
+	}
+	if !agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = false, want true (setup failed)")
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionStopFollow); err != nil {
+		t.Fatalf("Step (stopfollow): %v", err)
+	}
+	if agent.IsFollowing() {
+		t.Fatalf("IsFollowing() = true, want false (stopped)")
+	}
+}
+
+func TestActionMaskFollowStopFollowGating(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.FollowTargetPlayerName = "Other"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFollow]; legal {
+		t.Fatalf("ActionFollow legal = true, want false (configured but not resolvable yet)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionStopFollow]; legal {
+		t.Fatalf("ActionStopFollow legal = true, want false (not following)")
+	}
+
+	agent.setFollowablePlayer("Other")
+	if _, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFollow]; !legal {
+		t.Fatalf("ActionFollow legal = false, want true (target now resolvable)")
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionFollow); err != nil {
+		t.Fatalf("Step (follow): %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFollow]; legal {
+		t.Fatalf("ActionFollow legal = true, want false (already following)")
+	}
+	if legal := env.ActionMask()[rlenv.ActionStopFollow]; !legal {
+		t.Fatalf("ActionStopFollow legal = false, want true (now following)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionStopFollow]; legal {
+		t.Fatalf("ActionStopFollow legal = true, want false (Config.FollowTargetPlayerName unset)")
 	}
 }
 
