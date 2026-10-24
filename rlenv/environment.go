@@ -152,6 +152,13 @@ type Environment struct {
 	// RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
 	pickupCount int
 
+	// placeCount caches the last-known held count of
+	// Config.PlaceTargetItem (see placeCountNow) — the standalone-
+	// placement-task analogue of craftCount, except judged on a
+	// *decrease* (placing consumes one unit) rather than an increase
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	placeCount int
+
 	// flyTargetX/Y/Z is this episode's elytra-flight target, computed
 	// once at Reset from Config.FlyTargetOffset (plus jitter) — a fixed
 	// point, unlike mine/pickup's live-resolved targets, so there is
@@ -436,6 +443,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.PickupTargetItem = override.PickupTargetItem
 		e.cfg.PickupSearchRadius = override.PickupSearchRadius
 		e.cfg.PickupAnyItem = override.PickupAnyItem
+		e.cfg.PlaceTargetItem = override.PlaceTargetItem
 		e.cfg.FlyTargetOffset = override.FlyTargetOffset
 		e.cfg.FlyTargetActive = override.FlyTargetActive
 		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
@@ -600,13 +608,14 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	}
 	e.craftCount = e.craftCountNow()
 	e.pickupCount = e.pickupCountNow()
+	e.placeCount = e.placeCountNow()
 	e.mounted = e.agent.IsMounted()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -681,6 +690,26 @@ func (e *Environment) pickupCountNow() int {
 		return 0
 	}
 	return e.agent.InventoryCount(e.cfg.PickupTargetItem)
+}
+
+// placeCountNow returns the bot's current held count of
+// Config.PlaceTargetItem, or 0 if it's unset or a chain episode is active
+// (which keeps its own existing placement tracking) — mirrors
+// pickupCountNow's empty-target handling.
+// placeStandaloneReady reports whether this episode's standalone placement
+// task (Config.PlaceTargetItem, outside a chain episode) is currently
+// attemptable — holding at least one of the target item. Shared by
+// actionLegal and buildObservation so the two can't drift apart
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+func (e *Environment) placeStandaloneReady() bool {
+	return e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && e.agent.InventoryCount(e.cfg.PlaceTargetItem) > 0
+}
+
+func (e *Environment) placeCountNow() int {
+	if e.cfg.ChainStage > 0 || e.cfg.PlaceTargetItem == "" {
+		return 0
+	}
+	return e.agent.InventoryCount(e.cfg.PlaceTargetItem)
 }
 
 // pickupTaskActive reports whether this episode poses a pickup task at
@@ -962,6 +991,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.pickupCount mirrors prevCraftCount's own reasoning above, for the
 	// pickup task.
 	prevPickupCount := e.pickupCount
+	// e.placeCount mirrors prevPickupCount's own reasoning above, for the
+	// standalone placement task.
+	prevPlaceCount := e.placeCount
 	// prevPickupEntityID/prevPickupVisible back Config.PickupAnyItem's own
 	// reward check (see pickedUpThisStep below) — captured before dispatch
 	// for the same reason prevCombatEntityID is.
@@ -1053,6 +1085,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		_, stillTracked := e.agent.GetEntityHealth(prevPickupEntityID)
 		pickedUpThisStep = pickedUpThisStep || !stillTracked
 	}
+
+	// placedStandaloneThisStep is judged from an actual InventoryCount
+	// decrease (placing consumes one unit), not from whether ActionPlace
+	// was the dispatched action — mirrors pickedUpThisStep's own reasoning
+	// above. Chain-episode placement (Config.ChainStage > 0) keeps its own
+	// existing milestone-reward handling further down, unaffected by this
+	// (placeCountNow returns 0 during a chain episode, so this is always
+	// false then — docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	newPlaceCount := e.placeCountNow()
+	placedStandaloneThisStep := e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && newPlaceCount < prevPlaceCount
 
 	// mountedThisStep is judged from an actual IsMounted transition
 	// (false -> true), not from whether ActionMount was the dispatched
@@ -1163,6 +1205,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "pickup"
 	}
+	if placedStandaloneThisStep {
+		reward += placeRewardBonus
+		done = true
+		doneReason = "place"
+	}
 	if e.cfg.FlyTargetActive {
 		arrivalRadius := e.cfg.FlyArrivalRadius
 		if arrivalRadius <= 0 {
@@ -1218,10 +1265,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = newEquipReady
 	e.pickupCount = newPickupCount
+	e.placeCount = newPlaceCount
 	e.mounted = newMounted
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

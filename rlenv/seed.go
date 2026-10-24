@@ -177,6 +177,17 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.ChainStage == 0 && cfg.PlaceTargetItem != "" {
+		// ToolSeedAgent is the base SeedAgent's own optional capability
+		// already used for Config.MineRequiredTool — reused as-is, no new
+		// capability needed (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2).
+		if toolSeeder, ok := agent.(ToolSeedAgent); ok {
+			if err := toolSeeder.SeedGiveItem(ctx, cfg.PlaceTargetItem, 1); err != nil {
+				return fmt.Errorf("seeding standalone place target: %w", err)
+			}
+		}
+	}
 	return nil
 }
 

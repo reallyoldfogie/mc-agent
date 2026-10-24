@@ -137,6 +137,16 @@ type Config struct {
 	// refreshPickupTarget).
 	PickupAnyItem bool
 
+	// PlaceTargetItem, if set, is the item name (e.g. "minecraft:dirt")
+	// this episode's standalone placement task targets — enables
+	// ActionPlace outside a chain episode, following MineTargetBlock's
+	// exact "environment poses the task" pattern. Ignored while
+	// ChainStage > 0, which keeps its own existing hardcoded-crafting-table
+	// behavior unchanged (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+	// 2). Empty (the default, and the only option outside a chain episode
+	// before this field existed) means no standalone placement task.
+	PlaceTargetItem string
+
 	// FlyTargetOffset is added to the bot's position at Reset to produce
 	// this episode's elytra-flight target (Environment.flyTargetX/Y/Z) —
 	// the flight-task analogue of TargetOffset, but a genuine 3D offset
@@ -520,6 +530,9 @@ type TaskOverride struct {
 	PickupSearchRadius int
 	// PickupAnyItem is Config.PickupAnyItem for this episode.
 	PickupAnyItem bool
+
+	// PlaceTargetItem is Config.PlaceTargetItem for this episode.
+	PlaceTargetItem string
 
 	// FlyTargetOffset is Config.FlyTargetOffset for this episode.
 	FlyTargetOffset [3]float64

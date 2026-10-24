@@ -91,6 +91,12 @@ const (
 	// task, combat included (see Config.CombatTargetMobType's own doc
 	// comment).
 	combatRewardBonus float32 = 10.0
+	// placeRewardBonus is added once, the step Config.PlaceTargetItem's
+	// held inventory count is observed to decrease (placing consumes one
+	// unit) during a standalone (non-chain) placement episode — same
+	// magnitude/philosophy as craftRewardBonus, just the opposite
+	// direction (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	placeRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

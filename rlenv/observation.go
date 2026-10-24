@@ -163,6 +163,17 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          0.0 otherwise. Same role as goalRideActive/goalFlyActive
 //	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
 //
+//	index 46: placeReady — 1.0 if Environment.placeStandaloneReady()
+//	          (Config.PlaceTargetItem set, outside a chain episode, and
+//	          currently held), 0.0 otherwise. Plays the same role for
+//	          standalone placement that craftReady plays for craft — no
+//	          position/distance to encode, so "is this attemptable right
+//	          now" is the useful signal (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 2).
+//	index 47: goalPlaceStandaloneActive — 1.0 if Config.PlaceTargetItem is
+//	          set and Config.ChainStage == 0, 0.0 otherwise. Same
+//	          active-vs-ready distinction as goalCraftActive/craftReady.
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -206,7 +217,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 46
+const observationSize = 48
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -228,7 +239,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -306,6 +317,8 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				combatTargetHealth / obsVitalScale,
 				combatVisibleFlag,
 				boolToFloat32(combatActive),
+				boolToFloat32(placeReady),
+				boolToFloat32(placeActive),
 			},
 		}
 	}
@@ -357,6 +370,8 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			combatTargetHealth,
 			combatVisibleFlag,
 			boolToFloat32(combatActive),
+			boolToFloat32(placeReady),
+			boolToFloat32(placeActive),
 		},
 	}
 }

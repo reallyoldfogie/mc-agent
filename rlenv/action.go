@@ -240,7 +240,12 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if !e.actionLegal(ActionPlace) {
 			return actionDispatch{}, false, nil
 		}
-		return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+		if e.cfg.ChainStage > 0 {
+			return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+		}
+		// Standalone placement (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — Config.ChainStage's own branch above is unchanged.
+		return actionDispatch{name: placeActionName, args: []string{e.cfg.PlaceTargetItem}}, true, nil
 	case ActionEquip:
 		if !e.actionLegal(ActionEquip) {
 			return actionDispatch{}, false, nil
@@ -330,7 +335,13 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		}
 		return e.cfg.CraftTargetItem != "" && e.craftReady
 	case ActionPlace:
-		return e.cfg.ChainStage > 0 && chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+		if e.cfg.ChainStage > 0 {
+			return chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+		}
+		// Standalone placement (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — gated on actually holding the target item, the same
+		// masking-efficiency reasoning craftReady's own gate uses.
+		return e.placeStandaloneReady()
 	case ActionEquip, ActionUseItem:
 		// Both gated on the same field — see Config.EquipTargetItem's own
 		// doc comment for why ActionUseItem has no independent enable flag.
