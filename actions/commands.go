@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -800,6 +800,64 @@ func (SpearCharge) Execute(ctx context.Context, agent models.CommandAgent, args 
 	completion, resolve := models.NewCompletion()
 	go func() {
 		resolve(spear.SpearChargeAt(ctx, targetID, args[1], time.Duration(ms[0])*time.Millisecond,
+			time.Duration(ms[1])*time.Millisecond, time.Duration(ms[2])*time.Millisecond, ms[3], ms[4]))
+	}()
+	return completion, nil
+}
+
+type SpearChargeWithApproach struct{}
+
+func (SpearChargeWithApproach) Name() string { return "spearchargewithapproach" }
+func (SpearChargeWithApproach) Usage() string {
+	return "spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]"
+}
+
+// Execute mirrors SpearCharge's own argument parsing exactly; the only
+// difference is which method it dispatches to (SpearChargeAtWithApproach
+// instead of SpearChargeAt) — see that method's own doc comment for why a
+// separate command exists rather than reusing "spearcharge" (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+func (SpearChargeWithApproach) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) < 5 || len(args) > 7 {
+		_ = agent.SendChat("Usage: spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]")
+		return models.Done(nil), nil
+	}
+	targetID, err := parseCombatEntityID(args[0], agent)
+	if err != nil {
+		return models.Done(nil), nil
+	}
+	ms := make([]float64, 5)
+	for i := 0; i < 3; i++ {
+		n, parseErr := strconv.Atoi(args[i+2])
+		if parseErr != nil || n <= 0 {
+			_ = agent.SendChat("Spear charge durations must be positive milliseconds")
+			return models.Done(nil), nil
+		}
+		ms[i] = float64(n)
+	}
+	if len(args) >= 6 {
+		ms[3], err = strconv.ParseFloat(args[5], 64)
+		if err != nil {
+			_ = agent.SendChat("Invalid spear minimum speed")
+			return models.Done(nil), nil
+		}
+	}
+	if len(args) == 7 {
+		ms[4], err = strconv.ParseFloat(args[6], 64)
+		if err != nil || ms[4] < -1 || ms[4] > 1 {
+			_ = agent.SendChat("Invalid spear minimum alignment")
+			return models.Done(nil), nil
+		}
+	}
+	spear, ok := agent.(interface {
+		SpearChargeAtWithApproach(context.Context, int32, string, time.Duration, time.Duration, time.Duration, float64, float64) error
+	})
+	if !ok {
+		return models.Done(fmt.Errorf("spear charge with approach action is not supported by this agent")), nil
+	}
+	completion, resolve := models.NewCompletion()
+	go func() {
+		resolve(spear.SpearChargeAtWithApproach(ctx, targetID, args[1], time.Duration(ms[0])*time.Millisecond,
 			time.Duration(ms[1])*time.Millisecond, time.Duration(ms[2])*time.Millisecond, ms[3], ms[4]))
 	}()
 	return completion, nil

@@ -53,6 +53,23 @@ func (a *agent) spearRequestForEntity(targetID int32, itemName string, mode comb
 	return combatTarget, request, request.Validate()
 }
 
+// SpearChargeAtWithApproach is SpearChargeAt's own approach-and-charge
+// counterpart: SpearChargeAt (and ExecuteSpearAttack beneath it) only ever
+// sends the hold/release interaction packets, assuming the caller is
+// already sprinting toward the target with sufficient speed/alignment
+// during the hold — it never moves the bot itself. This closes that gap by
+// running the approach (approachTargetWhileAttacking, reusing the same
+// CombatMovementEnvironment/ApplyCombatMovement primitives RunCombat's own
+// loop uses) concurrently with the charge, so a caller gets one atomic
+// "run at the target and charge" capability instead of needing a second,
+// separately-orchestrated movement command (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+func (a *agent) SpearChargeAtWithApproach(ctx context.Context, targetID int32, itemName string, holdDuration, engagedDuration, tiredDuration time.Duration, minSpeed, minAlignment float64) error {
+	return a.approachTargetWhileAttacking(ctx, targetID, true, func(attackCtx context.Context) error {
+		return a.SpearChargeAt(attackCtx, targetID, itemName, holdDuration, engagedDuration, tiredDuration, minSpeed, minAlignment)
+	})
+}
+
 func spearJabRequestForTarget(target combat.Target, itemName string) (combat.SpearAttackRequest, error) {
 	request := combat.SpearAttackRequest{
 		TargetID:       target.EntityID,

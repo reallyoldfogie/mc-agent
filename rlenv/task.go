@@ -235,6 +235,28 @@ type Config struct {
 	// RideSearchRadius's own doc comment.
 	CreeperGunpowderRadius float64
 
+	// SpearChargeTargetMobType, if set, is the entity type name this
+	// episode's spear-charge task targets — enables
+	// ActionSpearChargeWithApproach, following CombatTargetMobType's exact
+	// "environment poses the task" pattern. Unlike CombatTargetMobType,
+	// dispatch is at Environment's own already-resolved entity ID (mirrors
+	// ActionMount's by-ID dispatch, not by-name — see ActionMine's own doc
+	// comment on why): agent.SpearChargeAtWithApproach needs one specific
+	// targetID, unlike RunCombat's own self-ranking loop. Empty (the
+	// default) means no spear-charge task (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 6). Bot death is already
+	// handled generically regardless of this field — same reasoning as
+	// CombatTargetMobType's own doc comment.
+	SpearChargeTargetMobType string
+
+	// SpearChargeRadius bounds both FindNearestVisibleEntityOfType's
+	// search when locating the nearest visible SpearChargeTargetMobType
+	// instance and the radius SeedSpearMob checks before summoning one.
+	// <= 0 defers to DefaultConfig's own default — no existing
+	// chat-command default to mirror, same reasoning as RideSearchRadius's
+	// own doc comment.
+	SpearChargeRadius float64
+
 	// FollowTargetPlayerName, if set, is the player name (not an entity
 	// type/block to search for — agent.Follow's own target-selection only
 	// resolves players by name, following/manager.go's Start(targetPlayerName
@@ -606,6 +628,12 @@ type TaskOverride struct {
 	// episode.
 	CreeperGunpowderRadius float64
 
+	// SpearChargeTargetMobType is Config.SpearChargeTargetMobType for this
+	// episode.
+	SpearChargeTargetMobType string
+	// SpearChargeRadius is Config.SpearChargeRadius for this episode.
+	SpearChargeRadius float64
+
 	// FollowTargetPlayerName is Config.FollowTargetPlayerName for this
 	// episode.
 	FollowTargetPlayerName string
@@ -641,6 +669,10 @@ func DefaultConfig() Config {
 		// CreeperGunpowderRadius's own doc comment) — matches CombatRadius's
 		// own default, a reasonable search distance for a hostile mob.
 		CreeperGunpowderRadius: 16,
+		// No existing chat-command default to mirror (see
+		// SpearChargeRadius's own doc comment) — matches CombatRadius's
+		// own default, same reasoning.
+		SpearChargeRadius: 16,
 	}
 }
 

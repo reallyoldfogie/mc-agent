@@ -224,6 +224,29 @@ type fakeAgent struct {
 	creeperVisible               bool
 	creeperDropsGunpowder        bool
 	gunpowderHeldCount           int
+
+	// Spear-charge simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 6): a single target mob type, spearTargetType, visible at
+	// (spearX,Y,Z) with entity ID spearEntityID and health spearHealth
+	// while spearVisible. SpearChargeAtWithApproach "charges" it by
+	// setting spearHealth to 0 (mirrors killCombatTarget's own "actually
+	// mutates state" precedent) — see killSpearTarget.
+	spearTargetType        string
+	spearX, spearY, spearZ float64
+	spearEntityID          int32
+	spearHealth            float32
+	spearVisible           bool
+	spearChargeCalls       []spearChargeCall
+}
+
+// spearChargeCall records one SpearChargeAtWithApproach call's args, so
+// tests can assert rlenv's real dispatch reached it with the right
+// values.
+type spearChargeCall struct {
+	targetID               int32
+	itemName               string
+	hold, engaged, tired   time.Duration
+	minSpeed, minAlignment float64
 }
 
 // setFollowablePlayer configures the simulated resolvable player — see
@@ -243,6 +266,26 @@ func (f *fakeAgent) setCreeperTarget(entityID int32, x, y, z float64, dropsGunpo
 	f.creeperX, f.creeperY, f.creeperZ = x, y, z
 	f.creeperVisible = true
 	f.creeperDropsGunpowder = dropsGunpowder
+	f.mu.Unlock()
+}
+
+// setSpearTarget configures the simulated spear-charge target — see
+// spearTargetType's own doc comment.
+func (f *fakeAgent) setSpearTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.spearTargetType = entityType
+	f.spearEntityID = entityID
+	f.spearX, f.spearY, f.spearZ = x, y, z
+	f.spearHealth = health
+	f.spearVisible = true
+	f.mu.Unlock()
+}
+
+// killSpearTarget mirrors killCombatTarget's own doc comment, for the
+// spear-charge target.
+func (f *fakeAgent) killSpearTarget() {
+	f.mu.Lock()
+	f.spearHealth = 0
 	f.mu.Unlock()
 }
 
@@ -610,6 +653,9 @@ func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityType
 	if f.creeperVisible && entityTypeName == "minecraft:creeper" {
 		return f.creeperEntityID, f.creeperX, f.creeperY, f.creeperZ, true, nil
 	}
+	if f.spearVisible && f.spearTargetType != "" && entityTypeName == f.spearTargetType {
+		return f.spearEntityID, f.spearX, f.spearY, f.spearZ, true, nil
+	}
 	return 0, 0, 0, 0, false, nil
 }
 
@@ -621,6 +667,9 @@ func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool)
 	defer f.mu.Unlock()
 	if f.combatVisible && entityID == f.combatEntityID {
 		return f.combatHealth, true
+	}
+	if f.spearVisible && entityID == f.spearEntityID {
+		return f.spearHealth, true
 	}
 	// The simulated pickup item has no meaningful health — only "found"
 	// matters for Config.PickupAnyItem's own reward check (see
@@ -669,6 +718,22 @@ func (f *fakeAgent) KillCreeperForGunpowder(_ context.Context) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// SpearChargeAtWithApproach "charges" the simulated spear target by
+// zeroing its health (mirrors killCombatTarget's own "actually mutates
+// state" precedent) — see spearTargetType's own doc comment. A no-op
+// (recording the call only) if nothing is currently configured as the
+// spear target, matching a real call against an untracked/vanished
+// target.
+func (f *fakeAgent) SpearChargeAtWithApproach(_ context.Context, targetID int32, itemName string, hold, engaged, tired time.Duration, minSpeed, minAlignment float64) error {
+	f.mu.Lock()
+	f.spearChargeCalls = append(f.spearChargeCalls, spearChargeCall{targetID, itemName, hold, engaged, tired, minSpeed, minAlignment})
+	if f.spearVisible && targetID == f.spearEntityID {
+		f.spearHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
 }
 
 // IsMounted reports the simulated mount state — see MountEntity/

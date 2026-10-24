@@ -42,6 +42,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(ThrowTridentAt{})
 	reg.Register(SpearJab{})
 	reg.Register(SpearCharge{})
+	reg.Register(SpearChargeWithApproach{})
 	reg.Register(MaceAttack{})
 	reg.Register(MaceSmash{})
 	reg.Register(RunCombat{})

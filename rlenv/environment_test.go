@@ -69,13 +69,15 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// RL_ACTION_SPACE_EXPANSION_III.md item 2); 48-50 are the follow block
 	// (followTargetVisible/isFollowing/goalFollowActive, that plan's item
 	// 4); 51-55 are the creeper-gunpowder block (creeperDx/Dy/Dz/
-	// creeperVisible/goalCreeperGunpowderActive, that plan's item 5) — see
-	// observation.go's own doc comment on observationSize for the full
-	// layout. This exact value is also what makes cmd/rl-train's
-	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
-	// reject an old checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 56 {
-		t.Fatalf("ObservationSize() = %d, want 56", got)
+	// creeperVisible/goalCreeperGunpowderActive, that plan's item 5); 56-60
+	// are the spear-charge block (spearDx/Dy/Dz/spearVisible/
+	// goalSpearChargeActive, that plan's item 6) — see observation.go's
+	// own doc comment on observationSize for the full layout. This exact
+	// value is also what makes cmd/rl-train's EnvironmentID
+	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
+	// checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 61 {
+		t.Fatalf("ObservationSize() = %d, want 61", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -90,8 +92,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 56 {
-		t.Fatalf("len(obs.Values) = %d, want 56 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 61 {
+		t.Fatalf("len(obs.Values) = %d, want 61 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -2507,6 +2509,241 @@ func TestActionMaskKillCreeperForGunpowderGatedOnConfiguredVisibleAndWeapon(t *t
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; legal {
 		t.Fatalf("ActionKillCreeperForGunpowder legal = true, want false (Config.CreeperGunpowderActive unset, even though visible and equipped)")
+	}
+}
+
+// --- Config.SpearChargeTargetMobType (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6) ---
+
+const spearChargeWeaponItemName = "minecraft:iron_spear"
+
+func TestStepSpearChargeWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20) // present in the world, but Config never asks for it
+	if err := agent.Equip(context.Background(), spearChargeWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionSpearChargeWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 0 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (Config.SpearChargeTargetMobType unset, safe no-op like ActionWait)", agent.spearChargeCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[60]; active != 0 {
+		t.Fatalf("goalSpearChargeActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepSpearChargeWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	if err := agent.Equip(context.Background(), spearChargeWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionSpearChargeWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 0 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (nothing visible to charge)", agent.spearChargeCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[59]; visible != 0 {
+		t.Fatalf("spearVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepSpearChargeWithoutWeaponDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionSpearChargeWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 0 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (no spear equipped)", agent.spearChargeCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+}
+
+func TestStepSpearChargeDispatchesWithResolvedEntityAndFixedArgs(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	if err := agent.Equip(context.Background(), spearChargeWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionSpearChargeWithApproach); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 1 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want exactly 1", agent.spearChargeCalls)
+	}
+	call := agent.spearChargeCalls[0]
+	if call.targetID != 31 {
+		t.Fatalf("targetID = %d, want 31 (Environment's own resolved entity, not a by-name search)", call.targetID)
+	}
+	if call.itemName != spearChargeWeaponItemName {
+		t.Fatalf("itemName = %q, want %q", call.itemName, spearChargeWeaponItemName)
+	}
+}
+
+func TestStepSpearChargeActionKillsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	if err := agent.Equip(context.Background(), spearChargeWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionSpearChargeWithApproach)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target was killed)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (spearChargeRewardBonus)", result.Reward)
+	}
+}
+
+// TestStepSpearChargeRewardJudgedByWorldStateNotDispatchedAction mirrors
+// TestStepCombatRewardJudgedByWorldStateNotDispatchedAction's own reasoning:
+// the target dying from something other than the dispatched action still
+// counts, since the reward is judged from the resolved entity's own health,
+// not from whether ActionSpearChargeWithApproach was chosen this step.
+func TestStepSpearChargeRewardJudgedByWorldStateNotDispatchedAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.killSpearTarget() // died from something other than the spear charge
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 0 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the charge)", agent.spearChargeCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (the resolved target died, regardless of cause)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (spearChargeRewardBonus)", result.Reward)
+	}
+}
+
+func TestStepObservationReflectsSpearTargetVisibilityRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[59]; visible != 1 {
+		t.Fatalf("spearVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[60]; active != 1 {
+		t.Fatalf("goalSpearChargeActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[56]; dx != 5 {
+		t.Fatalf("spearDx at Reset = %v, want 5", dx)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.spearChargeCalls) != 0 {
+		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the charge)", agent.spearChargeCalls)
+	}
+	if visible := result.Observation.Values[59]; visible != 1 {
+		t.Fatalf("spearVisible after ActionWait = %v, want 1 (still visible)", visible)
+	}
+}
+
+func TestActionMaskSpearChargeGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.SpearChargeTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionSpearChargeWithApproach]; legal {
+		t.Fatalf("ActionSpearChargeWithApproach legal = true, want false (configured but nothing visible, no weapon)")
+	}
+
+	agent.setSpearTarget("minecraft:zombie", 31, 5, 0, 0, 20)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[59]; visible != 1 {
+		t.Fatalf("spearVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionSpearChargeWithApproach]; legal {
+		t.Fatalf("ActionSpearChargeWithApproach legal = true, want false (visible but no weapon equipped yet)")
+	}
+
+	if err := agent.Equip(context.Background(), spearChargeWeaponItemName); err != nil {
+		t.Fatalf("Equip: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionSpearChargeWithApproach]; !legal {
+		t.Fatalf("ActionSpearChargeWithApproach legal = false, want true (now visible and weapon equipped)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionSpearChargeWithApproach]; legal {
+		t.Fatalf("ActionSpearChargeWithApproach legal = true, want false (Config.SpearChargeTargetMobType unset, even though visible and equipped)")
 	}
 }
 

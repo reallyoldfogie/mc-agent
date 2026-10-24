@@ -192,6 +192,21 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.SpearChargeTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if spearSeeder, ok := agent.(SpearSeedAgent); ok {
+			radius := cfg.SpearChargeRadius
+			if radius <= 0 {
+				radius = DefaultConfig().SpearChargeRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshSpearTarget.
+			if _, err := spearSeeder.SeedSpearMob(ctx, cfg.SpearChargeTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding spear mob: %w", err)
+			}
+		}
+	}
 	if cfg.ChainStage == 0 && cfg.PlaceTargetItem != "" {
 		// ToolSeedAgent is the base SeedAgent's own optional capability
 		// already used for Config.MineRequiredTool — reused as-is, no new
@@ -289,6 +304,16 @@ type CreeperSeedAgent interface {
 	// of the bot (via SeedEntity) and a melee weapon equipped — see
 	// agent.SeedCreeperForGunpowder's own doc comment.
 	SeedCreeperForGunpowder(ctx context.Context, radius int) (entityID int32, err error)
+}
+
+// SpearSeedAgent is the optional capability a SpearCharge episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6): summoning a
+// live mob and equipping a spear, in one call.
+type SpearSeedAgent interface {
+	// SeedSpearMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a spear equipped — see
+	// agent.SeedSpearMob's own doc comment.
+	SeedSpearMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

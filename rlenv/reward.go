@@ -120,6 +120,13 @@ const (
 	// nothing, matching how a real player farming creepers experiences it
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
 	creeperGunpowderRewardBonus float32 = 10.0
+	// spearChargeRewardBonus is added once, the step Environment's
+	// resolved spear-charge target (the specific entity ID
+	// e.spearEntityID held at the start of the step) is observed to die —
+	// same magnitude/philosophy as combatRewardBonus, a world-state-delta
+	// check, not "was ActionSpearChargeWithApproach the dispatched
+	// action" (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6).
+	spearChargeRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

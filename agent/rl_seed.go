@@ -480,6 +480,37 @@ func (a *agent) SeedCreeperForGunpowder(ctx context.Context, radius int) (int32,
 	return entityID, nil
 }
 
+// spearSeedWeapon is the weapon SeedSpearMob equips before an episode's
+// spear-charge task — fixed, not configurable, for a first pass, same
+// reasoning as combatSeedWeapon's own doc comment. "minecraft:iron_spear"
+// matches testing/combat_integration_test.go's own established spear-item
+// convention (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6).
+const spearSeedWeapon = "minecraft:iron_spear"
+
+// SeedSpearMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a spear is
+// equipped, via RCON — training convenience for SpearCharge episode
+// seeding, the spear-task analogue of SeedCombatMob. NoAI-tagged like
+// SeedCombatMob's own combatMobNBT (unlike SeedCreeperForGunpowder):
+// isolates "can the policy learn to charge" from surviving a reactive
+// opponent, the same reasoning SeedCombatMob's own doc comment gives.
+// Requires RCON (via SeedEntity/SeedGiveItem).
+func (a *agent) SeedSpearMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed spear mob: %w", err)
+	}
+	if !a.IsEquipped(spearSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, spearSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed spear mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, spearSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed spear mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()

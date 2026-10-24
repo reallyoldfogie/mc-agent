@@ -180,8 +180,23 @@ const (
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
 	ActionKillCreeperForGunpowder
 
+	// ActionSpearChargeWithApproach dispatches
+	// "spearchargewithapproach <entityID> <itemName> <holdMs> <engagedMs>
+	// <tiredMs> <minSpeed> <minAlignment>" at Environment's own
+	// already-resolved e.spearEntityID (see refreshSpearTarget) — not by
+	// mob type, since agent.SpearChargeAtWithApproach needs one specific
+	// targetID (unlike RunCombat's own self-ranking loop), the same
+	// by-ID-not-by-name reasoning ActionMount's own doc comment gives.
+	// itemName and the hold/engaged/tired/speed/alignment values are all
+	// fixed constants for a first pass (see spearChargeWeaponName/
+	// spearChargeHoldDuration's own doc comments), not Config knobs. A
+	// safe no-op when Config.SpearChargeTargetMobType is unset, nothing is
+	// currently visible, or the required spear isn't equipped (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+	ActionSpearChargeWithApproach
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionKillCreeperForGunpowder) + 1
+	NumActions = int(ActionSpearChargeWithApproach) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -213,6 +228,7 @@ const (
 	stopFollowActionName              = "stopfollow"
 	moveToAndSneakActionName          = "movetoandsneakquiet"
 	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
+	spearChargeWithApproachActionName = "spearchargewithapproach"
 )
 
 // actionDispatch describes what Step should send through the
@@ -350,6 +366,19 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: killCreeperForGunpowderActionName, args: nil}, true, nil
+	case ActionSpearChargeWithApproach:
+		if !e.actionLegal(ActionSpearChargeWithApproach) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: spearChargeWithApproachActionName, args: []string{
+			fmt.Sprintf("%d", e.spearEntityID),
+			spearChargeWeaponName,
+			fmt.Sprintf("%d", spearChargeHoldDuration.Milliseconds()),
+			fmt.Sprintf("%d", spearChargeEngagedDuration.Milliseconds()),
+			fmt.Sprintf("%d", spearChargeTiredDuration.Milliseconds()),
+			fmt.Sprintf("%.4f", spearChargeMinSpeed),
+			fmt.Sprintf("%.4f", spearChargeMinAlignment),
+		}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -430,6 +459,11 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// letting the mask stay permissive here would waste probability
 		// mass on an attempt that deterministically fails.
 		return e.cfg.CreeperGunpowderActive && e.creeperVisible && e.agent.IsEquipped(creeperGunpowderWeaponName)
+	case ActionSpearChargeWithApproach:
+		// Gated on the required spear currently equipped, the same
+		// masking-efficiency reasoning ActionKillCreeperForGunpowder's own
+		// weapon gate uses.
+		return e.cfg.SpearChargeTargetMobType != "" && e.spearVisible && e.agent.IsEquipped(spearChargeWeaponName)
 	default:
 		return false
 	}
