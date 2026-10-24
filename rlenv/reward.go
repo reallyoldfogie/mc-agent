@@ -77,6 +77,20 @@ const (
 	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note on why "ride
 	// somewhere" is left as a future composite task, not built here.
 	rideRewardBonus float32 = 10.0
+	// combatRewardBonus is added once, the step Environment's resolved
+	// combat target (the specific entity ID e.combatEntityID held at the
+	// start of the step — see Step's own before/after
+	// LiveAgent.GetEntityHealth comparison) is observed to die — either
+	// no longer tracked at all, or tracked with health <= 0 (the server
+	// doesn't guarantee a final 0-health update before removing a killed
+	// entity, so either signal counts). Same magnitude/philosophy as
+	// mineRewardBonus: a world-state-delta check, not "was ActionCombat
+	// the dispatched action." The bot's own health loss/death from the
+	// fight needs no special handling here — computeReward's
+	// damagePenaltyScale/deathPenalty already apply generically to every
+	// task, combat included (see Config.CombatTargetMobType's own doc
+	// comment).
+	combatRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0

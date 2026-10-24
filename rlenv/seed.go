@@ -140,6 +140,21 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.CombatTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if combatSeeder, ok := agent.(CombatSeedAgent); ok {
+			radius := cfg.CombatRadius
+			if radius <= 0 {
+				radius = DefaultConfig().CombatRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshCombatTarget.
+			if _, err := combatSeeder.SeedCombatMob(ctx, cfg.CombatTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding combat mob: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -206,6 +221,16 @@ type FlightSeedAgent interface {
 	// SeedElytra ensures the bot has an elytra equipped and a working
 	// firework-rocket supply — see agent.SeedElytra's doc comment.
 	SeedElytra(ctx context.Context) error
+}
+
+// CombatSeedAgent is the optional capability a Combat episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5): summoning a
+// non-aggressive mob to fight and equipping a weapon, in one call.
+type CombatSeedAgent interface {
+	// SeedCombatMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a weapon equipped — see
+	// agent.SeedCombatMob's own doc comment.
+	SeedCombatMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

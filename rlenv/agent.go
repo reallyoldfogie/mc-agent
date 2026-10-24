@@ -53,4 +53,11 @@ type LiveAgent interface {
 	// observation feature and ActionMount's reward (docs/plans/
 	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
 	IsMounted() bool
+
+	// GetEntityHealth returns a tracked entity's last-known health, and
+	// whether it's currently tracked at all — see agent.GetEntityHealth's
+	// own doc comment. Used by Combat's reward to judge a kill on a
+	// specific resolved entity ID (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+	GetEntityHealth(entityID int32) (health float32, found bool)
 }

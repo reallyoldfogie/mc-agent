@@ -140,6 +140,29 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          otherwise. Same role as goalFlyActive/goalPickupActive above
 //	          (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
 //
+//	index 40: combatDx — nearest visible instance of
+//	          Config.CombatTargetMobType (resolved via
+//	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
+//	          (blocks); 0 if not visible/not configured.
+//	index 41: combatDy — same, Y.
+//	index 42: combatDz — same, Z.
+//	index 43: combatTargetHealth — the resolved target's last-known
+//	          health (LiveAgent.GetEntityHealth), 0 if not visible/not
+//	          configured. Gated the same way mineDx/Dy/Dz are, not
+//	          reported unconditionally like isFlying/hasElytra: unlike
+//	          those (real bot state, always meaningful), a target's
+//	          health is meaningless with no resolved target to attach it
+//	          to. The bot's OWN health is already index 5 — this is only
+//	          the opponent's.
+//	index 44: combatVisible — 1.0 if Config.CombatTargetMobType is set and
+//	          a visible instance was found this step, 0.0 otherwise.
+//	          Mirrors mineVisible's dual role — gates combatDx/Dy/Dz/
+//	          combatTargetHealth and doubles as ActionCombat's legality/
+//	          mask condition.
+//	index 45: goalCombatActive — 1.0 if Config.CombatTargetMobType is set,
+//	          0.0 otherwise. Same role as goalRideActive/goalFlyActive
+//	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -183,7 +206,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
 // automatically with no separate version bump needed there).
-const observationSize = 40
+const observationSize = 46
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -205,7 +228,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -229,6 +252,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	rideDx, rideDy, rideDz, rideVisibleFlag := float32(0), float32(0), float32(0), float32(0)
 	if rideVisible {
 		rideDx, rideDy, rideDz, rideVisibleFlag = float32(rideX-x), float32(rideY-y), float32(rideZ-z), 1
+	}
+	combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag := float32(0), float32(0), float32(0), float32(0), float32(0)
+	if combatVisible {
+		combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag = float32(combatX-x), float32(combatY-y), float32(combatZ-z), combatHealth, 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -273,6 +300,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				rideVisibleFlag,
 				boolToFloat32(isMounted),
 				boolToFloat32(rideActive),
+				combatDx / obsDistanceScale,
+				combatDy / obsDistanceScale,
+				combatDz / obsDistanceScale,
+				combatTargetHealth / obsVitalScale,
+				combatVisibleFlag,
+				boolToFloat32(combatActive),
 			},
 		}
 	}
@@ -318,6 +351,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			rideVisibleFlag,
 			boolToFloat32(isMounted),
 			boolToFloat32(rideActive),
+			combatDx,
+			combatDy,
+			combatDz,
+			combatTargetHealth,
+			combatVisibleFlag,
+			boolToFloat32(combatActive),
 		},
 	}
 }

@@ -405,6 +405,45 @@ func (a *agent) SeedElytra(ctx context.Context) error {
 	return nil
 }
 
+// combatSeedWeapon is the weapon SeedCombatMob equips before an episode's
+// combat task — fixed, not configurable, for a first pass (see
+// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5's own note on
+// deliberately not exposing a weapon choice yet).
+const combatSeedWeapon = "minecraft:iron_sword"
+
+// combatMobNBT tags a seeded combat mob NoAI + PersistenceRequired by
+// default — isolates "can the policy learn to use a weapon" from "can it
+// survive a reactive, AI-driven opponent" (a genuinely harder, separate
+// task, not this pass's job), matching
+// testing/combat_integration_test.go's own established convention for the
+// identical reason. This is not a workaround for unhandled bot death —
+// that's already handled generically (rlenv/reward.go's computeReward,
+// independent of any task) — it's purely about isolating the skill being
+// trained.
+const combatMobNBT = "{NoAI:1b,PersistenceRequired:1b}"
+
+// SeedCombatMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a weapon is
+// equipped, via RCON — training convenience for Combat episode seeding
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5), the combat-task
+// analogue of SeedElytra: one call does everything that task needs
+// prepared. Requires RCON (via SeedEntity/SeedGiveItem).
+func (a *agent) SeedCombatMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed combat mob: %w", err)
+	}
+	if !a.IsEquipped(combatSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, combatSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed combat mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, combatSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed combat mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()

@@ -49,11 +49,12 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 40 (34 before the ride block, 28 before the fly block, 23 before
-	// the pickup block, 21 before the equip block, 17 before the chain
-	// block, 14 before the goal block): indices 0-13 are the original
-	// per-task numeric features; 14-16 are the goal-conditioning block
-	// (goalGoToActive/goalMineActive/goalCraftActive) added by
+	// 46 (40 before the combat block, 34 before the ride block, 28 before
+	// the fly block, 23 before the pickup block, 21 before the equip
+	// block, 17 before the chain block, 14 before the goal block):
+	// indices 0-13 are the original per-task numeric features; 14-16 are
+	// the goal-conditioning block (goalGoToActive/goalMineActive/
+	// goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
 	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
 	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1);
@@ -61,13 +62,15 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// goalPickupActive, that plan's Phase 2); 28-33 are the fly block
 	// (flyDx/Dy/Dz/isFlying/hasElytra/goalFlyActive, that plan's Phase 3);
 	// 34-39 are the ride block (rideDx/Dy/Dz/rideVisible/isMounted/
-	// goalRideActive, that plan's Phase 4) — see observation.go's own doc
-	// comment on observationSize for the full layout. This exact value is
-	// also what makes cmd/rl-train's EnvironmentID
+	// goalRideActive, that plan's Phase 4); 40-45 are the combat block
+	// (combatDx/Dy/Dz/combatTargetHealth/combatVisible/goalCombatActive,
+	// that plan's Phase 5) — see observation.go's own doc comment on
+	// observationSize for the full layout. This exact value is also what
+	// makes cmd/rl-train's EnvironmentID
 	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
 	// checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 40 {
-		t.Fatalf("ObservationSize() = %d, want 40", got)
+	if got := env.ObservationSize(); got != 46 {
+		t.Fatalf("ObservationSize() = %d, want 46", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -82,8 +85,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 40 {
-		t.Fatalf("len(obs.Values) = %d, want 40 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 46 {
+		t.Fatalf("len(obs.Values) = %d, want 46 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1640,6 +1643,183 @@ func TestActionMaskMountDismountVehicleJumpGating(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionMount]; legal {
 		t.Fatalf("ActionMount legal = true, want false (Config.RideVehicleType unset)")
+	}
+}
+
+// --- ActionCombat (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5) ---
+
+func TestStepCombatWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20) // present in the world, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCombat)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 0 {
+		t.Fatalf("RunCombat calls = %v, want none (Config.CombatTargetMobType unset, safe no-op like ActionWait)", agent.runCombatCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[45]; active != 0 {
+		t.Fatalf("goalCombatActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepCombatWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCombat)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 0 {
+		t.Fatalf("RunCombat calls = %v, want none (nothing visible to fight)", agent.runCombatCalls)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if visible := result.Observation.Values[44]; visible != 0 {
+		t.Fatalf("combatVisible = %v, want 0", visible)
+	}
+}
+
+func TestStepCombatActionKillsTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionCombat)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 1 {
+		t.Fatalf("RunCombat calls = %v, want exactly 1", agent.runCombatCalls)
+	}
+	if want := (runCombatCall{radius: 16, includeNeutral: false}); agent.runCombatCalls[0] != want {
+		t.Fatalf("RunCombat call = %+v, want %+v", agent.runCombatCalls[0], want)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target was killed)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (combatRewardBonus)", result.Reward)
+	}
+}
+
+func TestStepObservationReflectsCombatTargetHealthRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if visible := obs.Values[44]; visible != 1 {
+		t.Fatalf("combatVisible at Reset = %v, want 1", visible)
+	}
+	if active := obs.Values[45]; active != 1 {
+		t.Fatalf("goalCombatActive at Reset = %v, want 1", active)
+	}
+	if dx := obs.Values[40]; dx != 5 {
+		t.Fatalf("combatDx at Reset = %v, want 5", dx)
+	}
+	if health := obs.Values[43]; health != 20 {
+		t.Fatalf("combatTargetHealth at Reset = %v, want 20", health)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 0 {
+		t.Fatalf("RunCombat calls = %v, want none (ActionWait doesn't dispatch runcombat)", agent.runCombatCalls)
+	}
+	if health := result.Observation.Values[43]; health != 20 {
+		t.Fatalf("combatTargetHealth after ActionWait = %v, want 20 (unchanged)", health)
+	}
+}
+
+// TestStepCombatRewardJudgedByWorldStateNotDispatchedAction mirrors
+// TestStepMineDoesNotAwardBonusWhenActionMineFailsToBreakIt's inverse:
+// the target dying from something other than the dispatched action
+// (environmental damage, another cause entirely) still counts, since the
+// reward is judged from the resolved entity's own health, not from
+// whether ActionCombat was chosen this step.
+func TestStepCombatRewardJudgedByWorldStateNotDispatchedAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.killCombatTarget() // died from something other than ActionCombat
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 0 {
+		t.Fatalf("RunCombat calls = %v, want none (ActionWait doesn't dispatch runcombat)", agent.runCombatCalls)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (the resolved target died, regardless of cause)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (combatRewardBonus)", result.Reward)
+	}
+}
+
+func TestActionMaskCombatLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionCombat]; legal {
+		t.Fatalf("ActionCombat legal = true, want false (configured but nothing visible yet)")
+	}
+
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if visible := result.Observation.Values[44]; visible != 1 {
+		t.Fatalf("combatVisible = %v, want 1 (sanity check target is now visible)", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionCombat]; !legal {
+		t.Fatalf("ActionCombat legal = false, want true (target now visible)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionCombat]; legal {
+		t.Fatalf("ActionCombat legal = true, want false (Config.CombatTargetMobType unset, even though visible)")
 	}
 }
 

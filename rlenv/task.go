@@ -172,6 +172,26 @@ type Config struct {
 	// for the value chosen instead.
 	RideSearchRadius int
 
+	// CombatTargetMobType, if set, is the entity type name (e.g.
+	// "minecraft:zombie") this episode's combat task targets — enables
+	// ActionCombat, following MineTargetBlock's exact "environment poses
+	// the task" pattern (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5). Empty (the default) means no combat task. Bot death is
+	// already handled generically regardless of this field — see
+	// reward.go's computeReward (diedThisStep ends every episode with
+	// deathPenalty) — Combat doesn't need, and doesn't add, any
+	// special-cased death handling of its own.
+	CombatTargetMobType string
+
+	// CombatRadius bounds both FindNearestVisibleEntityOfType's search
+	// when locating the nearest visible CombatTargetMobType instance
+	// (also the radius SeedCombatMob checks before summoning one) and the
+	// radius ActionCombat's own "runcombat <radius> false" dispatch
+	// passes through to agent.RunCombat. <= 0 defers to DefaultConfig's
+	// own default, which matches actions/commands.go's own runCombat
+	// default radius (16).
+	CombatRadius float64
+
 	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
 	// this episode's equip task wants held (a tool/weapon) or worn (armor/
 	// elytra) — enables ActionEquip and ActionUseItem, following
@@ -499,6 +519,11 @@ type TaskOverride struct {
 	RideVehicleType string
 	// RideSearchRadius is Config.RideSearchRadius for this episode.
 	RideSearchRadius int
+
+	// CombatTargetMobType is Config.CombatTargetMobType for this episode.
+	CombatTargetMobType string
+	// CombatRadius is Config.CombatRadius for this episode.
+	CombatRadius float64
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -524,6 +549,9 @@ func DefaultConfig() Config {
 		// RideSearchRadius's own doc comment) — chosen generously for a
 		// vehicle-sized target, larger than a block/item's own defaults.
 		RideSearchRadius: 16,
+		// Matches actions/commands.go's own runCombat default radius —
+		// same reasoning as MineSearchRadius above.
+		CombatRadius: 16,
 	}
 }
 

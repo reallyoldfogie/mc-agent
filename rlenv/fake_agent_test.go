@@ -174,6 +174,24 @@ type fakeAgent struct {
 	mounted               bool
 	vehicleJumpCalls      int
 	findEntityOfTypeCalls int
+
+	// Combat simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5): a single target mob type, combatTargetType, visible at
+	// (combatX,Y,Z) with entity ID combatEntityID and health combatHealth
+	// while combatVisible. RunCombat "kills" it by setting combatHealth
+	// to 0 (mirrors mineBlockName's "actually mutates state" precedent)
+	// — see killCombatTarget.
+	combatTargetType          string
+	combatX, combatY, combatZ float64
+	combatEntityID            int32
+	combatHealth              float32
+	combatVisible             bool
+	runCombatCalls            []runCombatCall
+}
+
+type runCombatCall struct {
+	radius         float64
+	includeNeutral bool
 }
 
 // setRideVehicle configures the simulated Mob Riding target — see
@@ -184,6 +202,29 @@ func (f *fakeAgent) setRideVehicle(entityType string, entityID int32, x, y, z fl
 	f.rideEntityID = entityID
 	f.rideX, f.rideY, f.rideZ = x, y, z
 	f.rideVisible = true
+	f.mu.Unlock()
+}
+
+// setCombatTarget configures the simulated Combat target — see
+// combatTargetType's own doc comment.
+func (f *fakeAgent) setCombatTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.combatTargetType = entityType
+	f.combatEntityID = entityID
+	f.combatX, f.combatY, f.combatZ = x, y, z
+	f.combatHealth = health
+	f.combatVisible = true
+	f.mu.Unlock()
+}
+
+// killCombatTarget simulates RunCombat landing a killing blow: zeroes the
+// target's health, matching GetEntityHealth's "health <= 0 counts as
+// dead" contract (it stays "found", mirroring a kill the server hasn't
+// yet confirmed via removal — see that method's own doc comment on why
+// either signal counts).
+func (f *fakeAgent) killCombatTarget() {
+	f.mu.Lock()
+	f.combatHealth = 0
 	f.mu.Unlock()
 }
 
@@ -453,10 +494,42 @@ func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityType
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.findEntityOfTypeCalls++
-	if !f.rideVisible || f.rideTargetType == "" || entityTypeName != f.rideTargetType {
-		return 0, 0, 0, 0, false, nil
+	if f.rideVisible && f.rideTargetType != "" && entityTypeName == f.rideTargetType {
+		return f.rideEntityID, f.rideX, f.rideY, f.rideZ, true, nil
 	}
-	return f.rideEntityID, f.rideX, f.rideY, f.rideZ, true, nil
+	if f.combatVisible && f.combatTargetType != "" && entityTypeName == f.combatTargetType {
+		return f.combatEntityID, f.combatX, f.combatY, f.combatZ, true, nil
+	}
+	return 0, 0, 0, 0, false, nil
+}
+
+// GetEntityHealth reports the simulated combat target's health when
+// entityID matches — found=false otherwise (not tracked), matching
+// agent.GetEntityHealth's own contract.
+func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.combatVisible || entityID != f.combatEntityID {
+		return 0, false
+	}
+	return f.combatHealth, true
+}
+
+// RunCombat "fights" the simulated combat target by killing it (see
+// killCombatTarget) — mirrors MineBlockAt's "actually mutates state"
+// precedent so rlenv's real ActionCombat dispatch/reward logic is
+// exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+// A no-op (recording the call only) if nothing is currently configured as
+// the combat target, matching a real empty-radius runCombat call that
+// simply finds nothing to fight.
+func (f *fakeAgent) RunCombat(_ context.Context, radius float64, includeNeutral bool) error {
+	f.mu.Lock()
+	f.runCombatCalls = append(f.runCombatCalls, runCombatCall{radius: radius, includeNeutral: includeNeutral})
+	if f.combatVisible {
+		f.combatHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
 }
 
 // IsMounted reports the simulated mount state — see MountEntity/

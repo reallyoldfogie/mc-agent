@@ -546,6 +546,26 @@ func (a *agent) GetTrackedEntities() map[int32]models.TrackedEntityInfo {
 	return out
 }
 
+// GetEntityHealth returns the last-known health of a tracked entity, and
+// whether it's currently tracked at all — false if it was never seen or
+// has since been removed (ClientboundRemoveEntities, onRemoveEntities).
+// Used by rlenv's Combat task to judge a kill from a before/after
+// transition on a specific resolved entity ID (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_II.md Phase 5): a removed entity reports
+// found=false here even if its last-known health was never observed to
+// reach zero (the server doesn't guarantee a final 0-health metadata
+// update before removing a killed entity), so callers should treat
+// either signal as death.
+func (a *agent) GetEntityHealth(entityID int32) (health float32, found bool) {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+	e, ok := a.entities[entityID]
+	if !ok || e.Removed {
+		return 0, false
+	}
+	return e.Health, true
+}
+
 // FindNearestEntityByType finds the nearest entity of a specific type to a position.
 // Returns entityID, distance, and whether found.
 // Excludes entities marked as Removed. See models.Agent.FindNearestEntityByType's

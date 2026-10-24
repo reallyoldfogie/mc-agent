@@ -136,8 +136,23 @@ const (
 	// set, the same condition as ActionDismount.
 	ActionVehicleJump
 
+	// ActionCombat dispatches "runcombat <radius> false" — mc-agent's own
+	// autonomous combat loop (agent.RunCombat), which ranks and engages
+	// targets itself every combat tick rather than being aimed at one
+	// resolved entity. Unlike ActionMine/ActionMount, there is no
+	// independent-search mismatch to avoid in the dispatch itself (the
+	// dispatch never references an entity ID) — Environment's own
+	// e.combatEntityID (see refreshCombatTarget) exists purely to judge
+	// the reward (did THIS specific resolved entity die), not to steer
+	// the dispatch. A safe no-op when Config.CombatTargetMobType is unset
+	// or nothing matching is currently visible
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5). Bot death
+	// mid-combat needs no special handling here — see
+	// Config.CombatTargetMobType's own doc comment.
+	ActionCombat
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionVehicleJump) + 1
+	NumActions = int(ActionCombat) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -164,6 +179,7 @@ const (
 	mountActionName       = "mount"
 	dismountActionName    = "dismount"
 	vehicleJumpActionName = "vehiclejump"
+	combatActionName      = "runcombat"
 )
 
 // actionDispatch describes what Step should send through the
@@ -264,6 +280,15 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: vehicleJumpActionName, args: nil}, true, nil
+	case ActionCombat:
+		if !e.actionLegal(ActionCombat) {
+			return actionDispatch{}, false, nil
+		}
+		radius := e.cfg.CombatRadius
+		if radius <= 0 {
+			radius = DefaultConfig().CombatRadius
+		}
+		return actionDispatch{name: combatActionName, args: []string{fmt.Sprintf("%.4f", radius), "false"}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -324,6 +349,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.RideVehicleType != "" && !e.agent.IsMounted() && e.rideVisible
 	case ActionDismount, ActionVehicleJump:
 		return e.cfg.RideVehicleType != "" && e.agent.IsMounted()
+	case ActionCombat:
+		return e.cfg.CombatTargetMobType != "" && e.combatVisible
 	default:
 		return false
 	}

@@ -170,6 +170,19 @@ type Environment struct {
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
 	mounted bool
 
+	// combatEntityID/combatX/Y/Z/combatVisible cache the last-resolved
+	// nearest visible Config.CombatTargetMobType instance (see
+	// refreshCombatTarget) — the combat-task analogue of mineX/Y/Z/
+	// mineVisible, same caching shape. Unlike rideEntityID, the entity ID
+	// here is never dispatched against (ActionCombat's own dispatch
+	// never references it — see its own doc comment); it exists purely
+	// so Step's reward check can ask "did THIS specific entity die,"
+	// across the gap between resolving it and the dispatched combat
+	// loop's own effect.
+	combatEntityID            int32
+	combatX, combatY, combatZ float64
+	combatVisible             bool
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -421,6 +434,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
 		e.cfg.RideVehicleType = override.RideVehicleType
 		e.cfg.RideSearchRadius = override.RideSearchRadius
+		e.cfg.CombatTargetMobType = override.CombatTargetMobType
+		e.cfg.CombatRadius = override.CombatRadius
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -573,6 +588,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshRideTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshCombatTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
 	e.pickupCount = e.pickupCountNow()
 	e.mounted = e.agent.IsMounted()
@@ -580,7 +598,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "")
+	obsCombatHealth, _ := e.combatTargetHealthNow()
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -696,6 +715,41 @@ func (e *Environment) refreshRideTarget(ctx context.Context) error {
 	}
 	e.rideEntityID, e.rideX, e.rideY, e.rideZ, e.rideVisible = id, x, y, z, found
 	return nil
+}
+
+// refreshCombatTarget re-resolves the nearest currently-visible instance
+// of Config.CombatTargetMobType and stores it (with its entity ID) into
+// e.combatEntityID/combatX/Y/Z/combatVisible — the combat-task analogue
+// of refreshRideTarget. Leaves e.combatVisible=false without error if
+// Config.CombatTargetMobType is unset or nothing matching is currently
+// visible; only a genuine FindNearestVisibleEntityOfType error is
+// returned.
+func (e *Environment) refreshCombatTarget(ctx context.Context) error {
+	if e.cfg.CombatTargetMobType == "" {
+		e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.CombatRadius
+	if radius <= 0 {
+		radius = DefaultConfig().CombatRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.CombatTargetMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving combat target: %w", err)
+	}
+	e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = id, x, y, z, found
+	return nil
+}
+
+// combatTargetHealthNow returns the last-known health of
+// e.combatEntityID if it's currently tracked, 0 otherwise — used both for
+// the observation (when e.combatVisible) and, via its "found" half, by
+// Step's own kill check.
+func (e *Environment) combatTargetHealthNow() (health float32, found bool) {
+	if !e.combatVisible {
+		return 0, false
+	}
+	return e.agent.GetEntityHealth(e.combatEntityID)
 }
 
 // dismountForReset dismounts the bot if currently mounted, before any
@@ -882,6 +936,12 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.mounted mirrors prevEquipReady's own reasoning above, for the
 	// ride task.
 	prevMounted := e.mounted
+	// prevCombatEntityID/prevCombatVisible mirror prevMounted's own
+	// reasoning above, for the combat task — captured before dispatch so
+	// Step's post-dispatch check asks "did THIS entity die," not
+	// whichever entity happens to be nearest after the fact.
+	prevCombatEntityID := e.combatEntityID
+	prevCombatVisible := e.combatVisible
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -961,6 +1021,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note.
 	newMounted := e.agent.IsMounted()
 	mountedThisStep := e.cfg.RideVehicleType != "" && newMounted && !prevMounted
+
+	// combatKilledThisStep is judged from the specific entity resolved
+	// before this step dying — not visible/tracked at all, or tracked
+	// with health <= 0 (see reward.go's combatRewardBonus doc comment for
+	// why either counts) — not from whether ActionCombat was the
+	// dispatched action, mirroring every other task bonus's philosophy.
+	combatKilledThisStep := false
+	if e.cfg.CombatTargetMobType != "" && prevCombatVisible {
+		health, found := e.agent.GetEntityHealth(prevCombatEntityID)
+		combatKilledThisStep = !found || health <= 0
+	}
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
@@ -1065,6 +1136,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "ride"
 	}
+	if combatKilledThisStep {
+		reward += combatRewardBonus
+		done = true
+		doneReason = "combat"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -1087,6 +1163,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshRideTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshCombatTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -1098,7 +1177,8 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.pickupCount = newPickupCount
 	e.mounted = newMounted
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "")
+	obsCombatHealth, _ := e.combatTargetHealthNow()
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
