@@ -187,6 +187,23 @@ type fakeAgent struct {
 	combatHealth              float32
 	combatVisible             bool
 	runCombatCalls            []runCombatCall
+
+	// Standalone Place simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 2): a single target item, placeTargetName, with held count
+	// placeHeldCount — PlaceHeldBlock decrements it by one on a successful
+	// placement when chainInv is nil (standalone mode; a chain episode
+	// keeps using chainInv, unaffected by this).
+	placeTargetName string
+	placeHeldCount  int
+}
+
+// setPlaceTarget configures the simulated standalone-placement target —
+// see placeTargetName's own doc comment.
+func (f *fakeAgent) setPlaceTarget(itemName string, count int) {
+	f.mu.Lock()
+	f.placeTargetName = itemName
+	f.placeHeldCount = count
+	f.mu.Unlock()
 }
 
 type runCombatCall struct {
@@ -699,6 +716,9 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	if f.pickupTargetName != "" && itemName == f.pickupTargetName {
 		return f.pickupHeldCount
 	}
+	if f.placeTargetName != "" && itemName == f.placeTargetName {
+		return f.placeHeldCount
+	}
 	return 0
 }
 
@@ -943,7 +963,18 @@ func (f *fakeAgent) PlaceHeldBlock(_ context.Context, itemName string) (models.V
 		f.failNextPlace = false
 		return models.V3{}, errors.New("the block never appeared")
 	}
-	if f.chainInv == nil || f.chainInv[itemName] == 0 {
+	if f.chainInv == nil {
+		// Standalone mode (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — chainBlocks bookkeeping doesn't apply outside a chain
+		// episode, so this only needs to move the held count, which is
+		// all the standalone reward check (InventoryCount decrease) reads.
+		if f.placeTargetName == "" || itemName != f.placeTargetName || f.placeHeldCount == 0 {
+			return models.V3{}, errors.New("none in the inventory")
+		}
+		f.placeHeldCount--
+		return models.V3{X: f.x, Y: f.y, Z: f.z + 1}, nil
+	}
+	if f.chainInv[itemName] == 0 {
 		return models.V3{}, errors.New("none in the inventory")
 	}
 	f.chainInv[itemName]--

@@ -1927,6 +1927,132 @@ func TestActionMaskPickUpItemLegalForAnyItemModeToo(t *testing.T) {
 	}
 }
 
+// --- Config.PlaceTargetItem, standalone (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2) ---
+
+func TestStepPlaceStandaloneWithNoConfiguredTargetIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPlaceTarget("minecraft:dirt", 1) // held, but Config never asks for it
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPlace)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if got := agent.InventoryCount("minecraft:dirt"); got != 1 {
+		t.Fatalf("held count = %d, want 1 (Config.PlaceTargetItem unset, safe no-op like ActionWait)", got)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[47]; active != 0 {
+		t.Fatalf("goalPlaceStandaloneActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepPlaceStandaloneWithNothingHeldDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PlaceTargetItem = "minecraft:dirt"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPlace)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (nothing held to place)")
+	}
+	if ready := result.Observation.Values[46]; ready != 0 {
+		t.Fatalf("placeReady = %v, want 0 (nothing held)", ready)
+	}
+}
+
+func TestStepPlaceStandaloneActionPlacesTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPlaceTarget("minecraft:dirt", 1)
+	cfg := testConfig()
+	cfg.PlaceTargetItem = "minecraft:dirt"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionPlace)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (target item was placed)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (placeRewardBonus)", result.Reward)
+	}
+	if got := agent.InventoryCount("minecraft:dirt"); got != 0 {
+		t.Fatalf("held count after Step = %d, want 0", got)
+	}
+}
+
+func TestStepObservationReflectsPlaceReadyRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setPlaceTarget("minecraft:dirt", 1)
+	cfg := testConfig()
+	cfg.PlaceTargetItem = "minecraft:dirt"
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if ready := obs.Values[46]; ready != 1 {
+		t.Fatalf("placeReady at Reset = %v, want 1", ready)
+	}
+	if active := obs.Values[47]; active != 1 {
+		t.Fatalf("goalPlaceStandaloneActive at Reset = %v, want 1", active)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if got := agent.InventoryCount("minecraft:dirt"); got != 1 {
+		t.Fatalf("held count after ActionWait = %d, want 1 (nothing placed)", got)
+	}
+	if ready := result.Observation.Values[46]; ready != 1 {
+		t.Fatalf("placeReady after ActionWait = %v, want 1 (still held)", ready)
+	}
+}
+
+func TestActionMaskPlaceStandaloneLegalOnlyWhenConfiguredAndHeld(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.PlaceTargetItem = "minecraft:dirt"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionPlace]; legal {
+		t.Fatalf("ActionPlace legal = true, want false (configured but nothing held yet)")
+	}
+
+	agent.setPlaceTarget("minecraft:dirt", 1)
+	if legal := env.ActionMask()[rlenv.ActionPlace]; !legal {
+		t.Fatalf("ActionPlace legal = false, want true (target now held)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionPlace]; legal {
+		t.Fatalf("ActionPlace legal = true, want false (Config.PlaceTargetItem unset, even though held)")
+	}
+}
+
 // --- Config.Seeder (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
 
 func TestResetWithNoSeederConfiguredDoesNotSeed(t *testing.T) {
