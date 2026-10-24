@@ -114,6 +114,14 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.FlyTargetActive {
+		// Optional, same pattern as ToolSeedAgent/ItemDropSeedAgent above.
+		if flightSeeder, ok := agent.(FlightSeedAgent); ok {
+			if err := flightSeeder.SeedElytra(ctx); err != nil {
+				return fmt.Errorf("seeding flight elytra: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -171,6 +179,15 @@ type ItemDropSeedAgent interface {
 	// SeedDroppedItem drops one itemName on the ground within radius
 	// blocks of the bot — see agent.SeedDroppedItem's doc comment.
 	SeedDroppedItem(ctx context.Context, itemName string, radius int) error
+}
+
+// FlightSeedAgent is the optional capability a Flight episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3): giving the bot an
+// elytra (equipped) and a working firework-rocket supply.
+type FlightSeedAgent interface {
+	// SeedElytra ensures the bot has an elytra equipped and a working
+	// firework-rocket supply — see agent.SeedElytra's doc comment.
+	SeedElytra(ctx context.Context) error
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

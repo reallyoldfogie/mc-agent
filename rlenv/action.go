@@ -106,8 +106,21 @@ const (
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
 	ActionPickUpItem
 
+	// ActionFlyTo dispatches "flyto <x> <y> <z>" at Environment's own
+	// already-resolved e.flyTargetX/Y/Z (computed once at Reset from
+	// Config.FlyTargetOffset, mirroring targetX/Y/Z — see
+	// Config.FlyTargetOffset's own doc comment for why Y isn't what
+	// drives arrival). Unlike ActionMine/ActionPickUpItem there is no
+	// independent-search mismatch risk to avoid here: the flight target
+	// is a fixed point resolved once, not re-searched every step, so
+	// there was never a second resolution to disagree with in the first
+	// place. A safe no-op when Config.FlyTargetActive is false (see
+	// action.go's resolveDispatch) — docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
+	ActionFlyTo
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionPickUpItem) + 1
+	NumActions = int(ActionFlyTo) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -130,6 +143,7 @@ const (
 	useItemActionName    = "useitem"
 	useItemOffhandArg    = "offhand"
 	pickUpItemActionName = "pickupitem"
+	flyToActionName      = "flyto"
 )
 
 // actionDispatch describes what Step should send through the
@@ -210,6 +224,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: pickUpItemActionName, args: coordArgs(e.pickupX, e.pickupY, e.pickupZ)}, true, nil
+	case ActionFlyTo:
+		if !e.actionLegal(ActionFlyTo) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: flyToActionName, args: coordArgs(e.flyTargetX, e.flyTargetY, e.flyTargetZ)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -258,6 +277,14 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.EquipTargetItem != ""
 	case ActionPickUpItem:
 		return e.cfg.PickupTargetItem != "" && e.pickupVisible
+	case ActionFlyTo:
+		// Gated on an elytra currently being equipped, the same masking-
+		// efficiency reasoning ActionCraft's craftReady gate already
+		// uses: agent.FlyTo itself already fails gracefully without one
+		// (not a crash), but letting the mask stay permissive here would
+		// waste probability mass on an attempt that deterministically
+		// fails — see docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
+		return e.cfg.FlyTargetActive && e.agent.IsEquipped(elytraItemName)
 	default:
 		return false
 	}

@@ -49,21 +49,23 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 28 (23 before the pickup block, 21 before the equip block, 17 before
-	// the chain block, 14 before the goal block): indices 0-13 are the
-	// original per-task numeric features; 14-16 are the goal-conditioning
-	// block (goalGoToActive/goalMineActive/goalCraftActive) added by
+	// 34 (28 before the fly block, 23 before the pickup block, 21 before
+	// the equip block, 17 before the chain block, 14 before the goal
+	// block): indices 0-13 are the original per-task numeric features;
+	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
+	// goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
 	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
 	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1);
 	// 23-27 are the pickup block (pickupDx/Dy/Dz/pickupVisible/
-	// goalPickupActive, that plan's Phase 2) — see observation.go's own doc
-	// comment on observationSize for the full layout. This exact value is
-	// also what makes cmd/rl-train's EnvironmentID
-	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
-	// checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 28 {
-		t.Fatalf("ObservationSize() = %d, want 28", got)
+	// goalPickupActive, that plan's Phase 2); 28-33 are the fly block
+	// (flyDx/Dy/Dz/isFlying/hasElytra/goalFlyActive, that plan's Phase 3)
+	// — see observation.go's own doc comment on observationSize for the
+	// full layout. This exact value is also what makes cmd/rl-train's
+	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
+	// reject an old checkpoint trained against an earlier size.
+	if got := env.ObservationSize(); got != 34 {
+		t.Fatalf("ObservationSize() = %d, want 34", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -78,8 +80,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 28 {
-		t.Fatalf("len(obs.Values) = %d, want 28 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 34 {
+		t.Fatalf("len(obs.Values) = %d, want 34 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1304,6 +1306,146 @@ func TestActionMaskPickUpItemLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
 	}
 	if legal := unconfigured.ActionMask()[rlenv.ActionPickUpItem]; legal {
 		t.Fatalf("ActionPickUpItem legal = true, want false (Config.PickupTargetItem unset, even though visible)")
+	}
+}
+
+// --- ActionFlyTo (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3) ---
+
+func TestStepFlyWithTargetInactiveIsNoOp(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.heldItem = "minecraft:elytra" // equipped, but Config never asks for flight
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFlyTo)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if pos, _, _, _ := agent.GetPosition(); pos.X != 0 {
+		t.Fatalf("position moved to x=%v, want 0 (Config.FlyTargetActive is false, safe no-op like ActionWait)", pos.X)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false")
+	}
+	if active := result.Observation.Values[33]; active != 0 {
+		t.Fatalf("goalFlyActive = %v, want 0 (no task configured)", active)
+	}
+}
+
+func TestStepFlyWithoutElytraDoesNotDispatch(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.FlyTargetActive = true
+	cfg.FlyTargetOffset = [3]float64{10, 0, 0}
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFlyTo)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if pos, _, _, _ := agent.GetPosition(); pos.X != 0 {
+		t.Fatalf("position moved to x=%v, want 0 (no elytra equipped, must not dispatch)", pos.X)
+	}
+	if hasElytra := result.Observation.Values[32]; hasElytra != 0 {
+		t.Fatalf("hasElytra = %v, want 0 (sanity check)", hasElytra)
+	}
+}
+
+func TestStepFlyActionReachesTargetAndEndsEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.heldItem = "minecraft:elytra"
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true // isolate the fly reward from the unrelated phantom goto target
+	cfg.FlyTargetActive = true
+	cfg.FlyTargetOffset = [3]float64{20, 0, 0}
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFlyTo)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (flight reached the target)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (flyRewardBonus)", result.Reward)
+	}
+	if pos, _, _, _ := agent.GetPosition(); pos.X != 20 {
+		t.Fatalf("position after Step x=%v, want 20 (FlyTo's own simulated arrival)", pos.X)
+	}
+	if flying := result.Observation.Values[31]; flying != 1 {
+		t.Fatalf("isFlying = %v, want 1 (FlyTo marks the bot gliding)", flying)
+	}
+}
+
+func TestStepObservationReflectsFlyStateRegardlessOfAction(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.heldItem = "minecraft:elytra"
+	cfg := testConfig()
+	cfg.FlyTargetActive = true
+	cfg.FlyTargetOffset = [3]float64{20, 5, 0}
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if dx := obs.Values[28]; dx != 20 {
+		t.Fatalf("flyDx at Reset = %v, want 20", dx)
+	}
+	if dy := obs.Values[29]; dy != 5 {
+		t.Fatalf("flyDy at Reset = %v, want 5", dy)
+	}
+	if hasElytra := obs.Values[32]; hasElytra != 1 {
+		t.Fatalf("hasElytra at Reset = %v, want 1", hasElytra)
+	}
+	if active := obs.Values[33]; active != 1 {
+		t.Fatalf("goalFlyActive at Reset = %v, want 1", active)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if pos, _, _, _ := agent.GetPosition(); pos.X != 0 {
+		t.Fatalf("position moved to x=%v, want 0 (ActionWait doesn't dispatch flyto)", pos.X)
+	}
+	if dx := result.Observation.Values[28]; dx != 20 {
+		t.Fatalf("flyDx after ActionWait = %v, want 20 (still unreached)", dx)
+	}
+}
+
+func TestActionMaskFlyToLegalOnlyWhenActiveAndElytraEquipped(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := testConfig()
+	cfg.FlyTargetActive = true
+	cfg.FlyTargetOffset = [3]float64{20, 0, 0}
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFlyTo]; legal {
+		t.Fatalf("ActionFlyTo legal = true, want false (no elytra equipped)")
+	}
+
+	agent.heldItem = "minecraft:elytra"
+	if legal := env.ActionMask()[rlenv.ActionFlyTo]; !legal {
+		t.Fatalf("ActionFlyTo legal = false, want true (elytra now equipped)")
+	}
+
+	unconfigured := newTestEnvironment(t, agent, testConfig())
+	if _, err := unconfigured.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := unconfigured.ActionMask()[rlenv.ActionFlyTo]; legal {
+		t.Fatalf("ActionFlyTo legal = true, want false (Config.FlyTargetActive is false, even with an elytra equipped)")
 	}
 }
 

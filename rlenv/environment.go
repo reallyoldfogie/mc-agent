@@ -146,6 +146,14 @@ type Environment struct {
 	// RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
 	pickupCount int
 
+	// flyTargetX/Y/Z is this episode's elytra-flight target, computed
+	// once at Reset from Config.FlyTargetOffset (plus jitter) — a fixed
+	// point, unlike mine/pickup's live-resolved targets, so there is
+	// nothing to re-resolve per Step the way refreshMineTarget/
+	// refreshPickupTarget do (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 3).
+	flyTargetX, flyTargetY, flyTargetZ float64
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -390,6 +398,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.EquipTargetItem = override.EquipTargetItem
 		e.cfg.PickupTargetItem = override.PickupTargetItem
 		e.cfg.PickupSearchRadius = override.PickupSearchRadius
+		e.cfg.FlyTargetOffset = override.FlyTargetOffset
+		e.cfg.FlyTargetActive = override.FlyTargetActive
+		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -489,6 +500,23 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	}
 
 	e.prevDistance = distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
+
+	// The flight target is a fixed point, resolved once here like
+	// targetX/Y/Z above — no walkability/reachability retry loop applies
+	// (that machinery is ground-pathfinding-specific; an airborne glide
+	// target has no "walkable cell" to find). Jittered the same way
+	// TargetOffset is, from the same base (x, y, z), using the same
+	// Config.Jitter magnitudes — a second, independent jitter field was
+	// judged unnecessary for a first pass (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	flyOffset := e.cfg.FlyTargetOffset
+	for i := range flyOffset {
+		flyOffset[i] = e.jitter(flyOffset[i], i)
+	}
+	e.flyTargetX = x + flyOffset[0]
+	e.flyTargetY = y + flyOffset[1]
+	e.flyTargetZ = z + flyOffset[2]
+
 	e.episodeStarted = true
 
 	health, food, saturation, healthKnown := e.agent.Health()
@@ -528,7 +556,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftReady = e.craftReadyNow(ctx)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName))
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -577,6 +605,12 @@ func (e *Environment) craftReadyNow(ctx context.Context) bool {
 
 // craftingTableBlock is the block Config.CraftSearchRadius looks for.
 const craftingTableBlock = "minecraft:crafting_table"
+
+// elytraItemName is the item ActionFlyTo's legality/observation checks
+// (LiveAgent.IsEquipped/agent.FlyTo itself) require worn — the one and
+// only item Flight cares about, so it's a fixed constant, not a Config
+// field (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+const elytraItemName = "minecraft:elytra"
 
 // equipReadyNow reports whether Config.EquipTargetItem (if any) is
 // currently equipped (see LiveAgent.IsEquipped), or false if it's unset —
@@ -899,6 +933,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "pickup"
 	}
+	if e.cfg.FlyTargetActive {
+		arrivalRadius := e.cfg.FlyArrivalRadius
+		if arrivalRadius <= 0 {
+			arrivalRadius = DefaultConfig().FlyArrivalRadius
+		}
+		if distanceXZ(x, z, e.flyTargetX, e.flyTargetZ) <= arrivalRadius {
+			reward += flyRewardBonus
+			done = true
+			doneReason = "fly"
+		}
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -928,7 +973,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.equipReady = newEquipReady
 	e.pickupCount = newPickupCount
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "")
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.cfg.PickupTargetItem != "", e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName))
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

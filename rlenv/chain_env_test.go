@@ -67,8 +67,8 @@ func TestChainUseEpisodeRunsTheWholeChain(t *testing.T) {
 	if logs != 3 {
 		t.Errorf("seeded %d logs, want 3 (2 needed + 1 spare)", logs)
 	}
-	if len(obs.Values) != 28 {
-		t.Fatalf("observation has %d values, want 28", len(obs.Values))
+	if len(obs.Values) != 34 {
+		t.Fatalf("observation has %d values, want 34", len(obs.Values))
 	}
 	for i := 17; i <= 20; i++ {
 		if obs.Values[i] != 0 {

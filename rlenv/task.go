@@ -126,6 +126,33 @@ type Config struct {
 	// to defer to) — see DefaultConfig's own default for a reasonable value.
 	PickupSearchRadius int
 
+	// FlyTargetOffset is added to the bot's position at Reset to produce
+	// this episode's elytra-flight target (Environment.flyTargetX/Y/Z) —
+	// the flight-task analogue of TargetOffset, but a genuine 3D offset
+	// (altitude included). Only the X/Z components ever drive arrival
+	// (see FlyArrivalRadius): agent.FlyTo's own landing behavior ignores
+	// the Y it's given — elytra flight can't hover, so it always lands on
+	// the ground under the requested X/Z — and Environment's own arrival
+	// check mirrors that. Ignored unless FlyTargetActive is also true.
+	FlyTargetOffset [3]float64
+
+	// FlyTargetActive enables the flight task — ActionFlyTo becomes legal
+	// (once an elytra is equipped) when true, a permanent no-op when
+	// false (the default). A separate explicit flag, not "FlyTargetOffset
+	// != zero": a zero offset is itself a legitimate configuration (the
+	// target is wherever the bot took off from) — the identical ambiguity
+	// TargetOffset's own doc comment already documents and
+	// GoToTargetDisabled was added to resolve. Flight starts with this
+	// lesson already applied rather than repeating it
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	FlyTargetActive bool
+
+	// FlyArrivalRadius bounds how close, horizontally (X/Z only, matching
+	// FlyTo's own landing behavior), the bot must land to count as
+	// "arrived." <= 0 defers to FlyTo's own built-in arrival radius; see
+	// DefaultConfig's own default for the exact value it mirrors.
+	FlyArrivalRadius float64
+
 	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
 	// this episode's equip task wants held (a tool/weapon) or worn (armor/
 	// elytra) — enables ActionEquip and ActionUseItem, following
@@ -441,6 +468,13 @@ type TaskOverride struct {
 	PickupTargetItem string
 	// PickupSearchRadius is Config.PickupSearchRadius for this episode.
 	PickupSearchRadius int
+
+	// FlyTargetOffset is Config.FlyTargetOffset for this episode.
+	FlyTargetOffset [3]float64
+	// FlyTargetActive is Config.FlyTargetActive for this episode.
+	FlyTargetActive bool
+	// FlyArrivalRadius is Config.FlyArrivalRadius for this episode.
+	FlyArrivalRadius float64
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -459,6 +493,9 @@ func DefaultConfig() Config {
 		// default for the "pickUpItem <itemName>" chat command — same
 		// reasoning as MineSearchRadius above.
 		PickupSearchRadius: 8,
+		// Matches agent.FlyTo's own internal arrivalRadius constant
+		// (agent/flight.go) — same reasoning as MineSearchRadius above.
+		FlyArrivalRadius: 5,
 	}
 }
 

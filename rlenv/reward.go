@@ -59,6 +59,15 @@ const (
 	// content to diff (the item entity disappears entirely once collected),
 	// so this is judged the same way craftRewardBonus is.
 	pickupRewardBonus float32 = 10.0
+	// flyRewardBonus is added once, the step the bot's horizontal (X/Z)
+	// distance to Environment.flyTargetX/Z is observed to fall within
+	// Config.FlyArrivalRadius — same magnitude as arrivalBonus, and the
+	// same one-shot ("episode ends the instant it's true") shape, not a
+	// transition check: unlike equip/pickup, which need "before vs after"
+	// detection because the condition can stay true for many steps before
+	// the episode notices, arrival ends the episode on the very first
+	// step it's observed, so there's no later step to re-pay it on.
+	flyRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0
@@ -120,4 +129,13 @@ func computeReward(o stepOutcome) (reward float32, diedThisStep bool) {
 func distance3(x1, y1, z1, x2, y2, z2 float64) float64 {
 	dx, dy, dz := x2-x1, y2-y1, z2-z1
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+// distanceXZ is the horizontal (X/Z only) Euclidean distance between two
+// points — Flight's own arrival check (Config.FlyArrivalRadius), matching
+// agent.FlyTo's own landing behavior of never targeting Y exactly (see
+// Config.FlyTargetOffset's own doc comment).
+func distanceXZ(x1, z1, x2, z2 float64) float64 {
+	dx, dz := x2-x1, z2-z1
+	return math.Sqrt(dx*dx + dz*dz)
 }

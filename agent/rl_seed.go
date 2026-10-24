@@ -368,6 +368,43 @@ func (a *agent) SeedGiveItem(ctx context.Context, itemName string, count int) er
 	return nil
 }
 
+// elytraItemName/fireworkRocketItemName name the two items SeedElytra
+// cares about — kept as named constants here rather than inline literals
+// since this file references each of them twice.
+const (
+	elytraItemName         = "minecraft:elytra"
+	fireworkRocketItemName = "minecraft:firework_rocket"
+)
+
+// flySeedRocketCount is how many firework rockets SeedElytra tops the bot
+// up to — generous relative to a single flight's actual consumption
+// (climb + periodic re-boosts during cruise + landing, agent.FlyTo's own
+// fireRocket calls), so a training episode doesn't run out mid-flight.
+const flySeedRocketCount = 16
+
+// SeedElytra ensures the bot has an elytra equipped and a working supply
+// of firework rockets, via RCON — training convenience for Flight episode
+// seeding (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3), the
+// flight-task analogue of SeedCraftIngredients: one call does everything
+// that task needs prepared, not just one piece of it. Gives an elytra (if
+// not already held/worn) and equips it — agent.FlyTo itself refuses to
+// fly without one worn — then tops up firework rockets to
+// flySeedRocketCount if below it. Requires RCON (via SeedGiveItem).
+func (a *agent) SeedElytra(ctx context.Context) error {
+	if !a.IsEquipped(elytraItemName) {
+		if err := a.SeedGiveItem(ctx, elytraItemName, 1); err != nil {
+			return fmt.Errorf("seed elytra: giving elytra: %w", err)
+		}
+		if err := a.Equip(ctx, elytraItemName); err != nil {
+			return fmt.Errorf("seed elytra: equipping elytra: %w", err)
+		}
+	}
+	if err := a.SeedGiveItem(ctx, fireworkRocketItemName, flySeedRocketCount); err != nil {
+		return fmt.Errorf("seed elytra: giving firework rockets: %w", err)
+	}
+	return nil
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()

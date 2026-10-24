@@ -155,6 +155,10 @@ type fakeAgent struct {
 	pickupItemPresent                     bool
 	pickupHeldCount                       int
 	findItemOfTypeCalls                   int
+
+	// gliding backs IsGliding — see FlyTo's own doc comment
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	gliding bool
 }
 
 // pickupRange is how close MoveTo must land to the simulated pickup item
@@ -268,7 +272,11 @@ func (f *fakeAgent) SendChat(string) error { return nil }
 // --- models.MovementAgent (beyond Position) ---
 
 func (f *fakeAgent) GetVelocity() (x, y, z float64, ok bool) { return 0, 0, 0, false }
-func (f *fakeAgent) IsGliding() bool                         { return false }
+func (f *fakeAgent) IsGliding() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gliding
+}
 
 func (f *fakeAgent) MoveForward(context.Context, float64) error    { return nil }
 func (f *fakeAgent) MoveUp(context.Context, float64) error         { return nil }
@@ -397,7 +405,17 @@ func (f *fakeAgent) IsEquipped(itemName string) bool {
 	defer f.mu.Unlock()
 	return f.heldItem != "" && f.heldItem == itemName
 }
-func (f *fakeAgent) FlyTo(context.Context, float64, float64, float64) error {
+
+// FlyTo "flies" by moving the tracked position directly to (x, y, z) and
+// marking the bot as gliding — mirrors MoveTo's own "actually mutates
+// state" precedent (see this file's top doc comment) rather than a no-op
+// stub, so rlenv's real ActionFlyTo dispatch/arrival/reward logic is
+// exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+func (f *fakeAgent) FlyTo(_ context.Context, x, y, z float64) error {
+	f.mu.Lock()
+	f.x, f.y, f.z = x, y, z
+	f.gliding = true
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeAgent) NearestPlayerInfo(context.Context, bool) (models.NearestPlayerInfo, bool) {
