@@ -6,6 +6,8 @@ import (
 	"math"
 	"strings"
 	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // seedBlockOffset is how far in front of the bot (along +X) SeedNearbyBlock
@@ -1009,4 +1011,37 @@ func (a *agent) ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mo
 		return fmt.Errorf("clear entities of type via RCON: %w", err)
 	}
 	return nil
+}
+
+// --- Combat competition seeding (docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0) ---
+
+// VerifyPlayerNearPosition reports whether playerName's current position —
+// queried via RCON (queryEntityPosViaRCON, agent/cam_follow.go), not this
+// agent's own client-side tracking, for the same reason that method's own
+// doc comment gives — is within radius blocks of center. found=false (not
+// an error) covers both "not currently locatable" (offline, or the query
+// itself found nothing) and "located, but too far away"; a genuine error is
+// reserved for RCON not being configured at all.
+//
+// This is the hard safety gate every match-setup helper below (
+// SeedMatchReset, SeedMatchTeam, SaveInventorySnapshot,
+// RestoreInventorySnapshot) must pass before touching a named player's
+// health, team, or inventory at all. This framework may run on a shared,
+// general-purpose server — naming a player in a competition config does
+// not by itself mean they're actually standing in the arena right now (see
+// docs/plans/COMBAT_COMPETITION_PLAN.md's "Unmanaged participants"
+// section). Every one of those helpers calls this first and refuses
+// (returns a real error) rather than proceeding if it reports false — this
+// applies unconditionally, including for a managed bot the orchestrator
+// spawned itself, where it's a free, always-true check with no real cost.
+func (a *agent) VerifyPlayerNearPosition(ctx context.Context, playerName string, center models.V3, radius float64) (near bool, err error) {
+	if a.cfg.RCON == nil {
+		return false, fmt.Errorf("verify player near position: RCON not configured for this agent")
+	}
+	x, y, z, ok := a.queryEntityPosViaRCON(ctx, playerName)
+	if !ok {
+		return false, nil
+	}
+	dx, dy, dz := x-center.X, y-center.Y, z-center.Z
+	return math.Sqrt(dx*dx+dy*dy+dz*dz) <= radius, nil
 }

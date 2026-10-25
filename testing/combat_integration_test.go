@@ -7,8 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/actions"
 	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/rlenv"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -219,6 +221,56 @@ func (s *CombatFlatSuite) TestRunCombatPvPOptIn() {
 	afterPvP, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
 	require.NoError(s.T(), err, "read target health after PvP")
 	require.Less(s.T(), afterPvP, afterDefault, "explicit PvP policy should damage the player target")
+}
+
+// TestRLEnvActionCombatTargetsPlayer live-confirms
+// docs/plans/COMBAT_COMPETITION_PLAN.md's Phase 0 item 1: that
+// rlenv.Environment's ActionCombat, configured with
+// Config.CombatTargetMobType = "minecraft:player" and
+// Config.CombatIncludePlayers = true, actually resolves and damages a real
+// opposing player through the full rlenv dispatch path — not just the raw
+// agent.RunCombatWithPolicy method TestRunCombatPvPOptIn above already
+// covers. This is the live confirmation that plan's own "finding 1" (a
+// bot's own entity never appears in its own tracked-entities map, so
+// FindNearestVisibleEntityOfType("minecraft:player", ...) self-excludes
+// for free) actually holds, through the same Config fields a combat
+// competition's managed participants would use.
+func (s *CombatFlatSuite) TestRLEnvActionCombatTargetsPlayer() {
+	attacker, err := s.SpawnWorkingAreaAgent("CombatRLPvPBot", "combat_rl_pvp")
+	require.NoError(s.T(), err, "spawn attacker")
+	target, err := s.SpawnAgentNearNoCam("CombatRLPvPTarget", "combat_rl_pvp_target", attacker.Origin, 1, 0)
+	require.NoError(s.T(), err, "spawn target")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:netherite_sword", attacker.Name))
+	require.NoError(s.T(), err, "give PvP sword")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, attacker, "minecraft:netherite_sword"), "equip PvP sword")
+
+	before, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
+	require.NoError(s.T(), err, "read target health before")
+
+	liveAgent, ok := attacker.Agent.(rlenv.LiveAgent)
+	require.True(s.T(), ok, "spawned test agent must satisfy rlenv.LiveAgent")
+
+	rlEnv, err := rlenv.New(liveAgent, actions.NewRegistry(), rlenv.Config{
+		TargetOffset:         [3]float64{3, 0, 0},
+		ArrivalThreshold:     1.5,
+		StepTimeout:          4 * time.Second,
+		CombatTargetMobType:  "minecraft:player",
+		CombatRadius:         8,
+		CombatIncludePlayers: true,
+	})
+	require.NoError(s.T(), err, "construct rlenv.Environment")
+
+	obs, err := rlEnv.Reset(s.Ctx)
+	require.NoError(s.T(), err, "Reset")
+	require.Equal(s.T(), float32(1), obs.Values[44], "combatVisible should resolve the live opposing player")
+
+	_, err = rlEnv.Step(s.Ctx, rlenv.ActionCombat)
+	require.NoError(s.T(), err, "Step")
+
+	after, err := GetPlayerHealth(s.Ctx, s.Inst.RCON, target.Name)
+	require.NoError(s.T(), err, "read target health after")
+	require.Less(s.T(), after, before, "ActionCombat should damage the live opposing player through rlenv")
 }
 
 // TestPlayerDeathRespawnTracking verifies that a player death removes the
