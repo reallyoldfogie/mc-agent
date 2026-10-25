@@ -190,6 +190,12 @@ type PlayHandler interface {
 	// Returns the parsed update structure with all entry data.
 	ParsePlayerInfo(packet pk.Packet) (*PlayerInfoUpdate, error)
 
+	// ParseTeams parses a complete Teams (scoreboard) packet and extracts
+	// the team name, mode, friendly-fire flag, and affected player names —
+	// see TeamsUpdate's own doc comment.
+	// packet: the raw ClientboundTeams packet to parse
+	ParseTeams(packet pk.Packet) (*TeamsUpdate, error)
+
 	// BuildEntityEquipmentPacket builds an EntityEquipment packet for replay recording.
 	// Returns the packet ID and raw marshaled packet data.
 	// entityID: the bot's entity ID

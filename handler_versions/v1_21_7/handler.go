@@ -627,6 +627,47 @@ func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*models.PlayerInfoUpdat
 	return update, nil
 }
 
+// ParseTeams parses a complete Teams (scoreboard) packet — see
+// models.TeamsUpdate's own doc comment.
+func (p *playHandler) ParseTeams(packet pk.Packet) (*models.TeamsUpdate, error) {
+	teamsPkt := cb.NewTeams()
+	if err := teamsPkt.Scan(packet); err != nil {
+		return nil, fmt.Errorf("failed to scan Teams packet: %w", err)
+	}
+	update := &models.TeamsUpdate{
+		Team: string(teamsPkt.Team),
+		Mode: teamsPkt.Mode.Value,
+	}
+	switch update.Mode {
+	case "add":
+		if add, ok := teamsPkt.UnnamedType0001.(*cb.TeamsUnnamedType0001Add); ok {
+			update.FriendlyFire = add.Flags.FriendlyFire()
+		}
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayersAdd); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	case "change":
+		if change, ok := teamsPkt.UnnamedType0001.(*cb.TeamsUnnamedType0001Change); ok {
+			update.FriendlyFire = change.Flags.FriendlyFire()
+		}
+	case "join":
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayersJoin); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	case "leave":
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayersLeave); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	}
+	return update, nil
+}
+
 // entityHandler is implemented in entities.go
 
 // containerHandler is implemented in containers.go

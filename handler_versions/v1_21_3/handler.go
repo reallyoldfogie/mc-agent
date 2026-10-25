@@ -618,6 +618,55 @@ func (p *playHandler) ParsePlayerInfo(packet pk.Packet) (*models.PlayerInfoUpdat
 	return update, nil
 }
 
+// ParseTeams parses a complete Teams (scoreboard) packet — see
+// models.TeamsUpdate's own doc comment. This version's generated packet
+// represents Mode as a raw byte (0=add,1=remove,2=change,3=join,4=leave)
+// and splits the add/change variant into separate top-level switch
+// fields (Name/FriendlyFire/NameTagVisibility/...) rather than one
+// bundled struct — see handler_versions/v1_21_11/handler.go's own
+// ParseTeams for the newer, bundled shape later versions use.
+func (p *playHandler) ParseTeams(packet pk.Packet) (*models.TeamsUpdate, error) {
+	teamsPkt := cb.NewTeams()
+	if err := teamsPkt.Scan(packet); err != nil {
+		return nil, fmt.Errorf("failed to scan Teams packet: %w", err)
+	}
+	update := &models.TeamsUpdate{Team: string(teamsPkt.Team)}
+	switch int8(teamsPkt.Mode) {
+	case 0:
+		update.Mode = "add"
+		if flags, ok := teamsPkt.FriendlyFire.(*pk.Byte); ok {
+			update.FriendlyFire = byte(*flags)&0x01 != 0
+		}
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayers0); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	case 1:
+		update.Mode = "remove"
+	case 2:
+		update.Mode = "change"
+		if flags, ok := teamsPkt.FriendlyFire.(*pk.Byte); ok {
+			update.FriendlyFire = byte(*flags)&0x01 != 0
+		}
+	case 3:
+		update.Mode = "join"
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayers3); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	case 4:
+		update.Mode = "leave"
+		if players, ok := teamsPkt.Players.(*cb.TeamsPlayers4); ok {
+			for _, name := range players.Get() {
+				update.Players = append(update.Players, string(name))
+			}
+		}
+	}
+	return update, nil
+}
+
 // entityHandler is implemented in entities.go
 
 // containerHandler is implemented in containers.go
