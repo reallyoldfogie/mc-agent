@@ -35,11 +35,21 @@ type InventorySnapshotSlot struct {
 type InventorySnapshot []InventorySnapshotSlot
 
 // SaveInventorySnapshot captures playerName's full inventory - every
-// occupied slot's id, count, and raw NBT component data - via
-// /data get entity ... Inventory. Requires VerifyPlayerNearPosition first,
-// the same safety reasoning SeedMatchReset's own doc comment gives: this
-// framework may run on a shared server, so naming a player here doesn't by
-// itself mean they're standing in the arena right now.
+// occupied hotbar/main-inventory slot's id, count, and raw NBT component
+// data via /data get entity ... Inventory, PLUS worn armor and the offhand
+// item via a separate /data get entity ... equipment query. These live in
+// two different NBT locations depending on server version: confirmed live
+// (not assumed) that at least one supported version no longer reports worn
+// armor/offhand inside the "Inventory" list at all - they only appear under
+// a top-level "equipment" compound (keys head/chest/legs/feet/offhand) -
+// while hotbar/main inventory stayed in "Inventory" as before. Both are
+// read and merged into one InventorySnapshot so callers don't need to know
+// which location a given version actually used.
+//
+// Requires VerifyPlayerNearPosition first, the same safety reasoning
+// SeedMatchReset's own doc comment gives: this framework may run on a
+// shared server, so naming a player here doesn't by itself mean they're
+// standing in the arena right now.
 func (a *agent) SaveInventorySnapshot(ctx context.Context, playerName string, center models.V3, radius float64) (InventorySnapshot, error) {
 	near, err := a.VerifyPlayerNearPosition(ctx, playerName, center, radius)
 	if err != nil {
@@ -55,7 +65,17 @@ func (a *agent) SaveInventorySnapshot(ctx context.Context, playerName string, ce
 	if err != nil {
 		return nil, fmt.Errorf("save inventory snapshot: %w", err)
 	}
-	return parseInventorySnapshot(resp), nil
+	snapshot := parseInventorySnapshot(resp)
+
+	// Best-effort: an older server version with no "equipment" compound at
+	// all (armor/offhand still inline in "Inventory") answers with a
+	// command-syntax error here, which parseEquipmentSnapshot simply
+	// parses as empty rather than erroring.
+	equipResp, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("data get entity %s equipment", playerName))
+	if err == nil {
+		snapshot = append(snapshot, parseEquipmentSnapshot(equipResp)...)
+	}
+	return snapshot, nil
 }
 
 // RestoreInventorySnapshot replays snapshot onto playerName: /clear followed
@@ -155,6 +175,60 @@ func parseInventorySnapshot(resp string) InventorySnapshot {
 			ID:         idMatch[1],
 			Count:      count,
 			Components: extractComponentsNBT(segment),
+		})
+	}
+	return snapshot
+}
+
+// equipmentSlotNumbers maps the "equipment" compound's own key names to the
+// same synthetic Inventory slot numbers inventorySlotArg already translates
+// (armor 100-103, offhand -106) - see InventorySnapshotSlot's own doc
+// comment and SaveInventorySnapshot's doc comment for why a second NBT
+// location exists for these.
+var equipmentSlotNumbers = map[string]int{
+	"feet": 100, "legs": 101, "chest": 102, "head": 103, "offhand": -106,
+}
+
+// parseEquipmentSnapshot parses a /data get entity ... equipment response
+// (e.g. `... has the following entity data: {head: {id: "minecraft:...",
+// count: 1, components: {...}}, ...}`) into one InventorySnapshotSlot per
+// occupied equipment key. A response with no recognizable "{...}" compound
+// (e.g. an older server with no "equipment" path at all) yields an empty,
+// non-nil snapshot rather than an error - SaveInventorySnapshot treats this
+// path as best-effort.
+func parseEquipmentSnapshot(resp string) InventorySnapshot {
+	snapshot := InventorySnapshot{}
+	start := strings.Index(resp, "{")
+	end := strings.LastIndex(resp, "}")
+	if start == -1 || end == -1 || end <= start {
+		return snapshot
+	}
+	inner := resp[start+1 : end]
+	for _, entry := range splitTopLevelCommaEntries(inner) {
+		key, value, err := splitTopLevelKeyValue(entry)
+		if err != nil {
+			continue
+		}
+		slot, ok := equipmentSlotNumbers[strings.TrimSpace(key)]
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		idMatch := inventorySnapshotIDRe.FindStringSubmatch(value)
+		if idMatch == nil {
+			continue
+		}
+		count := 1
+		if countMatch := inventorySnapshotCountRe.FindStringSubmatch(value); countMatch != nil {
+			if c, err := strconv.Atoi(countMatch[1]); err == nil {
+				count = c
+			}
+		}
+		snapshot = append(snapshot, InventorySnapshotSlot{
+			Slot:       slot,
+			ID:         idMatch[1],
+			Count:      count,
+			Components: extractComponentsNBT(value),
 		})
 	}
 	return snapshot

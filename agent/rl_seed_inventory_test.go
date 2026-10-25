@@ -97,6 +97,7 @@ type inventoryRCON struct {
 	playerName       string
 	x, y, z          float64
 	inventoryReponse string
+	equipmentReponse string
 }
 
 func (r *inventoryRCON) Exec(ctx context.Context, cmd string) (string, error) {
@@ -106,6 +107,9 @@ func (r *inventoryRCON) Exec(ctx context.Context, cmd string) (string, error) {
 	}
 	if cmd == fmt.Sprintf("data get entity %s Inventory", r.playerName) {
 		return r.inventoryReponse, nil
+	}
+	if cmd == fmt.Sprintf("data get entity %s equipment", r.playerName) {
+		return r.equipmentReponse, nil
 	}
 	return "", nil
 }
@@ -146,6 +150,56 @@ func TestSaveInventorySnapshot_CapturesItemsWhenNear(t *testing.T) {
 	}
 	if len(snapshot) != 1 || snapshot[0].ID != "minecraft:iron_sword" {
 		t.Fatalf("snapshot = %+v, want one minecraft:iron_sword slot", snapshot)
+	}
+}
+
+func TestParseEquipmentSnapshot_CapturesArmorAndOffhand(t *testing.T) {
+	resp := `Bob has the following entity data: {head: {count: 1, id: "minecraft:diamond_helmet", components: {"minecraft:enchantments": {"minecraft:protection": 2}}}, offhand: {count: 1, id: "minecraft:shield"}}`
+	snapshot := parseEquipmentSnapshot(resp)
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot = %+v, want 2 entries", snapshot)
+	}
+	var helmet, shield *InventorySnapshotSlot
+	for i := range snapshot {
+		switch snapshot[i].ID {
+		case "minecraft:diamond_helmet":
+			helmet = &snapshot[i]
+		case "minecraft:shield":
+			shield = &snapshot[i]
+		}
+	}
+	if helmet == nil || helmet.Slot != 103 {
+		t.Fatalf("helmet = %+v, want slot 103", helmet)
+	}
+	if helmet.Components == "" {
+		t.Error("helmet.Components should capture the enchantment")
+	}
+	if shield == nil || shield.Slot != -106 {
+		t.Fatalf("shield = %+v, want slot -106", shield)
+	}
+}
+
+func TestParseEquipmentSnapshot_NoEquipmentCompoundIsNotAnError(t *testing.T) {
+	snapshot := parseEquipmentSnapshot("Unknown or incomplete command, see below for error")
+	if len(snapshot) != 0 {
+		t.Fatalf("snapshot = %+v, want empty for an unparseable response", snapshot)
+	}
+}
+
+func TestSaveInventorySnapshot_MergesEquipmentWithInventory(t *testing.T) {
+	rc := &inventoryRCON{
+		playerName:       "Combatant",
+		x:                1, y: 64, z: 1,
+		inventoryReponse: `Combatant has the following entity data: [{Slot: 0b, id: "minecraft:iron_sword", count: 1}]`,
+		equipmentReponse: `Combatant has the following entity data: {head: {count: 1, id: "minecraft:diamond_helmet"}}`,
+	}
+	a := newInventoryRCONTestAgent(t, rc)
+	snapshot, err := a.SaveInventorySnapshot(context.Background(), "Combatant", models.V3{X: 0, Y: 64, Z: 0}, 10)
+	if err != nil {
+		t.Fatalf("SaveInventorySnapshot: %v", err)
+	}
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot = %+v, want 2 entries (hotbar sword + equipment helmet)", snapshot)
 	}
 }
 
