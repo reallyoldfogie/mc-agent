@@ -2,6 +2,7 @@ package rlenv
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 )
@@ -136,19 +137,22 @@ const (
 	// set, the same condition as ActionDismount.
 	ActionVehicleJump
 
-	// ActionCombat dispatches "runcombat <radius> false" — mc-agent's own
-	// autonomous combat loop (agent.RunCombat), which ranks and engages
-	// targets itself every combat tick rather than being aimed at one
-	// resolved entity. Unlike ActionMine/ActionMount, there is no
-	// independent-search mismatch to avoid in the dispatch itself (the
-	// dispatch never references an entity ID) — Environment's own
-	// e.combatEntityID (see refreshCombatTarget) exists purely to judge
-	// the reward (did THIS specific resolved entity die), not to steer
-	// the dispatch. A safe no-op when Config.CombatTargetMobType is unset
-	// or nothing matching is currently visible
-	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5). Bot death
-	// mid-combat needs no special handling here — see
-	// Config.CombatTargetMobType's own doc comment.
+	// ActionCombat dispatches "runcombatwithpolicy <radius> <includePlayers>
+	// <includeNeutral>" — mc-agent's own autonomous combat loop
+	// (agent.RunCombatWithPolicy), which ranks and engages targets itself
+	// every combat tick rather than being aimed at one resolved entity.
+	// Unlike ActionMine/ActionMount, there is no independent-search
+	// mismatch to avoid in the dispatch itself (the dispatch never
+	// references an entity ID) — Environment's own e.combatEntityID (see
+	// refreshCombatTarget) exists purely to judge the reward (did THIS
+	// specific resolved entity die), not to steer the dispatch. A safe
+	// no-op when Config.CombatTargetMobType is unset or nothing matching
+	// is currently visible (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5). Config.CombatIncludePlayers/CombatIncludeNeutral default
+	// false — see their own doc comments on why PvP targeting is strictly
+	// opt-in (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's "Deferred"
+	// section). Bot death mid-combat needs no special handling here —
+	// see Config.CombatTargetMobType's own doc comment.
 	ActionCombat
 
 	// ActionFollow dispatches "follow <name>" — mc-agent's own following
@@ -233,7 +237,7 @@ const (
 	mountActionName                   = "mount"
 	dismountActionName                = "dismount"
 	vehicleJumpActionName             = "vehiclejump"
-	combatActionName                  = "runcombat"
+	combatActionName                  = "runcombatwithpolicy"
 	followActionName                  = "follow"
 	stopFollowActionName              = "stopfollow"
 	moveToAndSneakActionName          = "movetoandsneakquiet"
@@ -361,7 +365,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if radius <= 0 {
 			radius = DefaultConfig().CombatRadius
 		}
-		return actionDispatch{name: combatActionName, args: []string{fmt.Sprintf("%.4f", radius), "false"}}, true, nil
+		return actionDispatch{name: combatActionName, args: []string{
+			fmt.Sprintf("%.4f", radius),
+			strconv.FormatBool(e.cfg.CombatIncludePlayers),
+			strconv.FormatBool(e.cfg.CombatIncludeNeutral),
+		}}, true, nil
 	case ActionFollow:
 		if !e.actionLegal(ActionFollow) {
 			return actionDispatch{}, false, nil

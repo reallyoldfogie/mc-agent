@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -340,6 +341,7 @@ func (f *fakeAgent) setPlaceTarget(itemName string, count int) {
 
 type runCombatCall struct {
 	radius         float64
+	includePlayers bool
 	includeNeutral bool
 }
 
@@ -736,6 +738,25 @@ func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool)
 func (f *fakeAgent) RunCombat(_ context.Context, radius float64, includeNeutral bool) error {
 	f.mu.Lock()
 	f.runCombatCalls = append(f.runCombatCalls, runCombatCall{radius: radius, includeNeutral: includeNeutral})
+	if f.combatVisible {
+		f.combatHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// RunCombatWithPolicy mirrors RunCombat's own "actually mutates state"
+// precedent — rlenv's real ActionCombat dispatch now exclusively targets
+// "runcombatwithpolicy" (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's
+// "Deferred" section, closed out once the user explicitly decided
+// Config.CombatIncludePlayers should be opt-in/default-false), so this is
+// what ActionCombat's own tests actually exercise now; RunCombat above
+// stays in place unused by any current rlenv test, mirroring how
+// agent.RunCombat itself is just a convenience wrapper around
+// agent.RunCombatWithPolicy in production.
+func (f *fakeAgent) RunCombatWithPolicy(_ context.Context, radius float64, policy combat.TargetPolicy) error {
+	f.mu.Lock()
+	f.runCombatCalls = append(f.runCombatCalls, runCombatCall{radius: radius, includePlayers: policy.IncludePlayers, includeNeutral: policy.IncludeNeutral})
 	if f.combatVisible {
 		f.combatHealth = 0
 	}

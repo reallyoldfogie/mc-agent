@@ -1732,6 +1732,62 @@ func TestStepCombatActionKillsTargetAndEndsEpisode(t *testing.T) {
 	}
 }
 
+// TestStepCombatDefaultsToPlayerAndNeutralSafePolicy confirms
+// Config.CombatIncludePlayers/CombatIncludeNeutral default to false
+// (confirmed via testConfig(), which never sets them) even when a combat
+// task is otherwise fully configured — a trained policy must never be
+// able to attack real players unless an episode explicitly opts in
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's "Deferred" section).
+func TestStepCombatDefaultsToPlayerAndNeutralSafePolicy(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionCombat); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 1 {
+		t.Fatalf("RunCombatWithPolicy calls = %v, want exactly 1", agent.runCombatCalls)
+	}
+	if call := agent.runCombatCalls[0]; call.includePlayers || call.includeNeutral {
+		t.Fatalf("RunCombatWithPolicy call = %+v, want includePlayers=false, includeNeutral=false by default", call)
+	}
+}
+
+// TestStepCombatDispatchesConfiguredPolicyFlags confirms
+// Config.CombatIncludePlayers/CombatIncludeNeutral, once explicitly set,
+// actually reach the dispatched runcombatwithpolicy call — this is the
+// one piece of behavior "runcombatwithpolicy" adds over the already-wired
+// ActionCombat (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's own framing
+// of this item).
+func TestStepCombatDispatchesConfiguredPolicyFlags(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)
+	cfg := testConfig()
+	cfg.CombatTargetMobType = "minecraft:zombie"
+	cfg.CombatIncludePlayers = true
+	cfg.CombatIncludeNeutral = true
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if _, err := env.Step(context.Background(), rlenv.ActionCombat); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if len(agent.runCombatCalls) != 1 {
+		t.Fatalf("RunCombatWithPolicy calls = %v, want exactly 1", agent.runCombatCalls)
+	}
+	if want := (runCombatCall{radius: 16, includePlayers: true, includeNeutral: true}); agent.runCombatCalls[0] != want {
+		t.Fatalf("RunCombatWithPolicy call = %+v, want %+v", agent.runCombatCalls[0], want)
+	}
+}
+
 func TestStepObservationReflectsCombatTargetHealthRegardlessOfAction(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setCombatTarget("minecraft:zombie", 11, 5, 0, 0, 20)

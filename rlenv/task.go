@@ -207,11 +207,33 @@ type Config struct {
 	// CombatRadius bounds both FindNearestVisibleEntityOfType's search
 	// when locating the nearest visible CombatTargetMobType instance
 	// (also the radius SeedCombatMob checks before summoning one) and the
-	// radius ActionCombat's own "runcombat <radius> false" dispatch
-	// passes through to agent.RunCombat. <= 0 defers to DefaultConfig's
-	// own default, which matches actions/commands.go's own runCombat
-	// default radius (16).
+	// radius ActionCombat's own "runcombatwithpolicy <radius> ..."
+	// dispatch passes through to agent.RunCombatWithPolicy. <= 0 defers
+	// to DefaultConfig's own default, which matches actions/commands.go's
+	// own runCombat default radius (16).
 	CombatRadius float64
+
+	// CombatIncludePlayers, if true, lets ActionCombat target real
+	// connected players as well as hostile mobs
+	// (combat.TargetPolicy.IncludePlayers) — see that type's own doc
+	// comment ("Players are opt-in so callers do not accidentally enable
+	// friendly fire"). Default false: a trained policy must never be able
+	// to attack real players unless an episode explicitly asks for it —
+	// this is a product/safety decision, not an engineering one (docs/
+	// plans/RL_ACTION_SPACE_EXPANSION_III.md's own "Deferred" section,
+	// closed out once the user made this call explicitly — see commit
+	// history around 2026-10-24).
+	CombatIncludePlayers bool
+
+	// CombatIncludeNeutral, if true, lets ActionCombat target neutral
+	// mobs (e.g. enderman, wolf) unprovoked, not just hostile ones
+	// (combat.TargetPolicy.IncludeNeutral) — mirrors
+	// actions/commands.go's own "runcombat [radius] [includeNeutral]"
+	// parameter, which this field now also drives. Default false: no
+	// safety concern on CombatIncludePlayers' level, but still an
+	// explicit opt-in rather than a surprise behavior change for any
+	// episode that already configures Config.CombatTargetMobType.
+	CombatIncludeNeutral bool
 
 	// CreeperGunpowderActive, if true, enables
 	// ActionKillCreeperForGunpowder — a complete, already-built encounter
@@ -637,6 +659,10 @@ type TaskOverride struct {
 	CombatTargetMobType string
 	// CombatRadius is Config.CombatRadius for this episode.
 	CombatRadius float64
+	// CombatIncludePlayers is Config.CombatIncludePlayers for this episode.
+	CombatIncludePlayers bool
+	// CombatIncludeNeutral is Config.CombatIncludeNeutral for this episode.
+	CombatIncludeNeutral bool
 
 	// CreeperGunpowderActive is Config.CreeperGunpowderActive for this
 	// episode.

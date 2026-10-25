@@ -504,6 +504,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.RideSearchRadius = override.RideSearchRadius
 		e.cfg.CombatTargetMobType = override.CombatTargetMobType
 		e.cfg.CombatRadius = override.CombatRadius
+		e.cfg.CombatIncludePlayers = override.CombatIncludePlayers
+		e.cfg.CombatIncludeNeutral = override.CombatIncludeNeutral
 		e.cfg.CreeperGunpowderActive = override.CreeperGunpowderActive
 		e.cfg.CreeperGunpowderRadius = override.CreeperGunpowderRadius
 		e.cfg.SpearChargeTargetMobType = override.SpearChargeTargetMobType
