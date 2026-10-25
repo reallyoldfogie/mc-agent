@@ -1045,3 +1045,47 @@ func (a *agent) VerifyPlayerNearPosition(ctx context.Context, playerName string,
 	dx, dy, dz := x-center.X, y-center.Y, z-center.Z
 	return math.Sqrt(dx*dx+dy*dy+dz*dz) <= radius, nil
 }
+
+// combatRematchHealAmplifier is the instant_health effect amplifier
+// SeedMatchReset applies to guarantee a full heal regardless of current
+// health. Vanilla rejects /data merge|modify entity against a live,
+// connected player (confirmed via this exact codebase's own prior
+// discovery restoring a courier bot's inventory — see
+// docs/plans/COMBAT_COMPETITION_PLAN.md finding 8), so there is no direct
+// "set health to max" RCON command; a high-amplitude instant_health
+// effect is the vanilla-sanctioned workaround. Each amplifier level
+// roughly doubles the heal amount, so this comfortably exceeds any
+// player's max health.
+const combatRematchHealAmplifier = 10
+
+// SeedMatchReset resets playerName's health to full and gives them weapon
+// (1 unit), for repeated matches against the same or a different
+// opponent — docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0 item 3.
+// Requires VerifyPlayerNearPosition (above) to report playerName within
+// radius blocks of center first; refuses (returns an error) rather than
+// touching anything if that check fails or playerName isn't locatable at
+// all, the same safety reasoning that method's own doc comment gives.
+//
+// Deliberately does not wait for the give to sync to playerName's own
+// client the way SeedGiveItem does for the calling bot's own inventory:
+// that confirmation relies on the calling bot's own client-side
+// InventoryCount, which has no visibility into an arbitrary other
+// player's inventory at all. A future enhancement could add an RCON
+// read-back confirmation once a full inventory reader exists (Phase 0
+// item 5) rather than duplicating that work here ahead of time.
+func (a *agent) SeedMatchReset(ctx context.Context, playerName, weapon string, center models.V3, radius float64) error {
+	near, err := a.VerifyPlayerNearPosition(ctx, playerName, center, radius)
+	if err != nil {
+		return fmt.Errorf("seed match reset: %w", err)
+	}
+	if !near {
+		return fmt.Errorf("seed match reset: %s is not within %.1f blocks of the match arena center — refusing to modify their state", playerName, radius)
+	}
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("effect give %s minecraft:instant_health 1 %d", playerName, combatRematchHealAmplifier)); err != nil {
+		return fmt.Errorf("seed match reset: heal via RCON: %w", err)
+	}
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s", playerName, normalizeItemName(weapon))); err != nil {
+		return fmt.Errorf("seed match reset: give weapon via RCON: %w", err)
+	}
+	return nil
+}
