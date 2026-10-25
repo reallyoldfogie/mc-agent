@@ -1891,7 +1891,19 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.DiagonalAscend ||
 					step.Movement == pathfinding.MineDown ||
 					step.Movement == pathfinding.MineDownDiagonal ||
-					step.Movement == pathfinding.MineNeighborFloor
+					step.Movement == pathfinding.MineNeighborFloor ||
+					// MineThrough was missing from this list - found live
+					// digging mine_buried's horizontal overburden
+					// (mc-rsi-trainer): shuffling sideways against a solid
+					// wall obviously can't make progress, any more than it
+					// can against a solid floor (MineDown's own reasoning
+					// above), so every MineThrough step paid the full
+					// sidewaysTimeout before escalating to the re-pathfind
+					// that actually breaks the next block - roughly
+					// doubling horizontal dig time relative to vertical
+					// (stuckThreshold+sidewaysTimeout+break vs just
+					// stuckThreshold+break).
+					step.Movement == pathfinding.MineThrough
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2

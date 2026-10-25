@@ -60,6 +60,24 @@ type Config struct {
 	// this field entirely rather than fail the episode over it).
 	MineRequiredTool string
 
+	// MineRequiredToolEnchantments, if non-empty, asks DefaultEpisodeSeeder
+	// to give MineRequiredTool pre-enchanted (via SeedGiveEnchantedItem)
+	// instead of plain (SeedGiveItem) — keys are enchantment IDs (e.g.
+	// "efficiency" or "minecraft:efficiency" — normalized the same
+	// lenient way item names already are), values their level. Exists
+	// because a
+	// live validation run found digging through solid ground is
+	// dominated by movement/pathing overhead, not break time, but a
+	// faster break time is still free, safe, and compounds with any later
+	// fix to that overhead — see
+	// docs/plans/14-buried-block-mining-and-memory-map.md's follow-up
+	// notes (mc-rsi-trainer). Ignored if MineRequiredTool is empty, or if
+	// the seeder/agent in use doesn't implement EnchantedToolSeedAgent
+	// (DefaultEpisodeSeeder then falls back to ToolSeedAgent's plain
+	// SeedGiveItem, exactly as if this field were unset — never fails the
+	// episode just because enchanting isn't available).
+	MineRequiredToolEnchantments map[string]int
+
 	// MineTargetBuried, if true, tells DefaultEpisodeSeeder that
 	// MineTargetBlock is already present somewhere in the world (e.g.
 	// baked into a shared clone-reset template's underground stone band —
@@ -382,14 +400,15 @@ type TaskOverride struct {
 	// active. See Environment.seedFarTargets.
 	SeedAtGoal bool
 
-	GoToTargetDisabled bool
-	TargetOffset       [3]float64
-	MineTargetBlock    string
-	MineSearchRadius   int
-	MineRequiredTool   string
-	MineTargetBuried   bool
-	CraftTargetItem    string
-	CraftSearchRadius  int
+	GoToTargetDisabled           bool
+	TargetOffset                 [3]float64
+	MineTargetBlock              string
+	MineSearchRadius             int
+	MineRequiredTool             string
+	MineRequiredToolEnchantments map[string]int
+	MineTargetBuried             bool
+	CraftTargetItem              string
+	CraftSearchRadius            int
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must

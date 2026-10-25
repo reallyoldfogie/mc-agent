@@ -49,16 +49,20 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 21 (17 before the chain block, 14 before the goal block): indices 0-13 are the original per-task numeric features;
-	// 14-16 are the goal-conditioning block (goalGoToActive/goalMineActive/
-	// goalCraftActive) added by
-	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md
-	// — see observation.go's own doc comment on observationSize for the
-	// full layout. This exact value is also what makes cmd/rl-train's
-	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
-	// reject an old checkpoint trained against the pre-goal-block size.
-	if got := env.ObservationSize(); got != 21 {
-		t.Fatalf("ObservationSize() = %d, want 21", got)
+	// 25 (21 before the exploration-signal block, 17 before the chain
+	// block, 14 before the goal block): indices 0-13 are the original
+	// per-task numeric features; 14-16 are the goal-conditioning block
+	// (goalGoToActive/goalMineActive/goalCraftActive) added by
+	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
+	// 21-24 are unknownDx/Dy/Dz/unknownValid, added by
+	// ../mc-rsi-trainer/docs/plans/14-buried-block-mining-and-memory-map.md's
+	// option 2 — see observation.go's own doc comment on observationSize
+	// for the full layout. This exact value is also what makes
+	// cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
+	// automatically reject an old checkpoint trained against a shorter
+	// observation.
+	if got := env.ObservationSize(); got != 25 {
+		t.Fatalf("ObservationSize() = %d, want 25", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -73,8 +77,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 21 {
-		t.Fatalf("len(obs.Values) = %d, want 21 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 25 {
+		t.Fatalf("len(obs.Values) = %d, want 25 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -1070,6 +1074,71 @@ func TestResetSeedsMineRequiredToolBeforeTheMineTarget(t *testing.T) {
 	}
 	if got := agent.seedGiveItemCalls[0]; got.itemName != "minecraft:wooden_pickaxe" || got.count != 1 {
 		t.Fatalf("SeedGiveItem call = %+v, want {minecraft:wooden_pickaxe 1}", got)
+	}
+}
+
+// TestResetGivesEnchantedToolWhenAgentSupportsIt confirms
+// Config.MineRequiredToolEnchantments routes to SeedGiveEnchantedItem
+// (rlenv.EnchantedToolSeedAgent) instead of the plain SeedGiveItem path
+// when the agent implements it.
+func TestResetGivesEnchantedToolWhenAgentSupportsIt(t *testing.T) {
+	agent := &fakeEnchantedToolAgent{fakeAgent: newFakeAgent(0, 0, 0)}
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineSearchRadius = 10
+	cfg.MineRequiredTool = "minecraft:netherite_pickaxe"
+	cfg.MineRequiredToolEnchantments = map[string]int{"minecraft:efficiency": 5}
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	// newTestEnvironment's *fakeAgent parameter type would drop the
+	// wrapper's extra EnchantedToolSeedAgent method, so construct
+	// directly against the wrapper instead — rlenv.New resolves
+	// SeedAgent/ToolSeedAgent/EnchantedToolSeedAgent from whatever this
+	// value actually implements.
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.fakeAgent.seedGiveItemCalls) != 0 {
+		t.Fatalf("plain SeedGiveItem calls = %d, want 0 (enchanted path should have been taken instead)", len(agent.fakeAgent.seedGiveItemCalls))
+	}
+	if len(agent.seedGiveEnchantedItemCalls) != 1 {
+		t.Fatalf("SeedGiveEnchantedItem calls = %d, want 1", len(agent.seedGiveEnchantedItemCalls))
+	}
+	got := agent.seedGiveEnchantedItemCalls[0]
+	if got.itemName != "minecraft:netherite_pickaxe" || got.count != 1 {
+		t.Fatalf("SeedGiveEnchantedItem call = %+v, want itemName=minecraft:netherite_pickaxe count=1", got)
+	}
+	if got.enchantments["minecraft:efficiency"] != 5 {
+		t.Fatalf("SeedGiveEnchantedItem enchantments = %+v, want minecraft:efficiency=5", got.enchantments)
+	}
+}
+
+// TestResetFallsBackToPlainToolWhenAgentLacksEnchantedSupport confirms
+// Config.MineRequiredToolEnchantments never fails an episode just because
+// the agent in use doesn't implement rlenv.EnchantedToolSeedAgent — see
+// that field's own doc comment.
+func TestResetFallsBackToPlainToolWhenAgentLacksEnchantedSupport(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0) // plain fakeAgent: no SeedGiveEnchantedItem
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineSearchRadius = 10
+	cfg.MineRequiredTool = "minecraft:netherite_pickaxe"
+	cfg.MineRequiredToolEnchantments = map[string]int{"minecraft:efficiency": 5}
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedGiveItemCalls) != 1 {
+		t.Fatalf("SeedGiveItem calls = %d, want 1 (fallback path)", len(agent.seedGiveItemCalls))
+	}
+	if got := agent.seedGiveItemCalls[0]; got.itemName != "minecraft:netherite_pickaxe" || got.count != 1 {
+		t.Fatalf("SeedGiveItem call = %+v, want {minecraft:netherite_pickaxe 1}", got)
 	}
 }
 

@@ -105,6 +105,63 @@ type Environment struct {
 	mineKnownX, mineKnownY, mineKnownZ float64
 	mineEverSeen                       bool
 
+	// mineSearchAnchorX/Y/Z/exploredOctants are the exploration-signal
+	// companion to mineKnownX/Y/Z/mineEverSeen above (docs/plans/14-buried-
+	// block-mining-and-memory-map.md's option 2, mc-rsi-trainer): while
+	// mineEverSeen is false, the policy's observation otherwise carries no
+	// information at all about where to dig (see buildObservation's
+	// unknownDx/Dy/Dz). A real per-cell visibility grid (option 2's literal
+	// reading) would need either a new agent-level primitive exposing which
+	// cells FindVisibleBlock's shell search actually checked, or a
+	// dedicated FindAllVisibleBlocksInSphere-style ray-trace every Step —
+	// the latter already costs ~6-14k rays per call at this search radius
+	// (see mc-rsi-trainer's cmd/rsi-train/worldstream.go, which only runs
+	// it at 1Hz for a spectator view, not per training Step across several
+	// parallel envs). Instead this tracks, at the coarsest resolution that
+	// still gives a usable direction, which of the 4 horizontal quadrants
+	// around this episode's mine-search anchor (where the bot started,
+	// since mine_buried/chain_mine have no separate goto target — see
+	// mineBuriedTask's own doc comment in mc-rsi-trainer) the bot has
+	// physically entered this episode: quadrant index bit0/1 is x/z >=
+	// anchor, set the instant the bot's position (already read every Step
+	// for prevDistance/health) crosses into it. No new raycasts, no new
+	// agent-level method — reuses data already on hand.
+	//
+	// Deliberately horizontal-only (4 quadrants, not a full 8-octant
+	// sphere): mine_buried/chain_mine's ore is always seeded into the
+	// stone band *beneath* the dirt surface the bot spawns on (mc-rsi-
+	// trainer's own curriculum/seeding never places it above spawn), so an
+	// "explore upward" direction is never useful and — worse, found live
+	// building this — can be actively harmful: a naive ±Y scheme points
+	// unexplored-upward octants at a fixed point floating in open air
+	// above the surface, which has no walkable cell at all, so a
+	// MoveTo-style controller's pathfinding fails outright and the walk
+	// gets stuck retargeting that same unreachable point forever once the
+	// reachable quadrants run out (confirmed in
+	// testing/mine_buried_unknown_direction_test.go before this fix).
+	// observationUnknownDirection's target Y is always anchored half the
+	// search radius *below* the anchor for exactly this reason, not a
+	// per-quadrant choice.
+	//
+	// Coarser than true visibility (entering a quadrant doesn't mean the
+	// bot can see or has dug through all of it), but turns "which general
+	// direction haven't I tried yet" from no signal into a cheap one;
+	// revisit with a real visibility grid only if live data shows this
+	// MVP isn't enough, per docs/plans/14's own "ship the cheapest option
+	// first" precedent for mineKnownX/Y/Z itself.
+	mineSearchAnchorX, mineSearchAnchorY, mineSearchAnchorZ float64
+	exploredQuadrants                                       [4]bool
+
+	// mineBuriedExists is the line-of-sight-free companion to
+	// mineX/Y/Z/mineVisible — see BuriedTargetAgent and
+	// refreshMineBuriedExistence's own doc comments for what this backs
+	// and why it exists (a destroyed-but-never-seen buried target
+	// otherwise earns zero reward). Cleared at Reset the same way
+	// mineKnownX/Y/Z/mineEverSeen are, for the same reason: carrying a
+	// stale "exists" reading across episodes would misjudge a freshly
+	// re-seeded world.
+	mineBuriedExists bool
+
 	// mineTargetNameInUse is whichever block name the most recent
 	// refreshMineTarget call actually resolved against (see
 	// mineTargetBlockInUse) — tracked so a change mid-episode (a
@@ -343,6 +400,13 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.arrived = false
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 	e.mineTargetNameInUse = ""
+	// x/y/z here already reflect any ResetOrigin teleport/groundSnap above
+	// (nothing moves the bot again before this episode's first
+	// observation) - this episode's mine-search anchor, see
+	// exploredQuadrants' own doc comment.
+	e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ = x, y, z
+	e.exploredQuadrants = [4]bool{}
+	e.mineBuriedExists = false
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -358,6 +422,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
 		e.cfg.MineRequiredTool = override.MineRequiredTool
+		e.cfg.MineRequiredToolEnchantments = override.MineRequiredToolEnchantments
 		e.cfg.MineTargetBuried = override.MineTargetBuried
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
@@ -494,11 +559,16 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshMineBuriedExistence(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
+	e.markExploredQuadrant(x, z)
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -574,6 +644,155 @@ func (e *Environment) observationMineTarget() (x, y, z float64, visible bool) {
 		return e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen
 	}
 	return e.mineX, e.mineY, e.mineZ, e.mineVisible
+}
+
+// BuriedTargetAgent is the optional capability Step uses to detect a
+// buried mine target's destruction even when it's mined blind - found
+// live (mc-rsi-trainer, with an Efficiency V tool): the pathfinder's own
+// overburden-clearing routinely digs straight through the actual ore on
+// its way to wherever it's headed, destroying it before FindVisibleBlock
+// ever resolves it even once. The generic `mined` check a few lines below
+// is gated on prevMineVisible precisely because it diffs one *specific,
+// already-resolved* coordinate's block name before/after - with no
+// coordinate ever resolved, it has nothing to diff and silently never
+// fires, so a real destruction earns zero reward and never ends the
+// episode. A separate capability, not a new models.CommandAgent method:
+// unlike FindVisibleBlock (which the policy's own mine action and
+// observation legitimately need, gated by line-of-sight so the policy
+// never gets X-rayed information), this exists purely for the reward
+// function's own ground-truth bookkeeping - the *existence* check it
+// backs is never exposed to the policy's observation, only used to decide
+// whether this step's `mined` should be true.
+type BuriedTargetAgent interface {
+	// BlockExistsInRadius reports whether any instance of blockName
+	// exists within radius blocks of (x, y, z), in loaded chunks, with no
+	// line-of-sight requirement (unlike FindVisibleBlock) - existence,
+	// not location, which is all a destruction check needs.
+	BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error)
+}
+
+// refreshMineBuriedExistence updates e.mineBuriedExists for the next
+// Step's "before this step" read - mineVisible/refreshMineTarget's own
+// caching shape (see that field's own doc comment), but LOS-free (see
+// BuriedTargetAgent). No-op (leaves mineBuriedExists at whatever it
+// already was) unless mineTargetMemoryEnabled() and the agent implements
+// BuriedTargetAgent - matches this project's existing "an agent that
+// doesn't support an optional capability is left alone, not failed over"
+// convention (ToolSeedAgent/EnchantedToolSeedAgent).
+//
+// Known limitation, inherited from exploredQuadrants/mineSearchAnchorX/Y/Z
+// (see that field's own doc comment): the search center is this episode's
+// mine-search anchor (captured once at Reset, i.e. where the bot started),
+// which is right for mine_buried (no separate goto target - the whole
+// working area is the search volume) but not for chain_mine, where the
+// bot travels to a far ChainTargetOffset before ever reaching the
+// ChainMine stage. For chain_mine specifically this check degrades to a
+// safe no-op (the baseline existence read at Reset finds nothing near a
+// spawn point the buried ore was never seeded close to, so
+// prevMineBuriedExists starts false and this never fires) rather than a
+// wrong one - not yet fixed here, since mc-rsi-trainer's own notes flag
+// chain_mine's buried-mining phase as still awaiting its first live
+// validation independent of this fix.
+func (e *Environment) refreshMineBuriedExistence(ctx context.Context) error {
+	if !e.mineTargetMemoryEnabled() {
+		return nil
+	}
+	target := e.mineTargetBlockInUse()
+	if target == "" {
+		e.mineBuriedExists = false
+		return nil
+	}
+	checker, ok := e.agent.(BuriedTargetAgent)
+	if !ok {
+		return nil
+	}
+	radius := e.cfg.MineSearchRadius
+	if radius <= 0 {
+		radius = DefaultConfig().MineSearchRadius
+	}
+	exists, err := checker.BlockExistsInRadius(ctx, e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ, target, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: checking buried target existence: %w", err)
+	}
+	e.mineBuriedExists = exists
+	return nil
+}
+
+// markExploredQuadrant records that this episode's bot has now physically
+// entered the horizontal quadrant (relative to mineSearchAnchorX/Z)
+// containing (x, z) — see exploredQuadrants' own doc comment. No-op
+// outside mineTargetMemoryEnabled() tasks, matching mineKnownX/Y/Z's own
+// gating: cheap enough to call unconditionally every Step/Reset, but there
+// is nothing to mark for a task that doesn't use it.
+func (e *Environment) markExploredQuadrant(x, z float64) {
+	if !e.mineTargetMemoryEnabled() {
+		return
+	}
+	e.exploredQuadrants[quadrantIndex(x-e.mineSearchAnchorX, z-e.mineSearchAnchorZ)] = true
+}
+
+// observationUnknownDirection is the exploration-signal companion to
+// observationMineTarget (see exploredQuadrants' own doc comment):
+// unknownDx/Dy/Dz point toward the nearest not-yet-entered horizontal
+// quadrant around this episode's mine-search anchor, scaled the same way
+// mineDx/Dy/Dz is — an actual block delta from (x, y, z), not a unit
+// vector. The Y component always aims half the search radius *below* the
+// anchor (see exploredQuadrants' own doc comment on why this is downward-
+// only, not a per-quadrant choice). valid is false (dx/dy/dz left at the
+// zero value) outside mineTargetMemoryEnabled() tasks, once the real
+// target has ever been seen (mineEverSeen — the memory-map-backed
+// mineDx/Dy/Dz is a strictly better signal from then on, see its own doc
+// comment), every quadrant has already been entered, or
+// Config.MineSearchRadius isn't positive (mirrors FindVisibleBlock's own
+// "<=0 means not meaningfully configured" handling rather than inventing a
+// different convention here).
+func (e *Environment) observationUnknownDirection(x, y, z float64) (dx, dy, dz float64, valid bool) {
+	if !e.mineTargetMemoryEnabled() || e.mineEverSeen || e.cfg.MineSearchRadius <= 0 {
+		return 0, 0, 0, false
+	}
+	half := float64(e.cfg.MineSearchRadius) / 2
+	targetY := e.mineSearchAnchorY - half
+	bestDistSq := math.MaxFloat64
+	for idx := 0; idx < 4; idx++ {
+		if e.exploredQuadrants[idx] {
+			continue
+		}
+		qx, qz := quadrantDirection(idx)
+		ddx := e.mineSearchAnchorX + qx*half - x
+		ddy := targetY - y
+		ddz := e.mineSearchAnchorZ + qz*half - z
+		if distSq := ddx*ddx + ddy*ddy + ddz*ddz; distSq < bestDistSq {
+			bestDistSq, dx, dy, dz, valid = distSq, ddx, ddy, ddz, true
+		}
+	}
+	return dx, dy, dz, valid
+}
+
+// quadrantIndex maps a horizontal position delta from the mine-search
+// anchor to one of 4 quadrants (bit0/1 = x/z >= 0) — see
+// exploredQuadrants' own doc comment.
+func quadrantIndex(dx, dz float64) int {
+	idx := 0
+	if dx >= 0 {
+		idx |= 1
+	}
+	if dz >= 0 {
+		idx |= 2
+	}
+	return idx
+}
+
+// quadrantDirection is quadrantIndex's inverse: the ±1-per-axis horizontal
+// direction for a given quadrant index.
+func quadrantDirection(idx int) (dx, dz float64) {
+	dx, dz = -1, -1
+	if idx&1 != 0 {
+		dx = 1
+	}
+	if idx&2 != 0 {
+		dz = 1
+	}
+	return dx, dz
 }
 
 // refreshMineTarget re-resolves the nearest currently-visible instance of
@@ -660,6 +879,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		prevMineBlockName = e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 	}
+	// prevMineBuriedExists mirrors prevMineVisible's own "before this
+	// step" caching shape — see BuriedTargetAgent's doc comment for why
+	// this exists alongside the prevMineVisible-gated check above, not
+	// instead of it.
+	prevMineBuriedExists := e.mineBuriedExists
 	// e.craftCount still holds whatever the previous Step (or Reset) last
 	// resolved — read here as "before this step's action" state, regardless
 	// of whether that action was ActionCraft (mirrors prevMineVisible's own
@@ -709,6 +933,24 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		newMineBlockName := e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 		mined = newMineBlockName != prevMineBlockName
+	}
+	// Blind-destruction fallback (BuriedTargetAgent): refreshed
+	// unconditionally, the same way refreshMineTarget itself always runs
+	// regardless of what happened above — mineTargetBlockInUse() can
+	// change mid-episode (a ChainMine-stage chain switching targets once
+	// its goal item is crafted, mirroring mineKnownX/Y/Z's own
+	// staleness-avoidance reasoning), so leaving this stale on any step
+	// would risk comparing against the wrong target's last reading on a
+	// later one. Only consulted for `mined` while the target has never
+	// been resolved via FindVisibleBlock (!mineEverSeen) — once it has,
+	// the exact-coordinate check above is the better signal and this
+	// would be redundant (harmlessly so: a bool OR'd true twice is still
+	// just true).
+	if err := e.refreshMineBuriedExistence(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if !mined && !e.mineEverSeen && prevMineBuriedExists && !e.mineBuriedExists {
+		mined = true
 	}
 
 	// craftedThisStep is judged from an actual inventory-count increase,
@@ -820,8 +1062,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
+	e.markExploredQuadrant(x, z)
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
+	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

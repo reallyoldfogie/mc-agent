@@ -502,6 +502,55 @@ func (f *fakeAgent) SeedGiveItem(_ context.Context, itemName string, count int) 
 	return f.seedErr
 }
 
+// fakeEnchantedToolAgent wraps fakeAgent to additionally satisfy
+// rlenv.EnchantedToolSeedAgent — a separate type, not a method directly on
+// fakeAgent, so existing tests using plain fakeAgent keep exercising
+// DefaultEpisodeSeeder's fallback path (an agent that only implements
+// ToolSeedAgent) rather than silently gaining the enchanted capability too.
+type fakeEnchantedToolAgent struct {
+	*fakeAgent
+	seedGiveEnchantedItemCalls []seedGiveEnchantedItemCall
+}
+
+type seedGiveEnchantedItemCall struct {
+	itemName     string
+	enchantments map[string]int
+	count        int
+}
+
+// fakeBuriedTargetAgent wraps fakeAgent to additionally satisfy
+// rlenv.BuriedTargetAgent — a separate type for the same reason
+// fakeEnchantedToolAgent is: existing tests using plain fakeAgent keep
+// exercising refreshMineBuriedExistence's own "agent doesn't support this
+// capability" no-op path. exists is mutable directly by the test (not
+// computed from any simulated world state) so a test can flip it mid-
+// episode to simulate the buried target being destroyed.
+type fakeBuriedTargetAgent struct {
+	*fakeAgent
+	exists                   bool
+	blockExistsInRadiusCalls []blockExistsInRadiusCall
+}
+
+type blockExistsInRadiusCall struct {
+	x, y, z   float64
+	blockName string
+	radius    int
+}
+
+func (f *fakeBuriedTargetAgent) BlockExistsInRadius(_ context.Context, x, y, z float64, blockName string, radius int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blockExistsInRadiusCalls = append(f.blockExistsInRadiusCalls, blockExistsInRadiusCall{x: x, y: y, z: z, blockName: blockName, radius: radius})
+	return f.exists, nil
+}
+
+func (f *fakeEnchantedToolAgent) SeedGiveEnchantedItem(_ context.Context, itemName string, enchantments map[string]int, count int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedGiveEnchantedItemCalls = append(f.seedGiveEnchantedItemCalls, seedGiveEnchantedItemCall{itemName: itemName, enchantments: enchantments, count: count})
+	return f.seedErr
+}
+
 // --- rlenv.ResetAgent (Config.ResetOrigin) ---
 
 func (f *fakeAgent) TeleportTo(_ context.Context, x, y, z float64) error {

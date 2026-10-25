@@ -35,6 +35,21 @@ type ToolSeedAgent interface {
 	SeedGiveItem(ctx context.Context, itemName string, count int) error
 }
 
+// EnchantedToolSeedAgent is the optional capability
+// Config.MineRequiredToolEnchantments needs: giving the bot itemName
+// pre-enchanted, not plain. A separate interface from ToolSeedAgent
+// rather than a new method on it — not every agent that can give a plain
+// item can build an enchanted one (see agent.SeedGiveEnchantedItem's own
+// doc comment on how), and DefaultEpisodeSeeder already has a clean
+// fallback (ToolSeedAgent's plain SeedGiveItem) for an agent that only
+// implements that.
+type EnchantedToolSeedAgent interface {
+	// SeedGiveEnchantedItem ensures at least count of itemName, enchanted
+	// with enchantments (full enchantment ID -> level), is in the bot's
+	// inventory.
+	SeedGiveEnchantedItem(ctx context.Context, itemName string, enchantments map[string]int, count int) error
+}
+
 // EpisodeSeeder, if set on Config, is called once per Reset (after origin
 // is captured, before mine/craft state is resolved for the returned
 // observation) to prepare the world for this episode's configured task(s).
@@ -77,9 +92,25 @@ const defaultMineRequiredToolCount = 1
 func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) error {
 	if cfg.MineTargetBlock != "" {
 		if cfg.MineRequiredTool != "" {
-			if toolSeeder, ok := agent.(ToolSeedAgent); ok {
-				if err := toolSeeder.SeedGiveItem(ctx, cfg.MineRequiredTool, defaultMineRequiredToolCount); err != nil {
-					return fmt.Errorf("seeding mine required tool: %w", err)
+			// Prefer the enchanted path when both the config and the
+			// agent support it; otherwise fall back to the plain one —
+			// matches MineRequiredToolEnchantments' own doc comment:
+			// never fail an episode just because enchanting isn't
+			// available.
+			gaveEnchantedTool := false
+			if len(cfg.MineRequiredToolEnchantments) > 0 {
+				if enchantedSeeder, ok := agent.(EnchantedToolSeedAgent); ok {
+					if err := enchantedSeeder.SeedGiveEnchantedItem(ctx, cfg.MineRequiredTool, cfg.MineRequiredToolEnchantments, defaultMineRequiredToolCount); err != nil {
+						return fmt.Errorf("seeding enchanted mine required tool: %w", err)
+					}
+					gaveEnchantedTool = true
+				}
+			}
+			if !gaveEnchantedTool {
+				if toolSeeder, ok := agent.(ToolSeedAgent); ok {
+					if err := toolSeeder.SeedGiveItem(ctx, cfg.MineRequiredTool, defaultMineRequiredToolCount); err != nil {
+						return fmt.Errorf("seeding mine required tool: %w", err)
+					}
 				}
 			}
 		}

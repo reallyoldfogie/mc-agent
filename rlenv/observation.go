@@ -61,6 +61,31 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	index 19: chainTables — crafting tables held (not placed), / 8 when normalized.
 //	index 20: chainTablePlaced — 1.0 if this chain episode has placed its table.
 //
+//	index 21: unknownDx — nearest not-yet-entered horizontal quadrant
+//	          around this episode's mine-search anchor
+//	          (Environment.exploredQuadrants), X minus current X (blocks);
+//	          0 if not applicable (see unknownValid below).
+//	index 22: unknownDy — same, Y.
+//	index 23: unknownDz — same, Z.
+//	index 24: unknownValid — 1.0 if mine-target memory is enabled this
+//	          episode (Config.MineTargetBuried or ChainStage==ChainMine),
+//	          the real target hasn't been seen yet (mineVisible/index 12's
+//	          persistent cousin, mineEverSeen, is still false — once it's
+//	          true, mineDx/Dy/Dz is a strictly better signal and this goes
+//	          back to 0), and at least one quadrant is still unexplored;
+//	          0.0 otherwise. Gates unknownDx/Dy/Dz the same way mineVisible
+//	          gates mineDx/Dy/Dz: "nothing left to explore, or not this
+//	          episode's problem" must not be misread as "the unexplored
+//	          region is exactly here" (all-zero is also each field's own
+//	          zero value). Exists because mine_buried/chain_mine give the
+//	          policy literally nothing — no observation signal and (see
+//	          reward.go) no reward gradient either — until the buried
+//	          target is glimpsed purely by chance; see
+//	          docs/plans/14-buried-block-mining-and-memory-map.md's option
+//	          2 in mc-rsi-trainer, and exploredOctants' own doc comment for
+//	          why this is a coarse, downward-biased 4-quadrant signal
+//	          rather than a true per-cell visibility grid.
+//
 // indices 17-20 are the multi-step chain block (Config.ChainStage,
 // docs/plans/12 in mc-rsi-trainer): all zero outside chain episodes, so
 // every other task's observation differs from before only by four trailing
@@ -105,13 +130,16 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // same instance; see task.go). See doc.go.
 //
 // Changing this length is a breaking change for any checkpoint trained
-// against the old 14-length observation — see actorcritic.Load's existing
+// against a shorter observation — see actorcritic.Load's existing
 // EnvironmentID/shape validation, and mint a new EnvironmentID for
 // anything trained against this length (e.g. cmd/rl-train's own
 // "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
 // ObservationSize()/ActionSpace() directly, so it picks up this change
-// automatically with no separate version bump needed there).
-const observationSize = 21
+// automatically with no separate version bump needed there). Indices
+// 21-24 (unknownDx/Dy/Dz/unknownValid) are new relative to the 21-length
+// observation every currently-checkpointed policy was trained against —
+// no exception from this length's own rule.
+const observationSize = 25
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -133,7 +161,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -141,6 +169,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	mineDx, mineDy, mineDz, visible := float32(0), float32(0), float32(0), float32(0)
 	if mineVisible {
 		mineDx, mineDy, mineDz, visible = float32(mineX-x), float32(mineY-y), float32(mineZ-z), 1
+	}
+	unknownDx, unknownDy, unknownDz, unknownValid := float32(0), float32(0), float32(0), float32(0)
+	if unknownValidIn {
+		unknownDx, unknownDy, unknownDz, unknownValid = float32(unknownDxIn), float32(unknownDyIn), float32(unknownDzIn), 1
 	}
 	ready := float32(0)
 	if craftReady {
@@ -170,6 +202,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				float32(chain.planks) / chainInventoryCountNorm,
 				float32(chain.tables) / chainInventoryCountNorm,
 				boolToFloat32(chain.placed),
+				unknownDx / obsDistanceScale,
+				unknownDy / obsDistanceScale,
+				unknownDz / obsDistanceScale,
+				unknownValid,
 			},
 		}
 	}
@@ -196,6 +232,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			float32(chain.planks),
 			float32(chain.tables),
 			boolToFloat32(chain.placed),
+			unknownDx,
+			unknownDy,
+			unknownDz,
+			unknownValid,
 		},
 	}
 }
