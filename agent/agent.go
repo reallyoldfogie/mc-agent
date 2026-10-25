@@ -190,6 +190,11 @@ type agent struct {
 	entitiesMu sync.RWMutex
 	entities   map[int32]*trackedEntity
 
+	// teamsMu guards teams — see agent/combat_teams.go's own doc comment
+	// (docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0 item 4).
+	teamsMu sync.RWMutex
+	teams   map[string]*teamInfo
+
 	// abilitiesMu guards abilities/abilitiesInitialized.
 	abilitiesMu sync.RWMutex
 	// abilities is the bot's own last-known PlayerAbilities, as reported by

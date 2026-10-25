@@ -21,11 +21,15 @@ func (a *agent) RankCombatTargets(ctx context.Context, radius float64, includeNe
 
 // RankCombatTargetsWithPolicy ranks tracked entities using an explicit PvP and
 // neutral-target policy. Players remain excluded unless IncludePlayers is true.
+// OwnTeam is populated internally from the agent's own current scoreboard team
+// membership (see combat.TargetPolicy.OwnTeam's own doc comment) — callers
+// never need to set it themselves.
 func (a *agent) RankCombatTargetsWithPolicy(ctx context.Context, radius float64, policy combat.TargetPolicy) ([]combat.Target, error) {
 	position, _, _, initialized := a.GetPosition()
 	if !initialized {
 		return nil, fmt.Errorf("combat target ranking: position not initialized")
 	}
+	policy.OwnTeam = a.teamForPlayerName(a.cfg.Name)
 	tracked := a.GetTrackedEntities()
 	targets := make([]combat.Target, 0, len(tracked))
 	for _, entity := range tracked {
@@ -57,12 +61,17 @@ func (a *agent) RankCombatTargetsWithPolicy(ctx context.Context, radius float64,
 			directionZ = (entity.Z - position.Z) / horizontalDistance
 		}
 		velocityX, velocityY, velocityZ, _ := a.GetEntityVelocity(entity.EntityID)
+		team := ""
+		if category == combat.Player {
+			team = a.teamForPlayerEntityID(entity.EntityID)
+		}
 		targets = append(targets, combat.Target{
 			EntityID: entity.EntityID, TypeName: typeName, Category: category,
 			X: entity.X, Y: entity.Y, Z: entity.Z,
 			VelocityX: velocityX, VelocityY: velocityY, VelocityZ: velocityZ,
 			Distance: distance, DirectionX: directionX, DirectionZ: directionZ,
 			Health: entity.Health, MaxHealth: entity.MaxHealth, Visible: visible,
+			Team: team,
 		})
 	}
 	return combat.RankWithPolicy(targets, policy), nil

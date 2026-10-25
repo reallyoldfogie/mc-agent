@@ -1089,3 +1089,35 @@ func (a *agent) SeedMatchReset(ctx context.Context, playerName, weapon string, c
 	}
 	return nil
 }
+
+// SeedMatchTeam creates (or reuses) a vanilla scoreboard team named teamName,
+// adds every player in memberNames to it, and disables friendly fire —
+// docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0 item 4. Every member must
+// pass VerifyPlayerNearPosition first; refuses (returns an error) without
+// touching anything if any member fails that check, the same safety
+// reasoning SeedMatchReset's own doc comment gives — this can run on a
+// shared server where naming a player here doesn't by itself mean they're
+// standing in the arena right now.
+func (a *agent) SeedMatchTeam(ctx context.Context, teamName string, memberNames []string, center models.V3, radius float64) error {
+	for _, member := range memberNames {
+		near, err := a.VerifyPlayerNearPosition(ctx, member, center, radius)
+		if err != nil {
+			return fmt.Errorf("seed match team: %w", err)
+		}
+		if !near {
+			return fmt.Errorf("seed match team: %s is not within %.1f blocks of the match arena center — refusing to modify their team", member, radius)
+		}
+	}
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("team add %s", teamName)); err != nil {
+		return fmt.Errorf("seed match team: create team via RCON: %w", err)
+	}
+	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("team modify %s friendlyFire false", teamName)); err != nil {
+		return fmt.Errorf("seed match team: disable friendly fire via RCON: %w", err)
+	}
+	for _, member := range memberNames {
+		if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("team join %s %s", teamName, member)); err != nil {
+			return fmt.Errorf("seed match team: add %s via RCON: %w", member, err)
+		}
+	}
+	return nil
+}

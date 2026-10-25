@@ -36,6 +36,11 @@ type Target struct {
 	MaxHealth  float32
 	Visible    bool
 	Removed    bool
+	// Team is the vanilla scoreboard team this target belongs to, or ""
+	// if it's on no team (free-for-all) — see TargetPolicy.OwnTeam and
+	// docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0 item 4. Only
+	// meaningful for Category == Player; left "" for mobs.
+	Team string
 }
 
 // TargetPolicy controls which non-hostile target categories combat may select.
@@ -43,6 +48,13 @@ type Target struct {
 type TargetPolicy struct {
 	IncludePlayers bool
 	IncludeNeutral bool
+	// OwnTeam, if non-empty, excludes any target whose own Team matches
+	// this value — friendly-fire avoidance for combat-competition team
+	// battles. Populated internally by the agent layer from its own
+	// current team membership (see agent.RankCombatTargetsWithPolicy),
+	// never something an external chat-command/rlenv caller needs to
+	// know or set itself. Empty means no team-based exclusion.
+	OwnTeam string
 }
 
 // Classify maps a registry type name to the default combat category.
@@ -116,6 +128,9 @@ func RankWithPolicy(targets []Target, policy TargetPolicy) []Target {
 			continue
 		}
 		if target.Category == Player && !policy.IncludePlayers {
+			continue
+		}
+		if policy.OwnTeam != "" && target.Team == policy.OwnTeam {
 			continue
 		}
 		eligible = append(eligible, target)

@@ -98,3 +98,31 @@ func TestRankWithPolicyRequiresExplicitPlayerOptIn(t *testing.T) {
 		t.Fatalf("PvP policy selected %+v, want player first", pvp)
 	}
 }
+
+// TestRankWithPolicyExcludesOwnTeam validates the combat-competition
+// friendly-fire exclusion (docs/plans/COMBAT_COMPETITION_PLAN.md Phase 0
+// item 4): a target on the same team as OwnTeam is never eligible, even
+// with IncludePlayers set, while an opposing-team or teamless (free-for-
+// all) player remains targetable.
+func TestRankWithPolicyExcludesOwnTeam(t *testing.T) {
+	targets := []Target{
+		{EntityID: 1, Category: Player, Distance: 2, Visible: true, Team: "Red"},
+		{EntityID: 2, Category: Player, Distance: 3, Visible: true, Team: "Blue"},
+		{EntityID: 3, Category: Player, Distance: 4, Visible: true, Team: ""},
+	}
+
+	result := RankWithPolicy(targets, TargetPolicy{IncludePlayers: true, OwnTeam: "Red"})
+	if len(result) != 2 {
+		t.Fatalf("result = %+v, want exactly the Blue and teamless targets", result)
+	}
+	for _, target := range result {
+		if target.Team == "Red" {
+			t.Fatalf("result = %+v, must not include a same-team (Red) target", result)
+		}
+	}
+
+	ffa := RankWithPolicy(targets, TargetPolicy{IncludePlayers: true})
+	if len(ffa) != 3 {
+		t.Fatalf("ffa result = %+v, want all three targets when OwnTeam is unset", ffa)
+	}
+}

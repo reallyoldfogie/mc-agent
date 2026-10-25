@@ -185,6 +185,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			},
 		},
 		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundTeams"),
+			Name:     "ClientboundTeams",
+			Priority: 0,
+			F:        a.onTeams,
+		},
+		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundSetChunkCacheRadius"),
 			Name:     "ClientboundSetChunkCacheRadius",
 			Priority: 0,
