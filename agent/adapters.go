@@ -919,13 +919,12 @@ func (a *agent) FindRideableEntitiesNear(center models.V3, radius float64, honor
 		radius = a.perceptionRadiusCap(radius)
 	}
 
-	a.entitiesMu.RLock()
-	entities := a.entities
-	a.entitiesMu.RUnlock()
-
 	radiusSq := radius * radius
 
-	for entityID, tracked := range entities {
+	a.entitiesMu.RLock()
+	defer a.entitiesMu.RUnlock()
+
+	for entityID, tracked := range a.entities {
 		// Skip if entity is too far
 		distSq := (tracked.X-center.X)*(tracked.X-center.X) +
 			(tracked.Y-center.Y)*(tracked.Y-center.Y) +
