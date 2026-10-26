@@ -136,7 +136,7 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if !e.actionLegal(ActionGoToTarget) {
 			return actionDispatch{}, false, nil
 		}
-		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
+		return actionDispatch{name: moveToActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
 	case ActionMine:
 		if !e.actionLegal(ActionMine) {
 			return actionDispatch{}, false, nil
@@ -176,7 +176,7 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionWait:
 		return true
 	case ActionGoToTarget:
-		if e.cfg.GoToTargetDisabled {
+		if !e.goToTargetActive() {
 			return false
 		}
 		// In a go-there-then-mine/craft episode, once the bot has arrived

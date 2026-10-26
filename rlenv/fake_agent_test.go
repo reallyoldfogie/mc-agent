@@ -64,7 +64,13 @@ type fakeAgent struct {
 	// recipes, instead of the single mine block / craft target above.
 	chainInv         map[string]int
 	chainBlocks      map[[3]int]string
-	chainDrops       int
+	// chainBlocksHidden mirrors mineBlockHidden's own role (see its doc
+	// comment), but for the chainBlocks-backed FindVisibleBlock path: a
+	// block can be present in chainBlocks (so BlockNameAt/MineBlockAt
+	// still resolve it) while this makes FindVisibleBlock report it as
+	// not found, simulating a buried target that hasn't been glimpsed yet.
+	chainBlocksHidden bool
+	chainDrops        int
 	clearedInventory int
 	clearedDropAreas [][4]int
 	failNextPlace    bool
@@ -355,9 +361,11 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 	defer f.mu.Unlock()
 	f.findVisibleBlockCalls++
 	if f.chainBlocks != nil {
-		for pos, name := range f.chainBlocks {
-			if name == blockName {
-				return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+		if !f.chainBlocksHidden {
+			for pos, name := range f.chainBlocks {
+				if name == blockName {
+					return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+				}
 			}
 		}
 		return 0, 0, 0, false, nil

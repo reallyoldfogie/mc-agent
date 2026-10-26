@@ -30,7 +30,16 @@ type Environment struct {
 
 	targetX, targetY, targetZ float64
 	prevDistance              float64
-	prevHealth                float32
+
+	// prevGoToTargetX/Y/Z cache the last currentGoToTarget() result, so
+	// Step can tell whether it moved since the previous step (the
+	// buried-search exploration point can, unlike targetX/Y/Z itself,
+	// which only ever changes at Reset) — see currentGoToTarget's own doc
+	// comment for why a silent jump needs re-baselining rather than being
+	// diffed through computeReward directly.
+	prevGoToTargetX, prevGoToTargetY, prevGoToTargetZ float64
+
+	prevHealth float32
 	prevHealthKnown           bool
 	episodeStarted            bool
 	// lastDoneReason explains the most recent Step that returned Done=true.
@@ -122,10 +131,11 @@ type Environment struct {
 	// around this episode's mine-search anchor (where the bot started,
 	// since mine_buried/chain_mine have no separate goto target — see
 	// mineBuriedTask's own doc comment in mc-rsi-trainer) the bot has
-	// physically entered this episode: quadrant index bit0/1 is x/z >=
-	// anchor, set the instant the bot's position (already read every Step
-	// for prevDistance/health) crosses into it. No new raycasts, no new
-	// agent-level method — reuses data already on hand.
+	// genuinely reached — within Config.ArrivalThreshold of that
+	// quadrant's own target point, not merely crossed into its half of
+	// the anchor plane (see markExploredQuadrant's own doc comment for
+	// the live bug that distinction fixes) — this episode. No new
+	// raycasts, no new agent-level method — reuses data already on hand.
 	//
 	// Deliberately horizontal-only (4 quadrants, not a full 8-octant
 	// sphere): mine_buried/chain_mine's ore is always seeded into the
@@ -528,7 +538,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		}
 	}
 
-	e.prevDistance = distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
+	resetGoalX, resetGoalY, resetGoalZ := e.currentGoToTarget()
+	e.prevDistance = distance3(x, y, z, resetGoalX, resetGoalY, resetGoalZ)
+	e.prevGoToTargetX, e.prevGoToTargetY, e.prevGoToTargetZ = resetGoalX, resetGoalY, resetGoalZ
 	e.episodeStarted = true
 
 	health, food, saturation, healthKnown := e.agent.Health()
@@ -565,10 +577,10 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.craftCount = e.craftCountNow()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
-	e.markExploredQuadrant(x, z)
+	e.markExploredQuadrant(x, y, z)
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -637,6 +649,87 @@ func (e *Environment) mineTargetBlockInUse() string {
 // only a target that is currently visible.
 func (e *Environment) mineTargetMemoryEnabled() bool {
 	return e.cfg.MineTargetBuried || e.cfg.ChainStage == ChainMine
+}
+
+// buriedTargetActive reports whether mineTargetBlockInUse() is currently a
+// buried target for this episode — mirrors that function's own
+// stage/craftedGoal-aware switch exactly, deliberately narrower than
+// mineTargetMemoryEnabled(): ChainStage is fixed for a chain_mine
+// episode's entire duration (set once from Config, unlike chainState's
+// own milestone progression), so mineTargetMemoryEnabled() alone is true
+// from step 1 — including during gather/table/place/use, well before the
+// ore-search phase starts. goToTargetActive/currentGoToTarget must not
+// redirect movement away from the tree during gather, so they consult
+// this narrower condition instead.
+func (e *Environment) buriedTargetActive() bool {
+	if e.cfg.MineTargetBuried {
+		return true
+	}
+	return e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal
+}
+
+// buriedTargetUnresolved reports whether a buried target is active for
+// this episode and hasn't been resolved via FindVisibleBlock even once
+// yet — the window currentGoToTarget steers toward the live exploration
+// signal rather than the exact known position.
+func (e *Environment) buriedTargetUnresolved() bool {
+	return e.buriedTargetActive() && !e.mineEverSeen
+}
+
+// goToTargetActive reports whether ActionGoToTarget is currently a
+// meaningful choice: either this episode's own configured goto task
+// (Config.GoToTargetDisabled's original meaning), or — new — a buried
+// target, where walking toward currentGoToTarget's live point is the only
+// way to ever actually search for one. Before this, mine_buried/chain_mine
+// had an observation feature (unknownDx/Dy/Dz) with literally no action
+// able to act on it: mine_buried sets GoToTargetDisabled unconditionally
+// (the plain "mine" task it's modeled on assumes the target is already in
+// reach), so ActionWait was the *only* ever-legal action for the entire
+// episode (confirmed live via rsi_action_mask_total, mc-rsi-trainer,
+// 2026-10-26) — the bot sat frozen, not wandering, not mining. chain_mine
+// could move, but only ever back toward its already-reached chain
+// ChainTargetOffsets point, never toward wherever the ore search signal
+// pointed.
+func (e *Environment) goToTargetActive() bool {
+	return !e.cfg.GoToTargetDisabled || e.buriedTargetActive()
+}
+
+// currentGoToTarget returns where ActionGoToTarget currently dispatches to
+// and what the observation's dx/dy/dz (indices 0-2) and reward.go's
+// distance shaping both measure progress against — a single source of
+// truth so none of the three can silently diverge from the others. For an
+// ordinary task this is just Config.TargetOffset's fixed point
+// (targetX/Y/Z, unchanged since Reset). While buriedTargetUnresolved(),
+// it's instead the live exploration-quadrant point
+// (observationUnknownDirection's own target, re-resolved to an absolute
+// coordinate here rather than the delta form the observation uses) —
+// falling back to the search anchor itself if nothing's unexplored left
+// or the agent doesn't support BuriedTargetAgent (a stable, harmless
+// default: already there, zero shaping either way). Once the target has
+// been seen even once (mineEverSeen), switches to the exact resolved
+// position (mineKnownX/Y/Z) so the bot can be walked precisely there
+// instead of just to the right general quadrant.
+//
+// This can change from one Step to the next in ways targetX/Y/Z itself
+// never does (a different quadrant becoming nearest, or the target
+// finally resolving) — see Step's own prevGoToTargetX/Y/Z handling for why
+// that needs a re-baseline, not a direct diff.
+func (e *Environment) currentGoToTarget() (x, y, z float64) {
+	if !e.buriedTargetActive() {
+		return e.targetX, e.targetY, e.targetZ
+	}
+	if e.mineEverSeen {
+		return e.mineKnownX, e.mineKnownY, e.mineKnownZ
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ
+	}
+	dx, dy, dz, valid := e.observationUnknownDirection(pos.X, pos.Y, pos.Z)
+	if !valid {
+		return e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ
+	}
+	return pos.X + dx, pos.Y + dy, pos.Z + dz
 }
 
 func (e *Environment) observationMineTarget() (x, y, z float64, visible bool) {
@@ -718,17 +811,52 @@ func (e *Environment) refreshMineBuriedExistence(ctx context.Context) error {
 	return nil
 }
 
-// markExploredQuadrant records that this episode's bot has now physically
-// entered the horizontal quadrant (relative to mineSearchAnchorX/Z)
-// containing (x, z) — see exploredQuadrants' own doc comment. No-op
-// outside mineTargetMemoryEnabled() tasks, matching mineKnownX/Y/Z's own
-// gating: cheap enough to call unconditionally every Step/Reset, but there
-// is nothing to mark for a task that doesn't use it.
-func (e *Environment) markExploredQuadrant(x, z float64) {
-	if !e.mineTargetMemoryEnabled() {
+// markExploredQuadrant records that this episode's bot has genuinely
+// reached — within Config.ArrivalThreshold of — a horizontal quadrant's
+// own target point around mineSearchAnchorX/Y/Z (the same point
+// observationUnknownDirection itself points at), not merely crossed into
+// its half of the anchor plane. Found live (mc-rsi-trainer, 2026-10-26,
+// validating this signal end to end through the real discrete action
+// space): the earlier sign-crossing criterion let a single
+// StepTimeout-interrupted GoToTarget dispatch — digging toward a
+// quadrant's point can easily take longer than one Step's StepTimeout,
+// see this session's own MineThrough timing notes — nudge just past the
+// boundary without the bot ever getting remotely close to that point (or
+// the buried target near it), exhausting all 4 quadrants' exploration
+// value in a handful of partial, interrupted attempts instead of 4
+// genuine arrivals, with no exploration signal left for the rest of the
+// episode. No-op outside mineTargetMemoryEnabled() tasks or a
+// non-positive MineSearchRadius, matching mineKnownX/Y/Z's own gating;
+// cheap enough to call unconditionally every Step/Reset regardless (at
+// most 4 distance checks, no new raycasts).
+//
+// Single point per quadrant, still — not a recursive subdivision (a
+// quad-tree, say, requiring every sub-cell explored before the parent
+// counts): discussed and deliberately deferred, 2026-10-26. Per-block
+// movement/dig cost measured this session (3-10+ seconds even after the
+// MineThrough fix) means a policy will rarely finish walking to even
+// these 4 coarse points within any realistic step budget, let alone a
+// deeper subdivision's many more sub-targets — so the added bookkeeping
+// wouldn't pay for itself yet. Revisit only once the step-budget cap
+// itself is raised and live data then shows this single-point-per-
+// quadrant granularity is the limiting factor, not before.
+func (e *Environment) markExploredQuadrant(x, y, z float64) {
+	if !e.mineTargetMemoryEnabled() || e.cfg.MineSearchRadius <= 0 {
 		return
 	}
-	e.exploredQuadrants[quadrantIndex(x-e.mineSearchAnchorX, z-e.mineSearchAnchorZ)] = true
+	half := float64(e.cfg.MineSearchRadius) / 2
+	targetY := e.mineSearchAnchorY - half
+	for idx := 0; idx < 4; idx++ {
+		if e.exploredQuadrants[idx] {
+			continue
+		}
+		qx, qz := quadrantDirection(idx)
+		tx := e.mineSearchAnchorX + qx*half
+		tz := e.mineSearchAnchorZ + qz*half
+		if distance3(x, y, z, tx, targetY, tz) <= e.cfg.ArrivalThreshold {
+			e.exploredQuadrants[idx] = true
+		}
+	}
 }
 
 // observationUnknownDirection is the exploration-signal companion to
@@ -768,22 +896,9 @@ func (e *Environment) observationUnknownDirection(x, y, z float64) (dx, dy, dz f
 	return dx, dy, dz, valid
 }
 
-// quadrantIndex maps a horizontal position delta from the mine-search
-// anchor to one of 4 quadrants (bit0/1 = x/z >= 0) — see
-// exploredQuadrants' own doc comment.
-func quadrantIndex(dx, dz float64) int {
-	idx := 0
-	if dx >= 0 {
-		idx |= 1
-	}
-	if dz >= 0 {
-		idx |= 2
-	}
-	return idx
-}
-
-// quadrantDirection is quadrantIndex's inverse: the ±1-per-axis horizontal
-// direction for a given quadrant index.
+// quadrantDirection is the ±1-per-axis horizontal direction (bit0/1 =
+// x/z >= 0) for a given quadrant index 0-3 — see exploredQuadrants' own
+// doc comment.
 func quadrantDirection(idx int) (dx, dz float64) {
 	dx, dz = -1, -1
 	if idx&1 != 0 {
@@ -991,9 +1106,20 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// phantom "target" (the jittered reset position, 1.5-2.8 blocks away):
 	// moving toward it paid +1 per block, and reaching it paid +10 and ended
 	// the episode without the block ever being mined or the item crafted.
-	gotoActive := !e.cfg.GoToTargetDisabled
-	newDistance := distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
-	if !gotoActive {
+	gotoActive := e.goToTargetActive()
+	goalX, goalY, goalZ := e.currentGoToTarget()
+	// currentGoToTarget can change out from under this diff in a way
+	// targetX/Y/Z itself never used to (a different unexplored quadrant
+	// becoming nearest, or the buried target finally resolving) - see its
+	// own doc comment. Diffing prevDistance against a point it wasn't
+	// computed against would score that change itself as fabricated
+	// progress or penalty, not anything the bot actually did, so a moved
+	// target re-baselines instead: this step scores zero shaping, and the
+	// next one tracks real progress toward the (now stable, until it
+	// moves again) new point.
+	targetMoved := goalX != e.prevGoToTargetX || goalY != e.prevGoToTargetY || goalZ != e.prevGoToTargetZ
+	newDistance := distance3(x, y, z, goalX, goalY, goalZ)
+	if !gotoActive || targetMoved {
 		newDistance = e.prevDistance
 	}
 	reward, done := computeReward(stepOutcome{
@@ -1045,6 +1171,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		doneReason = "chain"
 	}
 	e.prevDistance = newDistance
+	e.prevGoToTargetX, e.prevGoToTargetY, e.prevGoToTargetZ = goalX, goalY, goalZ
 	e.prevHealth, e.prevHealthKnown = newHealth, newHealthKnown
 
 	// Refresh the cached mine target for the observation returned to the
@@ -1062,10 +1189,10 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
-	e.markExploredQuadrant(x, z)
+	e.markExploredQuadrant(x, y, z)
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
@@ -1507,15 +1634,35 @@ func (e *Environment) clearChainDrops(ctx context.Context) {
 
 // compositeGotoTask reports whether this episode is "go to the target, then
 // mine/craft there": the goto task active alongside a mine or craft task.
-// Reaching the target doesn't end such an episode.
+// Reaching the target doesn't end such an episode. goToTargetActive(), not
+// the raw !GoToTargetDisabled this used before buried-target exploration
+// existed: mine_buried/chain_mine's target is always configured
+// (MineTargetBlock/ChainMineTargetBlock), so this now also covers the
+// buried-search window, giving it the same "arriving doesn't end the
+// episode" treatment any other goto-then-mine task already had.
 func (e *Environment) compositeGotoTask() bool {
-	return !e.cfg.GoToTargetDisabled && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
+	return e.goToTargetActive() && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
 }
 
 // taskActionReady reports whether the mine or craft this episode's target is
 // for can be done right now: the block is visible, or the craft is ready.
+// taskActionReady reports whether the mine or craft this episode's target
+// is for can be done right now: the block is visible, or the craft is
+// ready. Once buriedTargetActive() (a buried target is this episode's
+// current task — mine_buried from the start, or chain_mine once
+// craftedGoal is true), only mine-readiness is consulted, ignoring
+// craftReady entirely — found live writing this wiring's own test:
+// chainCraftTarget() stays "ready" after the chain's goal item is crafted
+// whenever enough ingredients remain for a second one (nextChainCraft has
+// no "already done" check, only an ingredient-sufficiency one), which
+// otherwise disabled ActionGoToTarget via the rule below for a reason
+// that has nothing to do with the actual ore search.
 func (e *Environment) taskActionReady() bool {
-	return (e.cfg.MineTargetBlock != "" && e.mineVisible) || (e.cfg.CraftTargetItem != "" && e.craftReady)
+	mineReady := e.cfg.MineTargetBlock != "" && e.mineVisible
+	if e.buriedTargetActive() {
+		return mineReady
+	}
+	return mineReady || (e.cfg.CraftTargetItem != "" && e.craftReady)
 }
 
 // seedAtGoal reports whether this episode's mine block / crafting table go

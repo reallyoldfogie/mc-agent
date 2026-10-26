@@ -102,12 +102,12 @@ func TestUnknownDirectionInactiveOutsideMineTargetMemory(t *testing.T) {
 }
 
 // TestUnknownDirectionTracksExploredQuadrants confirms the signal actually
-// moves on as the bot visits new ground: once every horizontal quadrant
-// around the mine-search anchor has been physically entered, unknownValid
-// drops back to 0 rather than pointing somewhere already-explored. Only
-// X/Z matter for quadrant membership (see exploredQuadrants' own doc
-// comment on why this is downward-only, not a per-quadrant Y choice) —
-// every position below stays at the same Y to isolate that.
+// moves on as the bot visits new ground: once every horizontal quadrant's
+// own target point around the mine-search anchor has genuinely been
+// reached (within Config.ArrivalThreshold — see markExploredQuadrant's own
+// doc comment for why reaching the point is required, not merely crossing
+// into that quadrant's half of the anchor plane), unknownValid drops back
+// to 0 rather than pointing somewhere already-explored.
 func TestUnknownDirectionTracksExploredQuadrants(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setMineBlockHidden(true)
@@ -119,12 +119,14 @@ func TestUnknownDirectionTracksExploredQuadrants(t *testing.T) {
 		t.Fatalf("Reset: %v", err)
 	}
 
-	// Visit every one of the 4 horizontal quadrants around the anchor
-	// (0,0,0) in turn.
-	offsets := [][2]float64{{1, 1}, {-1, 1}, {1, -1}, {-1, -1}}
+	// Visit each of the 4 horizontal quadrants' own target points in turn
+	// — anchor (0,0,0) ± half (MineSearchRadius/2 = 2) in X/Z, Y always
+	// anchor-half (markExploredQuadrant/observationUnknownDirection's own
+	// downward bias) — not just some arbitrary point inside each quadrant.
+	offsets := [][2]float64{{2, 2}, {-2, 2}, {2, -2}, {-2, -2}}
 	var last rl.Observation
 	for _, off := range offsets {
-		agent.setPosition(off[0], 0, off[1])
+		agent.setPosition(off[0], -2, off[1])
 		result, err := env.Step(context.Background(), rlenv.ActionWait)
 		if err != nil {
 			t.Fatalf("Step: %v", err)
@@ -132,6 +134,6 @@ func TestUnknownDirectionTracksExploredQuadrants(t *testing.T) {
 		last = result.Observation
 	}
 	if valid := last.Values[24]; valid != 0 {
-		t.Fatalf("unknownValid = %v, want 0 once every quadrant has been entered", valid)
+		t.Fatalf("unknownValid = %v, want 0 once every quadrant's target point has been reached", valid)
 	}
 }
