@@ -172,6 +172,19 @@ type Environment struct {
 	// re-seeded world.
 	mineBuriedExists bool
 
+	// prevBlocksMinedCount is BlocksMinedCounter's last-read value, this
+	// episode's "before this step" baseline for digProgressBonus — Step
+	// diffs the new read against it the same way prevDistance/prevHealth
+	// cache their own "before" state. Refreshed every Step regardless of
+	// buriedTargetActive() (even during chain_mine's gather phase, where
+	// chopping logs also goes through MineBlockAt) so that phase's digging
+	// never accumulates into a single windfall delta once buriedTargetActive()
+	// turns true later in the same episode; only whether the *reward* fires
+	// is gated on that. Reset at Reset the same way, to the agent's current
+	// (whole-lifetime-monotonic) count, so a prior episode's digging is
+	// never credited to this one.
+	prevBlocksMinedCount int64
+
 	// mineTargetNameInUse is whichever block name the most recent
 	// refreshMineTarget call actually resolved against (see
 	// mineTargetBlockInUse) — tracked so a change mid-episode (a
@@ -417,6 +430,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ = x, y, z
 	e.exploredQuadrants = [4]bool{}
 	e.mineBuriedExists = false
+	e.prevBlocksMinedCount = e.currentBlocksMinedCount()
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -764,6 +778,35 @@ type BuriedTargetAgent interface {
 	BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error)
 }
 
+// BlocksMinedCounter is the optional capability Step uses to reward actual
+// digging during a buried-target search, not just movement toward it —
+// found live (mc-rsi-trainer, 2026-10-27) that distance shaping plus the
+// (now per-quadrant) arrival bonus still has nothing distinguishing a bot
+// that genuinely digs through overburden from one that paces back and
+// forth toward currentGoToTarget without ever breaking a block, risking a
+// policy that learns to "wander" for the shaping reward alone. Same "an
+// agent that doesn't implement this is left alone, not failed over"
+// convention as BuriedTargetAgent/EnchantedToolSeedAgent.
+type BlocksMinedCounter interface {
+	// BlocksMinedCount returns the number of blocks this agent has
+	// confirmed broken over its whole lifetime (monotonic, never reset) —
+	// Step diffs successive reads itself; see prevBlocksMinedCount's own
+	// doc comment.
+	BlocksMinedCount() int64
+}
+
+// currentBlocksMinedCount reads BlocksMinedCounter, or 0 if the agent
+// doesn't implement it (digProgressBonus then never fires — a stable,
+// harmless default, matching refreshMineBuriedExistence's own handling of
+// an unsupported optional capability).
+func (e *Environment) currentBlocksMinedCount() int64 {
+	counter, ok := e.agent.(BlocksMinedCounter)
+	if !ok {
+		return 0
+	}
+	return counter.BlocksMinedCount()
+}
+
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
 // Step's "before this step" read - mineVisible/refreshMineTarget's own
 // caching shape (see that field's own doc comment), but LOS-free (see
@@ -840,9 +883,14 @@ func (e *Environment) refreshMineBuriedExistence(ctx context.Context) error {
 // wouldn't pay for itself yet. Revisit only once the step-budget cap
 // itself is raised and live data then shows this single-point-per-
 // quadrant granularity is the limiting factor, not before.
-func (e *Environment) markExploredQuadrant(x, y, z float64) {
+//
+// Returns how many quadrants this call newly marked (almost always 0 or 1,
+// never negative) — Step's reward logic pays arrivalBonus per newly-marked
+// quadrant with it (see that constant's own doc comment); Reset's own call,
+// made before any reward exists to pay, simply discards it.
+func (e *Environment) markExploredQuadrant(x, y, z float64) (newlyExplored int) {
 	if !e.mineTargetMemoryEnabled() || e.cfg.MineSearchRadius <= 0 {
-		return
+		return 0
 	}
 	half := float64(e.cfg.MineSearchRadius) / 2
 	targetY := e.mineSearchAnchorY - half
@@ -855,8 +903,10 @@ func (e *Environment) markExploredQuadrant(x, y, z float64) {
 		tz := e.mineSearchAnchorZ + qz*half
 		if distance3(x, y, z, tx, targetY, tz) <= e.cfg.ArrivalThreshold {
 			e.exploredQuadrants[idx] = true
+			newlyExplored++
 		}
 	}
+	return newlyExplored
 }
 
 // observationUnknownDirection is the exploration-signal companion to
@@ -1139,8 +1189,14 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		if e.compositeGotoTask() {
 			// "Go there, then mine/craft": reaching the target pays once
 			// but doesn't end the episode - the mine or craft still has to
-			// happen.
-			if !e.arrived {
+			// happen. During a buried-target search specifically, this
+			// bonus is paid per-quadrant instead (see markExploredQuadrant's
+			// call below and arrivalBonus's own doc comment) - e.arrived is
+			// still set so actionLegal's mask-gating keeps working, but
+			// nothing is paid through this branch for that case.
+			if e.buriedTargetActive() {
+				e.arrived = true
+			} else if !e.arrived {
 				reward += arrivalBonus
 				e.arrived = true
 			}
@@ -1189,7 +1245,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
-	e.markExploredQuadrant(x, y, z)
+	if newlyExplored := e.markExploredQuadrant(x, y, z); newlyExplored > 0 {
+		reward += arrivalBonus * float32(newlyExplored)
+	}
+	// digProgressBonus: reward actual digging during a buried-target
+	// search, not just movement toward it - see that constant's own doc
+	// comment. The baseline still advances every Step regardless of
+	// buriedTargetActive() (see prevBlocksMinedCount's own doc comment),
+	// only the reward itself is gated.
+	minedCountNow := e.currentBlocksMinedCount()
+	if e.buriedTargetActive() {
+		if delta := minedCountNow - e.prevBlocksMinedCount; delta > 0 {
+			reward += digProgressBonus * float32(delta)
+		}
+	}
+	e.prevBlocksMinedCount = minedCountNow
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())

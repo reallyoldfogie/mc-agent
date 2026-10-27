@@ -64,6 +64,9 @@ func (s *MineBuriedActionSpaceFlatSuite) TestGreedyPolicyFindsTheBuriedOreThroug
 
 	liveAgent, ok := leader.Agent.(rlenv.LiveAgent)
 	require.True(t, ok, "spawned test agent must satisfy rlenv.LiveAgent")
+	minedCounter, ok := leader.Agent.(rlenv.BlocksMinedCounter)
+	require.True(t, ok, "spawned test agent must satisfy rlenv.BlocksMinedCounter")
+	startBlocksMined := minedCounter.BlocksMinedCount()
 
 	startX := int(math.Floor(leader.Origin.X))
 	startY := int(math.Floor(leader.Origin.Y))
@@ -118,4 +121,8 @@ func (s *MineBuriedActionSpaceFlatSuite) TestGreedyPolicyFindsTheBuriedOreThroug
 
 	require.True(t, found, "a greedy policy choosing only legal discrete actions should have found and mined the buried ore within %d steps", actionSpaceMaxSteps)
 	t.Log("✓ discrete action space alone (no hand-driven MoveTo) found and mined the buried ore")
+
+	endBlocksMined := minedCounter.BlocksMinedCount()
+	require.Greater(t, endBlocksMined, startBlocksMined, "BlocksMinedCount should have increased - digging through overburden plus the final ore should confirm at least one real break")
+	t.Logf("✓ BlocksMinedCount %d -> %d (%d confirmed breaks) - digProgressBonus had real signal to reward", startBlocksMined, endBlocksMined, endBlocksMined-startBlocksMined)
 }

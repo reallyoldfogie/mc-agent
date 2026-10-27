@@ -1364,7 +1364,11 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	// Instant break: hardness 0 or break time <= 1 tick
 	if breakTime <= 0.05 {
 		a.logf("[MineBlockAt] Instant break for %s", blockName)
-		return a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID)
+		if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
+			return err
+		}
+		a.blocksMinedCount.Add(1)
+		return nil
 	}
 
 	// Wait for the block to break, sending arm swings periodically
@@ -1394,6 +1398,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
 		return err
 	}
+	a.blocksMinedCount.Add(1)
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
 }

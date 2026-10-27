@@ -552,6 +552,23 @@ func (f *fakeBuriedTargetAgent) BlockExistsInRadius(_ context.Context, x, y, z f
 	return f.exists, nil
 }
 
+// fakeBlocksMinedAgent wraps fakeAgent to additionally satisfy
+// rlenv.BlocksMinedCounter — same reason as fakeBuriedTargetAgent: existing
+// tests using plain fakeAgent keep exercising the digProgressBonus "agent
+// doesn't support this capability" no-op path. count is mutable directly
+// by the test (not derived from any simulated mining action) so a test can
+// bump it to simulate confirmed block breaks between Step calls.
+type fakeBlocksMinedAgent struct {
+	*fakeAgent
+	count int64
+}
+
+func (f *fakeBlocksMinedAgent) BlocksMinedCount() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.count
+}
+
 func (f *fakeEnchantedToolAgent) SeedGiveEnchantedItem(_ context.Context, itemName string, enchantments map[string]int, count int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

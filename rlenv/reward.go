@@ -23,8 +23,26 @@ const (
 	// damagePenaltyScale converts health lost this step into reward: -1
 	// per point of health lost.
 	damagePenaltyScale float32 = 1.0
-	// arrivalBonus is added once, the step the target is reached.
+	// arrivalBonus is added once, the step the target is reached — except
+	// during a buried-target search (Environment.buriedTargetActive()),
+	// where Step pays it once per newly-explored quadrant instead (see
+	// markExploredQuadrant's return value and its call site in Step) rather
+	// than only the first-ever arrival: a bot that has already collected
+	// this bonus by reaching quadrant 1 would otherwise have no reward
+	// signal left to keep searching quadrants 2-4 once the ore isn't there.
 	arrivalBonus float32 = 10.0
+	// digProgressBonus is added per confirmed block break
+	// (BlocksMinedCounter) during a buried-target search specifically —
+	// found live (mc-rsi-trainer, 2026-10-27) that distance-shaping plus a
+	// per-quadrant arrival bonus still rewards pure wandering toward a
+	// goto point, with nothing distinguishing a bot that actually digs
+	// through overburden from one that paces back and forth just inside
+	// Config.ArrivalThreshold. Deliberately much smaller than
+	// arrivalBonus/mineRewardBonus (10.0): it's meant to outweigh a few
+	// steps' worth of timePenalty drag during a multi-second dig, not to
+	// rival the bonuses for genuinely finishing the search or the task.
+	// Tunable; revisit if live data shows it's mispriced either direction.
+	digProgressBonus float32 = 0.5
 	// mineRewardBonus is added once, the step Config.MineTargetBlock's
 	// nearest visible instance is observed to change (see
 	// Environment.Step's before/after BlockNameAt comparison) — same

@@ -394,6 +394,23 @@ type agent struct {
 	// treated as vanilla's 20 TPS. Atomic because the packet handler
 	// writes it while MineBlockAt reads it from another goroutine.
 	serverTickRateBits atomic.Uint32
+
+	// blocksMinedCount counts every block MineBlockAt has confirmed broken
+	// (awaitBlockChanged returning nil) over the agent's whole lifetime —
+	// both deliberate ActionMine dispatches and incidental
+	// overburden-clearing during pathfinding (MineThrough/MineDown/
+	// MineDownDiagonal all funnel through MineBlockAt). rlenv reads this via
+	// BlocksMinedCounter to reward dig progress per Step, not just the final
+	// target block — see that interface's own doc comment. Monotonic,
+	// never reset; callers diff successive reads themselves.
+	blocksMinedCount atomic.Int64
+}
+
+// BlocksMinedCount returns the number of blocks MineBlockAt has confirmed
+// broken since this agent was created. See blocksMinedCount's own doc
+// comment.
+func (a *agent) BlocksMinedCount() int64 {
+	return a.blocksMinedCount.Load()
 }
 
 // New constructs an agent with the provided configuration.
