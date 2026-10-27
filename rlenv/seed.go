@@ -50,6 +50,29 @@ type EnchantedToolSeedAgent interface {
 	SeedGiveEnchantedItem(ctx context.Context, itemName string, enchantments map[string]int, count int) error
 }
 
+// SeedBedAgent is the optional capability a sleep task
+// (Config.SleepSearchRadius) needs: ensuring a complete, sleepable bed
+// exists nearby, since FindNearestBed has nothing to find in a fresh/
+// cleared world otherwise. A separate interface from SeedAgent's own
+// SeedNearbyBlock, not a reuse of it: a bed is two blocks sharing a
+// "facing"/"part" blockstate pair, not a single named block a plain
+// /setblock can place complete - see agent.SeedBed's own doc comment.
+// DefaultEpisodeSeeder uses it when the SeedAgent passed in also
+// implements it; a SeedAgent that doesn't is free to leave
+// SleepSearchRadius unhonored rather than fail the episode over it, same
+// convention as ToolSeedAgent. Debris cleanup is not this interface's
+// job: a seeded bed is cleared the same way a seeded crafting table
+// already is, via Config.ClearAreaRadius/CloneAreaFrom's existing
+// generic "wipe debris near the reset origin" mechanism (see
+// AreaClearer/AreaCloner, reset.go) - no sleep-specific cleanup exists
+// or is needed.
+type SeedBedAgent interface {
+	// SeedBed ensures a bed exists within radius blocks of the bot's
+	// current position - see agent.SeedBed's doc comment for exactly
+	// how.
+	SeedBed(ctx context.Context, radius int) error
+}
+
 // EpisodeSeeder, if set on Config, is called once per Reset (after origin
 // is captured, before mine/craft state is resolved for the returned
 // observation) to prepare the world for this episode's configured task(s).
@@ -127,6 +150,13 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 	if cfg.CraftTargetItem != "" {
 		if err := agent.SeedCraftIngredients(ctx, cfg.CraftTargetItem); err != nil {
 			return fmt.Errorf("seeding craft ingredients: %w", err)
+		}
+	}
+	if cfg.SleepSearchRadius > 0 {
+		if bedSeeder, ok := agent.(SeedBedAgent); ok {
+			if err := bedSeeder.SeedBed(ctx, cfg.SleepSearchRadius); err != nil {
+				return fmt.Errorf("seeding bed: %w", err)
+			}
 		}
 	}
 	return nil

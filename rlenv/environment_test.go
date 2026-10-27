@@ -61,8 +61,11 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
 	// automatically reject an old checkpoint trained against a shorter
 	// observation.
-	if got := env.ObservationSize(); got != 25 {
-		t.Fatalf("ObservationSize() = %d, want 25", got)
+	// 25-30 are isNight/timeUntilDawn/bedDx/Dy/Dz/bedVisible, added by
+	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked) - see
+	// observation.go's own doc comment for the full layout.
+	if got := env.ObservationSize(); got != 31 {
+		t.Fatalf("ObservationSize() = %d, want 31", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -77,8 +80,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 25 {
-		t.Fatalf("len(obs.Values) = %d, want 25 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 31 {
+		t.Fatalf("len(obs.Values) = %d, want 31 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)

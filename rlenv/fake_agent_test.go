@@ -33,6 +33,20 @@ type fakeAgent struct {
 	moveToCanceled      bool          // set when a delayed MoveTo observed its context being canceled
 	moveToWithChatCalls int
 
+	// Sleep/time-of-day simulation: bedX/Y/Z/bedFound is what
+	// FindNearestBed reports; timeOfDayTicks/timeOfDayKnown is what
+	// GetTimeOfDay reports (see TimeOfDayAgent). sleepErr, if set, is
+	// what SleepInBed returns instead of succeeding - lets a test drive
+	// the "position never snapped into the bed" rejection path without
+	// a real server. sleepCalls/wakeUpCalls just count invocations.
+	bedX, bedY, bedZ float64
+	bedFound         bool
+	sleepErr         error
+	sleepCalls       int
+	wakeUpCalls      int
+	timeOfDayTicks   int64
+	timeOfDayKnown   bool
+
 	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
 	// name is mineBlockName ("" means nothing is there). FindVisibleBlock
 	// only reports it found when the queried name matches; MineBlockAt
@@ -350,6 +364,48 @@ func (f *fakeAgent) SetFlying(context.Context, bool) error { return nil }
 
 func (f *fakeAgent) StartCamFollow(context.Context, string, float64) error { return nil }
 func (f *fakeAgent) StopCamFollow() error                                  { return nil }
+
+// FindNearestBed reports the simulated bed's position, same simple
+// contract as the mine-block simulation fields above - one instance,
+// visible exactly when the test configured it to be.
+func (f *fakeAgent) FindNearestBed(context.Context, int) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.bedFound {
+		return models.V3{}, false, nil
+	}
+	return models.V3{X: f.bedX, Y: f.bedY, Z: f.bedZ}, true, nil
+}
+
+// SleepInBed records the call and returns sleepErr if the test configured
+// one (simulating the server rejecting/never confirming the attempt),
+// nil otherwise (simulating a successful sleep with no further state
+// change - this fake has no notion of "currently sleeping" to track).
+func (f *fakeAgent) SleepInBed(context.Context, models.V3) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sleepCalls++
+	return f.sleepErr
+}
+
+// WakeUp just records the call - nothing downstream of it needs
+// WakeUp's own effect simulated yet (there is no ActionWakeUp; see
+// action.go's own doc comment on why).
+func (f *fakeAgent) WakeUp(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wakeUpCalls++
+	return nil
+}
+
+// GetTimeOfDay implements rlenv.TimeOfDayAgent for tests that need direct
+// control over simulated time-of-day (the sleep legality gate, the
+// night-to-morning reward) without a real server's own clock.
+func (f *fakeAgent) GetTimeOfDay() (int64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.timeOfDayTicks, f.timeOfDayKnown
+}
 
 // FindVisibleBlock reports the simulated mine block's position only when
 // its current name matches blockName — mirrors the real implementation's

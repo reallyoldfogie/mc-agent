@@ -66,6 +66,21 @@ const (
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0
+	// sleptThroughNightBonus is added once, the step the world's time of
+	// day is observed to jump backward from within vanilla's own
+	// sleep-allowed window (Environment.sleepWindowActive at the START of
+	// the step - see refreshTimeOfDay/vanillaSleepWindowStart/End) to a
+	// smaller value - the one way that can happen other than a full
+	// natural day passing mid-step (steps are far shorter than a 24000-tick
+	// day), so it's an unambiguous "slept through the night" signal, not a
+	// guess. Avoid mob damage (goal 2 of docs/plans/SLEEP_ACTION_PLAN.md,
+	// local/untracked) needs no reward term of its own: damagePenaltyScale
+	// already penalizes health loss every step, so a policy using
+	// ActionSleep to avoid Phantom/mob damage is rewarded by that penalty
+	// simply not firing - judged from world-state deltas, not from which
+	// action ran, same philosophy as mineRewardBonus/craftRewardBonus.
+	// Same magnitude as those two: "this episode's task was accomplished."
+	sleptThroughNightBonus float32 = 10.0
 )
 
 // stepOutcome bundles what computeReward needs from a Step call: the
