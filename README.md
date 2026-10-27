@@ -13,9 +13,12 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 - **Recipe System**: Parse and export server recipes (property sets, stonecutter, slot displays)
 - **Bow Firing**: Physics-based ballistic calculation for accurate bow aiming
 - **Autonomous PvP/Combat**: Target selection, melee/ranged combat, shields, armor/equipment tracking, retreat behavior, spear support, and hazardous-target handling
+- **Multi-Agent Combat**: Team-aware targeting, match seeding/reset, and a real-player safety gate so several bots can fight each other (or a human) on one shared server - see [Multi-Agent Combat Training & Competition](#multi-agent-combat-training--competition)
+- **RL Action Space**: `rlenv` exposes most chat actions as a fixed-size action space for an RL policy, including multi-step chains and buried-block mining - see [RL Action Space](#rl-action-space-rlenv)
+- **Structure Building**: Loads vanilla Structure Block `.nbt` templates and builds them via real block placement, with a material-list "shopping list" export
 - **Packet Logging**: Comprehensive logging of all received packets for debugging and analysis
 - **Entity Tracking**: Real-time tracking of players and entities with position updates
-- **Player Following**: Intelligent pathfinding-based following with obstacle avoidance
+- **Player Following**: Intelligent pathfinding-based following (A*/EPEA*/HPA*) with obstacle avoidance
 - **Chat Commands**: Bot responds to commands via chat with `>>>ROF_bot<<<` prefix
 - **Event-Driven Architecture**: Clean separation of concerns with manager-based design
 - **Version-Specific Protocol Handling**: Modular per-version handlers for protocol differences
@@ -70,37 +73,139 @@ go build -o mc-agent ./cmd/mc-agent
 
 ## Chat Commands
 
-The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>ROF_bot<<<`). Examples:
+The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>ROF_bot<<<`). This is
+the full, current set — every action registered in `actions/registry.go`'s `RegisterDefaults` (the
+source of truth; see [Adding a New Action](#adding-a-new-action) below for keeping this list in
+sync). Two internal-only variants (`movetoquiet`, `movetoandsneakquiet`) exist purely for `rlenv`'s
+own dispatch and are omitted here — see [RL Action Space](#rl-action-space-rlenv).
+
+### Movement & pathfinding
 
 | Command | Description |
 |---------|-------------|
 | `help` | Show available commands |
 | `pos` | Print current position |
 | `say <text>` | Echo text back to chat |
-| `follow <player>` | Start following a player by name (requires path data) |
+| `testMove` | Test movement (+1 block on X) |
+| `moveTo <x> <y> <z>` | Pathfind to coordinates |
+| `lineTo <x> <y> <z>` | Straight-line movement (flat worlds only) |
+| `moveForward <distance>` | Move forward by distance |
+| `moveUp <distance>` | Move up by distance |
+| `moveUpAndSneak <distance>` | Move up and enable sneaking |
+| `moveToAndSneak <x> <y> <z>` | Pathfind and sneak at destination |
+| `lineToAndSneak <x> <y> <z>` | Straight-line move and sneak at destination |
+| `stopSneak` | Stop sneaking |
+| `findPath <x> <y> <z>` | Calculate a path without moving |
+| `testPath` | Test the pathfinding system |
+| `follow [<player>]` | Follow a player by name (nearest player if omitted) |
 | `stopFollow` | Stop following |
 | `followStatus` | Show follow status |
-| `startTracking` | Track nearest player with periodic updates |
+| `startTracking` | Continuously look at the nearest player |
 | `stopTracking` | Stop tracking |
-| `fireBow` | Fire equipped bow (basic) |
-| `fireBowAt <x> <y> <z>` | Fire bow at target coordinates with ballistic calculation |
+
+### Combat
+
+| Command | Description |
+|---------|-------------|
+| `fireBow` | Fire equipped bow in current direction (basic) |
+| `fireBowAt <x> <y> <z> \| fireBowAt nearest \| fireBowAt <player>` | Aim and fire a bow with ballistic calculation at coordinates, the nearest target, or a named player |
 | `attackEntity <entityID> [sneaking]` | Perform a validated direct melee attack |
 | `shield <raise\|lower>` | Raise or lower the equipped shield |
 | `fireCrossbowAt <entityID>` | Fire a crossbow at a tracked entity |
 | `throwTridentAt <entityID>` | Throw a trident at a tracked entity |
 | `spearJab <entityID> <itemName>` | Perform a spear Jab |
-| `spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]` | Perform a spear Charge |
+| `spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]` | Perform a spear Charge (caller already in range) |
+| `spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment]` | Like `spearCharge`, but closes distance into range first |
 | `maceAttack <entityID> <itemName>` | Perform a normal Mace attack |
-| `maceSmash <entityID> <itemName>` | Wait for the falling-attack window and perform a Mace smash |
-| `runCombat [radius] [includeNeutral]` | Run autonomous combat, including melee, ranged weapons, shields, and spear support |
-| `runCombatWithPolicy <radius> [includePlayers] [includeNeutral]` | Run autonomous combat with explicit target-category policy |
-| `killCreeperForGunpowder` | Fight a creeper, maintain a safe distance, and collect gunpowder when it drops (caller must equip a melee weapon first) |
+| `maceSmash <entityID> <itemName>` | Wait for the falling-attack window and perform a Mace smash (caller already in range) |
+| `maceSmashWithApproach <entityID> <itemName>` | Like `maceSmash`, but closes distance into range first |
+| `runCombat [radius] [includeNeutral]` | Run autonomous combat - melee, ranged weapons, shields, spear support |
+| `runCombatWithPolicy <radius> [includePlayers] [includeNeutral]` | Run autonomous combat with explicit target-category policy (PvP opt-in via `includePlayers`) |
+| `killCreeperForGunpowder` | Fight a creeper, keep a safe distance, collect gunpowder when it drops (caller must equip a melee weapon first) |
+
+### Vehicles & flight
+
+| Command | Description |
+|---------|-------------|
+| `mount <entityID \| entityType>` | Mount a nearby vehicle/mob by entity ID or type |
+| `dismount` | Dismount the current vehicle |
+| `vehicleJump [power]` | Jump while mounted (e.g. horse) |
+| `flyTo <x> <y> <z>` | Elytra flight to coordinates (takeoff, cruise, land) |
+| `fly` / `land` | Toggle creative/spectator-style flying (distinct from `flyTo`'s elytra glide) |
+
+### World interaction, inventory & crafting
+
+| Command | Description |
+|---------|-------------|
+| `mine <x> <y> <z> \| mine <blockName> [radius]` | Mine a block at exact coordinates, or the nearest visible block matching a name |
+| `lookAround [radius]` | List every visible entity/item within radius blocks (default 16) and their positions |
+| `pickUpNearbyItem [maxDistance]` | Walk to the nearest visible dropped item within maxDistance blocks (default 8); vanilla auto-collects on arrival |
+| `pickUpItem <x> <y> <z> \| pickUpItem <itemName> [maxDistance]` | Walk to and collect a *specific* item, by position or by matching contents |
+| `craft <itemName>` | Craft an item, using the player's 2x2 grid or a nearby crafting table's 3x3 grid as the recipe requires |
+| `place <itemName>` | Place a block from inventory on a standable cell beside the bot |
+| `buildStructure <path> <x> <y> <z>` | Load a vanilla Structure Block `.nbt` template and build it via real block placement, origin at `<x> <y> <z>` (see [docs/STRUCTURE_LOADER.md](docs/STRUCTURE_LOADER.md)) |
+| `materialList <structurePath> [exportPath]` | Report (and, with `exportPath`, persist to JSON) the materials a structure needs |
+| `equip <item>` | Find an item in inventory and wear/wield it |
+| `useItem [offhand]` | Use/right-click the currently held item |
+
+### Camera & planning
+
+| Command | Description |
+|---------|-------------|
+| `followCam <playerName> [maxDistance]` | Spectator-mode camera auto-follow via RCON |
+| `stopFollowCam` | Stop camera auto-follow |
+| `planStatus` | Show multi-step plan execution status |
+| `planStop` | Stop the current plan |
 
 Example:
 ```
 >>>ROF_bot<<< follow Steve
 >>>ROF_bot<<< pos
 ```
+
+## RL Action Space (`rlenv`)
+
+`rlenv` wraps most of the chat actions above into a fixed-size action space an RL policy can drive
+directly, picking a task per episode (go to a point, mine/craft/place/pickup, multi-step chains like
+"gather logs → craft planks and a table → place it → craft a goal item," combat, mob riding, elytra
+flight, and player-following) rather than always practicing the same skill. Two commands above exist
+*only* for this - `movetoquiet`/`movetoandsneakquiet` - identical to `moveto`/`movetoandsneak` but
+without the chat announcements, which would otherwise spam (and risk a kick for) every step of a live
+rollout.
+
+Combat's RL wiring reuses `runCombatWithPolicy`'s own target-category policy, including the opt-in
+PvP/team-aware targeting (`Config.CombatIncludePlayers`/`CombatIncludeNeutral`) multi-agent training
+and tournament competition (see the next section) build on directly - no separate RL-only combat
+code path.
+
+Not every chat command above is wired into `rlenv` - most don't need to be (see
+[Adding a New Action](#adding-a-new-action)'s step 4). The policy-facing task list, action encoding,
+and curriculum design live in `rlenv/` and the sibling `mc-rsi-trainer` repo's `pkg/curriculum`; see
+[docs/ADDING_NEW_ACTION.md](docs/ADDING_NEW_ACTION.md) for what wiring a new action into `rlenv`
+actually involves.
+
+## Multi-Agent Combat Training & Competition
+
+Beyond single-bot PvE/PvP combat (above), the agent supports **multiple bots fighting each other**
+on one shared server - the primitives `mc-rsi-trainer`'s `pkg/pvp` (self-play training) and
+`pkg/tournament` (frozen-checkpoint tournaments) build on:
+
+- **Team-aware targeting**: `RankCombatTargetsWithPolicy` excludes same-team entities from
+  `Config.CombatIncludePlayers`'s target pool, so two teammates sharing an arena don't rank each
+  other as a hostile target.
+- **`SeedMatchTeam`**: assigns a vanilla scoreboard team to a participant via RCON.
+- **`SeedMatchReset`**: resets a participant's health/weapon/position between matches/episodes.
+- **`VerifyPlayerNearPosition`**: the safety gate every seeding helper above calls first - refuses
+  to touch anyone outside a configured radius, so an unmanaged (real player) participant sharing the
+  arena is never affected by another match's own reset.
+- **Inventory snapshot save/restore**: captures a real player's exact inventory (including
+  enchanted/named items) before handing them a fixed combat loadout, and restores it afterward.
+
+These are mc-agent-side primitives only; the actual training loop, match barrier, bracket
+orchestrator, and live dashboard live in `mc-rsi-trainer`'s `pkg/pvp`/`pkg/tournament`/`pkg/liveview`
+and its `cmd/rsi-pvp-train`/`cmd/rsi-pvp-compete` entrypoints - see that repo's README and
+[`docs/examples/README.md`](https://github.com/reallyoldfogie/mc-rsi-trainer/blob/main/docs/examples/README.md)
+for a worked sample config.
 
 ## Architecture
 
@@ -117,30 +222,41 @@ The bot uses an event-driven architecture with specialized managers:
 
 ```
 mc-agent/
-├── cmd/mc-agent/main.go   # Thin CLI bootstrap
+├── cmd/                   # Entry points: cmd/agent (recommended), cmd/legacy, cmd/skin-demo, ...
 ├── agent/                 # Reusable agent package (lifecycle, handlers, tracking)
 ├── go.mod                 # Go module definition
 │
-├── actions/               # Action registry and command execution
+├── actions/               # Chat-command action registry and execution
+├── rlenv/                 # RL action space: task selection, action encoding, chain/composite tasks
 ├── items/                 # Item management, inventory operations, container helpers
 ├── models/                # Interfaces, types, and domain models
 ├── pathfinding/           # A*, EPEA*, and HPA* pathfinding implementations
 ├── physics/               # Physics engine (movement, projectiles, collision)
 ├── movement/              # Movement execution and physics-based movement
 ├── following/             # Player following system
-├── versions/              # Version-specific protocol handlers
+├── combat/                # Combat primitives (targeting, weapons, team-aware PvP)
+├── structure/             # Structure Block .nbt loading/building, material lists
+├── handler_versions/      # Version-specific protocol handlers
 │   ├── common/            # Shared interfaces for all versions
-│   └── v1_21_*/           # Per-version implementations (1.21.1-1.21.8)
+│   └── v1_21_*/, v26_1/   # Per-version implementations
+├── config/, configs/      # Settings types and loading
+├── courier/               # Cross-server item transfer
 ├── scripts/               # Automation scripts (add_version.sh, verify_versions.sh)
 ├── testing/               # Integration testing framework (Docker-based)
 │
 ├── bot/                   # Bot extensions and wrappers
 │   └── world/             # World state tracking
 │
+├── world/                 # World state (blocks, entities, light/biome/border)
 ├── utils/                 # Utility functions
+├── internal/              # Internal-only helpers
 ├── data/                  # Static data files
-└── logs/                  # Packet logs (auto-rotated)
+└── logs/                  # Packet logs (auto-rotated, gitignored)
 ```
+
+(`code-archive/` - legacy implementations kept for local reference - and `docs/plans/`/`docs/archive/`
+- working design notes and session history - are gitignored: present on a machine that's been
+developing this project, not in a fresh clone.)
 
 ### Version-Specific Protocol Handlers
 
@@ -218,7 +334,13 @@ See [docs/SKINS.md](docs/SKINS.md) for detailed documentation.
 
 ### Combat testing status
 
-Combat has deterministic unit coverage plus multi-version Docker integration coverage for melee, shields, ranged weapons, armor/equipment tracking, target death/respawn, multiple targets, hazardous creepers, and the reusable creeper loot action. The current integration matrix covers the supported versions listed by `models.StandardVersionTests`; the PvP/combat implementation plan in `docs/plans/PVP_COMBAT_IMPLEMENTATION_PLAN.md` records remaining audit and merge-readiness work.
+Combat has deterministic unit coverage plus multi-version Docker integration coverage for melee, shields, ranged weapons, armor/equipment tracking, target death/respawn, multiple targets, hazardous creepers, and the reusable creeper loot action. The current integration matrix covers the supported versions listed by `models.StandardVersionTests`.
+
+Multi-agent bot-vs-bot PvP (team-aware targeting, match seeding/reset, the real-player safety gate,
+inventory snapshot save/restore - see [Multi-Agent Combat Training & Competition](#multi-agent-combat-training--competition)
+above) is also live-verified: unit coverage for each primitive, plus live tests confirming the
+proximity guard actually refuses an out-of-range player and a save -> fixed-loadout -> restore round
+trip reproduces a real inventory exactly, including an enchanted/named item.
 
 **Try the demo:**
 ```bash
@@ -381,22 +503,24 @@ the interface fan-out that step 1 triggers and what "wire it into `rlenv`" actua
 
 ### Documentation
 
-- **[CLAUDE.md](CLAUDE.md)** - Comprehensive codebase guide for Claude Code
+- **CLAUDE.md** - Comprehensive codebase guide for Claude Code (gitignored - present when
+  developing locally with Claude Code, not in a fresh clone)
 - **[docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md)** - Guide for adding new Minecraft version support
 - **[docs/ADDING_NEW_ACTION.md](docs/ADDING_NEW_ACTION.md)** - Checklist for adding a new chat command/action, including RL (`rlenv`) wiring
 - **[docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md)** - Bow firing commands and ballistics documentation
 - **[docs/HPA_USAGE_EXAMPLE.md](docs/HPA_USAGE_EXAMPLE.md)** - HPA* pathfinding usage guide
 - **[docs/CONTAINER_INTERACTION_GUIDE.md](docs/CONTAINER_INTERACTION_GUIDE.md)** - Container/inventory interaction guide
+- **[docs/STRUCTURE_LOADER.md](docs/STRUCTURE_LOADER.md)** - Structure Block `.nbt` loading/building and material-list export
 - **[scripts/README.md](scripts/README.md)** - Version automation scripts documentation
 - **[testing/README.md](testing/README.md)** - Integration testing framework documentation
 
 ## Legacy Code
 
-The repository includes legacy implementations in:
-- `old/` - Original implementation with activity system
-- `src/` - Intermediate version
-
-These are kept for reference when porting features to the current implementation.
+Legacy implementations are kept locally for reference when porting features, under `code-archive/`
+(gitignored - not present in a fresh clone):
+- `code-archive/old/` - Original implementation with activity system
+- `code-archive/src/` - Intermediate version
+- `code-archive/phys/` - Physics experiment archive
 
 ## License
 
