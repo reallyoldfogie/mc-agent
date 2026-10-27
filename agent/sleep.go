@@ -167,17 +167,34 @@ const (
 	sleepConfirmTimeout = 10 * time.Second
 	sleepConfirmPoll    = 100 * time.Millisecond
 
-	// sleepSnapDistance is how close the agent's own tracked position
-	// must land to bedPos to count as "the server actually put me in
-	// the bed." EntityPose metadata (which would otherwise confirm a
-	// sleep attempt directly) is never echoed back to the sleeping
-	// entity's own connection - standard Minecraft behavior, not
+	// sleepSnapHorizontalDistance bounds how far the agent's tracked X/Z
+	// may sit from bedPos's own column to count as "the server actually
+	// put me in the bed." EntityPose metadata (which would otherwise
+	// confirm a sleep attempt directly) is never echoed back to the
+	// sleeping entity's own connection - standard Minecraft behavior, not
 	// something this codebase can control - so a position snap is the
 	// most direct signal available (see docs/plans/SLEEP_ACTION_PLAN.md's
-	// own "Open question" section). 1.5 blocks covers a bed's own
-	// two-block footprint without being so generous it would also match
-	// ordinary foot-of-bed movement that was never a real sleep attempt.
-	sleepSnapDistance = 1.5
+	// own "Open question" section).
+	//
+	// Horizontally this is a weak discriminator on its own: a live run
+	// (testing/sleep_action_test.go, 2026-10-27) showed
+	// TryInteractPositions' own approach cell landing only ~0.68 blocks
+	// (XZ) from the bed's column even while merely standing beside it,
+	// comfortably inside any reasonable horizontal snap radius - keeping
+	// this check mainly rules out confirming against the wrong bed
+	// entirely, not standing-vs-sleeping.
+	sleepSnapHorizontalDistance = 1.0
+
+	// sleepSnapMaxYAboveBed is the real discriminator, found from that
+	// same live run: standing on the floor beside a bed sitting at
+	// bedPos.Y consistently reads pos.Y == bedPos.Y+1.0 (the floor cell
+	// one block above the bed), while vanilla's own lying-down position
+	// sets Y close to the bed block's own level (roughly bedPos.Y+0.5-0.7,
+	// per public client-side sleep-pose documentation) - a clear gap
+	// below the floor-standing value. 0.85 sits strictly between the two,
+	// closer to the standing value so it still fails fast instead of
+	// risking a confirm on partial/glitchy Y data.
+	sleepSnapMaxYAboveBed = 0.85
 )
 
 // SleepInBed walks to a reachable position beside bedPos (the same
@@ -209,7 +226,10 @@ func (a *agent) SleepInBed(ctx context.Context, bedPos models.V3) error {
 }
 
 // awaitSleepConfirmed polls the agent's own tracked position until it
-// snaps within sleepSnapDistance of bedPos, or sleepConfirmTimeout passes.
+// snaps within sleepSnapHorizontalDistance (XZ) and sleepSnapMaxYAboveBed
+// (Y) of bedPos, or sleepConfirmTimeout passes. The Y gate is what
+// actually discriminates "lying in the bed" from "merely standing beside
+// it" - see sleepSnapMaxYAboveBed's own doc comment.
 func (a *agent) awaitSleepConfirmed(ctx context.Context, bedPos models.V3) error {
 	deadline := time.Now().Add(sleepConfirmTimeout)
 	bedCenterX, bedCenterZ := bedPos.X+0.5, bedPos.Z+0.5
@@ -217,7 +237,7 @@ func (a *agent) awaitSleepConfirmed(ctx context.Context, bedPos models.V3) error
 		pos, _, _, ok := a.GetPosition()
 		if ok {
 			dx, dy, dz := pos.X-bedCenterX, pos.Y-bedPos.Y, pos.Z-bedCenterZ
-			if dx*dx+dy*dy+dz*dz <= sleepSnapDistance*sleepSnapDistance {
+			if dx*dx+dz*dz <= sleepSnapHorizontalDistance*sleepSnapHorizontalDistance && dy <= sleepSnapMaxYAboveBed {
 				return nil
 			}
 		}
