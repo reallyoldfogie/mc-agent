@@ -12,7 +12,8 @@ adding one, including the extra steps needed for it to also be usable by the RL 
 2. Write the `Action` type in `actions/commands.go`.
 3. Register it in `actions/registry.go`'s `RegisterDefaults`.
 4. Add it to `helpText` in `actions/commands.go`.
-5. Add it to CLAUDE.md's command list.
+5. Add it to CLAUDE.md's command list **and** README.md's Chat Commands table (CLAUDE.md is
+   gitignored - README is the only copy of this list anyone cloning the repo actually sees).
 6. *(Optional)* Wire it into `rlenv` if the RL policy should be able to use it.
 7. Build, vet, test, gofmt.
 
@@ -93,11 +94,19 @@ reg.Register(YourAction{})
 `actions/commands.go`'s `helpText` constant is what the in-chat `help` command prints. Add your
 command to it in the same `name <args> - description` style as its neighbors.
 
-## 5. Update CLAUDE.md
+## 5. Update CLAUDE.md and README.md
 
-CLAUDE.md's "Command System" section lists every command for whoever (human or Claude) is
-working in this repo next. Add a line there too — it's a second, separately-maintained list from
-`helpText`, so both need updating by hand.
+CLAUDE.md's "Command System" section lists every command for whoever (human or Claude) is working
+in this repo next — but CLAUDE.md is gitignored (see `.gitignore`), so it's never visible to anyone
+who clones the repo instead of developing on a machine that already has it. **README.md's own
+"Chat Commands" section (grouped into category sub-tables: Movement & pathfinding / Combat /
+Vehicles & flight / World interaction, inventory & crafting / Camera & planning) is the only copy
+of this list anyone else actually sees — update it too, not just CLAUDE.md.** Both are
+separately-maintained from `helpText` and from each other, so all three need updating by hand.
+If the new action is also wired into `rlenv` (step 6), it belongs in README's "RL Action Space
+(`rlenv`)" section as well — including if it needs an internal-only "quiet" chat-command variant
+purely for `rlenv`'s own dispatch (see that section's existing `movetoquiet`/`movetoandsneakquiet`
+precedent), which should stay out of the main command table the same way those two do.
 
 ## 6. (Optional) Wire it into `rlenv` for RL usability
 
@@ -143,8 +152,10 @@ recorded here as concrete options if the friction becomes worth fixing:
 - **Have CLAUDE.md and the README's command table point at generated output instead of a second
   hand-copied list.** Once `help`'s output is generated (above), CLAUDE.md/README could say "see
   the `help` command's output" instead of maintaining a third copy of the same list that goes
-  stale on its own schedule (this document found CLAUDE.md's list already missing several
-  merged commands, and using the name of an interface — `Command` — that doesn't exist).
+  stale on its own schedule. (This document found CLAUDE.md's list already missing several merged
+  commands, and using the name of an interface — `Command` — that doesn't exist; README's own
+  table had drifted much further - 18 of 54 commands - and was brought back in sync on 2026-10-27.
+  Both are still two hand-maintained lists today; this idea would still be worth doing.)
 - **The step-1 interface fan-out is inherent to Go, not really a process bug.** A codegen step
   that scaffolds a blank stub for every implementer when `CommandAgent` gains a method is
   possible but is a fair amount of machinery for what's already a same-day compiler error naming
