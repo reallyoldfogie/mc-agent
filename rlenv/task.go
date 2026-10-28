@@ -97,6 +97,23 @@ type Config struct {
 	// effect on MineRequiredTool's own seeding, which still runs.
 	MineTargetBuried bool
 
+	// SleepSearchRadius, if > 0, enables ActionSleep: FindNearestBed
+	// searches this many blocks for a bed to sleep in. Unlike
+	// MineTargetBlock/CraftTargetItem, there is no companion "target
+	// name" field — a bed isn't identified by name (it comes in 16
+	// colors, see models.BlockShapeManager.IsBed), so SleepSearchRadius
+	// alone both enables the capability and bounds the search, following
+	// MineSearchRadius's own shape. <= 0 (the default) means this
+	// Environment instance doesn't pose a sleep task: ActionSleep becomes
+	// a safe no-op, the same way ActionMine/ActionCraft do when
+	// unconfigured — see action.go's resolveDispatch/actionLegal. Because
+	// ActionSleep is structurally always available (unlike ActionMine/
+	// ActionCraft, which additionally need a non-empty target field),
+	// this single field is what makes the whole feature inert everywhere
+	// until something explicitly turns it on — see
+	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
+	SleepSearchRadius int
+
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's crafting task targets — enables ActionCraft, following
 	// MineTargetBlock's exact "environment poses the task" pattern
@@ -407,6 +424,7 @@ type TaskOverride struct {
 	MineRequiredTool             string
 	MineRequiredToolEnchantments map[string]int
 	MineTargetBuried             bool
+	SleepSearchRadius            int
 	CraftTargetItem              string
 	CraftSearchRadius            int
 }

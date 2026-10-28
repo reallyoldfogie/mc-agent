@@ -74,8 +74,25 @@ const (
 	// the original four so their numbers never change.
 	ActionPlace
 
+	// ActionSleep dispatches "sleep <x> <y> <z>" at Environment's own
+	// already-resolved e.sleepX/Y/Z (see refreshSleepTarget) - the same
+	// "dispatch Environment's own already-resolved coordinates, don't
+	// let the dispatched action re-search independently" reasoning as
+	// ActionMine's own doc comment. Structurally always available (like
+	// ActionWait), not gated behind a target-name Config field the way
+	// ActionMine/ActionCraft are: this is what makes it usable as a
+	// general-purpose defensive option during any other active task, not
+	// just a dedicated sleep episode. There is deliberately no separate
+	// ActionWakeUp: the environment auto-wakes once morning arrives (or
+	// after a fixed tick budget), same reasoning as ActionReturnHome's
+	// own removal above - "sleep, then remember to wake up" is a
+	// two-step sequence with no reward benefit over the environment just
+	// doing the second step automatically. See
+	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
+	ActionSleep
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionPlace) + 1
+	NumActions = int(ActionSleep) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -94,6 +111,7 @@ const (
 	mineActionName   = "mine"
 	craftActionName  = "craft"
 	placeActionName  = "place"
+	sleepActionName  = "sleep"
 )
 
 // actionDispatch describes what Step should send through the
@@ -155,6 +173,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+	case ActionSleep:
+		if !e.actionLegal(ActionSleep) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: sleepActionName, args: coordArgs(e.sleepX, e.sleepY, e.sleepZ)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -197,6 +220,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.CraftTargetItem != "" && e.craftReady
 	case ActionPlace:
 		return e.cfg.ChainStage > 0 && chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+	case ActionSleep:
+		return e.cfg.SleepSearchRadius > 0 && e.sleepVisible && e.sleepWindowActive
 	default:
 		return false
 	}

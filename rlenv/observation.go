@@ -86,6 +86,36 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          why this is a coarse, downward-biased 4-quadrant signal
 //	          rather than a true per-cell visibility grid.
 //
+//	index 25: isNight — 1.0 if the world's current time of day falls
+//	          within vanilla's own sleep-allowed window
+//	          (Environment.sleepWindowActive — see refreshTimeOfDay),
+//	          0.0 otherwise (including "not yet known," same convention
+//	          as healthKnown: an unknown time of day must not read as
+//	          "definitely not night"). Deliberately the exact same signal
+//	          ActionSleep's own legality gate uses (action.go), not a
+//	          separately-computed "looks dark" approximation - a policy's
+//	          own perception of "is this a reasonable moment to try
+//	          sleeping" must never disagree with whether sleeping is
+//	          actually legal this step.
+//	index 26: timeUntilDawn — ticks remaining until the world clock wraps
+//	          to day (tick 0), 0 if time of day isn't known yet. Lets a
+//	          policy anticipate the window closing rather than only
+//	          reacting to isNight's own step-boundary flip.
+//	index 27: bedDx — nearest visible bed's X minus current X (blocks);
+//	          0 if not visible/not configured (Config.SleepSearchRadius
+//	          <= 0) - mirrors mineDx's exact shape.
+//	index 28: bedDy — same, Y.
+//	index 29: bedDz — same, Z.
+//	index 30: bedVisible — 1.0 if Config.SleepSearchRadius > 0 and a
+//	          visible bed was found this step (Environment.sleepVisible,
+//	          see refreshSleepTarget), 0.0 otherwise. Gates bedDx/Dy/Dz
+//	          the same way mineVisible gates mineDx/Dy/Dz.
+//
+// indices 25-30 are new relative to the 25-length observation every
+// currently-checkpointed policy was trained against (see
+// docs/plans/SLEEP_ACTION_PLAN.md, local/untracked) - no exception from
+// this length's own breaking-change rule below.
+//
 // indices 17-20 are the multi-step chain block (Config.ChainStage,
 // docs/plans/12 in mc-rsi-trainer): all zero outside chain episodes, so
 // every other task's observation differs from before only by four trailing
@@ -139,7 +169,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // 21-24 (unknownDx/Dy/Dz/unknownValid) are new relative to the 21-length
 // observation every currently-checkpointed policy was trained against —
 // no exception from this length's own rule.
-const observationSize = 25
+const observationSize = 31
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -161,7 +191,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -177,6 +207,15 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	ready := float32(0)
 	if craftReady {
 		ready = 1
+	}
+	isNightFlag := boolToFloat32(isNight)
+	timeUntilDawn := float32(0)
+	if timeOfDayKnown {
+		timeUntilDawn = float32(ticksPerDay - timeUntilDawnIn)
+	}
+	bedDx, bedDy, bedDz, bedVis := float32(0), float32(0), float32(0), float32(0)
+	if bedVisible {
+		bedDx, bedDy, bedDz, bedVis = float32(bedX-x), float32(bedY-y), float32(bedZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -206,6 +245,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				unknownDy / obsDistanceScale,
 				unknownDz / obsDistanceScale,
 				unknownValid,
+				isNightFlag,
+				timeUntilDawn / float32(ticksPerDay),
+				bedDx / obsDistanceScale,
+				bedDy / obsDistanceScale,
+				bedDz / obsDistanceScale,
+				bedVis,
 			},
 		}
 	}
@@ -236,6 +281,12 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			unknownDy,
 			unknownDz,
 			unknownValid,
+			isNightFlag,
+			timeUntilDawn,
+			bedDx,
+			bedDy,
+			bedDz,
+			bedVis,
 		},
 	}
 }

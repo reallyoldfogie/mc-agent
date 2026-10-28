@@ -249,6 +249,18 @@ type agent struct {
 	// itself to the right entity instead of being dropped.
 	pendingEntityContainerID int32
 
+	// sleepStatusMu guards sleepStatusEvents.
+	sleepStatusMu sync.Mutex
+	// sleepStatusEvents records each recognized vanilla sleep-status or
+	// bed-rejection system/action-bar message (see sleepSuccessMessageKeys/
+	// sleepRejectionMessageKeys, agent/sleep.go) as it arrives, each with
+	// its receipt time - awaitSleepConfirmed polls this instead of
+	// position, which vanilla never updates on a successful bed-entry (see
+	// that function's own doc comment and docs/plans/SLEEP_ACTION_PLAN.md).
+	// Bounded to a handful of entries (sleepStatusEventsCap); nothing needs
+	// more than that.
+	sleepStatusEvents []sleepStatusEvent
+
 	// e.g., player, playerList, world, movement, pathfinding, registries, etc.
 	// registries
 	regMu      sync.RWMutex

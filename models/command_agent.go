@@ -189,4 +189,33 @@ type CommandAgent interface {
 	// assumption the plain place <itemName> command already makes, not a
 	// new gap this introduces.
 	BuildStructure(ctx context.Context, path string, origin V3) (BuildStructureResult, error)
+
+	// FindNearestBed searches for the nearest bed block (any of the 16
+	// colors) within radius blocks that the agent has a clear line of
+	// sight to - the color-agnostic sibling of FindVisibleBlock, keyed on
+	// BlockShapeManager.IsBed instead of an exact block name, since no
+	// single name covers every bed color. found is false if none was
+	// located within radius.
+	FindNearestBed(ctx context.Context, radius int) (pos V3, found bool, err error)
+
+	// SleepInBed walks to a reachable position beside bedPos (same
+	// approach pattern PlaceBlockAt/MineBlockAt use) and right-clicks it,
+	// then confirms the attempt actually took effect by waiting for the
+	// agent's own tracked position to snap into the bed - the server
+	// moves a sleeping player's position there, and EntityPose metadata
+	// (which would otherwise confirm this) is never echoed back to the
+	// sleeping entity's own connection. Returns an error if no reachable
+	// standing position exists, or if the position never snaps within
+	// the confirmation deadline (most likely cause: it isn't night, or
+	// the bed is already occupied/obstructed - vanilla rejects the
+	// attempt rather than queuing it).
+	SleepInBed(ctx context.Context, bedPos V3) error
+
+	// WakeUp leaves the bed the agent is currently sleeping in (a no-op,
+	// not an error, if not currently sleeping - vanilla itself ignores
+	// the leave-bed action in that case). Unlike SleepInBed, this is a
+	// single fire-and-forget packet with no further confirmation -
+	// mirrors StartSneaking/StopSneaking's own one-shot EntityAction
+	// dispatch, just via the leave-bed action ID instead of sneak's.
+	WakeUp(ctx context.Context) error
 }

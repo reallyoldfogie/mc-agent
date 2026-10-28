@@ -95,6 +95,8 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `runCombat [radius] [includeNeutral]` | Run autonomous combat, including melee, ranged weapons, shields, and spear support |
 | `runCombatWithPolicy <radius> [includePlayers] [includeNeutral]` | Run autonomous combat with explicit target-category policy |
 | `killCreeperForGunpowder` | Fight a creeper, maintain a safe distance, and collect gunpowder when it drops (caller must equip a melee weapon first) |
+| `sleep [<x> <y> <z>]` | Sleep in the nearest visible bed, or one at exact coordinates |
+| `wakeUp` | Leave the bed the agent is currently sleeping in |
 
 Example:
 ```

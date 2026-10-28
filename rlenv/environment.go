@@ -39,9 +39,9 @@ type Environment struct {
 	// diffed through computeReward directly.
 	prevGoToTargetX, prevGoToTargetY, prevGoToTargetZ float64
 
-	prevHealth float32
-	prevHealthKnown           bool
-	episodeStarted            bool
+	prevHealth      float32
+	prevHealthKnown bool
+	episodeStarted  bool
 	// lastDoneReason explains the most recent Step that returned Done=true.
 	// It is intentionally separate from rl.StepResult, whose public shape is
 	// only observation/reward/done. Callers such as the trainer can use this
@@ -95,6 +95,24 @@ type Environment struct {
 	// re-resolved multiple times within one call.
 	mineX, mineY, mineZ float64
 	mineVisible         bool
+
+	// sleepX/Y/Z/sleepVisible cache the last-resolved nearest visible bed
+	// (see refreshSleepTarget), mirroring mineX/Y/Z/mineVisible exactly -
+	// no "ever seen" memory tracking, unlike mine, since sleep has no
+	// buried/memory-map concept to need one.
+	sleepX, sleepY, sleepZ float64
+	sleepVisible           bool
+
+	// timeOfDayTicks/timeOfDayKnown and sleepWindowActive cache the
+	// world's current time of day and whether it currently falls inside
+	// vanilla's own sleep-allowed window (see refreshSleepTarget) -
+	// isNight/timeUntilDawn's own observation features (observation.go)
+	// and ActionSleep's legality gate (action.go) both read this exact
+	// same cached value, so a policy's own "is it night" perception can
+	// never disagree with whether sleeping is actually legal this step.
+	timeOfDayTicks    int64
+	timeOfDayKnown    bool
+	sleepWindowActive bool
 
 	// mineKnownX/Y/Z/mineEverSeen are the minimum-viable "memory map"
 	// (docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer):
@@ -448,6 +466,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineRequiredTool = override.MineRequiredTool
 		e.cfg.MineRequiredToolEnchantments = override.MineRequiredToolEnchantments
 		e.cfg.MineTargetBuried = override.MineTargetBuried
+		e.cfg.SleepSearchRadius = override.SleepSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
@@ -585,6 +604,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshSleepTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	if err := e.refreshMineBuriedExistence(ctx); err != nil {
 		return rl.Observation{}, err
 	}
@@ -594,7 +616,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.markExploredQuadrant(x, y, z)
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible)
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -776,6 +798,23 @@ type BuriedTargetAgent interface {
 	// line-of-sight requirement (unlike FindVisibleBlock) - existence,
 	// not location, which is all a destruction check needs.
 	BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error)
+}
+
+// TimeOfDayAgent is an optional capability (same pattern as
+// BuriedTargetAgent above - not every CommandAgent implementation knows
+// the world's own clock) that refreshTimeOfDay uses to drive
+// isNight/timeUntilDawn's own observation features and ActionSleep's
+// night-window legality gate. The real agent forwards this to its own
+// GetWorld().GetTimeOfDay() (agent/sleep.go); a narrower interface than
+// WalkabilityAgent deliberately, so a test fake only needs two
+// controllable fields instead of a full fake models.World (14 methods,
+// most irrelevant here) just to drive this one signal.
+type TimeOfDayAgent interface {
+	// GetTimeOfDay returns the current time of day in ticks (0-23999)
+	// and whether it's been initialized yet - see models.World's own
+	// method of the same name, which the real implementation forwards
+	// to directly.
+	GetTimeOfDay() (int64, bool)
 }
 
 // BlocksMinedCounter is the optional capability Step uses to reward actual
@@ -1005,6 +1044,59 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	return nil
 }
 
+// refreshSleepTarget mirrors refreshMineTarget exactly, searching for a bed
+// instead of a named block: a safe no-op (sleepVisible left false) when
+// Config.SleepSearchRadius <= 0, since that's what "this Environment
+// instance doesn't pose a sleep task" means for Sleep (there is no
+// companion target-name field to gate on, unlike Mine/Craft - see
+// Config.SleepSearchRadius's own doc comment).
+func (e *Environment) refreshSleepTarget(ctx context.Context) error {
+	e.refreshTimeOfDay()
+	if e.cfg.SleepSearchRadius <= 0 {
+		e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible = 0, 0, 0, false
+		return nil
+	}
+	pos, found, err := e.agent.FindNearestBed(ctx, e.cfg.SleepSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving sleep target: %w", err)
+	}
+	e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible = pos.X, pos.Y, pos.Z, found
+	return nil
+}
+
+// vanillaSleepWindowStart/End are the Time-of-day tick bounds (0-23999,
+// see models.World.GetTimeOfDay's own doc comment) within which vanilla
+// allows a player to enter a bed - minecraft.wiki/w/Daylight_cycle's own
+// documented values (dusk at 12542, just before sunrise at 23459), not a
+// guess. Verify this live against the actual target server version before
+// relying on it for anything beyond this environment's own legality gate -
+// see docs/plans/SLEEP_ACTION_PLAN.md (local/untracked) for why.
+const (
+	vanillaSleepWindowStart = 12542
+	vanillaSleepWindowEnd   = 23459
+	ticksPerDay             = 24000
+)
+
+// refreshTimeOfDay caches the world's current time of day and whether
+// it's within vanillaSleepWindowStart/End, via the WalkabilityAgent
+// optional capability (GetWorld/BlockShapeManager - same interface
+// environment.go's own terrain-snap-after-reset logic already uses, see
+// that call site's own doc comment). Leaves timeOfDayKnown false (and
+// sleepWindowActive false) if the concrete agent doesn't implement it, or
+// the server hasn't sent an Update Time packet yet - the same
+// "not yet known" convention healthKnown/mineVisible already use, not an
+// error.
+func (e *Environment) refreshTimeOfDay() {
+	timeAgent, ok := e.agent.(TimeOfDayAgent)
+	if !ok {
+		e.timeOfDayTicks, e.timeOfDayKnown, e.sleepWindowActive = 0, false, false
+		return
+	}
+	ticks, known := timeAgent.GetTimeOfDay()
+	e.timeOfDayTicks, e.timeOfDayKnown = ticks, known
+	e.sleepWindowActive = known && ticks >= vanillaSleepWindowStart && ticks <= vanillaSleepWindowEnd
+}
+
 // Step implements rl.Environment.
 //
 // Movement completion, resolved via models.Completion: actions.MoveToQuiet.Execute
@@ -1172,6 +1264,12 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if !gotoActive || targetMoved {
 		newDistance = e.prevDistance
 	}
+	// Captured before refreshSleepTarget's own second call below
+	// (end of this Step) overwrites e.timeOfDayTicks/Known - e.timeOfDayTicks
+	// at this point still holds whatever Reset/the previous Step last
+	// refreshed it to, i.e. genuinely the value from before this step's
+	// own dispatched action ran.
+	prevTimeOfDayTicks, prevTimeOfDayKnown, prevSleepWindowActive := e.timeOfDayTicks, e.timeOfDayKnown, e.sleepWindowActive
 	reward, done := computeReward(stepOutcome{
 		timePenalty:       e.cfg.TimePenalty,
 		prevDistance:      e.prevDistance,
@@ -1238,6 +1336,22 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshSleepTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	// sleptThroughNight: the time of day jumped backward from within the
+	// vanilla sleep-allowed window - see sleptThroughNightBonus's own doc
+	// comment (reward.go) for why a backward jump specifically, not just
+	// "it's a new day," is the unambiguous signal. prevSleepWindowActive
+	// (not a fresh range check against prevTimeOfDayTicks) gates this so
+	// it agrees exactly with whatever ActionSleep's own legality gate
+	// would have said about the step that just ran.
+	sleptThroughNight := prevTimeOfDayKnown && e.timeOfDayKnown && prevSleepWindowActive && e.timeOfDayTicks < prevTimeOfDayTicks
+	if sleptThroughNight {
+		reward += sleptThroughNightBonus
+		done = true
+		doneReason = "slept"
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -1262,7 +1376,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.prevBlocksMinedCount = minedCountNow
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs())
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible)
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

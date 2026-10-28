@@ -221,6 +221,7 @@ func (a *agent) sendChatMessage(message string) error {
 func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 	a.logf("System Chat: %#v, Overlay: %v", c, overlay)
 	a.emitChatEvent(c)
+	a.recordSleepStatusMessage(c.Text)
 
 	text, ok := a.extractCommandFromMessage(c)
 	if !ok {

@@ -296,12 +296,33 @@ func (m *Manager) GetTimeOfDay() (int64, bool) {
 	return m.timeOfDay, true
 }
 
+// ticksPerDay bounds GetTimeOfDay's own documented 0-23999 contract - see
+// SetWorldTime's doc comment for why that normalization has to happen here.
+const ticksPerDay = 24000
+
 // SetWorldTime updates both world age and time of day from the server's Update Time packet.
 // This should be called whenever a ClientboundUpdateTime packet is received.
+//
+// The protocol's own "time of day" field is not actually bounded to a
+// single day - vanilla sends the same ever-increasing absolute daytime
+// counter worldAge itself is cut from (negative only to signal
+// doDaylightCycle is off), leaving it to the receiver to reduce it to a
+// single day's 0-23999 the way a vanilla client does before rendering the
+// sun/moon. GetTimeOfDay's own doc comment already promises that bounded
+// range, but nothing normalized it to match - confirmed live
+// (mc-agent/rlenv's Sleep action tests, 2026-10-27): a raw value of
+// 24289 (one day plus 289 ticks) read straight through here, silently
+// breaking any day-cycle-relative comparison past the first in-game day.
+// timeOfDay's existing negative-sentinel meaning ("not yet initialized"
+// below GetTimeOfDay, same as worldAge) is left alone - only a
+// non-negative value is reduced.
 func (m *Manager) SetWorldTime(worldAge, timeOfDay int64) {
 	m.worldTimeMu.Lock()
 	defer m.worldTimeMu.Unlock()
 	m.worldAge = worldAge
+	if timeOfDay >= 0 {
+		timeOfDay %= ticksPerDay
+	}
 	m.timeOfDay = timeOfDay
 }
 

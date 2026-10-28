@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1016,6 +1016,78 @@ func mineAt(ctx context.Context, agent models.CommandAgent, x, y, z float64) mod
 		resolve(err)
 	}()
 	return completion
+}
+
+// sleepSearchRadius is "sleep"'s own default bed-search radius when no
+// exact coordinates are given - mirrors mineSearchRadius's own role for
+// "mine <blockName>".
+const sleepSearchRadius = 32
+
+type Sleep struct{}
+
+func (Sleep) Name() string  { return "sleep" }
+func (Sleep) Usage() string { return "sleep [<x> <y> <z>]" }
+func (Sleep) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) == 0 {
+		pos, found, err := agent.FindNearestBed(ctx, sleepSearchRadius)
+		if err != nil {
+			_ = agent.SendChat("Find bed error: " + err.Error())
+			return models.Done(nil), nil
+		}
+		if !found {
+			_ = agent.SendChat(fmt.Sprintf("No visible bed found within %d blocks", sleepSearchRadius))
+			return models.Done(nil), nil
+		}
+		return sleepAt(ctx, agent, pos), nil
+	}
+
+	if len(args) != 3 {
+		_ = agent.SendChat("Usage: sleep [<x> <y> <z>]")
+		return models.Done(nil), nil
+	}
+	x, err := parseFloat(args[0])
+	if err != nil {
+		_ = agent.SendChat("Invalid X coordinate")
+		return models.Done(nil), nil
+	}
+	y, err := parseFloat(args[1])
+	if err != nil {
+		_ = agent.SendChat("Invalid Y coordinate")
+		return models.Done(nil), nil
+	}
+	z, err := parseFloat(args[2])
+	if err != nil {
+		_ = agent.SendChat("Invalid Z coordinate")
+		return models.Done(nil), nil
+	}
+	return sleepAt(ctx, agent, models.V3{X: x, Y: y, Z: z}), nil
+}
+
+// sleepAt launches SleepInBed in a goroutine (it blocks until the server
+// confirms or the confirmation deadline passes) and returns a Completion
+// that resolves with the outcome - mirrors mineAt's own pattern.
+func sleepAt(ctx context.Context, agent models.CommandAgent, pos models.V3) models.Completion {
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.SleepInBed(ctx, pos)
+		if err != nil {
+			_ = agent.SendChat("Sleep error: " + err.Error())
+		}
+		resolve(err)
+	}()
+	return completion
+}
+
+type WakeUp struct{}
+
+func (WakeUp) Name() string  { return "wakeup" }
+func (WakeUp) Usage() string { return "wakeUp" }
+func (WakeUp) Execute(ctx context.Context, agent models.CommandAgent, _ []string) (models.Completion, error) {
+	err := agent.WakeUp(ctx)
+	if err != nil {
+		_ = agent.SendChat("Wake up error: " + err.Error())
+	}
+	return models.Done(err), nil
 }
 
 // lookAroundDefaultRadius is the search radius (in blocks) "lookAround"
