@@ -160,42 +160,96 @@ func (a *agent) FindNearestBed(ctx context.Context, radius int) (models.V3, bool
 
 const (
 	// sleepConfirmTimeout bounds how long SleepInBed waits for the
-	// server to actually move the bot into the bed after the
-	// UseItemOnBlock click - mirrors every other client-sync wait in
-	// this codebase (see place_block.go's placeVerifyWait doc comment
-	// for the convention this follows).
+	// server's own sleep-status broadcast (sleepSuccessMessageKeys/
+	// sleepRejectionMessageKeys) after the UseItemOnBlock click - mirrors
+	// every other client-sync wait in this codebase (see place_block.go's
+	// placeVerifyWait doc comment for the convention this follows).
 	sleepConfirmTimeout = 10 * time.Second
 	sleepConfirmPoll    = 100 * time.Millisecond
 
-	// sleepSnapHorizontalDistance bounds how far the agent's tracked X/Z
-	// may sit from bedPos's own column to count as "the server actually
-	// put me in the bed." EntityPose metadata (which would otherwise
-	// confirm a sleep attempt directly) is never echoed back to the
-	// sleeping entity's own connection - standard Minecraft behavior, not
-	// something this codebase can control - so a position snap is the
-	// most direct signal available (see docs/plans/SLEEP_ACTION_PLAN.md's
-	// own "Open question" section).
-	//
-	// Horizontally this is a weak discriminator on its own: a live run
-	// (testing/sleep_action_test.go, 2026-10-27) showed
-	// TryInteractPositions' own approach cell landing only ~0.68 blocks
-	// (XZ) from the bed's column even while merely standing beside it,
-	// comfortably inside any reasonable horizontal snap radius - keeping
-	// this check mainly rules out confirming against the wrong bed
-	// entirely, not standing-vs-sleeping.
-	sleepSnapHorizontalDistance = 1.0
-
-	// sleepSnapMaxYAboveBed is the real discriminator, found from that
-	// same live run: standing on the floor beside a bed sitting at
-	// bedPos.Y consistently reads pos.Y == bedPos.Y+1.0 (the floor cell
-	// one block above the bed), while vanilla's own lying-down position
-	// sets Y close to the bed block's own level (roughly bedPos.Y+0.5-0.7,
-	// per public client-side sleep-pose documentation) - a clear gap
-	// below the floor-standing value. 0.85 sits strictly between the two,
-	// closer to the standing value so it still fails fast instead of
-	// risking a confirm on partial/glitchy Y data.
-	sleepSnapMaxYAboveBed = 0.85
+	// sleepStatusEventsCap bounds agent.sleepStatusEvents - a handful of
+	// entries is enough; awaitSleepConfirmed only ever looks for the first
+	// one after its own interact packet, so nothing needs a deep history.
+	sleepStatusEventsCap = 8
 )
+
+// sleepStatusEvent is one recognized vanilla sleep-status or
+// bed-rejection system/action-bar message, as recorded by
+// recordSleepStatusMessage.
+type sleepStatusEvent struct {
+	key     string
+	success bool
+	at      time.Time
+}
+
+// sleepSuccessMessageKeys are the exact vanilla translate keys
+// ServerWorld.sendSleepingStatus (net/minecraft/server/world/ServerWorld.java)
+// broadcasts to every connected player the moment ANY player's own
+// trySleep succeeds - confirmed from decompiled 1.21.5 source
+// (mc-data-gen/extractedSrc/1.21.5), not a guess: entering a bed never
+// moves the sleeping entity's own tracked position (no teleport/position
+// packet is sent on entry - only PlayerEntity.wakeUp() sends one), so a
+// position-based confirmation (this package's own earlier, now-removed
+// attempt) can never work here. "sleep.players_sleeping" fires when not
+// enough players are in bed yet to skip the night; "sleep.skipping_night"
+// fires once enough are. Either one means THIS bot's own attempt was
+// accepted - vanilla resets its time_since_rest stat (what prevents
+// phantom spawns, PlayerEntity.sleep) as part of that same success,
+// independent of whether the aggregate night-skip itself ever happens
+// (see docs/plans/SLEEP_ACTION_PLAN.md).
+var sleepSuccessMessageKeys = map[string]bool{
+	"sleep.players_sleeping": true,
+	"sleep.skipping_night":   true,
+}
+
+// sleepRejectionMessageKeys are PlayerEntity.SleepFailureReason's own
+// translate keys (net/minecraft/entity/player/PlayerEntity.java,
+// BedBlock.onUse), sent only to the player whose own attempt failed.
+// NOT_POSSIBLE_HERE (wrong dimension) and OTHER_PROBLEM (already
+// sleeping, or dead) have no message in vanilla at all - an attempt
+// failing for one of those two reasons looks identical to
+// awaitSleepConfirmed's own timeout case.
+var sleepRejectionMessageKeys = map[string]string{
+	"block.minecraft.bed.too_far_away": "too far away from the bed",
+	"block.minecraft.bed.obstructed":   "bed is obstructed (something above it)",
+	"block.minecraft.bed.no_sleep":     "not the right time to sleep",
+	"block.minecraft.bed.not_safe":     "hostile mobs are too close",
+	"block.minecraft.bed.occupied":     "bed is already occupied",
+}
+
+// recordSleepStatusMessage checks whether text - OnSystemChat's already-
+// resolved message, see handler_versions/*/chat.go's extractNBTString,
+// which falls back to the raw "translate" key for components like these
+// that carry no literal "text" field - is one of sleepSuccessMessageKeys/
+// sleepRejectionMessageKeys, and if so appends it to sleepStatusEvents for
+// awaitSleepConfirmed to find. A no-op for every other message (ordinary
+// chat, unrelated action-bar text, etc).
+func (a *agent) recordSleepStatusMessage(text string) {
+	isSuccess := sleepSuccessMessageKeys[text]
+	_, isRejection := sleepRejectionMessageKeys[text]
+	if !isSuccess && !isRejection {
+		return
+	}
+	a.sleepStatusMu.Lock()
+	defer a.sleepStatusMu.Unlock()
+	a.sleepStatusEvents = append(a.sleepStatusEvents, sleepStatusEvent{key: text, success: isSuccess, at: time.Now()})
+	if len(a.sleepStatusEvents) > sleepStatusEventsCap {
+		a.sleepStatusEvents = a.sleepStatusEvents[len(a.sleepStatusEvents)-sleepStatusEventsCap:]
+	}
+}
+
+// sleepStatusSince returns the first recorded sleepStatusEvent at or after
+// since, if any - the one awaitSleepConfirmed is waiting for.
+func (a *agent) sleepStatusSince(since time.Time) (sleepStatusEvent, bool) {
+	a.sleepStatusMu.Lock()
+	defer a.sleepStatusMu.Unlock()
+	for _, e := range a.sleepStatusEvents {
+		if !e.at.Before(since) {
+			return e, true
+		}
+	}
+	return sleepStatusEvent{}, false
+}
 
 // SleepInBed walks to a reachable position beside bedPos (the same
 // ApproachBlock/TryInteractPositions pattern PlaceBlockAt/MineBlockAt use)
@@ -210,39 +264,48 @@ func (a *agent) SleepInBed(ctx context.Context, bedPos models.V3) error {
 	if world == nil || shapeMgr == nil {
 		return fmt.Errorf("sleep at (%v): world not available", bedPos)
 	}
+	var interactSentAt time.Time
 	err := models.TryInteractPositions(ctx, a, bedPos, func(standAt models.V3) error {
 		if err := a.MoveTo(ctx, standAt.X, standAt.Y, standAt.Z, false); err != nil {
 			return err
 		}
+		interactSentAt = time.Now()
 		return a.UseItemOnBlock(ctx, bedPos.X, bedPos.Y, bedPos.Z, models.FaceUp, models.MainHand)
 	})
 	if err != nil {
 		return fmt.Errorf("sleep at (%v): %w", bedPos, err)
 	}
-	if err := a.awaitSleepConfirmed(ctx, bedPos); err != nil {
+	if err := a.awaitSleepConfirmed(ctx, interactSentAt); err != nil {
 		return fmt.Errorf("sleep at (%v): %w", bedPos, err)
 	}
 	return nil
 }
 
-// awaitSleepConfirmed polls the agent's own tracked position until it
-// snaps within sleepSnapHorizontalDistance (XZ) and sleepSnapMaxYAboveBed
-// (Y) of bedPos, or sleepConfirmTimeout passes. The Y gate is what
-// actually discriminates "lying in the bed" from "merely standing beside
-// it" - see sleepSnapMaxYAboveBed's own doc comment.
-func (a *agent) awaitSleepConfirmed(ctx context.Context, bedPos models.V3) error {
+// awaitSleepConfirmed polls for the server's own sleep-status broadcast
+// (recordSleepStatusMessage) arriving at or after interactSentAt, within
+// sleepConfirmTimeout. A success key (sleepSuccessMessageKeys) returns
+// nil; a rejection key (sleepRejectionMessageKeys) returns its reason as
+// an error immediately, without waiting out the rest of the timeout -
+// vanilla rejects a bad attempt outright, so there's nothing further to
+// wait for. No matching message within the timeout is itself ambiguous
+// (NOT_POSSIBLE_HERE/OTHER_PROBLEM have no message at all - see
+// sleepRejectionMessageKeys' own doc comment) but is still reported as an
+// error, the same conservative default every other confirmation in this
+// package uses.
+func (a *agent) awaitSleepConfirmed(ctx context.Context, interactSentAt time.Time) error {
 	deadline := time.Now().Add(sleepConfirmTimeout)
-	bedCenterX, bedCenterZ := bedPos.X+0.5, bedPos.Z+0.5
 	for {
-		pos, _, _, ok := a.GetPosition()
-		if ok {
-			dx, dy, dz := pos.X-bedCenterX, pos.Y-bedPos.Y, pos.Z-bedCenterZ
-			if dx*dx+dz*dz <= sleepSnapHorizontalDistance*sleepSnapHorizontalDistance && dy <= sleepSnapMaxYAboveBed {
+		if event, found := a.sleepStatusSince(interactSentAt); found {
+			if event.success {
 				return nil
 			}
+			if reason, ok := sleepRejectionMessageKeys[event.key]; ok {
+				return fmt.Errorf("rejected: %s", reason)
+			}
+			return fmt.Errorf("rejected: %s", event.key)
 		}
 		if !time.Now().Before(deadline) {
-			return errors.New("position never snapped into the bed - likely rejected (not night, or bed occupied/obstructed)")
+			return errors.New("no sleep-status message received within the timeout - likely rejected for a reason vanilla sends no message for (wrong dimension, already sleeping, or dead), or the interaction never reached the server")
 		}
 		select {
 		case <-ctx.Done():
