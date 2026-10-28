@@ -12,6 +12,8 @@ go 1.27.3
 
 // replace github.com/reallyoldfogie/cRL-go => /home/reallyoldfogie/src/github.com/reallyoldfogie/cRL-go
 
+exclude github.com/ollama/ollama v0.20.7
+
 require (
 	github.com/Tnze/go-mc v1.20.3-0.20240907175330-9a1f5431370e
 	github.com/aquasecurity/go-version v0.0.1
@@ -20,7 +22,7 @@ require (
 	github.com/maxsupermanhd/go-mc-ms-auth v0.0.0-20230820124717-22f4d907eac4
 	github.com/moby/moby/api v1.52.0
 	github.com/moby/moby/client v0.2.1
-	github.com/ollama/ollama v0.20.7
+	github.com/ollama/ollama v0.40.8
 	github.com/pkg/errors v0.9.1
 	github.com/reallyoldfogie/cRL-go v0.11.0
 	github.com/reallyoldfogie/mc-bot-go v0.2.5
