@@ -16,6 +16,17 @@ import (
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 )
 
+// winGameRespawnDelaySeenCredits/winGameRespawnDelayAlreadySeenCredits are
+// how long onGameEvent's win-game branch waits before sending
+// PERFORM_RESPAWN. Vanilla lets a human player skip the end credits by
+// pressing any key the moment they start scrolling, so neither value
+// attempts to match the credits' real runtime - they only need to be "long
+// enough not to race the server's own processing of the win-game event."
+const (
+	winGameRespawnDelaySeenCredits        = 2 * time.Second
+	winGameRespawnDelayAlreadySeenCredits = 500 * time.Millisecond
+)
+
 // handlers returns set of packet handlers needed.
 func (a *agent) handlers() []bot.PacketHandler {
 	if a.packetMgr == nil {
@@ -1712,6 +1723,51 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 		a.movementMu.RUnlock()
 		if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
 			notifier.NotifyDead()
+		}
+	}
+
+	// WIN_GAME (game event reason 4) - sent when the local player touches
+	// the End's exit portal after killing the Ender Dragon. The server does
+	// NOT respawn the player on its own: the *client* is responsible for
+	// sending ServerboundClientCommand(PERFORM_RESPAWN) - the exact same
+	// packet models.Respawner.Respawn() already sends for death - once it's
+	// done with the credits screen (or immediately, if value==0, meaning
+	// this player has already seen them on a prior dragon kill/portal use).
+	// Only then does the server send the ClientboundRespawn that actually
+	// moves the player back to the Overworld, flowing through the same
+	// onRespawn dispatch as any other dimension transfer - no special
+	// casing needed there.
+	const gameEventWinGame = 4
+	if eventType == gameEventWinGame {
+		// value!=0 signals the full first-time credits roll; vanilla lets a
+		// player skip it immediately by pressing any key once it starts, so
+		// this is deliberately a short, bot-appropriate wait rather than an
+		// attempt to match the human-facing credits' real runtime - there's
+		// no server-side minimum hold before PERFORM_RESPAWN is accepted.
+		// TODO: confirm against a live capture if this ever needs to be
+		// more than "long enough not to race the server."
+		wait := winGameRespawnDelaySeenCredits
+		if value == 0 {
+			wait = winGameRespawnDelayAlreadySeenCredits
+		}
+		a.logf("[onGameEvent] Win game (value=%.1f) - sending PERFORM_RESPAWN after %s", value, wait)
+
+		a.movementMu.RLock()
+		moveExec := a.moveExec
+		a.movementMu.RUnlock()
+		if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
+			notifier.NotifyDead()
+		}
+
+		if r := a.getRespawner(); r != nil {
+			go func() {
+				time.Sleep(wait)
+				if err := r.Respawn(); err != nil {
+					a.logf("[onGameEvent][ERROR] Win-game Respawn() failed: %v", err)
+				}
+			}()
+		} else {
+			a.logf("[onGameEvent][WARN] Win game: no Respawner available, bot will remain in the End")
 		}
 	}
 
