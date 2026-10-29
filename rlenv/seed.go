@@ -97,6 +97,12 @@ type EpisodeSeeder func(ctx context.Context, agent SeedAgent, cfg Config) error
 // ingredient-count copy from seedGiveCount.
 const defaultMineRequiredToolCount = 1
 
+// anyItemPickupSeedItem is what DefaultEpisodeSeeder drops for
+// Config.PickupAnyItem — a cheap, common item, since there's no specific
+// name to seed for an "any item" task (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+const anyItemPickupSeedItem = "minecraft:stick"
+
 // DefaultEpisodeSeeder implements EpisodeSeeder's minimum-viable contract:
 // if Config.MineTargetBlock is set, ensures an instance exists within
 // Config.MineSearchRadius (agent.SeedNearbyBlock) — unless
@@ -159,6 +165,140 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 			}
 		}
 	}
+	if cfg.PickupTargetItem != "" {
+		// Optional, like ToolSeedAgent above: a SeedAgent that doesn't also
+		// implement ItemDropSeedAgent is free to leave this task unseeded
+		// rather than fail the episode over it (docs/plans/
+		// RL_ACTION_SPACE_EXPANSION_II.md Phase 2) — *agent implements both,
+		// so this only matters for a SeedAgent implementation that doesn't.
+		if itemSeeder, ok := agent.(ItemDropSeedAgent); ok {
+			radius := cfg.PickupSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().PickupSearchRadius
+			}
+			if err := itemSeeder.SeedDroppedItem(ctx, cfg.PickupTargetItem, radius); err != nil {
+				return fmt.Errorf("seeding pickup target: %w", err)
+			}
+		}
+	} else if cfg.PickupAnyItem {
+		// No specific item name to drop for "any item" mode — seeds a
+		// fixed, cheap placeholder (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 1) so the task is still seedable standalone, the same way
+		// every other task's seeder picks something concrete rather than
+		// leaving the episode to depend on whatever happens to already be
+		// lying around.
+		if itemSeeder, ok := agent.(ItemDropSeedAgent); ok {
+			radius := cfg.PickupSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().PickupSearchRadius
+			}
+			if err := itemSeeder.SeedDroppedItem(ctx, anyItemPickupSeedItem, radius); err != nil {
+				return fmt.Errorf("seeding pickup target (any item): %w", err)
+			}
+		}
+	}
+	if cfg.FlyTargetActive {
+		// Optional, same pattern as ToolSeedAgent/ItemDropSeedAgent above.
+		if flightSeeder, ok := agent.(FlightSeedAgent); ok {
+			if err := flightSeeder.SeedElytra(ctx); err != nil {
+				return fmt.Errorf("seeding flight elytra: %w", err)
+			}
+		}
+	}
+	if cfg.RideVehicleType != "" {
+		// Optional, same pattern as the other task branches above.
+		if vehicleSeeder, ok := agent.(VehicleSeedAgent); ok {
+			radius := cfg.RideSearchRadius
+			if radius <= 0 {
+				radius = DefaultConfig().RideSearchRadius
+			}
+			// tame=true unconditionally: an untamed horse/donkey/mule
+			// refuses mounting at all (see agent.SeedVehicle's own doc
+			// comment), so there's no real-episode case where an
+			// untamed instance would be useful here. The resulting
+			// entity ID isn't needed here — Environment resolves its
+			// own target position/ID separately via refreshRideTarget.
+			if _, err := vehicleSeeder.SeedVehicle(ctx, cfg.RideVehicleType, radius, true); err != nil {
+				return fmt.Errorf("seeding ride vehicle: %w", err)
+			}
+		}
+	}
+	if cfg.CombatTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if combatSeeder, ok := agent.(CombatSeedAgent); ok {
+			radius := cfg.CombatRadius
+			if radius <= 0 {
+				radius = DefaultConfig().CombatRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshCombatTarget.
+			if _, err := combatSeeder.SeedCombatMob(ctx, cfg.CombatTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding combat mob: %w", err)
+			}
+		}
+	}
+	if cfg.CreeperGunpowderActive {
+		// Optional, same pattern as the other task branches above.
+		if creeperSeeder, ok := agent.(CreeperSeedAgent); ok {
+			radius := cfg.CreeperGunpowderRadius
+			if radius <= 0 {
+				radius = DefaultConfig().CreeperGunpowderRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshCreeperTarget.
+			if _, err := creeperSeeder.SeedCreeperForGunpowder(ctx, int(radius)); err != nil {
+				return fmt.Errorf("seeding creeper for gunpowder: %w", err)
+			}
+		}
+	}
+	if cfg.SpearChargeTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if spearSeeder, ok := agent.(SpearSeedAgent); ok {
+			radius := cfg.SpearChargeRadius
+			if radius <= 0 {
+				radius = DefaultConfig().SpearChargeRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshSpearTarget.
+			if _, err := spearSeeder.SeedSpearMob(ctx, cfg.SpearChargeTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding spear mob: %w", err)
+			}
+		}
+	}
+	if cfg.MaceSmashTargetMobType != "" {
+		// Optional, same pattern as the other task branches above.
+		if maceSeeder, ok := agent.(MaceSeedAgent); ok {
+			radius := cfg.MaceSmashRadius
+			if radius <= 0 {
+				radius = DefaultConfig().MaceSmashRadius
+			}
+			// The resulting entity ID isn't needed here — Environment
+			// resolves its own target position/ID separately via
+			// refreshMaceTarget. SeedElevatedPlatform re-resolves the same
+			// mob to place its platform, called only once the mob itself
+			// is known to exist.
+			if _, err := maceSeeder.SeedMaceMob(ctx, cfg.MaceSmashTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding mace mob: %w", err)
+			}
+			if err := maceSeeder.SeedElevatedPlatform(ctx, cfg.MaceSmashTargetMobType, int(radius)); err != nil {
+				return fmt.Errorf("seeding mace elevated platform: %w", err)
+			}
+		}
+	}
+	if cfg.ChainStage == 0 && cfg.PlaceTargetItem != "" {
+		// ToolSeedAgent is the base SeedAgent's own optional capability
+		// already used for Config.MineRequiredTool — reused as-is, no new
+		// capability needed (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2).
+		if toolSeeder, ok := agent.(ToolSeedAgent); ok {
+			if err := toolSeeder.SeedGiveItem(ctx, cfg.PlaceTargetItem, 1); err != nil {
+				return fmt.Errorf("seeding standalone place target: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -174,6 +314,104 @@ type FarSeedAgent interface {
 	// its inventory first, like SeedAgent.SeedCraftIngredients) and, if the
 	// recipe needs a crafting table, places one at (x, y, z).
 	SeedCraftIngredientsAt(ctx context.Context, itemName string, x, y, z int) error
+}
+
+// EntitySeedAgent is the optional capability a Combat episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/5): summoning a
+// hostile mob to fight, and cleaning it up at Reset if the episode didn't
+// kill it. Not folded into SeedAgent: a chat-command-only session without
+// RCON must never be required to implement it, same reasoning as
+// ToolSeedAgent/FarSeedAgent.
+type EntitySeedAgent interface {
+	// SeedEntity ensures a live instance of mobType exists within radius
+	// blocks of the bot (summoning one via RCON if none is), returning its
+	// entity ID — see agent.SeedEntity's doc comment for exactly how nbt
+	// is used.
+	SeedEntity(ctx context.Context, mobType string, radius int, nbt string) (entityID int32, err error)
+	// ClearEntitiesOfType kills every live instance of mobType within
+	// radius blocks of (x, y, z) — see agent.ClearEntitiesOfType's doc
+	// comment.
+	ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error
+}
+
+// VehicleSeedAgent is the optional capability a Mob Riding episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/4): summoning a
+// rideable vehicle, and cleaning it up at Reset. ClearEntitiesOfType has
+// the same shape as EntitySeedAgent's own method of that name (a type+
+// radius kill works identically for a vehicle as for a hostile mob) — an
+// agent implementing both only needs one real method to satisfy both
+// interfaces.
+type VehicleSeedAgent interface {
+	// SeedVehicle ensures a (if tame, tamed) instance of vehicleType
+	// exists within radius blocks of the bot, returning its entity ID —
+	// see agent.SeedVehicle's doc comment.
+	SeedVehicle(ctx context.Context, vehicleType string, radius int, tame bool) (entityID int32, err error)
+	ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error
+}
+
+// ItemDropSeedAgent is the optional capability an Item Pickup episode needs
+// when posed from a cold inventory rather than piggybacking on a mine
+// task's own drop (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/2).
+type ItemDropSeedAgent interface {
+	// SeedDroppedItem drops one itemName on the ground within radius
+	// blocks of the bot — see agent.SeedDroppedItem's doc comment.
+	SeedDroppedItem(ctx context.Context, itemName string, radius int) error
+}
+
+// FlightSeedAgent is the optional capability a Flight episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3): giving the bot an
+// elytra (equipped) and a working firework-rocket supply.
+type FlightSeedAgent interface {
+	// SeedElytra ensures the bot has an elytra equipped and a working
+	// firework-rocket supply — see agent.SeedElytra's doc comment.
+	SeedElytra(ctx context.Context) error
+}
+
+// CombatSeedAgent is the optional capability a Combat episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5): summoning a
+// non-aggressive mob to fight and equipping a weapon, in one call.
+type CombatSeedAgent interface {
+	// SeedCombatMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a weapon equipped — see
+	// agent.SeedCombatMob's own doc comment.
+	SeedCombatMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+}
+
+// CreeperSeedAgent is the optional capability a creeper-gunpowder episode
+// needs (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5): summoning a
+// live creeper and equipping a melee weapon, in one call.
+type CreeperSeedAgent interface {
+	// SeedCreeperForGunpowder ensures a live creeper within radius blocks
+	// of the bot (via SeedEntity) and a melee weapon equipped — see
+	// agent.SeedCreeperForGunpowder's own doc comment.
+	SeedCreeperForGunpowder(ctx context.Context, radius int) (entityID int32, err error)
+}
+
+// SpearSeedAgent is the optional capability a SpearCharge episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6): summoning a
+// live mob and equipping a spear, in one call.
+type SpearSeedAgent interface {
+	// SeedSpearMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a spear equipped — see
+	// agent.SeedSpearMob's own doc comment.
+	SeedSpearMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+}
+
+// MaceSeedAgent is the optional capability a MaceSmash episode needs
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7): summoning a live
+// mob and equipping a mace, plus building the elevated platform the
+// smash's own falling-attack window depends on.
+type MaceSeedAgent interface {
+	// SeedMaceMob ensures a live instance of mobType within radius
+	// blocks of the bot (via SeedEntity) and a mace equipped — see
+	// agent.SeedMaceMob's own doc comment.
+	SeedMaceMob(ctx context.Context, mobType string, radius int) (entityID int32, err error)
+	// SeedElevatedPlatform builds the platform a MaceSmash episode falls
+	// from, positioned relative to the nearest live mobType instance
+	// within radius blocks of the bot — see agent.SeedElevatedPlatform's
+	// own doc comment. Called only after SeedMaceMob has ensured that mob
+	// exists.
+	SeedElevatedPlatform(ctx context.Context, mobType string, radius int) error
 }
 
 // ChainSeedAgent is the optional capability multi-step chain episodes

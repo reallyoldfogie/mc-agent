@@ -39,4 +39,25 @@ type LiveAgent interface {
 	// guarantee). Used by the craftReady observation feature
 	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1c).
 	Craftable(itemName string) bool
+
+	// IsEquipped reports whether itemName is currently equipped — worn in
+	// an armor slot, or held in the main hand — mirroring the two things
+	// agent.Equip itself can do (wear armor/elytra, hold anything else).
+	// Used by the equipReady observation feature and ActionEquip's reward
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1), the equip-task
+	// analogue of Craftable's role for the craft task.
+	IsEquipped(itemName string) bool
+
+	// IsMounted reports whether the bot is currently riding a vehicle —
+	// see agent.IsMounted's own doc comment. Used by the isMounted
+	// observation feature and ActionMount's reward (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	IsMounted() bool
+
+	// GetEntityHealth returns a tracked entity's last-known health, and
+	// whether it's currently tracked at all — see agent.GetEntityHealth's
+	// own doc comment. Used by Combat's reward to judge a kill on a
+	// specific resolved entity ID (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+	GetEntityHealth(entityID int32) (health float32, found bool)
 }

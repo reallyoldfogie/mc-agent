@@ -2,6 +2,7 @@ package rlenv
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 )
@@ -91,8 +92,142 @@ const (
 	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
 	ActionSleep
 
+	// ActionEquip dispatches "equip <Config.EquipTargetItem>" — mc-agent's
+	// own Equip action (actions/commands.go) finds the item anywhere in the
+	// inventory and readies it (wears armor/elytra, holds anything else).
+	// A safe no-op (like an unconfigured ActionMine/ActionCraft) when
+	// Config.EquipTargetItem is unset — docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 1, mirroring ActionMine/ActionCraft's "environment poses the
+	// task" pattern exactly. Appended after ActionPlace so earlier actions'
+	// numbers never change.
+	ActionEquip
+	// ActionUseItem dispatches "useitem" (or "useitem offhand" if
+	// Config.UseItemOffhand) — mc-agent's own UseItem action, a plain
+	// right-click interaction with whatever is held. Gated on
+	// Config.EquipTargetItem being set, the same as ActionEquip: using an
+	// item only makes sense as part of an equip task, not as an
+	// independent one (see Config.EquipTargetItem's own doc comment).
+	// Deliberately has no reward component of its own — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1's note on why.
+	ActionUseItem
+
+	// ActionPickUpItem dispatches "pickupitem <x> <y> <z>" at Environment's
+	// own already-resolved e.pickupX/Y/Z (see refreshPickupTarget) — not
+	// "pickupitem <itemName>" by name, for the same reason ActionMine
+	// dispatches resolved coordinates rather than redispatching by name
+	// (see ActionMine's own doc comment): avoids a second, independently-
+	// radius'd FindNearestVisibleItemOfType search inside the dispatched
+	// action. A safe no-op when Config.PickupTargetItem is unset or
+	// nothing is currently visible (!e.pickupVisible) — this environment
+	// poses at most one pickup task per instance, mirroring
+	// Config.MineTargetBlock's own "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+	ActionPickUpItem
+
+	// ActionFlyTo dispatches "flyto <x> <y> <z>" at Environment's own
+	// already-resolved e.flyTargetX/Y/Z (computed once at Reset from
+	// Config.FlyTargetOffset, mirroring targetX/Y/Z — see
+	// Config.FlyTargetOffset's own doc comment for why Y isn't what
+	// drives arrival). Unlike ActionMine/ActionPickUpItem there is no
+	// independent-search mismatch risk to avoid here: the flight target
+	// is a fixed point resolved once, not re-searched every step, so
+	// there was never a second resolution to disagree with in the first
+	// place. A safe no-op when Config.FlyTargetActive is false (see
+	// action.go's resolveDispatch) — docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
+	ActionFlyTo
+
+	// ActionMount dispatches "mount <entityID>" at Environment's own
+	// already-resolved e.rideEntityID (see refreshRideTarget) — not
+	// "mount <entityType>" by name, the same lesson ActionMine's own doc
+	// comment already establishes (avoids a second, independently-
+	// resolved search). A safe no-op when Config.RideVehicleType is
+	// unset, nothing matching is currently visible, or the bot is already
+	// mounted (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	ActionMount
+	// ActionDismount dispatches "dismount". Legal only while mounted and
+	// Config.RideVehicleType is set.
+	ActionDismount
+	// ActionVehicleJump dispatches "vehiclejump" (default/max power —
+	// this discrete action space doesn't expose a continuous power
+	// parameter). Legal only while mounted and Config.RideVehicleType is
+	// set, the same condition as ActionDismount.
+	ActionVehicleJump
+
+	// ActionCombat dispatches "runcombatwithpolicy <radius> <includePlayers>
+	// <includeNeutral>" — mc-agent's own autonomous combat loop
+	// (agent.RunCombatWithPolicy), which ranks and engages targets itself
+	// every combat tick rather than being aimed at one resolved entity.
+	// Unlike ActionMine/ActionMount, there is no independent-search
+	// mismatch to avoid in the dispatch itself (the dispatch never
+	// references an entity ID) — Environment's own e.combatEntityID (see
+	// refreshCombatTarget) exists purely to judge the reward (did THIS
+	// specific resolved entity die), not to steer the dispatch. A safe
+	// no-op when Config.CombatTargetMobType is unset or nothing matching
+	// is currently visible (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5). Config.CombatIncludePlayers/CombatIncludeNeutral default
+	// false — see their own doc comments on why PvP targeting is strictly
+	// opt-in (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's "Deferred"
+	// section). Bot death mid-combat needs no special handling here —
+	// see Config.CombatTargetMobType's own doc comment.
+	ActionCombat
+
+	// ActionFollow dispatches "follow <name>" — mc-agent's own following
+	// manager (following/manager.go), a continuous background behavior
+	// (sprint/sneak distance thresholds, stuck recovery, continuous path
+	// recalculation toward a moving target) with no natural "done" state,
+	// structurally unlike every other task in this package. Legal only
+	// when not already following and the named player is currently
+	// resolvable — mirrors ActionMount's own gating exactly
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4). Real
+	// precondition, not solvable by this package: a second real connected
+	// player (or bot) with Config.FollowTargetPlayerName must already be
+	// in the session — see that Config field's own doc comment.
+	ActionFollow
+	// ActionStopFollow dispatches "stopfollow". Legal only while
+	// following and Config.FollowTargetPlayerName is set — mirrors
+	// ActionDismount's own gating exactly.
+	ActionStopFollow
+
+	// ActionKillCreeperForGunpowder dispatches "killcreeperforgunpowder"
+	// (no args) — mc-agent's own complete, hardcoded-to-creepers encounter
+	// (agent.KillCreeperForGunpowder), which resolves its own target
+	// internally rather than being aimed at one resolved entity, the same
+	// shape ActionCombat's own dispatch already has. Environment's own
+	// e.creeperEntityID (see refreshCreeperTarget) exists purely to gate
+	// legality/feed the observation, not to steer the dispatch. A safe
+	// no-op when Config.CreeperGunpowderActive is false, nothing is
+	// currently visible, or the required melee weapon isn't equipped
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	ActionKillCreeperForGunpowder
+
+	// ActionSpearChargeWithApproach dispatches
+	// "spearchargewithapproach <entityID> <itemName> <holdMs> <engagedMs>
+	// <tiredMs> <minSpeed> <minAlignment>" at Environment's own
+	// already-resolved e.spearEntityID (see refreshSpearTarget) — not by
+	// mob type, since agent.SpearChargeAtWithApproach needs one specific
+	// targetID (unlike RunCombat's own self-ranking loop), the same
+	// by-ID-not-by-name reasoning ActionMount's own doc comment gives.
+	// itemName and the hold/engaged/tired/speed/alignment values are all
+	// fixed constants for a first pass (see spearChargeWeaponName/
+	// spearChargeHoldDuration's own doc comments), not Config knobs. A
+	// safe no-op when Config.SpearChargeTargetMobType is unset, nothing is
+	// currently visible, or the required spear isn't equipped (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+	ActionSpearChargeWithApproach
+
+	// ActionMaceSmashWithApproach dispatches
+	// "macesmashwithapproach <entityID> <itemName>" at Environment's own
+	// already-resolved e.maceEntityID (see refreshMaceTarget) — same
+	// by-ID-not-by-name reasoning as ActionSpearChargeWithApproach.
+	// itemName is a fixed constant (maceSmashWeaponName), not a Config
+	// knob. A safe no-op when Config.MaceSmashTargetMobType is unset,
+	// nothing is currently visible, or the required mace isn't equipped
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	ActionMaceSmashWithApproach
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionSleep) + 1
+	NumActions = int(ActionMaceSmashWithApproach) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -107,11 +242,26 @@ const (
 // actions.MoveToQuiet's own doc comment and
 // docs/plans/RL_TRAINING_LOOP_PLAN.md.
 const (
-	moveToActionName = "movetoquiet"
-	mineActionName   = "mine"
-	craftActionName  = "craft"
-	placeActionName  = "place"
-	sleepActionName  = "sleep"
+	moveToActionName                  = "movetoquiet"
+	mineActionName                    = "mine"
+	craftActionName                   = "craft"
+	placeActionName                   = "place"
+	sleepActionName                   = "sleep"
+	equipActionName                   = "equip"
+	useItemActionName                 = "useitem"
+	useItemOffhandArg                 = "offhand"
+	pickUpItemActionName              = "pickupitem"
+	flyToActionName                   = "flyto"
+	mountActionName                   = "mount"
+	dismountActionName                = "dismount"
+	vehicleJumpActionName             = "vehiclejump"
+	combatActionName                  = "runcombatwithpolicy"
+	followActionName                  = "follow"
+	stopFollowActionName              = "stopfollow"
+	moveToAndSneakActionName          = "movetoandsneakquiet"
+	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
+	spearChargeWithApproachActionName = "spearchargewithapproach"
+	maceSmashWithApproachActionName   = "macesmashwithapproach"
 )
 
 // actionDispatch describes what Step should send through the
@@ -154,6 +304,14 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if !e.actionLegal(ActionGoToTarget) {
 			return actionDispatch{}, false, nil
 		}
+		// Config.ArriveSneaking (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 3) is purely a dispatch-time choice — arrival detection
+		// itself (distance-based, in Step) is unaffected either way, so
+		// there's no separate action/reward for this, just which quiet
+		// movement primitive gets dispatched.
+		if e.cfg.ArriveSneaking {
+			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
+		}
 		return actionDispatch{name: moveToActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
 	case ActionMine:
 		if !e.actionLegal(ActionMine) {
@@ -172,12 +330,105 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		if !e.actionLegal(ActionPlace) {
 			return actionDispatch{}, false, nil
 		}
-		return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+		if e.cfg.ChainStage > 0 {
+			return actionDispatch{name: placeActionName, args: []string{chainTable}}, true, nil
+		}
+		// Standalone placement (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — Config.ChainStage's own branch above is unchanged.
+		return actionDispatch{name: placeActionName, args: []string{e.cfg.PlaceTargetItem}}, true, nil
 	case ActionSleep:
 		if !e.actionLegal(ActionSleep) {
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: sleepActionName, args: coordArgs(e.sleepX, e.sleepY, e.sleepZ)}, true, nil
+	case ActionEquip:
+		if !e.actionLegal(ActionEquip) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: equipActionName, args: []string{e.cfg.EquipTargetItem}}, true, nil
+	case ActionUseItem:
+		if !e.actionLegal(ActionUseItem) {
+			return actionDispatch{}, false, nil
+		}
+		args := []string{}
+		if e.cfg.UseItemOffhand {
+			args = []string{useItemOffhandArg}
+		}
+		return actionDispatch{name: useItemActionName, args: args}, true, nil
+	case ActionPickUpItem:
+		if !e.actionLegal(ActionPickUpItem) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: pickUpItemActionName, args: coordArgs(e.pickupX, e.pickupY, e.pickupZ)}, true, nil
+	case ActionFlyTo:
+		if !e.actionLegal(ActionFlyTo) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: flyToActionName, args: coordArgs(e.flyTargetX, e.flyTargetY, e.flyTargetZ)}, true, nil
+	case ActionMount:
+		if !e.actionLegal(ActionMount) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: mountActionName, args: []string{fmt.Sprintf("%d", e.rideEntityID)}}, true, nil
+	case ActionDismount:
+		if !e.actionLegal(ActionDismount) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: dismountActionName, args: nil}, true, nil
+	case ActionVehicleJump:
+		if !e.actionLegal(ActionVehicleJump) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: vehicleJumpActionName, args: nil}, true, nil
+	case ActionCombat:
+		if !e.actionLegal(ActionCombat) {
+			return actionDispatch{}, false, nil
+		}
+		radius := e.cfg.CombatRadius
+		if radius <= 0 {
+			radius = DefaultConfig().CombatRadius
+		}
+		return actionDispatch{name: combatActionName, args: []string{
+			fmt.Sprintf("%.4f", radius),
+			strconv.FormatBool(e.cfg.CombatIncludePlayers),
+			strconv.FormatBool(e.cfg.CombatIncludeNeutral),
+		}}, true, nil
+	case ActionFollow:
+		if !e.actionLegal(ActionFollow) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: followActionName, args: []string{e.cfg.FollowTargetPlayerName}}, true, nil
+	case ActionStopFollow:
+		if !e.actionLegal(ActionStopFollow) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: stopFollowActionName, args: nil}, true, nil
+	case ActionKillCreeperForGunpowder:
+		if !e.actionLegal(ActionKillCreeperForGunpowder) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: killCreeperForGunpowderActionName, args: nil}, true, nil
+	case ActionSpearChargeWithApproach:
+		if !e.actionLegal(ActionSpearChargeWithApproach) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: spearChargeWithApproachActionName, args: []string{
+			fmt.Sprintf("%d", e.spearEntityID),
+			spearChargeWeaponName,
+			fmt.Sprintf("%d", spearChargeHoldDuration.Milliseconds()),
+			fmt.Sprintf("%d", spearChargeEngagedDuration.Milliseconds()),
+			fmt.Sprintf("%d", spearChargeTiredDuration.Milliseconds()),
+			fmt.Sprintf("%.4f", spearChargeMinSpeed),
+			fmt.Sprintf("%.4f", spearChargeMinAlignment),
+		}}, true, nil
+	case ActionMaceSmashWithApproach:
+		if !e.actionLegal(ActionMaceSmashWithApproach) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: maceSmashWithApproachActionName, args: []string{
+			fmt.Sprintf("%d", e.maceEntityID),
+			maceSmashWeaponName,
+		}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -219,9 +470,57 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		}
 		return e.cfg.CraftTargetItem != "" && e.craftReady
 	case ActionPlace:
-		return e.cfg.ChainStage > 0 && chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+		if e.cfg.ChainStage > 0 {
+			return chainPlaceLegal(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced)
+		}
+		// Standalone placement (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — gated on actually holding the target item, the same
+		// masking-efficiency reasoning craftReady's own gate uses.
+		return e.placeStandaloneReady()
 	case ActionSleep:
 		return e.cfg.SleepSearchRadius > 0 && e.sleepVisible && e.sleepWindowActive
+	case ActionEquip, ActionUseItem:
+		// Both gated on the same field — see Config.EquipTargetItem's own
+		// doc comment for why ActionUseItem has no independent enable flag.
+		return e.cfg.EquipTargetItem != ""
+	case ActionPickUpItem:
+		return e.pickupTaskActive() && e.pickupVisible
+	case ActionFlyTo:
+		// Gated on an elytra currently being equipped, the same masking-
+		// efficiency reasoning ActionCraft's craftReady gate already
+		// uses: agent.FlyTo itself already fails gracefully without one
+		// (not a crash), but letting the mask stay permissive here would
+		// waste probability mass on an attempt that deterministically
+		// fails — see docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3.
+		return e.cfg.FlyTargetActive && e.agent.IsEquipped(elytraItemName)
+	case ActionMount:
+		return e.cfg.RideVehicleType != "" && !e.agent.IsMounted() && e.rideVisible
+	case ActionDismount, ActionVehicleJump:
+		return e.cfg.RideVehicleType != "" && e.agent.IsMounted()
+	case ActionCombat:
+		return e.cfg.CombatTargetMobType != "" && e.combatVisible
+	case ActionFollow:
+		return e.cfg.FollowTargetPlayerName != "" && !e.agent.IsFollowing() && e.followTargetVisible
+	case ActionStopFollow:
+		return e.cfg.FollowTargetPlayerName != "" && e.agent.IsFollowing()
+	case ActionKillCreeperForGunpowder:
+		// Gated on the required melee weapon currently equipped, the same
+		// masking-efficiency reasoning ActionFlyTo's elytra gate uses:
+		// agent.KillCreeperForGunpowder itself already fails gracefully
+		// without one (not a crash, see agent.validateCreeperWeapon), but
+		// letting the mask stay permissive here would waste probability
+		// mass on an attempt that deterministically fails.
+		return e.cfg.CreeperGunpowderActive && e.creeperVisible && e.agent.IsEquipped(creeperGunpowderWeaponName)
+	case ActionSpearChargeWithApproach:
+		// Gated on the required spear currently equipped, the same
+		// masking-efficiency reasoning ActionKillCreeperForGunpowder's own
+		// weapon gate uses.
+		return e.cfg.SpearChargeTargetMobType != "" && e.spearVisible && e.agent.IsEquipped(spearChargeWeaponName)
+	case ActionMaceSmashWithApproach:
+		// Gated on the required mace currently equipped, the same
+		// masking-efficiency reasoning ActionSpearChargeWithApproach's own
+		// weapon gate uses.
+		return e.cfg.MaceSmashTargetMobType != "" && e.maceVisible && e.agent.IsEquipped(maceSmashWeaponName)
 	default:
 		return false
 	}

@@ -41,6 +41,19 @@ type spearRunner interface {
 	ExecuteSpearAttack(context.Context, combat.SpearAttackRequest) error
 }
 
+type spearChargeApproachRunner interface {
+	SpearChargeAtWithApproach(context.Context, int32, string, time.Duration, time.Duration, time.Duration, float64, float64) error
+}
+
+type maceSmashApproachRunner interface {
+	MaceSmashAtWithApproach(context.Context, int32, string) error
+}
+
+type maceSeedRunner interface {
+	SeedMaceMob(context.Context, string, int) (int32, error)
+	SeedElevatedPlatform(context.Context, string, int) error
+}
+
 type CombatFlatSuite struct {
 	VersionWorldSuite
 }
@@ -977,6 +990,123 @@ func (s *CombatFlatSuite) TestSpearCharge1211() {
 		Profile:      combat.SpearChargeProfile{EngagedDuration: 100 * time.Millisecond, TiredDuration: 100 * time.Millisecond},
 	})
 	require.NoError(s.T(), err, "spear Charge packet execution")
+}
+
+// TestSpearChargeWithApproach1211 validates agent.SpearChargeAtWithApproach
+// end to end, live: unlike TestSpearCharge1211 (which sends the
+// hold/release packets from wherever the bot already stands, with
+// ChargeEligible's speed/alignment check faked to a tautology),
+// this spawns the target 10 blocks away — well beyond combat.SpearMaxReach
+// (6) — so the charge could not possibly land without the concurrent
+// approach goroutine actually closing distance first. Caught live-testing
+// this exact scenario (not a hypothetical): the first implementation
+// called SpearChargeAt immediately, with no wait for the approach to
+// close distance at all, which failed combat.SpearAttackRequest.Validate's
+// one-shot reach check before the bot had moved an inch — fixed by adding
+// approachTargetWhileAttacking's own preAttackMaxReach wait (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+func (s *CombatFlatSuite) TestSpearChargeWithApproach1211() {
+	if !combat.SpearSupportedVersion(s.Version) {
+		s.T().Skipf("spears require Minecraft Java 1.21.11+: %s", s.Version)
+	}
+	leader, err := s.SpawnWorkingAreaAgent("SpearApproachBot", "combat_spear_approach")
+	require.NoError(s.T(), err, "spawn agent")
+	spawnX := leader.Origin.X + 10
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:zombie %.1f %.1f %.1f {Health:20f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn charge target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:iron_spear", leader.Name))
+	require.NoError(s.T(), err, "give spear")
+	require.NoError(s.T(), equipCombatItem(s.Ctx, leader, "minecraft:iron_spear"), "equip spear")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:zombie")
+	runner, ok := leader.Agent.(spearChargeApproachRunner)
+	require.True(s.T(), ok, "agent should expose SpearChargeAtWithApproach")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "charge target should have a health snapshot before attack")
+
+	err = runner.SpearChargeAtWithApproach(s.Ctx, targetID, "minecraft:iron_spear",
+		400*time.Millisecond, 500*time.Millisecond, 1000*time.Millisecond, 0.05, 0.9)
+	require.NoError(s.T(), err, "spear charge with approach")
+
+	waitForTrackedHealthDrop(s, leader, targetID, before.Health)
+}
+
+// TestMaceSmashWithApproach validates that MaceSmashAtWithApproach's
+// concurrent approach-movement goroutine (manual mode, throttle/sprint)
+// doesn't interfere with MaceSmashAt's own falling-attack-window
+// detection — mirrors TestMaceSmashWhileFalling's own teleport-into-
+// open-air setup (free-fall straight down onto a stationary target
+// directly below, zero horizontal distance so the approach goroutine's
+// own throttle stays at zero and can't introduce a confound) to isolate
+// exactly this question. SeedElevatedPlatform's own platform-walk-off
+// geometry is a separate, not-yet-live-validated concern — see that
+// method's own doc comment and docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 7's "live-tuning flag".
+func (s *CombatFlatSuite) TestMaceSmashWithApproach() {
+	leader, err := s.SpawnWorkingAreaAgent("MaceApproachBot", "combat_mace_approach")
+	require.NoError(s.T(), err, "spawn agent")
+
+	spawnX := leader.Origin.X + 2
+	spawnY := leader.Origin.Y
+	spawnZ := leader.Origin.Z
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		`summon minecraft:husk %.1f %.1f %.1f {Health:100f,NoAI:1b,PersistenceRequired:1b}`,
+		spawnX, spawnY, spawnZ))
+	require.NoError(s.T(), err, "spawn stationary smash target")
+	targetID := zombieIDForTest(s, leader, "minecraft:husk")
+	runner, ok := leader.Agent.(maceSmashApproachRunner)
+	require.True(s.T(), ok, "agent should expose MaceSmashAtWithApproach")
+	time.Sleep(2 * time.Second)
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "smash target should have a health snapshot before the attack")
+
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf(
+		"tp %s %.1f %.1f %.1f facing %.1f %.1f %.1f",
+		leader.Name, spawnX, spawnY+10, spawnZ, spawnX, spawnY+1, spawnZ))
+	require.NoError(s.T(), err, "teleport agent above Mace target")
+	_, err = s.Inst.RCON.Exec(s.Ctx, fmt.Sprintf("give %s minecraft:mace", leader.Name))
+	require.NoError(s.T(), err, "give smash mace")
+	require.NoError(s.T(), runner.MaceSmashAtWithApproach(s.Ctx, targetID, "minecraft:mace"), "send falling Mace attack with approach")
+
+	after := waitForTrackedDamage(s, leader, targetID, before.Health, 10)
+	require.Greater(s.T(), before.Health-after.Health, float32(10), "falling Mace attack with approach should include smash bonus damage")
+}
+
+// TestMaceSmashWithApproachWalksOffPlatform validates
+// agent.SeedElevatedPlatform's own walk-off geometry live, end to end —
+// the one thing TestMaceSmashWithApproach's teleport-into-open-air setup
+// deliberately did not exercise (see that test's own doc comment and
+// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7's "live-tuning
+// flag"). Seeds the mace mob and its platform through the real
+// production RCON-seeding path (agent.SeedMaceMob/SeedElevatedPlatform —
+// the same methods rlenv.DefaultEpisodeSeeder calls, never exercised
+// live before this), then dispatches MaceSmashAtWithApproach with no
+// other setup: the bot must walk off the platform's edge on its own,
+// fall, and land the smash for this to pass.
+func (s *CombatFlatSuite) TestMaceSmashWithApproachWalksOffPlatform() {
+	leader, err := s.SpawnWorkingAreaAgent("MacePlatformBot", "combat_mace_platform")
+	require.NoError(s.T(), err, "spawn agent")
+
+	seeder, ok := leader.Agent.(maceSeedRunner)
+	require.True(s.T(), ok, "agent should expose SeedMaceMob/SeedElevatedPlatform")
+	_, err = seeder.SeedMaceMob(s.Ctx, "minecraft:husk", 16)
+	require.NoError(s.T(), err, "seed mace mob")
+	require.NoError(s.T(), seeder.SeedElevatedPlatform(s.Ctx, "minecraft:husk", 16), "seed elevated platform")
+
+	targetID := zombieIDForTest(s, leader, "minecraft:husk")
+	before, ok := leader.GetTrackedEntities()[targetID]
+	require.True(s.T(), ok, "mace target should have a health snapshot before attack")
+
+	runner, ok := leader.Agent.(maceSmashApproachRunner)
+	require.True(s.T(), ok, "agent should expose MaceSmashAtWithApproach")
+	require.NoError(s.T(), runner.MaceSmashAtWithApproach(s.Ctx, targetID, "minecraft:mace"), "walk off the seeded platform and smash")
+
+	after := waitForTrackedDamage(s, leader, targetID, before.Health, 10)
+	require.Greater(s.T(), before.Health-after.Health, float32(10), "walking off the seeded elevated platform should produce a falling Mace smash")
 }
 
 func zombieIDForTest(s *CombatFlatSuite, leader *WorkingAreaAgent, typeName string) int32 {

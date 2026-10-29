@@ -431,6 +431,251 @@ func (a *agent) SeedGiveEnchantedItem(ctx context.Context, itemName string, ench
 	return nil
 }
 
+// elytraItemName/fireworkRocketItemName name the two items SeedElytra
+// cares about — kept as named constants here rather than inline literals
+// since this file references each of them twice.
+const (
+	elytraItemName         = "minecraft:elytra"
+	fireworkRocketItemName = "minecraft:firework_rocket"
+)
+
+// flySeedRocketCount is how many firework rockets SeedElytra tops the bot
+// up to — generous relative to a single flight's actual consumption
+// (climb + periodic re-boosts during cruise + landing, agent.FlyTo's own
+// fireRocket calls), so a training episode doesn't run out mid-flight.
+const flySeedRocketCount = 16
+
+// SeedElytra ensures the bot has an elytra equipped and a working supply
+// of firework rockets, via RCON — training convenience for Flight episode
+// seeding (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3), the
+// flight-task analogue of SeedCraftIngredients: one call does everything
+// that task needs prepared, not just one piece of it. Gives an elytra (if
+// not already held/worn) and equips it — agent.FlyTo itself refuses to
+// fly without one worn — then tops up firework rockets to
+// flySeedRocketCount if below it. Requires RCON (via SeedGiveItem).
+func (a *agent) SeedElytra(ctx context.Context) error {
+	if !a.IsEquipped(elytraItemName) {
+		if err := a.SeedGiveItem(ctx, elytraItemName, 1); err != nil {
+			return fmt.Errorf("seed elytra: giving elytra: %w", err)
+		}
+		if err := a.Equip(ctx, elytraItemName); err != nil {
+			return fmt.Errorf("seed elytra: equipping elytra: %w", err)
+		}
+	}
+	if err := a.SeedGiveItem(ctx, fireworkRocketItemName, flySeedRocketCount); err != nil {
+		return fmt.Errorf("seed elytra: giving firework rockets: %w", err)
+	}
+	return nil
+}
+
+// combatSeedWeapon is the weapon SeedCombatMob equips before an episode's
+// combat task — fixed, not configurable, for a first pass (see
+// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5's own note on
+// deliberately not exposing a weapon choice yet).
+const combatSeedWeapon = "minecraft:iron_sword"
+
+// combatMobNBT tags a seeded combat mob NoAI + PersistenceRequired by
+// default — isolates "can the policy learn to use a weapon" from "can it
+// survive a reactive, AI-driven opponent" (a genuinely harder, separate
+// task, not this pass's job), matching
+// testing/combat_integration_test.go's own established convention for the
+// identical reason. This is not a workaround for unhandled bot death —
+// that's already handled generically (rlenv/reward.go's computeReward,
+// independent of any task) — it's purely about isolating the skill being
+// trained.
+const combatMobNBT = "{NoAI:1b,PersistenceRequired:1b}"
+
+// SeedCombatMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a weapon is
+// equipped, via RCON — training convenience for Combat episode seeding
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5), the combat-task
+// analogue of SeedElytra: one call does everything that task needs
+// prepared. Requires RCON (via SeedEntity/SeedGiveItem).
+func (a *agent) SeedCombatMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed combat mob: %w", err)
+	}
+	if !a.IsEquipped(combatSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, combatSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed combat mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, combatSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed combat mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
+// creeperGunpowderMobType is the entity type SeedCreeperForGunpowder
+// always summons — KillCreeperForGunpowder itself is hardcoded to
+// creepers by design (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+// 5), so there's no mob-type parameter here, unlike SeedCombatMob's own.
+const creeperGunpowderMobType = "minecraft:creeper"
+
+// SeedCreeperForGunpowder ensures a live creeper exists within radius
+// blocks of the bot (via SeedEntity) and that a supported melee weapon is
+// equipped, via RCON — training convenience for KillCreeperForGunpowder
+// episode seeding, the creeper-gunpowder-task analogue of SeedCombatMob.
+// Deliberately NOT NoAI-tagged (empty nbt), unlike SeedCombatMob's own
+// combatMobNBT — the one real design decision that differs from Combat's
+// own seeding philosophy: this task's entire point is managing a live,
+// explosive threat safely (KillCreeperForGunpowder's own health-
+// cancellation guard exists for exactly that); tagging the seeded
+// creeper NoAI would remove the actual skill being trained. Reuses
+// combatSeedWeapon (not a second weapon constant) — same reasoning as
+// SeedCombatMob's own doc comment on why the weapon choice is a fixed
+// constant, not configurable, for a first pass. Requires RCON (via
+// SeedEntity/SeedGiveItem).
+func (a *agent) SeedCreeperForGunpowder(ctx context.Context, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, creeperGunpowderMobType, radius, "")
+	if err != nil {
+		return 0, fmt.Errorf("seed creeper for gunpowder: %w", err)
+	}
+	if !a.IsEquipped(combatSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, combatSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed creeper for gunpowder: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, combatSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed creeper for gunpowder: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
+// spearSeedWeapon is the weapon SeedSpearMob equips before an episode's
+// spear-charge task — fixed, not configurable, for a first pass, same
+// reasoning as combatSeedWeapon's own doc comment. "minecraft:iron_spear"
+// matches testing/combat_integration_test.go's own established spear-item
+// convention (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6).
+const spearSeedWeapon = "minecraft:iron_spear"
+
+// SeedSpearMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a spear is
+// equipped, via RCON — training convenience for SpearCharge episode
+// seeding, the spear-task analogue of SeedCombatMob. NoAI-tagged like
+// SeedCombatMob's own combatMobNBT (unlike SeedCreeperForGunpowder):
+// isolates "can the policy learn to charge" from surviving a reactive
+// opponent, the same reasoning SeedCombatMob's own doc comment gives.
+// Requires RCON (via SeedEntity/SeedGiveItem).
+func (a *agent) SeedSpearMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed spear mob: %w", err)
+	}
+	if !a.IsEquipped(spearSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, spearSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed spear mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, spearSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed spear mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
+// maceSeedWeapon is the weapon SeedMaceMob equips before an episode's
+// mace-smash task — fixed, not configurable, for a first pass, same
+// reasoning as combatSeedWeapon's own doc comment (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 7).
+const maceSeedWeapon = "minecraft:mace"
+
+// SeedMaceMob ensures a live, non-aggressive instance of mobType exists
+// within radius blocks of the bot (via SeedEntity) and that a mace is
+// equipped, via RCON — training convenience for MaceSmash episode
+// seeding, the mace-task analogue of SeedCombatMob/SeedSpearMob.
+// NoAI-tagged like those two: a falling-attack timing window is hard
+// enough to hit without also fighting a reactive opponent. Requires RCON
+// (via SeedEntity/SeedGiveItem). See SeedElevatedPlatform for the other
+// half of this task's seeding (the terrain the smash actually needs).
+func (a *agent) SeedMaceMob(ctx context.Context, mobType string, radius int) (int32, error) {
+	entityID, err := a.SeedEntity(ctx, mobType, radius, combatMobNBT)
+	if err != nil {
+		return 0, fmt.Errorf("seed mace mob: %w", err)
+	}
+	if !a.IsEquipped(maceSeedWeapon) {
+		if err := a.SeedGiveItem(ctx, maceSeedWeapon, 1); err != nil {
+			return 0, fmt.Errorf("seed mace mob: giving weapon: %w", err)
+		}
+		if err := a.Equip(ctx, maceSeedWeapon); err != nil {
+			return 0, fmt.Errorf("seed mace mob: equipping weapon: %w", err)
+		}
+	}
+	return entityID, nil
+}
+
+// seedElevatedPlatformHeight/seedElevatedPlatformOffset/
+// seedElevatedPlatformBlock control where/how SeedElevatedPlatform builds
+// its platform relative to the seeded mace mob's own position:
+// seedElevatedPlatformHeight blocks straight up, seedElevatedPlatformOffset
+// blocks horizontally to one side. Chosen so a bot standing at the
+// platform's center and walking toward the mob (approachCombatTarget's own
+// continuous direction-to-live-target behavior — see
+// agent.MaceSmashAtWithApproach) steps off the near edge within its first
+// couple of movement ticks and falls comfortably past
+// combat.MaceAdditionalDamageFall's threshold while closing within
+// combat.MaceMaxReach by the time it lands. These exact values are a
+// first-pass estimate, not derived from the real falling-physics
+// trajectory (which this package doesn't simulate) — documented here as
+// the thing to retune first if live testing shows the window is missed
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7 flags this as
+// needing live validation once a server running a mace-supporting version
+// is available).
+const (
+	seedElevatedPlatformHeight = 5
+	seedElevatedPlatformOffset = 2
+	seedElevatedPlatformBlock  = "minecraft:stone"
+)
+
+// SeedElevatedPlatform locates the nearest live instance of mobType within
+// radius blocks of the bot (the same FindNearestEntityByType primitive
+// SeedEntity itself uses — this does not seed the mob; call SeedMaceMob
+// first) and places a small 3x3 stone platform seedElevatedPlatformHeight
+// blocks above it, seedElevatedPlatformOffset blocks to one side, then
+// teleports the bot onto its center — training convenience for MaceSmash
+// episode seeding (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7):
+// agent.MaceSmashAt itself only waits for a falling-attack window, never
+// creates one, so without this seeding step a smash can never succeed (the
+// bot starts on flat ground beside the mob, nothing to fall from).
+// Requires RCON (via raw /fill, mirroring ClearAir's own RCON machinery —
+// not SeedEntity/SeedVehicle, which summon entities, not place blocks) and
+// TeleportTo.
+func (a *agent) SeedElevatedPlatform(ctx context.Context, mobType string, radius int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed elevated platform: RCON not configured for this agent")
+	}
+	normalized := normalizeItemName(mobType)
+	typeID, ok := a.GetEntityTypeID(normalized)
+	if !ok {
+		return fmt.Errorf("seed elevated platform: unknown entity type %q", mobType)
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return fmt.Errorf("seed elevated platform: position not yet known")
+	}
+	entityID, distance, found := a.FindNearestEntityByType(typeID, pos.X, pos.Y, pos.Z, true)
+	if !found || distance > float64(radius) {
+		return fmt.Errorf("seed elevated platform: no %s within %d blocks to build toward", mobType, radius)
+	}
+	target, tracked := a.GetTrackedEntities()[entityID]
+	if !tracked {
+		return fmt.Errorf("seed elevated platform: resolved %s is no longer tracked", mobType)
+	}
+
+	platformX := target.X + seedElevatedPlatformOffset
+	platformY := target.Y + seedElevatedPlatformHeight
+	platformZ := target.Z
+	minX, maxX := int64(math.Floor(platformX))-1, int64(math.Floor(platformX))+1
+	minZ, maxZ := int64(math.Floor(platformZ))-1, int64(math.Floor(platformZ))+1
+	y := int64(math.Floor(platformY))
+	cmd := fmt.Sprintf("fill %d %d %d %d %d %d %s", minX, y, minZ, maxX, y, maxZ, seedElevatedPlatformBlock)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("fill via RCON: %w", err)
+	}
+
+	return a.TeleportTo(ctx, platformX, platformY+1, platformZ)
+}
+
 // craftRecipeFor loads itemName's crafting recipe.
 func (a *agent) craftRecipeFor(itemName string) (craftingRecipe, error) {
 	recipes, err := a.loadCraftingRecipes()
@@ -649,6 +894,182 @@ func (a *agent) ClearDroppedItems(ctx context.Context, x, y, z, radius int) erro
 	cmd := fmt.Sprintf("execute positioned %d %d %d run kill @e[type=item,distance=..%d]", x, y, z, radius)
 	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
 		return fmt.Errorf("clear dropped items via RCON: %w", err)
+	}
+	return nil
+}
+
+// seedEntityOffset mirrors seedBlockOffset: how far in front of the bot
+// (along +X) SeedEntity/SeedVehicle/SeedDroppedItem spawn their entity.
+// Unlike a block seed, an entity stands ON the ground rather than
+// replacing it, so it spawns at the bot's own feet level (seedBlockCoords'
+// y-1 would place it a block too low).
+const seedEntityOffset = 2
+
+// seedEntitySyncRadius bounds how far from the spawn point SeedEntity/
+// SeedVehicle looks for the entity it just summoned, independent of the
+// caller's own radius argument (which instead answers "does a suitable
+// instance already exist nearby" — a separate question). Generous enough
+// to comfortably cover any summon-position rounding, small enough that a
+// second, unrelated, same-type entity already in the world couldn't be
+// mistaken for the one just summoned in the common case.
+const seedEntitySyncRadius = 8.0
+
+// seedEntityCoords is where SeedEntity/SeedVehicle/SeedDroppedItem spawn
+// their entity for a bot at (x, y, z) — see seedEntityOffset's own doc
+// comment. Floor, not truncation, for the same negative-coordinate reason
+// seedBlockCoords uses it.
+func seedEntityCoords(x, y, z float64) (int64, int64, int64) {
+	return int64(math.Floor(x)) + seedEntityOffset, int64(math.Floor(y)), int64(math.Floor(z))
+}
+
+// SeedEntity ensures a live instance of mobType exists within radius blocks
+// of the bot, via RCON "summon" — training convenience only, the entity
+// analogue of SeedNearbyBlock (same scope note: never used by any chat
+// command or real gameplay path), for Combat/Mob-Riding episode seeding
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0). nbt, if non-empty,
+// must be a full NBT compound including its own braces (e.g.
+// "{NoAI:1b,PersistenceRequired:1b}") — passed through to
+// testenv.RCONHelper.SummonEntity unchanged; empty means no NBT at all,
+// not an empty compound. Requires RCON.
+//
+// A no-op (returning the existing instance's ID) if FindNearestEntityByType
+// already finds one within radius — doesn't stack an extra mob onto a
+// world that already has one, mirroring SeedNearbyBlock's own "already
+// there" check.
+//
+// Waits (bounded by seedSyncTimeout) for the summoned entity to actually
+// become visible to this bot's own tracking before returning, within
+// seedEntitySyncRadius of the spawn point — the same client-sync race
+// SeedNearbyBlock's doc comment describes for a block-update packet, here
+// for a SpawnEntity packet.
+func (a *agent) SeedEntity(ctx context.Context, mobType string, radius int, nbt string) (int32, error) {
+	if a.cfg.RCON == nil {
+		return 0, fmt.Errorf("seed entity: RCON not configured for this agent")
+	}
+	normalized := normalizeItemName(mobType)
+	typeID, ok := a.GetEntityTypeID(normalized)
+	if !ok {
+		return 0, fmt.Errorf("seed entity: unknown entity type %q", mobType)
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return 0, fmt.Errorf("seed entity: position not yet known")
+	}
+	if entityID, distance, found := a.FindNearestEntityByType(typeID, pos.X, pos.Y, pos.Z, true); found && distance <= float64(radius) {
+		return entityID, nil
+	}
+
+	x, y, z := seedEntityCoords(pos.X, pos.Y, pos.Z)
+	// Built directly via Exec (matching testenv.RCONHelper.SummonEntity's
+	// own "summon %s %f %f %f %s" format exactly) rather than chained
+	// through SummonEntity(...).Exec(ctx): the latter's returned
+	// *testenv.RCONResult binds to its originating *rconHelper via an
+	// unexported field this package cannot populate in a test double, so
+	// a unit test could never verify the command it sends — see
+	// agent/rl_seed_test.go.
+	cmd := fmt.Sprintf("summon %s %d %d %d %s", normalized, x, y, z, nbt)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return 0, fmt.Errorf("summon %s via RCON: %w", normalized, err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for {
+		if entityID, distance, found := a.FindNearestEntityByType(typeID, float64(x), float64(y), float64(z), true); found && distance <= seedEntitySyncRadius {
+			return entityID, nil
+		}
+		if !time.Now().Before(deadline) {
+			return 0, fmt.Errorf("seed entity: summoned %s but it never became visible to this bot within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+}
+
+// vehicleTameNBT is the NBT compound SeedVehicle passes when tame is true —
+// an untamed horse/donkey/mule refuses mounting (confirmed by
+// testing/vehicles' own {Tame:1b} convention), so this is the only NBT a
+// mob-riding episode's seeding needs beyond what SeedEntity already does.
+const vehicleTameNBT = "{Tame:1b}"
+
+// SeedVehicle is SeedEntity for a rideable vehicle, tame controlling
+// whether the summoned instance is tamed (see vehicleTameNBT) — the
+// mob-riding analogue of SeedEntity's combat-mob role
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/4).
+func (a *agent) SeedVehicle(ctx context.Context, vehicleType string, radius int, tame bool) (int32, error) {
+	nbt := ""
+	if tame {
+		nbt = vehicleTameNBT
+	}
+	return a.SeedEntity(ctx, vehicleType, radius, nbt)
+}
+
+// SeedDroppedItem drops one itemName on the ground within radius blocks of
+// the bot, via RCON "summon minecraft:item" — the item-entity analogue of
+// SeedNearbyBlock/SeedEntity, for an Item Pickup episode posed from a cold
+// inventory rather than piggybacking on a mine task's own drop
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0/2). The
+// `Item:{id:"...",Count:1}` NBT shape matches testing/lookaround_test.go's
+// own already-live-tested convention. Training convenience only; requires
+// RCON. A no-op if FindNearestVisibleItem already finds something within
+// radius.
+func (a *agent) SeedDroppedItem(ctx context.Context, itemName string, radius int) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed dropped item: RCON not configured for this agent")
+	}
+	if _, _, _, _, found, err := a.FindNearestVisibleItem(ctx, float64(radius)); err == nil && found {
+		return nil
+	}
+	pos, ok := a.GetPositionSimple()
+	if !ok {
+		return fmt.Errorf("seed dropped item: position not yet known")
+	}
+	normalized := normalizeItemName(itemName)
+	x, y, z := seedEntityCoords(pos.X, pos.Y, pos.Z)
+	nbt := fmt.Sprintf(`{Item:{id:"%s",Count:1}}`, normalized)
+	cmd := fmt.Sprintf("summon minecraft:item %d %d %d %s", x, y, z, nbt)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("summon item via RCON: %w", err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for {
+		if _, _, _, _, found, err := a.FindNearestVisibleItem(ctx, float64(radius)); err == nil && found {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("seed dropped item: dropped %s but it never became visible to this bot within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+}
+
+// ClearEntitiesOfType kills every live instance of mobType within radius
+// blocks of (x, y, z) via RCON — the Reset-time cleanup counterpart to
+// SeedEntity/SeedVehicle (see rlenv.EntitySeedAgent/VehicleSeedAgent): a
+// mob or vehicle a Combat/Mob-Riding episode didn't account for (the
+// policy chose Wait all episode, or combat failed) would otherwise persist
+// into the next Reset, the same "working area turns into an obstacle
+// course" failure mode ClearDroppedItems/ClearAir already exist to prevent
+// for drops/blocks (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0).
+// A type+radius kill, not an ID-specific one: precise per-episode-entity
+// targeting (to avoid a shared-server episode's cleanup killing another
+// bot's own seeded entity) is deferred to whichever of Phase 4/5 actually
+// needs it, not solved speculatively here — see that plan's own note.
+func (a *agent) ClearEntitiesOfType(ctx context.Context, x, y, z, radius int, mobType string) error {
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("clear entities of type: RCON not configured")
+	}
+	normalized := normalizeItemName(mobType)
+	cmd := fmt.Sprintf("execute positioned %d %d %d run kill @e[type=%s,distance=..%d]", x, y, z, normalized, radius)
+	if _, err := a.cfg.RCON.Exec(ctx, cmd); err != nil {
+		return fmt.Errorf("clear entities of type via RCON: %w", err)
 	}
 	return nil
 }

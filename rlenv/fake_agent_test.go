@@ -3,9 +3,11 @@ package rlenv_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/reallyoldfogie/mc-agent/combat"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
@@ -70,8 +72,8 @@ type fakeAgent struct {
 	// which simulates it no longer existing at all), for exercising the
 	// mine-target "memory" (docs/plans/14-buried-block-mining-and-memory-map.md,
 	// mc-rsi-trainer).
-	mineBlockHidden bool
-	collectDropsCalls                  int
+	mineBlockHidden   bool
+	collectDropsCalls int
 
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
@@ -151,6 +153,265 @@ type fakeAgent struct {
 	// candidates the reachability gate tried, not just how many.
 	findPathUnreachable func(x, y, z float64) bool
 	findPathCalls       []models.V3
+
+	// Equip/UseItem simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 1): heldItem is whatever Equip was last called with — mirrors
+	// mineBlockName's "actually mutates state" precedent, so Environment's
+	// real equip dispatch/reward logic is exercised for real rather than
+	// stubbed out. useItemCalls/useItemHands record every UseItem call so
+	// tests can assert dispatch args reached it correctly.
+	heldItem     string
+	useItemCalls int
+	useItemHands []models.Hand
+
+	// Item Pickup simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 2): a single target item, pickupTargetName, dropped at
+	// (pickupItemX,Y,Z), visible while pickupItemPresent. MoveTo/
+	// MoveToWithChat reaching within pickupRange of it "collects" it
+	// (clears pickupItemPresent, increments pickupHeldCount) — mirrors
+	// vanilla's own walk-near-it auto-collect behavior the real
+	// PickUpItem/pickUpNearbyItem commands rely on, and mineBlockName's
+	// "actually mutates state" precedent rather than a no-op stub.
+	pickupTargetName                      string
+	pickupItemX, pickupItemY, pickupItemZ float64
+	pickupItemPresent                     bool
+	pickupHeldCount                       int
+	findItemOfTypeCalls                   int
+
+	// gliding backs IsGliding — see FlyTo's own doc comment
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	gliding bool
+
+	// Mob Riding simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 4): a single target vehicle type, rideTargetType, visible at
+	// (rideX,Y,Z) with entity ID rideEntityID while rideVisible.
+	// MountEntity "mounts" it (mirrors mineBlockName's "actually mutates
+	// state" precedent) only when given that exact entity ID — matching
+	// ActionMount's own dispatch-by-resolved-ID contract, not by name.
+	rideTargetType        string
+	rideX, rideY, rideZ   float64
+	rideEntityID          int32
+	rideVisible           bool
+	mounted               bool
+	vehicleJumpCalls      int
+	findEntityOfTypeCalls int
+
+	// Combat simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5): a single target mob type, combatTargetType, visible at
+	// (combatX,Y,Z) with entity ID combatEntityID and health combatHealth
+	// while combatVisible. RunCombat "kills" it by setting combatHealth
+	// to 0 (mirrors mineBlockName's "actually mutates state" precedent)
+	// — see killCombatTarget.
+	combatTargetType          string
+	combatX, combatY, combatZ float64
+	combatEntityID            int32
+	combatHealth              float32
+	combatVisible             bool
+	runCombatCalls            []runCombatCall
+
+	// Standalone Place simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 2): a single target item, placeTargetName, with held count
+	// placeHeldCount — PlaceHeldBlock decrements it by one on a successful
+	// placement when chainInv is nil (standalone mode; a chain episode
+	// keeps using chainInv, unaffected by this).
+	placeTargetName string
+	placeHeldCount  int
+
+	// Sneak-on-arrival simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 3): sneaking backs StopSneaking's own no-op-when-not-sneaking
+	// contract closely enough for tests; moveToAndSneakCalls/
+	// stopSneakingCalls record call counts for dispatch assertions.
+	sneaking            bool
+	moveToAndSneakCalls int
+	stopSneakingCalls   int
+
+	// Follow simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+	// 4): followablePlayerName is the one name FindPlayerByName resolves
+	// (empty = nobody resolvable, the common "no second player" case this
+	// task's own precondition describes); following backs IsFollowing.
+	followablePlayerName string
+	following            bool
+
+	// Creeper-gunpowder simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 5): a single creeper, visible at (creeperX,Y,Z) with entity ID
+	// creeperEntityID while creeperVisible. KillCreeperForGunpowder
+	// "fights" it by clearing creeperVisible (mirrors killCombatTarget's
+	// own "actually mutates state" precedent) and, if
+	// creeperDropsGunpowder, increments gunpowderHeldCount — the real
+	// method's own documented "no-drop encounter" is a valid outcome, so
+	// this defaults to true rather than always dropping.
+	creeperX, creeperY, creeperZ float64
+	creeperEntityID              int32
+	creeperVisible               bool
+	creeperDropsGunpowder        bool
+	gunpowderHeldCount           int
+
+	// Spear-charge simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 6): a single target mob type, spearTargetType, visible at
+	// (spearX,Y,Z) with entity ID spearEntityID and health spearHealth
+	// while spearVisible. SpearChargeAtWithApproach "charges" it by
+	// setting spearHealth to 0 (mirrors killCombatTarget's own "actually
+	// mutates state" precedent) — see killSpearTarget.
+	spearTargetType        string
+	spearX, spearY, spearZ float64
+	spearEntityID          int32
+	spearHealth            float32
+	spearVisible           bool
+	spearChargeCalls       []spearChargeCall
+
+	// Mace-smash simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 7): a single target mob type, maceTargetType, visible at
+	// (maceX,Y,Z) with entity ID maceEntityID and health maceHealth while
+	// maceVisible. MaceSmashAtWithApproach "smashes" it by setting
+	// maceHealth to 0 — mirrors spearTargetType's own "actually mutates
+	// state" precedent.
+	maceTargetType      string
+	maceX, maceY, maceZ float64
+	maceEntityID        int32
+	maceHealth          float32
+	maceVisible         bool
+	maceSmashCalls      []maceSmashCall
+}
+
+// maceSmashCall records one MaceSmashAtWithApproach call's args, so tests
+// can assert rlenv's real dispatch reached it with the right values.
+type maceSmashCall struct {
+	targetID int32
+	itemName string
+}
+
+// spearChargeCall records one SpearChargeAtWithApproach call's args, so
+// tests can assert rlenv's real dispatch reached it with the right
+// values.
+type spearChargeCall struct {
+	targetID               int32
+	itemName               string
+	hold, engaged, tired   time.Duration
+	minSpeed, minAlignment float64
+}
+
+// setFollowablePlayer configures the simulated resolvable player — see
+// followablePlayerName's own doc comment.
+func (f *fakeAgent) setFollowablePlayer(name string) {
+	f.mu.Lock()
+	f.followablePlayerName = name
+	f.mu.Unlock()
+}
+
+// setCreeperTarget configures the simulated creeper — see creeperX's own
+// doc comment. dropsGunpowder controls whether a subsequent
+// KillCreeperForGunpowder call yields a drop.
+func (f *fakeAgent) setCreeperTarget(entityID int32, x, y, z float64, dropsGunpowder bool) {
+	f.mu.Lock()
+	f.creeperEntityID = entityID
+	f.creeperX, f.creeperY, f.creeperZ = x, y, z
+	f.creeperVisible = true
+	f.creeperDropsGunpowder = dropsGunpowder
+	f.mu.Unlock()
+}
+
+// setSpearTarget configures the simulated spear-charge target — see
+// spearTargetType's own doc comment.
+func (f *fakeAgent) setSpearTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.spearTargetType = entityType
+	f.spearEntityID = entityID
+	f.spearX, f.spearY, f.spearZ = x, y, z
+	f.spearHealth = health
+	f.spearVisible = true
+	f.mu.Unlock()
+}
+
+// killSpearTarget mirrors killCombatTarget's own doc comment, for the
+// spear-charge target.
+func (f *fakeAgent) killSpearTarget() {
+	f.mu.Lock()
+	f.spearHealth = 0
+	f.mu.Unlock()
+}
+
+// setMaceTarget configures the simulated mace-smash target — see
+// maceTargetType's own doc comment.
+func (f *fakeAgent) setMaceTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.maceTargetType = entityType
+	f.maceEntityID = entityID
+	f.maceX, f.maceY, f.maceZ = x, y, z
+	f.maceHealth = health
+	f.maceVisible = true
+	f.mu.Unlock()
+}
+
+// killMaceTarget mirrors killCombatTarget's own doc comment, for the
+// mace-smash target.
+func (f *fakeAgent) killMaceTarget() {
+	f.mu.Lock()
+	f.maceHealth = 0
+	f.mu.Unlock()
+}
+
+// setPlaceTarget configures the simulated standalone-placement target —
+// see placeTargetName's own doc comment.
+func (f *fakeAgent) setPlaceTarget(itemName string, count int) {
+	f.mu.Lock()
+	f.placeTargetName = itemName
+	f.placeHeldCount = count
+	f.mu.Unlock()
+}
+
+type runCombatCall struct {
+	radius         float64
+	includePlayers bool
+	includeNeutral bool
+}
+
+// setRideVehicle configures the simulated Mob Riding target — see
+// rideTargetType's own doc comment.
+func (f *fakeAgent) setRideVehicle(entityType string, entityID int32, x, y, z float64) {
+	f.mu.Lock()
+	f.rideTargetType = entityType
+	f.rideEntityID = entityID
+	f.rideX, f.rideY, f.rideZ = x, y, z
+	f.rideVisible = true
+	f.mu.Unlock()
+}
+
+// setCombatTarget configures the simulated Combat target — see
+// combatTargetType's own doc comment.
+func (f *fakeAgent) setCombatTarget(entityType string, entityID int32, x, y, z float64, health float32) {
+	f.mu.Lock()
+	f.combatTargetType = entityType
+	f.combatEntityID = entityID
+	f.combatX, f.combatY, f.combatZ = x, y, z
+	f.combatHealth = health
+	f.combatVisible = true
+	f.mu.Unlock()
+}
+
+// killCombatTarget simulates RunCombat landing a killing blow: zeroes the
+// target's health, matching GetEntityHealth's "health <= 0 counts as
+// dead" contract (it stays "found", mirroring a kill the server hasn't
+// yet confirmed via removal — see that method's own doc comment on why
+// either signal counts).
+func (f *fakeAgent) killCombatTarget() {
+	f.mu.Lock()
+	f.combatHealth = 0
+	f.mu.Unlock()
+}
+
+// pickupRange is how close MoveTo must land to the simulated pickup item
+// to "collect" it — mirrors vanilla's actual pickup-range generosity
+// (collects without landing exactly on the drop's cell).
+const pickupRange = 1.5
+
+// setPickupItem configures the simulated Item Pickup target — see
+// pickupTargetName's own doc comment.
+func (f *fakeAgent) setPickupItem(name string, x, y, z float64) {
+	f.mu.Lock()
+	f.pickupTargetName = name
+	f.pickupItemX, f.pickupItemY, f.pickupItemZ = x, y, z
+	f.pickupItemPresent = true
+	f.mu.Unlock()
 }
 
 type seedNearbyBlockCall struct {
@@ -249,19 +510,45 @@ func (f *fakeAgent) SendChat(string) error { return nil }
 // --- models.MovementAgent (beyond Position) ---
 
 func (f *fakeAgent) GetVelocity() (x, y, z float64, ok bool) { return 0, 0, 0, false }
-func (f *fakeAgent) IsGliding() bool                         { return false }
+func (f *fakeAgent) IsGliding() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.gliding
+}
 
 func (f *fakeAgent) MoveForward(context.Context, float64) error    { return nil }
 func (f *fakeAgent) MoveUp(context.Context, float64) error         { return nil }
 func (f *fakeAgent) MoveUpAndSneak(context.Context, float64) error { return nil }
-func (f *fakeAgent) MoveToAndSneak(context.Context, float64, float64, float64) error {
+
+// MoveToAndSneak moves the tracked position to (x, y, z) and marks the bot
+// sneaking — mirrors MoveTo's own "actually mutates state" precedent, so
+// rlenv's real ActionGoToTarget dispatch (Config.ArriveSneaking,
+// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 3) is exercised for
+// real rather than stubbed out.
+func (f *fakeAgent) MoveToAndSneak(_ context.Context, x, y, z float64) error {
+	f.mu.Lock()
+	f.x, f.y, f.z = x, y, z
+	f.sneaking = true
+	f.moveToAndSneakCalls++
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeAgent) LineToAndSneak(context.Context, float64, float64, float64) error {
 	return nil
 }
-func (f *fakeAgent) StartSneaking() error { return nil }
-func (f *fakeAgent) StopSneaking() error  { return nil }
+func (f *fakeAgent) StartSneaking() error {
+	f.mu.Lock()
+	f.sneaking = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) StopSneaking() error {
+	f.mu.Lock()
+	f.sneaking = false
+	f.stopSneakingCalls++
+	f.mu.Unlock()
+	return nil
+}
 func (f *fakeAgent) FindPath(_ context.Context, x, y, z float64) (*models.Path, error) {
 	f.mu.Lock()
 	f.findPathCalls = append(f.findPathCalls, models.V3{X: x, Y: y, Z: z})
@@ -274,9 +561,24 @@ func (f *fakeAgent) FindPath(_ context.Context, x, y, z float64) (*models.Path, 
 }
 func (f *fakeAgent) ExecutePath(context.Context, *models.Path) error         { return nil }
 func (f *fakeAgent) LookAt(context.Context, float64, float64, float64) error { return nil }
-func (f *fakeAgent) Follow(context.Context, string) error                    { return nil }
-func (f *fakeAgent) StopFollow(context.Context) error                        { return nil }
-func (f *fakeAgent) FollowStatus(context.Context) string                     { return "" }
+
+// Follow "starts" following — mirrors mineBlockName's own "actually
+// mutates state" precedent, so rlenv's real ActionFollow dispatch/reward
+// logic is exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 4).
+func (f *fakeAgent) Follow(_ context.Context, _ string) error {
+	f.mu.Lock()
+	f.following = true
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) StopFollow(_ context.Context) error {
+	f.mu.Lock()
+	f.following = false
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) FollowStatus(context.Context) string { return "" }
 
 // --- models.CommandAgent (beyond MovementAgent/ChatOperations) ---
 
@@ -312,6 +614,13 @@ func (f *fakeAgent) MoveTo(ctx context.Context, x, y, z float64, _ bool) error {
 	if err == nil {
 		f.mu.Lock()
 		f.x, f.y, f.z = x, y, z
+		if f.pickupItemPresent {
+			dx, dy, dz := x-f.pickupItemX, y-f.pickupItemY, z-f.pickupItemZ
+			if dx*dx+dy*dy+dz*dz <= pickupRange*pickupRange {
+				f.pickupItemPresent = false
+				f.pickupHeldCount++
+			}
+		}
 		f.mu.Unlock()
 	}
 	return err
@@ -328,9 +637,13 @@ func (f *fakeAgent) TestMove()              {}
 func (f *fakeAgent) TestPath()              {}
 func (f *fakeAgent) StartTracking()         {}
 func (f *fakeAgent) StopTracking()          {}
-func (f *fakeAgent) HasFollowManager() bool { return false }
-func (f *fakeAgent) IsFollowing() bool      { return false }
-func (f *fakeAgent) IsSprinting() bool      { return false }
+func (f *fakeAgent) HasFollowManager() bool { return true }
+func (f *fakeAgent) IsFollowing() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.following
+}
+func (f *fakeAgent) IsSprinting() bool { return false }
 func (f *fakeAgent) PlanStatus(context.Context) models.PlanStatus {
 	return models.PlanStatus{}
 }
@@ -339,20 +652,239 @@ func (f *fakeAgent) FireBow(context.Context) error  { return nil }
 func (f *fakeAgent) FireBowAt(context.Context, float64, float64, float64, ...models.ProjectileHitCallback) ([]models.TrajectoryPoint, error) {
 	return nil, nil
 }
-func (f *fakeAgent) MountEntity(context.Context, int32) error   { return nil }
+
+// MountEntity "mounts" entityID if it matches the simulated ride target —
+// mirrors mineBlockName's "actually mutates state" precedent (see
+// rideTargetType's own doc comment).
+func (f *fakeAgent) MountEntity(_ context.Context, entityID int32) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rideTargetType == "" || !f.rideVisible || entityID != f.rideEntityID {
+		return fmt.Errorf("entity %d not found", entityID)
+	}
+	f.mounted = true
+	return nil
+}
 func (f *fakeAgent) MountNearest(context.Context, string) error { return nil }
-func (f *fakeAgent) DismountEntity() error                      { return nil }
-func (f *fakeAgent) JumpVehicle(context.Context, int32) error   { return nil }
-func (f *fakeAgent) Equip(context.Context, string) error        { return nil }
-func (f *fakeAgent) UseItem(context.Context, models.Hand) error { return nil }
-func (f *fakeAgent) FlyTo(context.Context, float64, float64, float64) error {
+func (f *fakeAgent) DismountEntity() error {
+	f.mu.Lock()
+	f.mounted = false
+	f.mu.Unlock()
+	return nil
+}
+func (f *fakeAgent) JumpVehicle(context.Context, int32) error {
+	f.mu.Lock()
+	f.vehicleJumpCalls++
+	f.mu.Unlock()
+	return nil
+}
+
+// Equip "equips" itemName by recording it as heldItem — see heldItem's own
+// doc comment for why this mutates state rather than being a no-op stub.
+func (f *fakeAgent) Equip(_ context.Context, itemName string) error {
+	f.mu.Lock()
+	f.heldItem = itemName
+	f.mu.Unlock()
+	return nil
+}
+
+// UseItem records the call and which hand it was sent for, so tests can
+// assert ActionUseItem's dispatch reached it with the right args.
+func (f *fakeAgent) UseItem(_ context.Context, hand models.Hand) error {
+	f.mu.Lock()
+	f.useItemCalls++
+	f.useItemHands = append(f.useItemHands, hand)
+	f.mu.Unlock()
+	return nil
+}
+
+// FindNearestVisibleEntityOfType reports the simulated ride vehicle's
+// position/ID only when its type matches and it's still present — mirrors
+// FindNearestVisibleItemOfType's own contract (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+func (f *fakeAgent) FindNearestVisibleEntityOfType(_ context.Context, entityTypeName string, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findEntityOfTypeCalls++
+	if f.rideVisible && f.rideTargetType != "" && entityTypeName == f.rideTargetType {
+		return f.rideEntityID, f.rideX, f.rideY, f.rideZ, true, nil
+	}
+	if f.combatVisible && f.combatTargetType != "" && entityTypeName == f.combatTargetType {
+		return f.combatEntityID, f.combatX, f.combatY, f.combatZ, true, nil
+	}
+	if f.creeperVisible && entityTypeName == "minecraft:creeper" {
+		return f.creeperEntityID, f.creeperX, f.creeperY, f.creeperZ, true, nil
+	}
+	if f.spearVisible && f.spearTargetType != "" && entityTypeName == f.spearTargetType {
+		return f.spearEntityID, f.spearX, f.spearY, f.spearZ, true, nil
+	}
+	if f.maceVisible && f.maceTargetType != "" && entityTypeName == f.maceTargetType {
+		return f.maceEntityID, f.maceX, f.maceY, f.maceZ, true, nil
+	}
+	return 0, 0, 0, 0, false, nil
+}
+
+// GetEntityHealth reports the simulated combat target's health when
+// entityID matches — found=false otherwise (not tracked), matching
+// agent.GetEntityHealth's own contract.
+func (f *fakeAgent) GetEntityHealth(entityID int32) (health float32, found bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.combatVisible && entityID == f.combatEntityID {
+		return f.combatHealth, true
+	}
+	if f.spearVisible && entityID == f.spearEntityID {
+		return f.spearHealth, true
+	}
+	if f.maceVisible && entityID == f.maceEntityID {
+		return f.maceHealth, true
+	}
+	// The simulated pickup item has no meaningful health — only "found"
+	// matters for Config.PickupAnyItem's own reward check (see
+	// pickupItemEntityID's own doc comment).
+	if f.pickupItemPresent && entityID == pickupItemEntityID {
+		return 0, true
+	}
+	return 0, false
+}
+
+// RunCombat "fights" the simulated combat target by killing it (see
+// killCombatTarget) — mirrors MineBlockAt's "actually mutates state"
+// precedent so rlenv's real ActionCombat dispatch/reward logic is
+// exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+// A no-op (recording the call only) if nothing is currently configured as
+// the combat target, matching a real empty-radius runCombat call that
+// simply finds nothing to fight.
+func (f *fakeAgent) RunCombat(_ context.Context, radius float64, includeNeutral bool) error {
+	f.mu.Lock()
+	f.runCombatCalls = append(f.runCombatCalls, runCombatCall{radius: radius, includeNeutral: includeNeutral})
+	if f.combatVisible {
+		f.combatHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// RunCombatWithPolicy mirrors RunCombat's own "actually mutates state"
+// precedent — rlenv's real ActionCombat dispatch now exclusively targets
+// "runcombatwithpolicy" (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md's
+// "Deferred" section, closed out once the user explicitly decided
+// Config.CombatIncludePlayers should be opt-in/default-false), so this is
+// what ActionCombat's own tests actually exercise now; RunCombat above
+// stays in place unused by any current rlenv test, mirroring how
+// agent.RunCombat itself is just a convenience wrapper around
+// agent.RunCombatWithPolicy in production.
+func (f *fakeAgent) RunCombatWithPolicy(_ context.Context, radius float64, policy combat.TargetPolicy) error {
+	f.mu.Lock()
+	f.runCombatCalls = append(f.runCombatCalls, runCombatCall{radius: radius, includePlayers: policy.IncludePlayers, includeNeutral: policy.IncludeNeutral})
+	if f.combatVisible {
+		f.combatHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// KillCreeperForGunpowder "fights" the simulated creeper by clearing
+// creeperVisible and, if creeperDropsGunpowder, incrementing
+// gunpowderHeldCount — mirrors RunCombat's own "actually mutates state"
+// precedent so rlenv's real ActionKillCreeperForGunpowder dispatch/reward
+// logic is exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 5). Errors if nothing is currently configured as the creeper
+// target, matching the real method's own "not found" contract rather than
+// a silent no-op (unlike RunCombat, this method always resolves one
+// specific creeper, so there is no "empty radius" equivalent).
+func (f *fakeAgent) KillCreeperForGunpowder(_ context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.creeperVisible {
+		return false, errors.New("kill creeper: creeper not found")
+	}
+	f.creeperVisible = false
+	if f.creeperDropsGunpowder {
+		f.gunpowderHeldCount++
+		return true, nil
+	}
+	return false, nil
+}
+
+// SpearChargeAtWithApproach "charges" the simulated spear target by
+// zeroing its health (mirrors killCombatTarget's own "actually mutates
+// state" precedent) — see spearTargetType's own doc comment. A no-op
+// (recording the call only) if nothing is currently configured as the
+// spear target, matching a real call against an untracked/vanished
+// target.
+func (f *fakeAgent) SpearChargeAtWithApproach(_ context.Context, targetID int32, itemName string, hold, engaged, tired time.Duration, minSpeed, minAlignment float64) error {
+	f.mu.Lock()
+	f.spearChargeCalls = append(f.spearChargeCalls, spearChargeCall{targetID, itemName, hold, engaged, tired, minSpeed, minAlignment})
+	if f.spearVisible && targetID == f.spearEntityID {
+		f.spearHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// MaceSmashAtWithApproach "smashes" the simulated mace target by zeroing
+// its health — mirrors SpearChargeAtWithApproach's own "actually mutates
+// state" precedent. A no-op (recording the call only) if nothing is
+// currently configured as the mace target, matching a real call against
+// an untracked/vanished target.
+func (f *fakeAgent) MaceSmashAtWithApproach(_ context.Context, targetID int32, itemName string) error {
+	f.mu.Lock()
+	f.maceSmashCalls = append(f.maceSmashCalls, maceSmashCall{targetID: targetID, itemName: itemName})
+	if f.maceVisible && targetID == f.maceEntityID {
+		f.maceHealth = 0
+	}
+	f.mu.Unlock()
+	return nil
+}
+
+// IsMounted reports the simulated mount state — see MountEntity/
+// DismountEntity's own doc comments.
+func (f *fakeAgent) IsMounted() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.mounted
+}
+
+// IsEquipped reports whether itemName matches heldItem — mirrors the real
+// implementation's "worn or held" contract closely enough for this
+// package's equip-task tests, which only ever equip one item at a time.
+func (f *fakeAgent) IsEquipped(itemName string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heldItem != "" && f.heldItem == itemName
+}
+
+// FlyTo "flies" by moving the tracked position directly to (x, y, z) and
+// marking the bot as gliding — mirrors MoveTo's own "actually mutates
+// state" precedent (see this file's top doc comment) rather than a no-op
+// stub, so rlenv's real ActionFlyTo dispatch/arrival/reward logic is
+// exercised for real (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+func (f *fakeAgent) FlyTo(_ context.Context, x, y, z float64) error {
+	f.mu.Lock()
+	f.x, f.y, f.z = x, y, z
+	f.gliding = true
+	f.mu.Unlock()
 	return nil
 }
 func (f *fakeAgent) NearestPlayerInfo(context.Context, bool) (models.NearestPlayerInfo, bool) {
 	return models.NearestPlayerInfo{}, false
 }
-func (f *fakeAgent) FindPlayerByName(context.Context, string) (x, y, z float64, found bool, err error) {
-	return 0, 0, 0, false, nil
+
+// FindPlayerByName reports the simulated resolvable player only when the
+// queried name matches followablePlayerName — mirrors the real contract
+// deliberately: returns an error (not found=false) when the name doesn't
+// resolve, matching agent.FindPlayerByName's own "not found" behavior,
+// since Environment.refreshFollowTarget is specifically built to treat
+// that as routine rather than fatal (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 4).
+func (f *fakeAgent) FindPlayerByName(_ context.Context, name string) (x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.followablePlayerName == "" || name != f.followablePlayerName {
+		return 0, 0, 0, false, errors.New("player not found")
+	}
+	return 0, 0, 0, true, nil
 }
 func (f *fakeAgent) GetPlayerAbilities() (models.PlayerAbilities, bool) {
 	return models.PlayerAbilities{}, false
@@ -521,6 +1053,15 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	if f.craftTargetName != "" && itemName == f.craftTargetName {
 		return f.craftHeldCount
 	}
+	if f.pickupTargetName != "" && itemName == f.pickupTargetName {
+		return f.pickupHeldCount
+	}
+	if f.placeTargetName != "" && itemName == f.placeTargetName {
+		return f.placeHeldCount
+	}
+	if itemName == "minecraft:gunpowder" {
+		return f.gunpowderHeldCount
+	}
 	return 0
 }
 
@@ -537,9 +1078,40 @@ func (f *fakeAgent) FindAllVisibleEntitiesInSphere(context.Context, float64) ([]
 	return nil, nil
 }
 
-func (f *fakeAgent) FindNearestVisibleItem(context.Context, float64) (entityID int32, x, y, z float64, found bool, err error) {
-	return 0, 0, 0, 0, false, nil
+// FindNearestVisibleItem reports the simulated pickup item regardless of
+// its name — the unfiltered counterpart to FindNearestVisibleItemOfType,
+// used by Config.PickupAnyItem's own tests (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+func (f *fakeAgent) FindNearestVisibleItem(_ context.Context, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.pickupItemPresent {
+		return 0, 0, 0, 0, false, nil
+	}
+	return pickupItemEntityID, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
 }
+
+// FindNearestVisibleItemOfType reports the simulated pickup item's position
+// only when its name matches and it's still present — mirrors
+// FindVisibleBlock's "finds the nearest visible instance of that specific
+// name" contract closely enough to exercise rlenv's real dispatch/
+// observation logic without a live server.
+func (f *fakeAgent) FindNearestVisibleItemOfType(_ context.Context, itemName string, _ float64) (entityID int32, x, y, z float64, found bool, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findItemOfTypeCalls++
+	if !f.pickupItemPresent || f.pickupTargetName == "" || itemName != f.pickupTargetName {
+		return 0, 0, 0, 0, false, nil
+	}
+	return pickupItemEntityID, f.pickupItemX, f.pickupItemY, f.pickupItemZ, true, nil
+}
+
+// pickupItemEntityID is the fixed simulated entity ID FindNearestVisibleItem/
+// FindNearestVisibleItemOfType report for the simulated pickup item — also
+// recognized by GetEntityHealth, so Config.PickupAnyItem's reward check
+// (which asks "is this entity ID still tracked") works against the fake the
+// same way it does against the real agent.
+const pickupItemEntityID = 1
 
 // --- rlenv.SeedAgent (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) ---
 
@@ -800,7 +1372,18 @@ func (f *fakeAgent) PlaceHeldBlock(_ context.Context, itemName string) (models.V
 		f.failNextPlace = false
 		return models.V3{}, errors.New("the block never appeared")
 	}
-	if f.chainInv == nil || f.chainInv[itemName] == 0 {
+	if f.chainInv == nil {
+		// Standalone mode (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+		// item 2) — chainBlocks bookkeeping doesn't apply outside a chain
+		// episode, so this only needs to move the held count, which is
+		// all the standalone reward check (InventoryCount decrease) reads.
+		if f.placeTargetName == "" || itemName != f.placeTargetName || f.placeHeldCount == 0 {
+			return models.V3{}, errors.New("none in the inventory")
+		}
+		f.placeHeldCount--
+		return models.V3{X: f.x, Y: f.y, Z: f.z + 1}, nil
+	}
+	if f.chainInv[itemName] == 0 {
 		return models.V3{}, errors.New("none in the inventory")
 	}
 	f.chainInv[itemName]--

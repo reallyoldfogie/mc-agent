@@ -60,6 +60,25 @@ func (a *agent) MaceAttackAt(ctx context.Context, targetID int32, itemName strin
 	return a.attackEntityAtRange(ctx, targetID, false, request.MaxReach)
 }
 
+// MaceSmashAtWithApproach is MaceSmashAt's own approach-and-smash
+// counterpart: MaceSmashAt only ever waits for the falling-attack window
+// and sends the attack — it never moves the bot, so nothing ever creates
+// that window on its own. This closes that gap by running the approach
+// (approachTargetWhileAttacking, reusing the same CombatMovementEnvironment/
+// ApplyCombatMovement primitives RunCombat's own loop uses) concurrently
+// with the smash wait, with filterFallRisk=false: the bot deliberately
+// walking off a seeded elevated platform's edge (see
+// agent.SeedElevatedPlatform's own doc comment) is the entire mechanic this
+// waits for, so the ordinary "don't walk off a ledge" safety check that
+// SpearChargeAtWithApproach keeps must NOT apply here — it would hold
+// position at exactly the edge the smash needs the bot to fall from
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+func (a *agent) MaceSmashAtWithApproach(ctx context.Context, targetID int32, itemName string) error {
+	return a.approachTargetWhileAttacking(ctx, targetID, false, 0, func(attackCtx context.Context) error {
+		return a.MaceSmashAt(attackCtx, targetID, itemName)
+	})
+}
+
 // MaceSmashAt waits for vanilla's falling attack window and sends the Mace
 // attack as soon as the smash conditions are met.
 func (a *agent) MaceSmashAt(ctx context.Context, targetID int32, itemName string) error {

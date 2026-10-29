@@ -138,6 +138,234 @@ type Config struct {
 	// applies no table condition. Ignored if CraftTargetItem is empty.
 	CraftSearchRadius int
 
+	// PickupTargetItem, if set, is the item name (e.g. "minecraft:stick")
+	// this episode's item-pickup task targets — enables ActionPickUpItem,
+	// following MineTargetBlock's exact "environment poses the task"
+	// pattern (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 2). Empty
+	// (the default) means this Environment instance doesn't pose a pickup
+	// task: ActionPickUpItem becomes a safe no-op, not an error — see
+	// action.go's resolveDispatch. Unlike MineTargetBlock, there's no
+	// position-based reward check possible here (the item entity simply
+	// disappears once collected — there's no "did this position's content
+	// change" the way a mined block's position still exists, now as air):
+	// reward is judged from an InventoryCount increase instead, the same
+	// shape CraftTargetItem's own reward already uses.
+	PickupTargetItem string
+
+	// PickupSearchRadius bounds FindNearestVisibleItemOfType's search when
+	// locating the nearest visible PickupTargetItem instance, in blocks.
+	// Ignored if PickupTargetItem is empty. <= 0 means unbounded (mirrors
+	// FindNearestVisibleItemOfType's own "maxDistance <= 0 disables the
+	// limit" convention, unlike MineSearchRadius's "<=0 defers to a built-in
+	// default" — FindNearestVisibleItemOfType has no such built-in default
+	// to defer to) — see DefaultConfig's own default for a reasonable value.
+	PickupSearchRadius int
+
+	// PickupAnyItem, if true (and PickupTargetItem is empty), poses the
+	// pickup task as "collect whatever's nearest, regardless of content" —
+	// the generalized form of the "pickupnearbyitem" chat command, mirroring
+	// FindNearestVisibleItem's own unfiltered search (the predecessor
+	// FindNearestVisibleItemOfType was built on top of — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1). Mutually
+	// exclusive with PickupTargetItem in practice: if both are set,
+	// PickupTargetItem's name-filtered resolution takes precedence (see
+	// refreshPickupTarget).
+	PickupAnyItem bool
+
+	// PlaceTargetItem, if set, is the item name (e.g. "minecraft:dirt")
+	// this episode's standalone placement task targets — enables
+	// ActionPlace outside a chain episode, following MineTargetBlock's
+	// exact "environment poses the task" pattern. Ignored while
+	// ChainStage > 0, which keeps its own existing hardcoded-crafting-table
+	// behavior unchanged (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+	// 2). Empty (the default, and the only option outside a chain episode
+	// before this field existed) means no standalone placement task.
+	PlaceTargetItem string
+
+	// FlyTargetOffset is added to the bot's position at Reset to produce
+	// this episode's elytra-flight target (Environment.flyTargetX/Y/Z) —
+	// the flight-task analogue of TargetOffset, but a genuine 3D offset
+	// (altitude included). Only the X/Z components ever drive arrival
+	// (see FlyArrivalRadius): agent.FlyTo's own landing behavior ignores
+	// the Y it's given — elytra flight can't hover, so it always lands on
+	// the ground under the requested X/Z — and Environment's own arrival
+	// check mirrors that. Ignored unless FlyTargetActive is also true.
+	FlyTargetOffset [3]float64
+
+	// FlyTargetActive enables the flight task — ActionFlyTo becomes legal
+	// (once an elytra is equipped) when true, a permanent no-op when
+	// false (the default). A separate explicit flag, not "FlyTargetOffset
+	// != zero": a zero offset is itself a legitimate configuration (the
+	// target is wherever the bot took off from) — the identical ambiguity
+	// TargetOffset's own doc comment already documents and
+	// GoToTargetDisabled was added to resolve. Flight starts with this
+	// lesson already applied rather than repeating it
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	FlyTargetActive bool
+
+	// FlyArrivalRadius bounds how close, horizontally (X/Z only, matching
+	// FlyTo's own landing behavior), the bot must land to count as
+	// "arrived." <= 0 defers to FlyTo's own built-in arrival radius; see
+	// DefaultConfig's own default for the exact value it mirrors.
+	FlyArrivalRadius float64
+
+	// RideVehicleType, if set, is the entity type name (e.g.
+	// "minecraft:horse") this episode's mob-riding task targets — enables
+	// ActionMount/ActionDismount/ActionVehicleJump, following
+	// MineTargetBlock's exact "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4). Empty (the
+	// default) means no riding task: all three actions become safe
+	// no-ops — see action.go's resolveDispatch.
+	RideVehicleType string
+
+	// RideSearchRadius bounds FindNearestVisibleEntityOfType's search when
+	// locating the nearest visible RideVehicleType instance, in blocks
+	// (also the radius SeedVehicle checks before summoning one — see
+	// DefaultEpisodeSeeder). Ignored if RideVehicleType is empty. <= 0
+	// means unbounded. No existing chat-command default to mirror here —
+	// unlike mine/pickup, "mount <entityType>" (MountNearest) has no
+	// radius concept of its own at all — see DefaultConfig's own default
+	// for the value chosen instead.
+	RideSearchRadius int
+
+	// CombatTargetMobType, if set, is the entity type name (e.g.
+	// "minecraft:zombie") this episode's combat task targets — enables
+	// ActionCombat, following MineTargetBlock's exact "environment poses
+	// the task" pattern (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 5). Empty (the default) means no combat task. Bot death is
+	// already handled generically regardless of this field — see
+	// reward.go's computeReward (diedThisStep ends every episode with
+	// deathPenalty) — Combat doesn't need, and doesn't add, any
+	// special-cased death handling of its own.
+	CombatTargetMobType string
+
+	// CombatRadius bounds both FindNearestVisibleEntityOfType's search
+	// when locating the nearest visible CombatTargetMobType instance
+	// (also the radius SeedCombatMob checks before summoning one) and the
+	// radius ActionCombat's own "runcombatwithpolicy <radius> ..."
+	// dispatch passes through to agent.RunCombatWithPolicy. <= 0 defers
+	// to DefaultConfig's own default, which matches actions/commands.go's
+	// own runCombat default radius (16).
+	CombatRadius float64
+
+	// CombatIncludePlayers, if true, lets ActionCombat target real
+	// connected players as well as hostile mobs
+	// (combat.TargetPolicy.IncludePlayers) — see that type's own doc
+	// comment ("Players are opt-in so callers do not accidentally enable
+	// friendly fire"). Default false: a trained policy must never be able
+	// to attack real players unless an episode explicitly asks for it —
+	// this is a product/safety decision, not an engineering one (docs/
+	// plans/RL_ACTION_SPACE_EXPANSION_III.md's own "Deferred" section,
+	// closed out once the user made this call explicitly — see commit
+	// history around 2026-10-24).
+	CombatIncludePlayers bool
+
+	// CombatIncludeNeutral, if true, lets ActionCombat target neutral
+	// mobs (e.g. enderman, wolf) unprovoked, not just hostile ones
+	// (combat.TargetPolicy.IncludeNeutral) — mirrors
+	// actions/commands.go's own "runcombat [radius] [includeNeutral]"
+	// parameter, which this field now also drives. Default false: no
+	// safety concern on CombatIncludePlayers' level, but still an
+	// explicit opt-in rather than a surprise behavior change for any
+	// episode that already configures Config.CombatTargetMobType.
+	CombatIncludeNeutral bool
+
+	// CreeperGunpowderActive, if true, enables
+	// ActionKillCreeperForGunpowder — a complete, already-built encounter
+	// (agent.KillCreeperForGunpowder) that fights the nearest creeper with
+	// whatever melee weapon is already equipped and collects a gunpowder
+	// drop if one appears, following MineTargetBlock's exact "environment
+	// poses the task" pattern. Unlike CombatTargetMobType, there is no mob-
+	// type field: the method itself is hardcoded to creepers by design
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5). Empty/false
+	// (the default) means no creeper-gunpowder task. Bot death is already
+	// handled generically regardless of this field — same reasoning as
+	// CombatTargetMobType's own doc comment.
+	CreeperGunpowderActive bool
+
+	// CreeperGunpowderRadius bounds FindNearestVisibleEntityOfType's
+	// search for the nearest visible creeper (also the radius
+	// SeedCreeperForGunpowder checks before summoning one). <= 0 defers to
+	// DefaultConfig's own default — no existing chat-command default to
+	// mirror (the real method's own search loop is unbounded, polling
+	// until a creeper happens to be found), same reasoning as
+	// RideSearchRadius's own doc comment.
+	CreeperGunpowderRadius float64
+
+	// SpearChargeTargetMobType, if set, is the entity type name this
+	// episode's spear-charge task targets — enables
+	// ActionSpearChargeWithApproach, following CombatTargetMobType's exact
+	// "environment poses the task" pattern. Unlike CombatTargetMobType,
+	// dispatch is at Environment's own already-resolved entity ID (mirrors
+	// ActionMount's by-ID dispatch, not by-name — see ActionMine's own doc
+	// comment on why): agent.SpearChargeAtWithApproach needs one specific
+	// targetID, unlike RunCombat's own self-ranking loop. Empty (the
+	// default) means no spear-charge task (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 6). Bot death is already
+	// handled generically regardless of this field — same reasoning as
+	// CombatTargetMobType's own doc comment.
+	SpearChargeTargetMobType string
+
+	// SpearChargeRadius bounds both FindNearestVisibleEntityOfType's
+	// search when locating the nearest visible SpearChargeTargetMobType
+	// instance and the radius SeedSpearMob checks before summoning one.
+	// <= 0 defers to DefaultConfig's own default — no existing
+	// chat-command default to mirror, same reasoning as RideSearchRadius's
+	// own doc comment.
+	SpearChargeRadius float64
+
+	// MaceSmashTargetMobType, if set, is the entity type name this
+	// episode's mace-smash task targets — enables
+	// ActionMaceSmashWithApproach, following SpearChargeTargetMobType's
+	// exact "environment poses the task" pattern, same by-ID dispatch
+	// reasoning (agent.MaceSmashAtWithApproach needs one specific
+	// targetID too). Empty (the default) means no mace-smash task (docs/
+	// plans/RL_ACTION_SPACE_EXPANSION_III.md item 7). Bot death is
+	// already handled generically regardless of this field.
+	MaceSmashTargetMobType string
+
+	// MaceSmashRadius bounds both FindNearestVisibleEntityOfType's
+	// search when locating the nearest visible MaceSmashTargetMobType
+	// instance and the radius SeedMaceMob/SeedElevatedPlatform check
+	// before summoning/building. <= 0 defers to DefaultConfig's own
+	// default, same reasoning as SpearChargeRadius's own doc comment.
+	MaceSmashRadius float64
+
+	// FollowTargetPlayerName, if set, is the player name (not an entity
+	// type/block to search for — agent.Follow's own target-selection only
+	// resolves players by name, following/manager.go's Start(targetPlayerName
+	// string)) this episode's following task targets — enables
+	// ActionFollow/ActionStopFollow, following MineTargetBlock's exact
+	// "environment poses the task" pattern. Empty (the default) means no
+	// following task.
+	//
+	// Real precondition, not solvable by this package: a second real
+	// connected player (or bot) with this name must already be in the
+	// session. There is no RCON way to seed "another player exists" — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4 for the full
+	// reasoning and why this isn't worked around.
+	FollowTargetPlayerName string
+
+	// EquipTargetItem, if set, is the item name (e.g. "minecraft:elytra")
+	// this episode's equip task wants held (a tool/weapon) or worn (armor/
+	// elytra) — enables ActionEquip and ActionUseItem, following
+	// MineTargetBlock's exact "environment poses the task" pattern
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1). Empty (the
+	// default) means this Environment instance doesn't pose an equip task:
+	// both actions become safe no-ops, the same way ActionMine/ActionCraft
+	// already do for an unconfigured instance — see action.go's
+	// resolveDispatch. ActionUseItem is gated on this field too, not given
+	// its own independent enable flag: using an item only makes sense once
+	// something is equipped to use, so this one field poses both halves of
+	// the task (see that plan document's own note on why ActionUseItem gets
+	// no standalone reward component).
+	EquipTargetItem string
+
+	// UseItemOffhand selects which hand ActionUseItem sends "useItem" for
+	// — true dispatches "useitem offhand", false (the default) dispatches
+	// "useitem" (main hand). Ignored if EquipTargetItem is empty.
+	UseItemOffhand bool
+
 	// Seeder, if set, is called once per Reset to prepare the world for
 	// this episode's configured task(s) — see EpisodeSeeder's doc comment
 	// (docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 4) for exactly what this
@@ -355,6 +583,15 @@ type Config struct {
 	// below for the mechanism that actually sets this per episode.
 	GoToTargetDisabled bool
 
+	// ArriveSneaking, if true, makes ActionGoToTarget dispatch
+	// "movetoandsneakquiet" instead of "movetoquiet" — the bot ends the
+	// movement sneaking at the destination, instead of standing normally.
+	// Purely a dispatch-time choice: arrival detection itself (Step's own
+	// distance-based check) is unaffected either way, so there's no
+	// separate reward for this (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+	// item 3). False (the default) preserves today's behavior exactly.
+	ArriveSneaking bool
+
 	// TaskSelector, if set, is called once per Reset (after any
 	// Config.ResetOrigin teleport, before this episode's target/jitter is
 	// computed) to choose which task(s) are active this specific episode,
@@ -417,7 +654,9 @@ type TaskOverride struct {
 	// active. See Environment.seedFarTargets.
 	SeedAtGoal bool
 
-	GoToTargetDisabled           bool
+	GoToTargetDisabled bool
+	// ArriveSneaking is Config.ArriveSneaking for this episode.
+	ArriveSneaking               bool
 	TargetOffset                 [3]float64
 	MineTargetBlock              string
 	MineSearchRadius             int
@@ -427,6 +666,63 @@ type TaskOverride struct {
 	SleepSearchRadius            int
 	CraftTargetItem              string
 	CraftSearchRadius            int
+
+	// EquipTargetItem is Config.EquipTargetItem for this episode.
+	EquipTargetItem string
+
+	// PickupTargetItem is Config.PickupTargetItem for this episode.
+	PickupTargetItem string
+	// PickupSearchRadius is Config.PickupSearchRadius for this episode.
+	PickupSearchRadius int
+	// PickupAnyItem is Config.PickupAnyItem for this episode.
+	PickupAnyItem bool
+
+	// PlaceTargetItem is Config.PlaceTargetItem for this episode.
+	PlaceTargetItem string
+
+	// FlyTargetOffset is Config.FlyTargetOffset for this episode.
+	FlyTargetOffset [3]float64
+	// FlyTargetActive is Config.FlyTargetActive for this episode.
+	FlyTargetActive bool
+	// FlyArrivalRadius is Config.FlyArrivalRadius for this episode.
+	FlyArrivalRadius float64
+
+	// RideVehicleType is Config.RideVehicleType for this episode.
+	RideVehicleType string
+	// RideSearchRadius is Config.RideSearchRadius for this episode.
+	RideSearchRadius int
+
+	// CombatTargetMobType is Config.CombatTargetMobType for this episode.
+	CombatTargetMobType string
+	// CombatRadius is Config.CombatRadius for this episode.
+	CombatRadius float64
+	// CombatIncludePlayers is Config.CombatIncludePlayers for this episode.
+	CombatIncludePlayers bool
+	// CombatIncludeNeutral is Config.CombatIncludeNeutral for this episode.
+	CombatIncludeNeutral bool
+
+	// CreeperGunpowderActive is Config.CreeperGunpowderActive for this
+	// episode.
+	CreeperGunpowderActive bool
+	// CreeperGunpowderRadius is Config.CreeperGunpowderRadius for this
+	// episode.
+	CreeperGunpowderRadius float64
+
+	// SpearChargeTargetMobType is Config.SpearChargeTargetMobType for this
+	// episode.
+	SpearChargeTargetMobType string
+	// SpearChargeRadius is Config.SpearChargeRadius for this episode.
+	SpearChargeRadius float64
+
+	// MaceSmashTargetMobType is Config.MaceSmashTargetMobType for this
+	// episode.
+	MaceSmashTargetMobType string
+	// MaceSmashRadius is Config.MaceSmashRadius for this episode.
+	MaceSmashRadius float64
+
+	// FollowTargetPlayerName is Config.FollowTargetPlayerName for this
+	// episode.
+	FollowTargetPlayerName string
 }
 
 // DefaultConfig returns reasonable production defaults; TargetOffset must
@@ -441,6 +737,32 @@ func DefaultConfig() Config {
 		// the "mine <blockName>" chat command — kept as a separate literal
 		// here since that constant is unexported.
 		MineSearchRadius: 32,
+		// Matches actions/commands.go's own pickUpItemDefaultMaxDistance
+		// default for the "pickUpItem <itemName>" chat command — same
+		// reasoning as MineSearchRadius above.
+		PickupSearchRadius: 8,
+		// Matches agent.FlyTo's own internal arrivalRadius constant
+		// (agent/flight.go) — same reasoning as MineSearchRadius above.
+		FlyArrivalRadius: 5,
+		// No existing chat-command default to mirror (see
+		// RideSearchRadius's own doc comment) — chosen generously for a
+		// vehicle-sized target, larger than a block/item's own defaults.
+		RideSearchRadius: 16,
+		// Matches actions/commands.go's own runCombat default radius —
+		// same reasoning as MineSearchRadius above.
+		CombatRadius: 16,
+		// No existing chat-command default to mirror (see
+		// CreeperGunpowderRadius's own doc comment) — matches CombatRadius's
+		// own default, a reasonable search distance for a hostile mob.
+		CreeperGunpowderRadius: 16,
+		// No existing chat-command default to mirror (see
+		// SpearChargeRadius's own doc comment) — matches CombatRadius's
+		// own default, same reasoning.
+		SpearChargeRadius: 16,
+		// No existing chat-command default to mirror (see
+		// MaceSmashRadius's own doc comment) — matches CombatRadius's own
+		// default, same reasoning.
+		MaceSmashRadius: 16,
 	}
 }
 

@@ -63,6 +63,93 @@ const (
 	// rather than which action was chosen — see
 	// docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1d.
 	craftRewardBonus float32 = 10.0
+	// equipRewardBonus is added once, the step Config.EquipTargetItem is
+	// observed to become equipped (see Environment.Step's before/after
+	// IsEquipped comparison) — same magnitude as mineRewardBonus/
+	// craftRewardBonus, marking "this episode's task was accomplished."
+	// ActionUseItem deliberately has no reward component of its own — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
+	equipRewardBonus float32 = 10.0
+	// pickupRewardBonus is added once, the step Config.PickupTargetItem's
+	// held inventory count is observed to increase (see Environment.Step's
+	// before/after InventoryCount comparison) — same magnitude/philosophy
+	// as craftRewardBonus, not mineRewardBonus: there's no position whose
+	// content to diff (the item entity disappears entirely once collected),
+	// so this is judged the same way craftRewardBonus is.
+	pickupRewardBonus float32 = 10.0
+	// flyRewardBonus is added once, the step the bot's horizontal (X/Z)
+	// distance to Environment.flyTargetX/Z is observed to fall within
+	// Config.FlyArrivalRadius — same magnitude as arrivalBonus, and the
+	// same one-shot ("episode ends the instant it's true") shape, not a
+	// transition check: unlike equip/pickup, which need "before vs after"
+	// detection because the condition can stay true for many steps before
+	// the episode notices, arrival ends the episode on the very first
+	// step it's observed, so there's no later step to re-pay it on.
+	flyRewardBonus float32 = 10.0
+	// rideRewardBonus is added once, the step LiveAgent.IsMounted() is
+	// observed to become true (see Environment.Step's before/after
+	// comparison) — same magnitude/philosophy as equipRewardBonus: a
+	// one-shot transition check, ending the episode immediately like
+	// every other task bonus. Mounting alone (not riding anywhere) is a
+	// complete, testable task for a first pass — see docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note on why "ride
+	// somewhere" is left as a future composite task, not built here.
+	rideRewardBonus float32 = 10.0
+	// combatRewardBonus is added once, the step Environment's resolved
+	// combat target (the specific entity ID e.combatEntityID held at the
+	// start of the step — see Step's own before/after
+	// LiveAgent.GetEntityHealth comparison) is observed to die — either
+	// no longer tracked at all, or tracked with health <= 0 (the server
+	// doesn't guarantee a final 0-health update before removing a killed
+	// entity, so either signal counts). Same magnitude/philosophy as
+	// mineRewardBonus: a world-state-delta check, not "was ActionCombat
+	// the dispatched action." The bot's own health loss/death from the
+	// fight needs no special handling here — computeReward's
+	// damagePenaltyScale/deathPenalty already apply generically to every
+	// task, combat included (see Config.CombatTargetMobType's own doc
+	// comment).
+	combatRewardBonus float32 = 10.0
+	// placeRewardBonus is added once, the step Config.PlaceTargetItem's
+	// held inventory count is observed to decrease (placing consumes one
+	// unit) during a standalone (non-chain) placement episode — same
+	// magnitude/philosophy as craftRewardBonus, just the opposite
+	// direction (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	placeRewardBonus float32 = 10.0
+	// followRewardBonus is added once, the step CommandAgent.IsFollowing()
+	// is observed to transition false->true — same magnitude/philosophy
+	// as rideRewardBonus: a one-shot start-transition, not continuous
+	// proximity-shaping. Following/manager.go's own control loop
+	// (sprint/sneak distance thresholds, stuck recovery, continuous path
+	// recalculation) is an open-ended background behavior with no
+	// natural "done" state, structurally unlike every other task in this
+	// package — rather than extending computeReward with a second,
+	// independent distance-shaping stream for one task, this mirrors
+	// ActionMount's own shape instead. Sustained "follow well" as a
+	// richer, continuous reward is a legitimate future enhancement this
+	// doesn't foreclose, just doesn't build speculatively (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4).
+	followRewardBonus float32 = 10.0
+	// creeperGunpowderRewardBonus is added once, the step
+	// "minecraft:gunpowder"'s held inventory count is observed to
+	// increase during a Config.CreeperGunpowderActive episode — same
+	// magnitude/philosophy as craftRewardBonus/pickupRewardBonus. Faithful
+	// to the real encounter's uncertain drop rate: a kill with no drop (a
+	// valid, documented outcome of agent.KillCreeperForGunpowder) earns
+	// nothing, matching how a real player farming creepers experiences it
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	creeperGunpowderRewardBonus float32 = 10.0
+	// spearChargeRewardBonus is added once, the step Environment's
+	// resolved spear-charge target (the specific entity ID
+	// e.spearEntityID held at the start of the step) is observed to die —
+	// same magnitude/philosophy as combatRewardBonus, a world-state-delta
+	// check, not "was ActionSpearChargeWithApproach the dispatched
+	// action" (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 6).
+	spearChargeRewardBonus float32 = 10.0
+	// maceSmashRewardBonus is added once, the step Environment's resolved
+	// mace-smash target is observed to die — same magnitude/philosophy as
+	// spearChargeRewardBonus/combatRewardBonus, a world-state-delta check
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceSmashRewardBonus float32 = 10.0
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0
@@ -139,4 +226,13 @@ func computeReward(o stepOutcome) (reward float32, diedThisStep bool) {
 func distance3(x1, y1, z1, x2, y2, z2 float64) float64 {
 	dx, dy, dz := x2-x1, y2-y1, z2-z1
 	return math.Sqrt(dx*dx + dy*dy + dz*dz)
+}
+
+// distanceXZ is the horizontal (X/Z only) Euclidean distance between two
+// points — Flight's own arrival check (Config.FlyArrivalRadius), matching
+// agent.FlyTo's own landing behavior of never targeting Y exactly (see
+// Config.FlyTargetOffset's own doc comment).
+func distanceXZ(x1, z1, x2, z2 float64) float64 {
+	dx, dz := x2-x1, z2-z1
+	return math.Sqrt(dx*dx + dz*dz)
 }

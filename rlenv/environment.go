@@ -222,6 +222,129 @@ type Environment struct {
 	craftCount int
 	craftReady bool
 
+	// equipReady caches the last-computed LiveAgent.IsEquipped(Config.
+	// EquipTargetItem) result — the equip-task analogue of craftReady,
+	// read at the start of each Step as "before this step" state (see
+	// Step's equippedThisStep check) and for the observation returned to
+	// the caller.
+	equipReady bool
+
+	// pickupX/Y/Z/pickupVisible cache the last-resolved nearest visible
+	// Config.PickupTargetItem (or, for Config.PickupAnyItem, whatever's
+	// nearest regardless of content) instance (see refreshPickupTarget) —
+	// the pickup-task analogue of mineX/Y/Z/mineVisible, same caching shape
+	// and same reason (refreshed once per Step/Reset, read as "before this
+	// step" state). pickupEntityID additionally backs PickupAnyItem's own
+	// reward check (see Step's pickedUpThisStep) — an entity-ID-based
+	// "still tracked" check, the only reward shape available when there's
+	// no single item name to run an InventoryCount delta against
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1).
+	pickupX, pickupY, pickupZ float64
+	pickupEntityID            int32
+	pickupVisible             bool
+
+	// pickupCount caches the last-known held count of
+	// Config.PickupTargetItem (see pickupCountNow) — the pickup-task
+	// analogue of craftCount, read at the start of each Step as "before
+	// this step" state for the reward check (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+	pickupCount int
+
+	// placeCount caches the last-known held count of
+	// Config.PlaceTargetItem (see placeCountNow) — the standalone-
+	// placement-task analogue of craftCount, except judged on a
+	// *decrease* (placing consumes one unit) rather than an increase
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	placeCount int
+
+	// flyTargetX/Y/Z is this episode's elytra-flight target, computed
+	// once at Reset from Config.FlyTargetOffset (plus jitter) — a fixed
+	// point, unlike mine/pickup's live-resolved targets, so there is
+	// nothing to re-resolve per Step the way refreshMineTarget/
+	// refreshPickupTarget do (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md
+	// Phase 3).
+	flyTargetX, flyTargetY, flyTargetZ float64
+
+	// rideEntityID/rideX/Y/Z/rideVisible cache the last-resolved nearest
+	// visible Config.RideVehicleType instance (see refreshRideTarget) —
+	// the ride-task analogue of mineX/Y/Z/mineVisible, same caching shape
+	// and reason, plus the entity ID ActionMount dispatches against
+	// (mount <entityID>, not by type name — see ActionMount's own doc
+	// comment).
+	rideEntityID        int32
+	rideX, rideY, rideZ float64
+	rideVisible         bool
+
+	// mounted caches the last-computed LiveAgent.IsMounted() result — the
+	// ride-task analogue of equipReady, read at the start of each Step as
+	// "before this step" state for the reward transition check
+	// (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+	mounted bool
+
+	// combatEntityID/combatX/Y/Z/combatVisible cache the last-resolved
+	// nearest visible Config.CombatTargetMobType instance (see
+	// refreshCombatTarget) — the combat-task analogue of mineX/Y/Z/
+	// mineVisible, same caching shape. Unlike rideEntityID, the entity ID
+	// here is never dispatched against (ActionCombat's own dispatch
+	// never references it — see its own doc comment); it exists purely
+	// so Step's reward check can ask "did THIS specific entity die,"
+	// across the gap between resolving it and the dispatched combat
+	// loop's own effect.
+	combatEntityID            int32
+	combatX, combatY, combatZ float64
+	combatVisible             bool
+
+	// creeperEntityID/creeperX/Y/Z/creeperVisible cache the last-resolved
+	// nearest visible creeper instance (see refreshCreeperTarget) — the
+	// creeper-gunpowder-task analogue of combatEntityID/combatX/Y/Z/
+	// combatVisible, same caching shape (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 5). Unlike combatEntityID,
+	// never dispatched against: ActionKillCreeperForGunpowder dispatches
+	// "killcreeperforgunpowder" with no args (agent.KillCreeperForGunpowder
+	// resolves its own target internally) — this exists purely to gate
+	// ActionKillCreeperForGunpowder's legality/mask and feed the
+	// observation's distance features.
+	creeperEntityID              int32
+	creeperX, creeperY, creeperZ float64
+	creeperVisible               bool
+
+	// gunpowderCount caches the last-known held count of
+	// "minecraft:gunpowder" (see gunpowderCountNow) — the creeper-
+	// gunpowder-task analogue of craftCount, read at the start of each
+	// Step as "before this step" state for the reward check.
+	gunpowderCount int
+
+	// spearEntityID/spearX/Y/Z/spearVisible cache the last-resolved
+	// nearest visible Config.SpearChargeTargetMobType instance (see
+	// refreshSpearTarget) — the spear-charge-task analogue of
+	// combatEntityID/combatX/Y/Z/combatVisible, same caching shape (docs/
+	// plans/RL_ACTION_SPACE_EXPANSION_III.md item 6). Unlike combatEntityID,
+	// this one IS dispatched against: ActionSpearChargeWithApproach needs
+	// one specific targetID (agent.SpearChargeAtWithApproach has no
+	// self-ranking loop of its own the way RunCombat does).
+	spearEntityID          int32
+	spearX, spearY, spearZ float64
+	spearVisible           bool
+
+	// maceEntityID/maceX/Y/Z/maceVisible cache the last-resolved nearest
+	// visible Config.MaceSmashTargetMobType instance (see
+	// refreshMaceTarget) — the mace-smash-task analogue of spearEntityID/
+	// spearX/Y/Z/spearVisible, same caching shape and same by-ID dispatch
+	// reasoning (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceEntityID        int32
+	maceX, maceY, maceZ float64
+	maceVisible         bool
+
+	// followTargetVisible/followed cache Config.FollowTargetPlayerName's
+	// own resolvability (see refreshFollowTarget) and the last-computed
+	// CommandAgent.IsFollowing() result — the follow-task analogues of
+	// mineVisible/mounted, same caching shape (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4). No position is cached: the
+	// target's own position isn't something the policy acts on directly
+	// once following/manager.go takes over.
+	followTargetVisible bool
+	followed            bool
+
 	// lastObsValues/stepsWithoutObservationChange back Config.StuckTimeout:
 	// lastObsValues is the previous Step's (or Reset's) observation vector,
 	// stepsWithoutObservationChange counts how many consecutive Steps have
@@ -378,6 +501,9 @@ func (e *Environment) Reset(ctx context.Context) (rl.Observation, error) {
 // (see its doc comment), passed through unchanged for Config.TaskSelector.
 func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Observation, error) {
 	e.cancelInflight()
+	e.dismountForReset()
+	e.stopSneakForReset()
+	e.clearRideVehicle(ctx)
 	e.restoreMinedBlocks(ctx)
 	e.removeFarSeeded(ctx)
 	e.clearChainDrops(ctx)
@@ -460,6 +586,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if e.cfg.TaskSelector != nil {
 		override := e.cfg.TaskSelector(episodeIndex, e.rng)
 		e.cfg.GoToTargetDisabled = override.GoToTargetDisabled
+		e.cfg.ArriveSneaking = override.ArriveSneaking
 		e.cfg.TargetOffset = override.TargetOffset
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
@@ -473,6 +600,27 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.CollectDrops = override.CollectDrops
 		e.cfg.ChainStage = override.ChainStage
 		e.cfg.ChainMineTargetBlock = override.ChainMineTargetBlock
+		e.cfg.EquipTargetItem = override.EquipTargetItem
+		e.cfg.PickupTargetItem = override.PickupTargetItem
+		e.cfg.PickupSearchRadius = override.PickupSearchRadius
+		e.cfg.PickupAnyItem = override.PickupAnyItem
+		e.cfg.PlaceTargetItem = override.PlaceTargetItem
+		e.cfg.FlyTargetOffset = override.FlyTargetOffset
+		e.cfg.FlyTargetActive = override.FlyTargetActive
+		e.cfg.FlyArrivalRadius = override.FlyArrivalRadius
+		e.cfg.RideVehicleType = override.RideVehicleType
+		e.cfg.RideSearchRadius = override.RideSearchRadius
+		e.cfg.CombatTargetMobType = override.CombatTargetMobType
+		e.cfg.CombatRadius = override.CombatRadius
+		e.cfg.CombatIncludePlayers = override.CombatIncludePlayers
+		e.cfg.CombatIncludeNeutral = override.CombatIncludeNeutral
+		e.cfg.CreeperGunpowderActive = override.CreeperGunpowderActive
+		e.cfg.CreeperGunpowderRadius = override.CreeperGunpowderRadius
+		e.cfg.SpearChargeTargetMobType = override.SpearChargeTargetMobType
+		e.cfg.SpearChargeRadius = override.SpearChargeRadius
+		e.cfg.MaceSmashTargetMobType = override.MaceSmashTargetMobType
+		e.cfg.MaceSmashRadius = override.MaceSmashRadius
+		e.cfg.FollowTargetPlayerName = override.FollowTargetPlayerName
 	}
 
 	targetOffset := e.cfg.TargetOffset
@@ -574,6 +722,23 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	resetGoalX, resetGoalY, resetGoalZ := e.currentGoToTarget()
 	e.prevDistance = distance3(x, y, z, resetGoalX, resetGoalY, resetGoalZ)
 	e.prevGoToTargetX, e.prevGoToTargetY, e.prevGoToTargetZ = resetGoalX, resetGoalY, resetGoalZ
+
+	// The flight target is a fixed point, resolved once here like
+	// targetX/Y/Z above — no walkability/reachability retry loop applies
+	// (that machinery is ground-pathfinding-specific; an airborne glide
+	// target has no "walkable cell" to find). Jittered the same way
+	// TargetOffset is, from the same base (x, y, z), using the same
+	// Config.Jitter magnitudes — a second, independent jitter field was
+	// judged unnecessary for a first pass (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+	flyOffset := e.cfg.FlyTargetOffset
+	for i := range flyOffset {
+		flyOffset[i] = e.jitter(flyOffset[i], i)
+	}
+	e.flyTargetX = x + flyOffset[0]
+	e.flyTargetY = y + flyOffset[1]
+	e.flyTargetZ = z + flyOffset[2]
+
 	e.episodeStarted = true
 
 	health, food, saturation, healthKnown := e.agent.Health()
@@ -610,13 +775,41 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshMineBuriedExistence(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshPickupTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshRideTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshCombatTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshCreeperTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshSpearTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshMaceTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshFollowTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.craftCount = e.craftCountNow()
+	e.pickupCount = e.pickupCountNow()
+	e.placeCount = e.placeCountNow()
+	e.gunpowderCount = e.gunpowderCountNow()
+	e.mounted = e.agent.IsMounted()
+	e.followed = e.agent.IsFollowing()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.markExploredQuadrant(x, y, z)
+	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible)
+	obsCombatHealth, _ := e.combatTargetHealthNow()
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -665,6 +858,408 @@ func (e *Environment) craftReadyNow(ctx context.Context) bool {
 
 // craftingTableBlock is the block Config.CraftSearchRadius looks for.
 const craftingTableBlock = "minecraft:crafting_table"
+
+// gunpowderCountNow returns the bot's current held count of
+// "minecraft:gunpowder" (see LiveAgent.InventoryCount), or 0 if
+// Config.CreeperGunpowderActive is false — mirrors craftCountNow's
+// empty-target handling, except gated on the task's own active flag
+// rather than an item-name field (there is none — see
+// Config.CreeperGunpowderActive's own doc comment).
+func (e *Environment) gunpowderCountNow() int {
+	if !e.cfg.CreeperGunpowderActive {
+		return 0
+	}
+	return e.agent.InventoryCount(creeperGunpowderItemName)
+}
+
+// elytraItemName is the item ActionFlyTo's legality/observation checks
+// (LiveAgent.IsEquipped/agent.FlyTo itself) require worn — the one and
+// only item Flight cares about, so it's a fixed constant, not a Config
+// field (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+const elytraItemName = "minecraft:elytra"
+
+// creeperGunpowderMobType is the entity type
+// ActionKillCreeperForGunpowder's legality/observation checks search for —
+// the method itself is hardcoded to creepers by design (see
+// Config.CreeperGunpowderActive's own doc comment), so this is a fixed
+// constant, not a Config field, mirroring elytraItemName's own reasoning.
+const creeperGunpowderMobType = "minecraft:creeper"
+
+// creeperGunpowderWeaponName mirrors agent's own unexported
+// combatSeedWeapon constant (agent/rl_seed.go) — this package can't
+// import that directly (unexported, different package), so the value is
+// duplicated here deliberately, the same way elytraItemName duplicates
+// agent.elytraItemName's own value rather than importing it.
+// ActionKillCreeperForGunpowder's legality requires this exact item
+// equipped, matching agent.validateCreeperWeapon's own real requirement
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+const creeperGunpowderWeaponName = "minecraft:iron_sword"
+
+// creeperGunpowderItemName is the item gunpowderCountNow's InventoryCount
+// check and reward.go's creeperGunpowderRewardBonus delta watch — the
+// drop agent.KillCreeperForGunpowder collects.
+const creeperGunpowderItemName = "minecraft:gunpowder"
+
+// spearChargeWeaponName mirrors agent's own unexported spearSeedWeapon
+// constant (agent/rl_seed.go) — this package can't import that directly
+// (unexported, different package), so the value is duplicated here
+// deliberately, the same reasoning creeperGunpowderWeaponName's own doc
+// comment gives for duplicating combatSeedWeapon.
+// ActionSpearChargeWithApproach's dispatch/legality both require this
+// exact item equipped (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item
+// 6).
+const spearChargeWeaponName = "minecraft:iron_spear"
+
+// spearChargeHoldDuration/engagedDuration/tiredDuration/minSpeed/
+// minAlignment are fixed constants ActionSpearChargeWithApproach's
+// dispatch passes through to agent.SpearChargeAtWithApproach — not
+// exposed as continuous Config knobs for a first pass, matching
+// combatSeedWeapon/flySeedRocketCount's own "fixed constant, not a
+// policy parameter" precedent (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
+// item 6). engagedDuration/tiredDuration feed
+// combat.SpearChargeProfile.StageAt; holdDuration is chosen to land
+// within the engaged stage (full damage/knockback/dismount, see
+// combat.ContactOutcome) rather than tired/disengaged. minSpeed/
+// minAlignment are passed through to agent.SpearChargeAt's own
+// ChargeEligible check, which — as that method's own doc comment notes —
+// currently only verifies the caller-supplied values against themselves,
+// not real measured motion, so their exact magnitude has no live-gameplay
+// effect yet; kept non-zero/positive only to stay within
+// combat.SpearAttackRequest.Validate's own bounds.
+const (
+	spearChargeHoldDuration    = 400 * time.Millisecond
+	spearChargeEngagedDuration = 500 * time.Millisecond
+	spearChargeTiredDuration   = 1000 * time.Millisecond
+	spearChargeMinSpeed        = 0.05
+	spearChargeMinAlignment    = 0.9
+)
+
+// maceSmashWeaponName mirrors agent's own unexported maceSeedWeapon
+// constant (agent/rl_seed.go) — this package can't import that directly,
+// same reasoning as spearChargeWeaponName's own doc comment.
+// ActionMaceSmashWithApproach's dispatch/legality both require this exact
+// item equipped (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+const maceSmashWeaponName = "minecraft:mace"
+
+// equipReadyNow reports whether Config.EquipTargetItem (if any) is
+// currently equipped (see LiveAgent.IsEquipped), or false if it's unset —
+// mirrors craftReadyNow's empty-target handling.
+func (e *Environment) equipReadyNow() bool {
+	if e.cfg.EquipTargetItem == "" {
+		return false
+	}
+	return e.agent.IsEquipped(e.cfg.EquipTargetItem)
+}
+
+// pickupCountNow returns the bot's current held count of
+// Config.PickupTargetItem (see LiveAgent.InventoryCount), or 0 if
+// Config.PickupTargetItem is unset — mirrors craftCountNow's
+// empty-target handling.
+func (e *Environment) pickupCountNow() int {
+	if e.cfg.PickupTargetItem == "" {
+		return 0
+	}
+	return e.agent.InventoryCount(e.cfg.PickupTargetItem)
+}
+
+// placeCountNow returns the bot's current held count of
+// Config.PlaceTargetItem, or 0 if it's unset or a chain episode is active
+// (which keeps its own existing placement tracking) — mirrors
+// pickupCountNow's empty-target handling.
+// placeStandaloneReady reports whether this episode's standalone placement
+// task (Config.PlaceTargetItem, outside a chain episode) is currently
+// attemptable — holding at least one of the target item. Shared by
+// actionLegal and buildObservation so the two can't drift apart
+// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+func (e *Environment) placeStandaloneReady() bool {
+	return e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && e.agent.InventoryCount(e.cfg.PlaceTargetItem) > 0
+}
+
+func (e *Environment) placeCountNow() int {
+	if e.cfg.ChainStage > 0 || e.cfg.PlaceTargetItem == "" {
+		return 0
+	}
+	return e.agent.InventoryCount(e.cfg.PlaceTargetItem)
+}
+
+// pickupTaskActive reports whether this episode poses a pickup task at
+// all, either named (Config.PickupTargetItem) or unnamed
+// (Config.PickupAnyItem) — shared by actionLegal and both buildObservation
+// call sites so the two conditions can't drift apart (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+func (e *Environment) pickupTaskActive() bool {
+	return e.cfg.PickupTargetItem != "" || e.cfg.PickupAnyItem
+}
+
+// refreshPickupTarget re-resolves the nearest currently-visible instance of
+// Config.PickupTargetItem (or, for Config.PickupAnyItem, the nearest visible
+// item of any content) and stores it (with its entity ID) into
+// e.pickupEntityID/pickupX/Y/Z/pickupVisible, for observation/dispatch
+// purposes — the pickup-task analogue of refreshMineTarget (see its own doc
+// comment for why this is called once at Reset and once per Step, reading
+// the *previous* call's cached result as "before this step" state). Leaves
+// e.pickupVisible=false without error if neither field is set or nothing
+// matching is currently visible; only a genuine
+// FindNearestVisibleItemOfType/FindNearestVisibleItem error is returned.
+func (e *Environment) refreshPickupTarget(ctx context.Context) error {
+	switch {
+	case e.cfg.PickupTargetItem != "":
+		id, x, y, z, found, err := e.agent.FindNearestVisibleItemOfType(ctx, e.cfg.PickupTargetItem, float64(e.cfg.PickupSearchRadius))
+		if err != nil {
+			return fmt.Errorf("rlenv: resolving pickup target: %w", err)
+		}
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = id, x, y, z, found
+	case e.cfg.PickupAnyItem:
+		// FindNearestVisibleItem is the unfiltered predecessor
+		// FindNearestVisibleItemOfType was built on top of — still here,
+		// never removed, exactly what "any item" needs (docs/plans/
+		// RL_ACTION_SPACE_EXPANSION_III.md item 1).
+		id, x, y, z, found, err := e.agent.FindNearestVisibleItem(ctx, float64(e.cfg.PickupSearchRadius))
+		if err != nil {
+			return fmt.Errorf("rlenv: resolving pickup target (any item): %w", err)
+		}
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = id, x, y, z, found
+	default:
+		e.pickupEntityID, e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible = 0, 0, 0, 0, false
+	}
+	return nil
+}
+
+// refreshRideTarget re-resolves the nearest currently-visible instance of
+// Config.RideVehicleType and stores it (with its entity ID) into
+// e.rideEntityID/rideX/Y/Z/rideVisible — the ride-task analogue of
+// refreshMineTarget/refreshPickupTarget. Leaves e.rideVisible=false
+// without error if Config.RideVehicleType is unset or nothing matching is
+// currently visible; only a genuine FindNearestVisibleEntityOfType error
+// is returned.
+func (e *Environment) refreshRideTarget(ctx context.Context) error {
+	if e.cfg.RideVehicleType == "" {
+		e.rideEntityID, e.rideX, e.rideY, e.rideZ, e.rideVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.RideVehicleType, float64(e.cfg.RideSearchRadius))
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving ride target: %w", err)
+	}
+	e.rideEntityID, e.rideX, e.rideY, e.rideZ, e.rideVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshCombatTarget re-resolves the nearest currently-visible instance
+// of Config.CombatTargetMobType and stores it (with its entity ID) into
+// e.combatEntityID/combatX/Y/Z/combatVisible — the combat-task analogue
+// of refreshRideTarget. Leaves e.combatVisible=false without error if
+// Config.CombatTargetMobType is unset or nothing matching is currently
+// visible; only a genuine FindNearestVisibleEntityOfType error is
+// returned.
+func (e *Environment) refreshCombatTarget(ctx context.Context) error {
+	if e.cfg.CombatTargetMobType == "" {
+		e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.CombatRadius
+	if radius <= 0 {
+		radius = DefaultConfig().CombatRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.CombatTargetMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving combat target: %w", err)
+	}
+	e.combatEntityID, e.combatX, e.combatY, e.combatZ, e.combatVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshCreeperTarget re-resolves the nearest currently-visible creeper
+// and stores it (with its entity ID) into e.creeperEntityID/creeperX/Y/Z/
+// creeperVisible — the creeper-gunpowder-task analogue of
+// refreshCombatTarget, same caching shape, hardcoded mob type instead of
+// a Config field (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+// Leaves e.creeperVisible=false without error if Config.CreeperGunpowderActive
+// is false or nothing matching is currently visible; only a genuine
+// FindNearestVisibleEntityOfType error is returned.
+func (e *Environment) refreshCreeperTarget(ctx context.Context) error {
+	if !e.cfg.CreeperGunpowderActive {
+		e.creeperEntityID, e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.CreeperGunpowderRadius
+	if radius <= 0 {
+		radius = DefaultConfig().CreeperGunpowderRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, creeperGunpowderMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving creeper-gunpowder target: %w", err)
+	}
+	e.creeperEntityID, e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshSpearTarget re-resolves the nearest currently-visible instance of
+// Config.SpearChargeTargetMobType and stores it (with its entity ID) into
+// e.spearEntityID/spearX/Y/Z/spearVisible — the spear-charge-task analogue
+// of refreshCombatTarget, same caching shape (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 6). Leaves e.spearVisible=false
+// without error if Config.SpearChargeTargetMobType is unset or nothing
+// matching is currently visible; only a genuine
+// FindNearestVisibleEntityOfType error is returned.
+func (e *Environment) refreshSpearTarget(ctx context.Context) error {
+	if e.cfg.SpearChargeTargetMobType == "" {
+		e.spearEntityID, e.spearX, e.spearY, e.spearZ, e.spearVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.SpearChargeRadius
+	if radius <= 0 {
+		radius = DefaultConfig().SpearChargeRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.SpearChargeTargetMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving spear-charge target: %w", err)
+	}
+	e.spearEntityID, e.spearX, e.spearY, e.spearZ, e.spearVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshMaceTarget re-resolves the nearest currently-visible instance of
+// Config.MaceSmashTargetMobType and stores it (with its entity ID) into
+// e.maceEntityID/maceX/Y/Z/maceVisible — the mace-smash-task analogue of
+// refreshSpearTarget, same caching shape (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 7). Leaves e.maceVisible=false
+// without error if Config.MaceSmashTargetMobType is unset or nothing
+// matching is currently visible; only a genuine
+// FindNearestVisibleEntityOfType error is returned.
+func (e *Environment) refreshMaceTarget(ctx context.Context) error {
+	if e.cfg.MaceSmashTargetMobType == "" {
+		e.maceEntityID, e.maceX, e.maceY, e.maceZ, e.maceVisible = 0, 0, 0, 0, false
+		return nil
+	}
+	radius := e.cfg.MaceSmashRadius
+	if radius <= 0 {
+		radius = DefaultConfig().MaceSmashRadius
+	}
+	id, x, y, z, found, err := e.agent.FindNearestVisibleEntityOfType(ctx, e.cfg.MaceSmashTargetMobType, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving mace-smash target: %w", err)
+	}
+	e.maceEntityID, e.maceX, e.maceY, e.maceZ, e.maceVisible = id, x, y, z, found
+	return nil
+}
+
+// refreshFollowTarget re-resolves whether Config.FollowTargetPlayerName is
+// currently connected/resolvable and stores it into
+// e.followTargetVisible — the follow-task analogue of refreshCombatTarget.
+// Leaves e.followTargetVisible=false without error if
+// Config.FollowTargetPlayerName is unset, this agent has no follow
+// subsystem at all (HasFollowManager), or the named player simply isn't
+// currently resolvable.
+//
+// FindPlayerByName's own contract differs from FindVisibleBlock/
+// FindNearestVisibleEntityOfType's "found=false, err=nil for nothing
+// there": it returns a real error for "not found," not just found=false
+// (agent/command_actions.go wraps the target selector's own error
+// through unchanged). A routine "the other player/bot isn't connected
+// right now" is exactly the common case this task's own precondition
+// describes (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 4) — it
+// must not be treated as fatal to Step/Reset the way a genuine error
+// would be for every other task's own refresh. Only a caller-context
+// cancellation propagates as a real error here.
+func (e *Environment) refreshFollowTarget(ctx context.Context) error {
+	if e.cfg.FollowTargetPlayerName == "" || !e.agent.HasFollowManager() {
+		e.followTargetVisible = false
+		return nil
+	}
+	_, _, _, found, err := e.agent.FindPlayerByName(ctx, e.cfg.FollowTargetPlayerName)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("rlenv: resolving follow target: %w", err)
+		}
+		e.followTargetVisible = false
+		return nil
+	}
+	e.followTargetVisible = found
+	return nil
+}
+
+// combatTargetHealthNow returns the last-known health of
+// e.combatEntityID if it's currently tracked, 0 otherwise — used both for
+// the observation (when e.combatVisible) and, via its "found" half, by
+// Step's own kill check.
+func (e *Environment) combatTargetHealthNow() (health float32, found bool) {
+	if !e.combatVisible {
+		return 0, false
+	}
+	return e.agent.GetEntityHealth(e.combatEntityID)
+}
+
+// dismountForReset dismounts the bot if currently mounted, before any
+// teleport/cleanup runs — unconditional, not gated on
+// Config.RideVehicleType, since a Reset must never leave a Config change
+// (e.g. a TaskSelector that stopped posing the ride task) carrying a
+// stale mount across episode boundaries. A Reset that teleported the bot
+// away while still mounted risks the same class of desync BlockRestorer's
+// own doc comment warns about for mining pits — moving the bot out from
+// under its own tracked vehicle rather than off of it cleanly. Best
+// effort: a failed dismount is logged, never fails the Reset.
+func (e *Environment) dismountForReset() {
+	if !e.agent.IsMounted() {
+		return
+	}
+	if err := e.agent.DismountEntity(); err != nil {
+		log.Printf("rlenv: dismounting before reset: %v", err)
+	}
+}
+
+// stopSneakForReset clears sneaking before any teleport/cleanup runs —
+// unconditional, the same reasoning dismountForReset's own doc comment
+// gives for mounting: a persistent toggle (here, from a previous episode's
+// Config.ArriveSneaking) must never survive into the next episode
+// regardless of this episode's own Config (docs/plans/
+// RL_ACTION_SPACE_EXPANSION_III.md item 3). Best effort: a failure is
+// logged, never fails the Reset.
+func (e *Environment) stopSneakForReset() {
+	if err := e.agent.StopSneaking(); err != nil {
+		log.Printf("rlenv: stopping sneak before reset: %v", err)
+	}
+}
+
+// rideVehicleCleanupRadius is how far around the bot's own current
+// position clearRideVehicle looks for Config.RideVehicleType instances to
+// remove — see that method's own doc comment for why "current position,"
+// not the stale reset origin.
+const rideVehicleCleanupRadius = 16
+
+// clearRideVehicle kills every live instance of the *previous* episode's
+// Config.RideVehicleType near wherever the bot currently is (called
+// before Config.TaskSelector's override runs, so this still reads the
+// previous episode's value — see resetAttempt's own ordering) — the
+// Reset-time cleanup counterpart to SeedVehicle. Deliberately centered on
+// the bot's own current position, not a remembered seed location: riding
+// could have carried the bot (and its mount) far from wherever it was
+// seeded, the same reason dismountForReset runs first, so the vehicle is
+// still right where the bot just dismounted it. Not ID-specific — see
+// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 0's own note on why
+// precise per-episode-entity targeting (to avoid a shared-server
+// episode's cleanup killing another bot's own mount) is deferred, not
+// solved here: a position-bounded kill centered on this bot's own
+// position is a reasonable, simple approximation of that precision for a
+// single-bot (or well-separated shared-server working area) training
+// run. Best effort: a failure is logged, never fails the Reset.
+func (e *Environment) clearRideVehicle(ctx context.Context) {
+	if e.cfg.RideVehicleType == "" {
+		return
+	}
+	clearer, ok := e.agent.(EntitySeedAgent)
+	if !ok {
+		return
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return
+	}
+	x, y, z := int(math.Floor(pos.X)), int(math.Floor(pos.Y)), int(math.Floor(pos.Z))
+	if err := clearer.ClearEntitiesOfType(ctx, x, y, z, rideVehicleCleanupRadius, e.cfg.RideVehicleType); err != nil {
+		log.Printf("rlenv: clearing ridden vehicle at (%d,%d,%d): %v", x, y, z, err)
+	}
+}
 
 // mineTargetBlockInUse resolves which block name refreshMineTarget actually
 // tracks right now: ordinarily Config.MineTargetBlock, but for a
@@ -1146,6 +1741,43 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// of whether that action was ActionCraft (mirrors prevMineVisible's own
 	// reasoning above).
 	prevCraftCount := e.craftCount
+	// e.equipReady mirrors prevCraftCount's own reasoning above, for the
+	// equip task.
+	prevEquipReady := e.equipReady
+	// e.pickupCount mirrors prevCraftCount's own reasoning above, for the
+	// pickup task.
+	prevPickupCount := e.pickupCount
+	// e.placeCount mirrors prevPickupCount's own reasoning above, for the
+	// standalone placement task.
+	prevPlaceCount := e.placeCount
+	// e.gunpowderCount mirrors prevPlaceCount's own reasoning above, for
+	// the creeper-gunpowder task.
+	prevGunpowderCount := e.gunpowderCount
+	// prevPickupEntityID/prevPickupVisible back Config.PickupAnyItem's own
+	// reward check (see pickedUpThisStep below) — captured before dispatch
+	// for the same reason prevCombatEntityID is.
+	prevPickupEntityID := e.pickupEntityID
+	prevPickupVisible := e.pickupVisible
+	// e.mounted mirrors prevEquipReady's own reasoning above, for the
+	// ride task.
+	prevMounted := e.mounted
+	// e.followed mirrors prevMounted's own reasoning above, for the
+	// follow task.
+	prevFollowed := e.followed
+	// prevCombatEntityID/prevCombatVisible mirror prevMounted's own
+	// reasoning above, for the combat task — captured before dispatch so
+	// Step's post-dispatch check asks "did THIS entity die," not
+	// whichever entity happens to be nearest after the fact.
+	prevCombatEntityID := e.combatEntityID
+	prevCombatVisible := e.combatVisible
+	// prevSpearEntityID/prevSpearVisible mirror prevCombatEntityID's own
+	// reasoning above, for the spear-charge task.
+	prevSpearEntityID := e.spearEntityID
+	prevSpearVisible := e.spearVisible
+	// prevMaceEntityID/prevMaceVisible mirror prevSpearEntityID's own
+	// reasoning above, for the mace-smash task.
+	prevMaceEntityID := e.maceEntityID
+	prevMaceVisible := e.maceVisible
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -1218,6 +1850,96 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// "increased."
 	newCraftCount := e.craftCountNow()
 	craftedThisStep := e.cfg.CraftTargetItem != "" && newCraftCount > prevCraftCount
+
+	// equippedThisStep is judged from an actual IsEquipped transition
+	// (false -> true), not from whether ActionEquip was the dispatched
+	// action — mirrors craftedThisStep's own reasoning above (see
+	// reward.go's equipRewardBonus doc comment).
+	newEquipReady := e.equipReadyNow()
+	equippedThisStep := e.cfg.EquipTargetItem != "" && newEquipReady && !prevEquipReady
+
+	// pickedUpThisStep is judged from an actual world-state change, not
+	// from whether ActionPickUpItem was the dispatched action — mirrors
+	// craftedThisStep's own reasoning above (see reward.go's
+	// pickupRewardBonus doc comment). Config.PickupTargetItem judges this
+	// via an InventoryCount increase (there's one specific item name to
+	// check); Config.PickupAnyItem has no such name, so it judges from the
+	// resolved item entity no longer being tracked instead (reusing
+	// GetEntityHealth purely for its "found" signal — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 1).
+	newPickupCount := e.pickupCountNow()
+	pickedUpThisStep := e.cfg.PickupTargetItem != "" && newPickupCount > prevPickupCount
+	if e.cfg.PickupAnyItem && prevPickupVisible {
+		_, stillTracked := e.agent.GetEntityHealth(prevPickupEntityID)
+		pickedUpThisStep = pickedUpThisStep || !stillTracked
+	}
+
+	// placedStandaloneThisStep is judged from an actual InventoryCount
+	// decrease (placing consumes one unit), not from whether ActionPlace
+	// was the dispatched action — mirrors pickedUpThisStep's own reasoning
+	// above. Chain-episode placement (Config.ChainStage > 0) keeps its own
+	// existing milestone-reward handling further down, unaffected by this
+	// (placeCountNow returns 0 during a chain episode, so this is always
+	// false then — docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 2).
+	newPlaceCount := e.placeCountNow()
+	placedStandaloneThisStep := e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && newPlaceCount < prevPlaceCount
+
+	// gunpowderCollectedThisStep is judged from an actual InventoryCount
+	// increase, not from whether ActionKillCreeperForGunpowder was the
+	// dispatched action — mirrors craftedThisStep's own reasoning above.
+	// Faithful to the real encounter's uncertain drop rate: a kill with no
+	// drop (a valid, documented outcome of agent.KillCreeperForGunpowder)
+	// earns nothing here, matching how a real player farming creepers
+	// experiences it (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 5).
+	newGunpowderCount := e.gunpowderCountNow()
+	gunpowderCollectedThisStep := e.cfg.CreeperGunpowderActive && newGunpowderCount > prevGunpowderCount
+
+	// mountedThisStep is judged from an actual IsMounted transition
+	// (false -> true), not from whether ActionMount was the dispatched
+	// action — mirrors equippedThisStep's own reasoning above (see
+	// reward.go's rideRewardBonus doc comment). Not narrowed to "mounted
+	// specifically e.rideEntityID": a first pass has nothing else to
+	// mount in a normal single-vehicle-seeded episode, so this is judged
+	// sufficient without tracking which entity was actually boarded — see
+	// docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4's own note.
+	newMounted := e.agent.IsMounted()
+	mountedThisStep := e.cfg.RideVehicleType != "" && newMounted && !prevMounted
+
+	// followedThisStep mirrors mountedThisStep's own reasoning above, for
+	// the follow task — a one-shot IsFollowing() transition, not
+	// continuous proximity-shaping (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 4's own note on why).
+	newFollowed := e.agent.IsFollowing()
+	followedThisStep := e.cfg.FollowTargetPlayerName != "" && newFollowed && !prevFollowed
+
+	// combatKilledThisStep is judged from the specific entity resolved
+	// before this step dying — not visible/tracked at all, or tracked
+	// with health <= 0 (see reward.go's combatRewardBonus doc comment for
+	// why either counts) — not from whether ActionCombat was the
+	// dispatched action, mirroring every other task bonus's philosophy.
+	combatKilledThisStep := false
+	if e.cfg.CombatTargetMobType != "" && prevCombatVisible {
+		health, found := e.agent.GetEntityHealth(prevCombatEntityID)
+		combatKilledThisStep = !found || health <= 0
+	}
+
+	// spearKilledThisStep mirrors combatKilledThisStep's own reasoning
+	// above, for the spear-charge task (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 6).
+	spearKilledThisStep := false
+	if e.cfg.SpearChargeTargetMobType != "" && prevSpearVisible {
+		health, found := e.agent.GetEntityHealth(prevSpearEntityID)
+		spearKilledThisStep = !found || health <= 0
+	}
+
+	// maceKilledThisStep mirrors spearKilledThisStep's own reasoning
+	// above, for the mace-smash task (docs/plans/
+	// RL_ACTION_SPACE_EXPANSION_III.md item 7).
+	maceKilledThisStep := false
+	if e.cfg.MaceSmashTargetMobType != "" && prevMaceVisible {
+		health, found := e.agent.GetEntityHealth(prevMaceEntityID)
+		maceKilledThisStep = !found || health <= 0
+	}
 
 	// A chain episode replaces the mine and craft bonuses (which end the
 	// episode on the first mined block or crafted item) with milestone
@@ -1319,6 +2041,62 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "craft"
 	}
+	if equippedThisStep {
+		reward += equipRewardBonus
+		done = true
+		doneReason = "equip"
+	}
+	if pickedUpThisStep {
+		reward += pickupRewardBonus
+		done = true
+		doneReason = "pickup"
+	}
+	if placedStandaloneThisStep {
+		reward += placeRewardBonus
+		done = true
+		doneReason = "place"
+	}
+	if gunpowderCollectedThisStep {
+		reward += creeperGunpowderRewardBonus
+		done = true
+		doneReason = "creepergunpowder"
+	}
+	if e.cfg.FlyTargetActive {
+		arrivalRadius := e.cfg.FlyArrivalRadius
+		if arrivalRadius <= 0 {
+			arrivalRadius = DefaultConfig().FlyArrivalRadius
+		}
+		if distanceXZ(x, z, e.flyTargetX, e.flyTargetZ) <= arrivalRadius {
+			reward += flyRewardBonus
+			done = true
+			doneReason = "fly"
+		}
+	}
+	if mountedThisStep {
+		reward += rideRewardBonus
+		done = true
+		doneReason = "ride"
+	}
+	if followedThisStep {
+		reward += followRewardBonus
+		done = true
+		doneReason = "follow"
+	}
+	if combatKilledThisStep {
+		reward += combatRewardBonus
+		done = true
+		doneReason = "combat"
+	}
+	if spearKilledThisStep {
+		reward += spearChargeRewardBonus
+		done = true
+		doneReason = "spearcharge"
+	}
+	if maceKilledThisStep {
+		reward += maceSmashRewardBonus
+		done = true
+		doneReason = "macesmash"
+	}
 	reward += chainReward
 	if chainDone {
 		done = true
@@ -1352,6 +2130,27 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		done = true
 		doneReason = "slept"
 	}
+	if err := e.refreshPickupTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshRideTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshCombatTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshCreeperTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshSpearTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshMaceTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshFollowTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// Same refresh for craft state: newCraftCount is already this step's
 	// post-dispatch value, so it becomes the next Step's "before" read
 	// directly; craftReady is recomputed since inventory contents may have
@@ -1374,9 +2173,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		}
 	}
 	e.prevBlocksMinedCount = minedCountNow
+	e.equipReady = newEquipReady
+	e.pickupCount = newPickupCount
+	e.placeCount = newPlaceCount
+	e.gunpowderCount = newGunpowderCount
+	e.mounted = newMounted
+	e.followed = newFollowed
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
-	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible)
+	obsCombatHealth, _ := e.combatTargetHealthNow()
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc

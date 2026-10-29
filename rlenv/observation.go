@@ -123,6 +123,176 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // change the checkpoint environment ID, so old checkpoints are refused
 // rather than misread.
 //
+//	index 31: equipReady — 1.0 if Config.EquipTargetItem is set and
+//	          currently equipped (see LiveAgent.IsEquipped), 0.0 otherwise.
+//	          Plays the same role for the equip task that craftReady plays
+//	          for craft: no position/distance to encode (an item equips
+//	          from wherever it is in the inventory), so "is the task already
+//	          done" is the useful signal instead — see
+//	          docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
+//	index 32: goalEquipActive — 1.0 if ActionEquip/ActionUseItem are legal
+//	          this episode (Config.EquipTargetItem set), 0.0 otherwise.
+//	          Same active-vs-ready distinction as goalMineActive/
+//	          goalCraftActive (indices 15-16) have against their own ready
+//	          bits, kept here as a trailing pair instead of inside the
+//	          original indices 9-16 block since no trained checkpoint
+//	          existed yet to make reordering worth avoiding — appending was
+//	          simpler and matches how the chain block (17-20) itself was
+//	          appended rather than interleaved.
+//
+//	index 33: pickupDx — nearest visible instance of Config.PickupTargetItem
+//	          (resolved via LiveAgent.FindNearestVisibleItemOfType) minus
+//	          current X (blocks); 0 if not visible/not configured.
+//	index 34: pickupDy — same, Y.
+//	index 35: pickupDz — same, Z.
+//	index 36: pickupVisible — 1.0 if Config.PickupTargetItem is set and a
+//	          visible instance was found this step, 0.0 otherwise. Mirrors
+//	          mineVisible's role exactly (indices 9-12) — gates pickupDx/
+//	          Dy/Dz the same way, and also doubles as ActionPickUpItem's
+//	          legality/mask condition (see action.go's actionLegal), same
+//	          dual role mineVisible already plays for ActionMine.
+//	index 37: goalPickupActive — 1.0 if ActionPickUpItem is legal this
+//	          episode (Config.PickupTargetItem set), 0.0 otherwise. Same
+//	          active-vs-ready distinction goalMineActive/goalCraftActive
+//	          have against their own ready bits (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
+//
+//	index 38: flyDx — Environment.flyTargetX minus current X (blocks); 0
+//	          if Config.FlyTargetActive is false. Unlike mineDx/pickupDx,
+//	          always non-zero while active — the flight target is a fixed
+//	          point, not something that can be "not currently visible."
+//	index 39: flyDy — same, Y. Informational only (altitude difference) —
+//	          see Config.FlyTargetOffset's own doc comment on why Y never
+//	          drives arrival.
+//	index 40: flyDz — same, Z.
+//	index 41: isFlying — 1.0 if LiveAgent.IsGliding() reports elytra-
+//	          gliding physics currently active, 0.0 otherwise. Reflects
+//	          real bot state unconditionally (not gated on
+//	          Config.FlyTargetActive) — the bot could be gliding for
+//	          reasons unrelated to this episode's own task, and hiding
+//	          that would make the observation lie about physical reality.
+//	index 42: hasElytra — 1.0 if LiveAgent.IsEquipped("minecraft:elytra"),
+//	          0.0 otherwise. Same "real state, ungated" reasoning as
+//	          isFlying above.
+//	index 43: goalFlyActive — 1.0 if Config.FlyTargetActive, 0.0
+//	          otherwise. Same role as goalPickupActive/goalEquipActive
+//	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
+//
+//	index 44: rideDx — nearest visible instance of Config.RideVehicleType
+//	          (resolved via LiveAgent.FindNearestVisibleEntityOfType)
+//	          minus current X (blocks); 0 if not visible/not configured.
+//	index 45: rideDy — same, Y.
+//	index 46: rideDz — same, Z.
+//	index 47: rideVisible — 1.0 if Config.RideVehicleType is set and a
+//	          visible instance was found this step, 0.0 otherwise. Mirrors
+//	          mineVisible's dual role exactly — gates rideDx/Dy/Dz and
+//	          doubles as ActionMount's legality/mask condition.
+//	index 48: isMounted — 1.0 if LiveAgent.IsMounted(), 0.0 otherwise.
+//	          Reflects real bot state unconditionally (not gated on
+//	          Config.RideVehicleType), same reasoning as isFlying/
+//	          hasElytra above.
+//	index 49: goalRideActive — 1.0 if Config.RideVehicleType is set, 0.0
+//	          otherwise. Same role as goalFlyActive/goalPickupActive above
+//	          (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
+//
+//	index 50: combatDx — nearest visible instance of
+//	          Config.CombatTargetMobType (resolved via
+//	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
+//	          (blocks); 0 if not visible/not configured.
+//	index 51: combatDy — same, Y.
+//	index 52: combatDz — same, Z.
+//	index 53: combatTargetHealth — the resolved target's last-known
+//	          health (LiveAgent.GetEntityHealth), 0 if not visible/not
+//	          configured. Gated the same way mineDx/Dy/Dz are, not
+//	          reported unconditionally like isFlying/hasElytra: unlike
+//	          those (real bot state, always meaningful), a target's
+//	          health is meaningless with no resolved target to attach it
+//	          to. The bot's OWN health is already index 5 — this is only
+//	          the opponent's.
+//	index 54: combatVisible — 1.0 if Config.CombatTargetMobType is set and
+//	          a visible instance was found this step, 0.0 otherwise.
+//	          Mirrors mineVisible's dual role — gates combatDx/Dy/Dz/
+//	          combatTargetHealth and doubles as ActionCombat's legality/
+//	          mask condition.
+//	index 55: goalCombatActive — 1.0 if Config.CombatTargetMobType is set,
+//	          0.0 otherwise. Same role as goalRideActive/goalFlyActive
+//	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
+//
+//	index 56: placeReady — 1.0 if Environment.placeStandaloneReady()
+//	          (Config.PlaceTargetItem set, outside a chain episode, and
+//	          currently held), 0.0 otherwise. Plays the same role for
+//	          standalone placement that craftReady plays for craft — no
+//	          position/distance to encode, so "is this attemptable right
+//	          now" is the useful signal (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 2).
+//	index 57: goalPlaceStandaloneActive — 1.0 if Config.PlaceTargetItem is
+//	          set and Config.ChainStage == 0, 0.0 otherwise. Same
+//	          active-vs-ready distinction as goalCraftActive/craftReady.
+//
+//	index 58: followTargetVisible — 1.0 if Config.FollowTargetPlayerName is
+//	          set and currently resolvable (CommandAgent.FindPlayerByName),
+//	          0.0 otherwise. Mirrors mineVisible's dual role — doubles as
+//	          ActionFollow's legality/mask condition. No position features
+//	          accompany this (unlike mine/pickup/ride/combat): the target's
+//	          own position isn't something the policy acts on directly once
+//	          following/manager.go takes over (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 4).
+//	index 59: isFollowing — 1.0 if CommandAgent.IsFollowing(), 0.0
+//	          otherwise. Reflects real bot state unconditionally (not
+//	          gated on Config.FollowTargetPlayerName), same reasoning as
+//	          isFlying/hasElytra/isMounted above.
+//	index 60: goalFollowActive — 1.0 if Config.FollowTargetPlayerName is
+//	          set, 0.0 otherwise. Same role as goalRideActive/
+//	          goalCombatActive above.
+//
+//	index 61: creeperDx — nearest visible creeper's X minus current X
+//	          (blocks); 0 if not visible/Config.CreeperGunpowderActive is
+//	          false. Unlike CombatTargetMobType, there is no mob-type
+//	          field: the search is always for "minecraft:creeper" (see
+//	          Config.CreeperGunpowderActive's own doc comment).
+//	index 62: creeperDy — same, Y.
+//	index 63: creeperDz — same, Z.
+//	index 64: creeperVisible — 1.0 if Config.CreeperGunpowderActive is
+//	          true and a visible creeper was found this step, 0.0
+//	          otherwise. Mirrors combatVisible's dual role — gates
+//	          creeperDx/Dy/Dz and doubles as
+//	          ActionKillCreeperForGunpowder's legality/mask condition.
+//	index 65: goalCreeperGunpowderActive — 1.0 if
+//	          Config.CreeperGunpowderActive is true, 0.0 otherwise. Same
+//	          role as goalCombatActive/goalRideActive above (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 5).
+//
+//	index 66: spearDx — nearest visible instance of
+//	          Config.SpearChargeTargetMobType (resolved via
+//	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
+//	          (blocks); 0 if not visible/not configured.
+//	index 67: spearDy — same, Y.
+//	index 68: spearDz — same, Z.
+//	index 69: spearVisible — 1.0 if Config.SpearChargeTargetMobType is set
+//	          and a visible instance was found this step, 0.0 otherwise.
+//	          Mirrors combatVisible's dual role — gates spearDx/Dy/Dz and
+//	          doubles as ActionSpearChargeWithApproach's legality/mask
+//	          condition.
+//	index 70: goalSpearChargeActive — 1.0 if
+//	          Config.SpearChargeTargetMobType is set, 0.0 otherwise. Same
+//	          role as goalCombatActive above (docs/plans/
+//	          RL_ACTION_SPACE_EXPANSION_III.md item 6).
+//
+//	index 71: maceDx — nearest visible instance of
+//	          Config.MaceSmashTargetMobType (resolved via
+//	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
+//	          (blocks); 0 if not visible/not configured.
+//	index 72: maceDy — same, Y.
+//	index 73: maceDz — same, Z.
+//	index 74: maceVisible — 1.0 if Config.MaceSmashTargetMobType is set
+//	          and a visible instance was found this step, 0.0 otherwise.
+//	          Mirrors spearVisible's dual role — gates maceDx/Dy/Dz and
+//	          doubles as ActionMaceSmashWithApproach's legality/mask
+//	          condition.
+//	index 75: goalMaceSmashActive — 1.0 if Config.MaceSmashTargetMobType
+//	          is set, 0.0 otherwise. Same role as goalSpearChargeActive
+//	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+//
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
 // a multi-hot (not strictly one-hot — see Config.TaskSelector's own doc
@@ -168,8 +338,12 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // automatically with no separate version bump needed there). Indices
 // 21-24 (unknownDx/Dy/Dz/unknownValid) are new relative to the 21-length
 // observation every currently-checkpointed policy was trained against —
-// no exception from this length's own rule.
-const observationSize = 31
+// no exception from this length's own rule. Indices 31-75 are
+// rl-action-space-expansion-ii's own block (equip through mace smash),
+// shifted from that branch's own 21-65 numbering to make room for the
+// buried-target exploration (21-24) and Sleep (25-30) blocks already on
+// master when it merged.
+const observationSize = 76
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -191,7 +365,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -216,6 +390,34 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	bedDx, bedDy, bedDz, bedVis := float32(0), float32(0), float32(0), float32(0)
 	if bedVisible {
 		bedDx, bedDy, bedDz, bedVis = float32(bedX-x), float32(bedY-y), float32(bedZ-z), 1
+	}
+	pickupDx, pickupDy, pickupDz, pickupVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if pickupVisible {
+		pickupDx, pickupDy, pickupDz, pickupVisibleFlag = float32(pickupX-x), float32(pickupY-y), float32(pickupZ-z), 1
+	}
+	flyDx, flyDy, flyDz := float32(0), float32(0), float32(0)
+	if flyActive {
+		flyDx, flyDy, flyDz = float32(flyTargetX-x), float32(flyTargetY-y), float32(flyTargetZ-z)
+	}
+	rideDx, rideDy, rideDz, rideVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if rideVisible {
+		rideDx, rideDy, rideDz, rideVisibleFlag = float32(rideX-x), float32(rideY-y), float32(rideZ-z), 1
+	}
+	combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag := float32(0), float32(0), float32(0), float32(0), float32(0)
+	if combatVisible {
+		combatDx, combatDy, combatDz, combatTargetHealth, combatVisibleFlag = float32(combatX-x), float32(combatY-y), float32(combatZ-z), combatHealth, 1
+	}
+	creeperDx, creeperDy, creeperDz, creeperVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if creeperVisible {
+		creeperDx, creeperDy, creeperDz, creeperVisibleFlag = float32(creeperX-x), float32(creeperY-y), float32(creeperZ-z), 1
+	}
+	spearDx, spearDy, spearDz, spearVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if spearVisible {
+		spearDx, spearDy, spearDz, spearVisibleFlag = float32(spearX-x), float32(spearY-y), float32(spearZ-z), 1
+	}
+	maceDx, maceDy, maceDz, maceVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if maceVisible {
+		maceDx, maceDy, maceDz, maceVisibleFlag = float32(maceX-x), float32(maceY-y), float32(maceZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -251,6 +453,51 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				bedDy / obsDistanceScale,
 				bedDz / obsDistanceScale,
 				bedVis,
+				boolToFloat32(equipReady),
+				boolToFloat32(equipActive),
+				pickupDx / obsDistanceScale,
+				pickupDy / obsDistanceScale,
+				pickupDz / obsDistanceScale,
+				pickupVisibleFlag,
+				boolToFloat32(pickupActive),
+				flyDx / obsDistanceScale,
+				flyDy / obsDistanceScale,
+				flyDz / obsDistanceScale,
+				boolToFloat32(isFlying),
+				boolToFloat32(hasElytra),
+				boolToFloat32(flyActive),
+				rideDx / obsDistanceScale,
+				rideDy / obsDistanceScale,
+				rideDz / obsDistanceScale,
+				rideVisibleFlag,
+				boolToFloat32(isMounted),
+				boolToFloat32(rideActive),
+				combatDx / obsDistanceScale,
+				combatDy / obsDistanceScale,
+				combatDz / obsDistanceScale,
+				combatTargetHealth / obsVitalScale,
+				combatVisibleFlag,
+				boolToFloat32(combatActive),
+				boolToFloat32(placeReady),
+				boolToFloat32(placeActive),
+				boolToFloat32(followTargetVisible),
+				boolToFloat32(isFollowing),
+				boolToFloat32(followActive),
+				creeperDx / obsDistanceScale,
+				creeperDy / obsDistanceScale,
+				creeperDz / obsDistanceScale,
+				creeperVisibleFlag,
+				boolToFloat32(creeperActive),
+				spearDx / obsDistanceScale,
+				spearDy / obsDistanceScale,
+				spearDz / obsDistanceScale,
+				spearVisibleFlag,
+				boolToFloat32(spearActive),
+				maceDx / obsDistanceScale,
+				maceDy / obsDistanceScale,
+				maceDz / obsDistanceScale,
+				maceVisibleFlag,
+				boolToFloat32(maceActive),
 			},
 		}
 	}
@@ -287,6 +534,51 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			bedDy,
 			bedDz,
 			bedVis,
+			boolToFloat32(equipReady),
+			boolToFloat32(equipActive),
+			pickupDx,
+			pickupDy,
+			pickupDz,
+			pickupVisibleFlag,
+			boolToFloat32(pickupActive),
+			flyDx,
+			flyDy,
+			flyDz,
+			boolToFloat32(isFlying),
+			boolToFloat32(hasElytra),
+			boolToFloat32(flyActive),
+			rideDx,
+			rideDy,
+			rideDz,
+			rideVisibleFlag,
+			boolToFloat32(isMounted),
+			boolToFloat32(rideActive),
+			combatDx,
+			combatDy,
+			combatDz,
+			combatTargetHealth,
+			combatVisibleFlag,
+			boolToFloat32(combatActive),
+			boolToFloat32(placeReady),
+			boolToFloat32(placeActive),
+			boolToFloat32(followTargetVisible),
+			boolToFloat32(isFollowing),
+			boolToFloat32(followActive),
+			creeperDx,
+			creeperDy,
+			creeperDz,
+			creeperVisibleFlag,
+			boolToFloat32(creeperActive),
+			spearDx,
+			spearDy,
+			spearDz,
+			spearVisibleFlag,
+			boolToFloat32(spearActive),
+			maceDx,
+			maceDy,
+			maceDz,
+			maceVisibleFlag,
+			boolToFloat32(maceActive),
 		},
 	}
 }

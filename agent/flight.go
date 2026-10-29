@@ -141,6 +141,20 @@ func (a *agent) Equip(ctx context.Context, itemName string) error {
 	return nil
 }
 
+// IsEquipped reports whether itemName is currently equipped: worn in an
+// armor slot, or held in the main hand. Mirrors Equip's own two equip
+// targets (armor/elytra wears, anything else holds), so this is the
+// matching "did it work" check rlenv's equip task observation/reward need
+// — see rlenv.LiveAgent.IsEquipped and models.CommandAgent's Equip doc
+// comment for the two targets this checks.
+func (a *agent) IsEquipped(itemName string) bool {
+	normalized := normalizeItemName(itemName)
+	if a.isWornInArmorSlot(normalized) {
+		return true
+	}
+	return a.combatHeldItemName() == normalized
+}
+
 func isArmorSlotIndex(slotIndex int) bool {
 	for _, idx := range armorSlotIndices {
 		if slotIndex == idx {
