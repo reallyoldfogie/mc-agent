@@ -81,6 +81,13 @@ type World interface {
 	// SetDifficulty updates difficulty and lock state. Called when a
 	// ClientboundChangeDifficulty packet is received.
 	SetDifficulty(difficulty uint8, locked bool)
+
+	// Reset clears all chunks, block overrides, world age/time of day,
+	// difficulty, and world border state. Called on a ClientboundRespawn
+	// (dimension change) — the new dimension is a different coordinate
+	// space with its own independent world state, and none of the above
+	// survives the transition.
+	Reset()
 }
 
 // WorldBorder mirrors ClientboundInitializeWorldBorder's fields.

@@ -85,6 +85,8 @@ func (m *mockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
 
 func (m *mockWorld) SetDifficulty(difficulty uint8, locked bool) {}
 
+func (m *mockWorld) Reset() {}
+
 // mockShapeProvider provides simple block collision data
 type mockShapeProvider struct {
 	passableBlocks    map[uint32]bool

@@ -186,3 +186,5 @@ func (mw *MockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
 }
 
 func (mw *MockWorld) SetDifficulty(difficulty uint8, locked bool) {}
+
+func (mw *MockWorld) Reset() {}

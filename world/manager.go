@@ -516,13 +516,38 @@ func (m *Manager) HandleSectionBlocksUpdate(blocks []models.BlockUpdate) {
 	}
 }
 
-// Reset clears all world data (called on respawn/dimension change).
+// Reset clears all world data (called on respawn/dimension change). A
+// Respawn is a protocol-level blanket wipe — the old dimension's chunks,
+// world age/time of day, difficulty, and world border are all stale the
+// instant it arrives, since the new dimension sends its own copies of all
+// of these independently and there is no guarantee of when (world age/time
+// and difficulty are typically resent immediately; a custom world border
+// may not be resent at all if the new dimension uses the default border).
+// Leaving any of them un-reset would let old-dimension values linger
+// indefinitely if the new dimension's packet for that particular piece of
+// state happens to arrive late, or never.
 func (m *Manager) Reset() {
 	m.mu.Lock()
 	m.Columns = make(map[ChunkPos]*ChunkData)
 	m.mu.Unlock()
 
 	m.clearAllOverrides()
+
+	m.worldTimeMu.Lock()
+	m.worldAge = -1
+	m.timeOfDay = -1
+	m.worldTimeMu.Unlock()
+
+	m.difficultyMu.Lock()
+	m.difficulty = 0
+	m.difficultyLocked = false
+	m.hasDifficulty = false
+	m.difficultyMu.Unlock()
+
+	m.worldBorderMu.Lock()
+	m.worldBorder = models.WorldBorder{}
+	m.hasWorldBorder = false
+	m.worldBorderMu.Unlock()
 }
 
 // Block override methods

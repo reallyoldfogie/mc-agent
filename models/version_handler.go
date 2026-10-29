@@ -140,6 +140,18 @@ type PlayHandler interface {
 	// and the player's initial game mode (SpawnInfo.Gamemode).
 	ParseLogin(p pk.Packet) (entityID int32, gameMode GameMode, err error)
 
+	// ParseRespawn parses the ClientboundRespawn packet, sent whenever the
+	// local player's dimension changes (nether/end portal use, the end's
+	// exit portal, or an operator's /execute in). Unlike ClientboundLogin,
+	// this does not carry a new entity ID — the connection and entity stay
+	// the same across a Respawn, only the dimension (and the player's
+	// position, delivered separately via the ClientboundPosition that
+	// follows) changes. dimensionTypeID is the index into the dimension_type
+	// registry (delivered earlier via registry data during configuration);
+	// dimensionName is the dimension's own identifier (e.g.
+	// "minecraft:the_nether").
+	ParseRespawn(p pk.Packet) (dimensionTypeID int32, dimensionName string, err error)
+
 	// ParseClientboundAbilities parses a ClientboundAbilities packet - sent
 	// at login and whenever the local player's flying-related abilities
 	// change (e.g. a game mode switch). See PlayerAbilities's doc comment.

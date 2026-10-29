@@ -206,6 +206,17 @@ type agent struct {
 	gameMode            models.GameMode
 	gameModeInitialized bool
 
+	// dimensionMu guards dimensionTypeID/dimensionName/dimensionInitialized.
+	dimensionMu sync.RWMutex
+	// dimensionTypeID is the index into the dimension_type registry for the
+	// bot's current dimension, and dimensionName is that dimension's own
+	// identifier (e.g. "minecraft:the_nether"). Set from the Login packet at
+	// join and kept current via ClientboundRespawn (nether/end portal use,
+	// the end's exit portal, or an operator's /execute in).
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+
 	// camFollowMu guards camFollowCancel.
 	camFollowMu sync.Mutex
 	// camFollowCancel stops the currently active StartCamFollow loop, if
@@ -267,11 +278,17 @@ type agent struct {
 	// Chunk batching (1.20.2+): track number of batches received for acknowledgement
 	chunkBatchCount float32
 
-	// playerLoadedSent fires once-per-connection. The vanilla client sends
-	// ServerboundPlayerLoaded after the world finishes loading; without it the
-	// 1.21.4+ server silently drops interact/vehicle packets for the first 60
-	// server ticks (PlayerEntity.isLoaded gate).
-	playerLoadedSent sync.Once
+	// playerLoadedSentMu guards playerLoadedSent.
+	playerLoadedSentMu sync.Mutex
+	// playerLoadedSent fires once per "load" — initial join, and again after
+	// every dimension change (ClientboundRespawn resets it). The vanilla
+	// client sends ServerboundPlayerLoaded after the world finishes loading;
+	// without it the 1.21.4+ server silently drops interact/vehicle packets
+	// for the first 60 server ticks (PlayerEntity.isLoaded gate), and that
+	// gate is re-armed by the server on every dimension transfer, not just
+	// once per TCP connection — a sync.Once here would permanently disable
+	// this after the first portal use. See resetPlayerLoadedGate.
+	playerLoadedSent bool
 
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed

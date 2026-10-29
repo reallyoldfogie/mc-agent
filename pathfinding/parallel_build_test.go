@@ -106,6 +106,7 @@ func (w *testMockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool)
 }
 
 func (w *testMockWorld) SetDifficulty(difficulty uint8, locked bool) {}
+func (w *testMockWorld) Reset()                                      {}
 
 // testMockShapeManager is a simple mock block shape manager
 type testMockShapeManager struct{}

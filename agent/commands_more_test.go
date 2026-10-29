@@ -39,6 +39,36 @@ type fakeMoveExec struct {
 	stopChan   chan struct{}
 	// Reference to agent for position updates in tests
 	agent *agent
+
+	// notifyDeadCalls/notifyRespawnedCalls count calls to NotifyDead/
+	// NotifyRespawned (the sidecar interface onDeath/onRespawn/
+	// onClientboundPosition type-assert for, not part of
+	// models.MovementExecutor itself).
+	notifyDeadCalls      int
+	notifyRespawnedCalls int
+}
+
+// NotifyDead implements the sidecar interface{ NotifyDead() } that
+// onDeath/onRespawn/onGameEvent's win-game-style branches type-assert for.
+func (f *fakeMoveExec) NotifyDead() {
+	f.mu.Lock()
+	f.notifyDeadCalls++
+	f.mu.Unlock()
+}
+
+// NotifyRespawned implements the sidecar interface{ NotifyRespawned() }
+// that onLogin/onClientboundPosition type-assert for.
+func (f *fakeMoveExec) NotifyRespawned() {
+	f.mu.Lock()
+	f.notifyRespawnedCalls++
+	f.mu.Unlock()
+}
+
+// NotifyDeadCalls returns how many times NotifyDead has been called so far.
+func (f *fakeMoveExec) NotifyDeadCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.notifyDeadCalls
 }
 
 // PosCalls returns a snapshot of every position recorded via SendPosition

@@ -256,3 +256,14 @@ func (h *WorldUpdateHandler) ClearOldClusters(maxClusters int) {
 	// For now, clusters remain in memory
 	// This could track last access time and evict least recently used clusters
 }
+
+// Reset discards all built HPA* state and re-enables batch mode (the same
+// mode used for the initial world load), since a dimension change is
+// followed by exactly that: a burst of fresh chunk loads for the new
+// dimension. Called on ClientboundRespawn.
+func (h *WorldUpdateHandler) Reset() {
+	if h.builder != nil {
+		h.builder.Reset()
+	}
+	h.EnableBatchMode()
+}

@@ -98,6 +98,8 @@ func (mw *MockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool) {
 
 func (mw *MockWorld) SetDifficulty(difficulty uint8, locked bool) {}
 
+func (mw *MockWorld) Reset() {}
+
 // MockShapeProvider implements physics.BlockShapeProvider for testing
 type MockShapeProvider struct{}
 
