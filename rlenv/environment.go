@@ -1489,11 +1489,52 @@ func (e *Environment) clearArea(ctx context.Context) {
 // defaultCloneAreaDepth is Config.CloneAreaDepth's default.
 const defaultCloneAreaDepth = 3
 
+// vanillaCloneBlockLimit is vanilla's own /clone command cap - the same
+// 32,768-block ceiling CloneArea's own doc comment already documents for a
+// single call. A radius big enough to need this (mc-rsi-trainer,
+// 2026-10-29: widening -clone-area-radius past -24 so a wider mine_buried
+// search radius can't point past the template's own, smaller-radius ground
+// truth - found live the two had silently drifted apart) exceeds it easily:
+// radius 32, the default height (4) and this run's own depth (8) is
+// 65*65*13 = 54,925 blocks, well over the cap in one /clone.
+const vanillaCloneBlockLimit = 32768
+
+// cloneAreaZBandSize returns how many Z rows one /clone call can safely
+// cover for a given X span and Y span (height+depth+1) without exceeding
+// vanillaCloneBlockLimit, and whether that's even possible at all (false
+// when xSpan*ySpan alone already exceeds the limit - a single Z row would
+// still be too big, meaning this radius/height/depth combination has no
+// safe single-axis split and the caller should give up rather than issue a
+// command vanilla will reject anyway). Pulled out of cloneArea as its own
+// function so the band-size arithmetic is unit-testable without a live
+// RCON connection.
+func cloneAreaZBandSize(xSpan, ySpan int) (bandSize int, ok bool) {
+	perRow := xSpan * ySpan
+	if perRow <= 0 || perRow > vanillaCloneBlockLimit {
+		return 0, false
+	}
+	return vanillaCloneBlockLimit / perRow, true
+}
+
 // cloneArea restores the space around ResetOrigin to a known-good template
 // (see Config.CloneAreaFrom's own doc comment for why this exists instead
 // of, or alongside, clearArea). Done before the teleport, same as
 // clearArea, while the area is still loaded around the bot. Best effort: a
 // failure is logged, never fails the Reset.
+//
+// Issues one /clone per Z-band of up to cloneAreaZBandSize rows rather than
+// one call for the whole box - found live, 2026-10-29, widening
+// -clone-area-radius to 32 (see vanillaCloneBlockLimit's own doc comment
+// for why): a radius/height/depth combination whose full box exceeds
+// vanilla's 32,768-block /clone cap used to just silently clone nothing (an
+// RCON error, logged and swallowed by this function's own "best effort"
+// contract) rather than ever splitting itself up. Splits along Z only, not
+// X too - every real combination so far keeps xSpan*ySpan comfortably
+// under the cap on its own (65*13=845 for radius 32/height 4/depth 8),
+// leaving plenty of room for a Z band wider than 1; a genuinely huge
+// xSpan*ySpan that doesn't would need a 2-axis split this doesn't attempt,
+// and cloneAreaZBandSize's own ok=false return makes that case a clear
+// no-op (logged) instead of a doomed, oversized RCON command.
 func (e *Environment) cloneArea(ctx context.Context) {
 	if e.cfg.CloneAreaFrom == nil || e.cfg.ResetOrigin == nil {
 		return
@@ -1517,6 +1558,14 @@ func (e *Environment) cloneArea(ctx context.Context) {
 	if r <= 0 {
 		return
 	}
+	xSpan := 2*r + 1
+	ySpan := height + depth + 1
+	bandSize, ok := cloneAreaZBandSize(xSpan, ySpan)
+	if !ok {
+		log.Printf("rlenv: clone-area-from radius %d/height %d/depth %d (%d x %d blocks per Z row) exceeds vanilla's %d-block /clone limit even one Z row at a time - reduce one of them", r, height, depth, xSpan, ySpan, vanillaCloneBlockLimit)
+		return
+	}
+
 	src := *e.cfg.CloneAreaFrom
 	sx, sy, sz := int(math.Floor(src[0])), int(math.Floor(src[1])), int(math.Floor(src[2]))
 	// dy is CloneAreaFrom's own Y, not ResetOrigin's - the entire point of
@@ -1524,8 +1573,16 @@ func (e *Environment) cloneArea(ctx context.Context) {
 	// is ever computed from the bot's own, possibly-imprecise position.
 	o := *e.cfg.ResetOrigin
 	dx, dz := int(math.Floor(o[0])), int(math.Floor(o[2]))
-	if err := cloner.CloneArea(ctx, sx-r, sy-depth, sz-r, sx+r, sy+height, sz+r, dx-r, sy-depth, dz-r); err != nil {
-		log.Printf("rlenv: cloning area from (%d,%d,%d) onto (%d,%d,%d): %v", sx, sy, sz, dx, sy, dz, err)
+
+	for zOffset := -r; zOffset <= r; zOffset += bandSize {
+		zEnd := zOffset + bandSize - 1
+		if zEnd > r {
+			zEnd = r
+		}
+		if err := cloner.CloneArea(ctx, sx-r, sy-depth, sz+zOffset, sx+r, sy+height, sz+zEnd, dx-r, sy-depth, dz+zOffset); err != nil {
+			log.Printf("rlenv: cloning area from (%d,%d,%d) onto (%d,%d,%d), Z band [%d,%d]: %v", sx, sy, sz, dx, sy, dz, zOffset, zEnd, err)
+			return
+		}
 	}
 }
 

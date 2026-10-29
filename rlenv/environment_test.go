@@ -428,6 +428,65 @@ func TestResetClonesTheTemplateInsteadOfClearingWhenBothAreSet(t *testing.T) {
 	}
 }
 
+// TestResetClonesInZBandsWhenTheFullBoxExceedsVanillasCloneLimit confirms
+// cloneArea splits into multiple /clone calls rather than issuing one
+// doomed-to-fail oversized command, or silently cloning nothing - found
+// live, 2026-10-29, widening -clone-area-radius to 32 so it covers
+// mine_buried's own, larger search radius (the two had silently drifted
+// apart: a radius-16 template left a third of mine_buried's 24-radius
+// search volume with no ore ever possible). Radius 32/height 4(default)/
+// depth 8 is 65*65*13=54,925 blocks, over vanilla's 32,768-block /clone
+// cap in one call.
+func TestResetClonesInZBandsWhenTheFullBoxExceedsVanillasCloneLimit(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10, -60, 5}
+	template := [3]float64{0, -60, 5000}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.CloneAreaFrom = &template
+	cfg.CloneAreaRadius = 32
+	cfg.CloneAreaDepth = 8
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if len(agent.clonedAreas) < 2 {
+		t.Fatalf("clonedAreas = %v, want at least 2 calls (one would exceed vanilla's 32,768-block /clone limit)", agent.clonedAreas)
+	}
+
+	const r = 32
+	const wantXSpan = 2*r + 1 // 65
+	const wantYSpan = 4 + 8 + 1
+	wantZRows := 0
+	for i, c := range agent.clonedAreas {
+		if c.srcX1 != -r || c.srcX2 != r {
+			t.Fatalf("call %d: X span = [%d,%d], want [%d,%d] unchanged by Z-banding", i, c.srcX1, c.srcX2, -r, r)
+		}
+		rows := c.srcZ2 - c.srcZ1 + 1
+		if blocks := wantXSpan * rows * wantYSpan; blocks > 32768 {
+			t.Fatalf("call %d covers %d blocks (%d x %d x %d), over vanilla's 32,768 limit", i, blocks, wantXSpan, rows, wantYSpan)
+		}
+		if got, want := c.dstX1-10, c.srcX1; got != want {
+			t.Fatalf("call %d: dst X offset from src = %d, want %d (same relative offset every band)", i, got, want)
+		}
+		if c.dstZ1-c.srcZ1 != 5-5000 {
+			t.Fatalf("call %d: dst/src Z offset = %d, want %d (every band must carry the same relative Z shift)", i, c.dstZ1-c.srcZ1, 5-5000)
+		}
+		wantZRows += rows
+	}
+	if wantZRows != wantXSpan {
+		t.Fatalf("total Z rows across all calls = %d, want %d (the whole span, no gaps, no overlaps)", wantZRows, wantXSpan)
+	}
+	// No gaps/overlaps: each call's own srcZ1 must pick up exactly where
+	// the previous one's srcZ2 left off.
+	for i := 1; i < len(agent.clonedAreas); i++ {
+		if agent.clonedAreas[i].srcZ1 != agent.clonedAreas[i-1].srcZ2+1 {
+			t.Fatalf("call %d starts at Z=%d, want %d (right after call %d's own Z=%d)", i, agent.clonedAreas[i].srcZ1, agent.clonedAreas[i-1].srcZ2+1, i-1, agent.clonedAreas[i-1].srcZ2)
+		}
+	}
+}
+
 func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	origin := [3]float64{10, -60, 5}
