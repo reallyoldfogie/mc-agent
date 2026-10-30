@@ -72,8 +72,8 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// makes cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
 	// automatically reject an old checkpoint trained against a shorter
 	// observation.
-	if got := env.ObservationSize(); got != 81 {
-		t.Fatalf("ObservationSize() = %d, want 81", got)
+	if got := env.ObservationSize(); got != 86 {
+		t.Fatalf("ObservationSize() = %d, want 86", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -88,8 +88,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 81 {
-		t.Fatalf("len(obs.Values) = %d, want 81 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 86 {
+		t.Fatalf("len(obs.Values) = %d, want 86 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)

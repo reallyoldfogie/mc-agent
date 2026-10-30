@@ -58,6 +58,17 @@ type fakeAgent struct {
 	usePortalAtErr            error
 	usePortalAtCalls          int
 
+	// Portal frame simulation: frame/frameFound is what FindPortalFrame
+	// reports; lightPortalFrameErr, if set, is what LightPortalFrame
+	// returns instead of succeeding (simulating the ignition never
+	// confirming) - lightPortalFrameCalls just counts invocations. Mirrors
+	// portal/UsePortalAt's own shape exactly.
+	frame                  models.PortalFrame
+	frameFound             bool
+	lightPortalFrameErr    error
+	lightPortalFrameCalls  int
+	frameInteriorBlockName string
+
 	// dimensionTypeID/dimensionName/dimensionInitialized back GetDimension
 	// - defaults to the zero value (Overworld, uninitialized), settable so
 	// a test can simulate a dimension change.
@@ -1034,6 +1045,9 @@ func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 	if f.mineBlockName != "" && ix == int(f.mineBlockX) && iy == int(f.mineBlockY) && iz == int(f.mineBlockZ) {
 		return f.mineBlockName
 	}
+	if f.frameInteriorBlockName != "" && ix == int(f.frame.InteriorMin.X) && iy == int(f.frame.InteriorMin.Y) && iz == int(f.frame.InteriorMin.Z) {
+		return f.frameInteriorBlockName
+	}
 	return "minecraft:air"
 }
 
@@ -1444,23 +1458,45 @@ func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (mo
 	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
 }
 
-// FindPortalFrame and LightPortalFrame/LightPortal make fakeAgent satisfy
-// models.CommandAgent's lit-portal-frame-detection additions. No test
-// currently exercises any of these (nothing in rlenv drives portal
-// lighting), so these are minimal, honest stubs - FindPortalFrame reports
-// no frame found rather than pretending to detect one, and
-// LightPortalFrame/LightPortal report "not supported" rather than
-// pretending to ignite anything.
+// FindPortalFrame reports frame/frameFound, mirroring FindNearestPortal's
+// own shape exactly.
 func (f *fakeAgent) FindPortalFrame(context.Context, int) (models.PortalFrame, bool, error) {
-	return models.PortalFrame{}, false, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.frameFound {
+		return models.PortalFrame{}, false, nil
+	}
+	return f.frame, true, nil
 }
 
+// LightPortalFrame records the call and returns lightPortalFrameErr if the
+// test configured one (simulating the ignition never confirming), nil
+// otherwise (simulating a successful ignition - this fake has no notion of
+// "currently lit" to track beyond what the test mutates directly on frame).
+// Mirrors UsePortalAt's own shape exactly.
 func (f *fakeAgent) LightPortalFrame(context.Context, models.PortalFrame) error {
-	return errors.New("fakeAgent does not support LightPortalFrame")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lightPortalFrameCalls++
+	if f.lightPortalFrameErr == nil {
+		f.frameInteriorBlockName = "minecraft:nether_portal"
+	}
+	return f.lightPortalFrameErr
 }
 
-func (f *fakeAgent) LightPortal(context.Context, int) error {
-	return errors.New("fakeAgent does not support LightPortal")
+// LightPortal mirrors the real agent's own shape: resolve via
+// FindPortalFrame, then delegate to LightPortalFrame. Simulated, not
+// stubbed out, now that ActionLightPortal actually dispatches through this
+// path (see refreshPortalFrameTarget/resolveDispatch).
+func (f *fakeAgent) LightPortal(ctx context.Context, maxDistance int) error {
+	frame, found, err := f.FindPortalFrame(ctx, maxDistance)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("no portal frame found")
+	}
+	return f.LightPortalFrame(ctx, frame)
 }
 
 // UsePortal mirrors the real agent's own shape: resolve via

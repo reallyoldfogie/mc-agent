@@ -131,6 +131,22 @@ type Config struct {
 	// this package.
 	PortalSearchRadius int
 
+	// LightPortalSearchRadius, if > 0, enables ActionLightPortal:
+	// FindPortalFrame searches this many blocks for an unlit nether
+	// portal frame (any vanilla size, 2x3 to 21x21 interior) to ignite.
+	// Same shape as PortalSearchRadius's own doc comment: no companion
+	// "target name" field, since a frame isn't identified by name either.
+	// <= 0 (the default) means this Environment instance doesn't pose a
+	// portal-lighting task: ActionLightPortal becomes a safe no-op.
+	// Unlike PortalSearchRadius/SleepSearchRadius's reward (deliberately
+	// NOT Config-gated), reward.go's lightPortalRewardBonus IS
+	// effectively gated by this field: the frame it judges "did this
+	// ignite" against (Environment.portalFrame) is only ever tracked
+	// while this is > 0 (see refreshPortalFrameTarget) — there's no
+	// frame-identifying signal to compare against otherwise, unlike
+	// GetDimension()/GetTimeOfDay(), which are always trackable.
+	LightPortalSearchRadius int
+
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's crafting task targets — enables ActionCraft, following
 	// MineTargetBlock's exact "environment poses the task" pattern
@@ -682,6 +698,7 @@ type TaskOverride struct {
 	MineTargetBuried             bool
 	SleepSearchRadius            int
 	PortalSearchRadius           int
+	LightPortalSearchRadius      int
 	CraftTargetItem              string
 	CraftSearchRadius            int
 

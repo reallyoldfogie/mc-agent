@@ -306,6 +306,18 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          0.0 otherwise. Same role as goalMaceSmashActive above
 //	          (docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md, local/untracked,
 //	          Phase 7's rlenv follow-up).
+//	index 81: frameDx — nearest visible unlit portal frame's ignition
+//	          block (resolved via LiveAgent.FindPortalFrame) minus current
+//	          X (blocks); 0 if not visible/not configured.
+//	index 82: frameDy — same, Y.
+//	index 83: frameDz — same, Z.
+//	index 84: frameVisible — 1.0 if Config.LightPortalSearchRadius > 0 and
+//	          a frame was found this step (Environment.portalFrameVisible,
+//	          see refreshPortalFrameTarget), 0.0 otherwise. Gates
+//	          frameDx/Dy/Dz and doubles as ActionLightPortal's
+//	          legality/mask condition — same dual role as portalVisible.
+//	index 85: goalFrameActive — 1.0 if Config.LightPortalSearchRadius > 0,
+//	          0.0 otherwise. Same role as goalPortalActive above.
 //
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
@@ -364,7 +376,7 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // master when it merged. Index 76-80 (portalDx/Dy/Dz/portalVisible/
 // goalPortalActive) is ActionUsePortal's own block, appended the same way
 // rl-action-space-expansion-ii's block was.
-const observationSize = 81
+const observationSize = 86
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -386,7 +398,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool, portalX, portalY, portalZ float64, portalVisible, portalActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool, portalX, portalY, portalZ float64, portalVisible, portalActive bool, frameX, frameY, frameZ float64, frameVisible, frameActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -443,6 +455,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	portalDx, portalDy, portalDz, portalVisibleFlag := float32(0), float32(0), float32(0), float32(0)
 	if portalVisible {
 		portalDx, portalDy, portalDz, portalVisibleFlag = float32(portalX-x), float32(portalY-y), float32(portalZ-z), 1
+	}
+	frameDx, frameDy, frameDz, frameVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if frameVisible {
+		frameDx, frameDy, frameDz, frameVisibleFlag = float32(frameX-x), float32(frameY-y), float32(frameZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -528,6 +544,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				portalDz / obsDistanceScale,
 				portalVisibleFlag,
 				boolToFloat32(portalActive),
+				frameDx / obsDistanceScale,
+				frameDy / obsDistanceScale,
+				frameDz / obsDistanceScale,
+				frameVisibleFlag,
+				boolToFloat32(frameActive),
 			},
 		}
 	}
@@ -614,6 +635,11 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			portalDz,
 			portalVisibleFlag,
 			boolToFloat32(portalActive),
+			frameDx,
+			frameDy,
+			frameDz,
+			frameVisibleFlag,
+			boolToFloat32(frameActive),
 		},
 	}
 }

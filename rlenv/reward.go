@@ -191,6 +191,19 @@ const (
 	// any named-block/item search radius) the same way reaching a fly
 	// target does.
 	portalRewardBonus float32 = 10.0
+	// lightPortalRewardBonus is added once, the step the frame
+	// Environment started the step tracking (Environment.portalFrame) is
+	// observed to ignite - its interior's block name changing at all
+	// (mirrors mineRewardBonus's own "changed at all, not narrowly
+	// 'became X'" reasoning) - judged from actual world state, not from
+	// whether ActionLightPortal specifically was dispatched. Same
+	// magnitude/philosophy as every other one-shot task-accomplished
+	// bonus in this file. Unlike portalRewardBonus/sleptThroughNightBonus,
+	// this one IS effectively gated by Config.LightPortalSearchRadius:
+	// there's no frame to judge "did it ignite" against unless this
+	// Environment is actually tracking one (see
+	// Config.LightPortalSearchRadius's own doc comment).
+	lightPortalRewardBonus float32 = 10.0
 )
 
 // stepOutcome bundles what computeReward needs from a Step call: the

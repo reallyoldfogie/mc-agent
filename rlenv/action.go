@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md originally sketched
@@ -247,8 +248,25 @@ const (
 	// an ungraded, always-available action costs).
 	ActionUsePortal
 
+	// ActionLightPortal dispatches "lightPortal <ignitionX> <ignitionY>
+	// <ignitionZ> <axis> <interiorMinX> <interiorMinY> <interiorMinZ>
+	// <interiorMaxX> <interiorMaxY> <interiorMaxZ>" at Environment's own
+	// already-resolved e.portalFrame (see refreshPortalFrameTarget) —
+	// same "dispatch Environment's own already-resolved state, don't let
+	// the dispatched action re-search independently" reasoning as
+	// ActionUsePortal's own doc comment; a frame has more state than a
+	// single V3 so the exact-frame form takes all of it instead of three
+	// coordinates. A safe no-op when Config.LightPortalSearchRadius <= 0
+	// or nothing is currently visible — docs/plans/
+	// NETHER_END_PORTAL_TRANSFER_PLAN.md (local/untracked) Phase 7's
+	// lightPortal follow-up. Rewarded via reward.go's
+	// lightPortalRewardBonus, same reasoning as ActionUsePortal's own
+	// portalRewardBonus: igniting a frame is this action's own distinct
+	// outcome, not covered by any other reward term.
+	ActionLightPortal
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionUsePortal) + 1
+	NumActions = int(ActionLightPortal) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -284,6 +302,7 @@ const (
 	spearChargeWithApproachActionName = "spearchargewithapproach"
 	maceSmashWithApproachActionName   = "macesmashwithapproach"
 	usePortalActionName               = "useportal"
+	lightPortalActionName             = "lightportal"
 )
 
 // actionDispatch describes what Step should send through the
@@ -456,6 +475,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: usePortalActionName, args: coordArgs(e.portalX, e.portalY, e.portalZ)}, true, nil
+	case ActionLightPortal:
+		if !e.actionLegal(ActionLightPortal) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: lightPortalActionName, args: portalFrameArgs(e.portalFrame)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -550,6 +574,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.MaceSmashTargetMobType != "" && e.maceVisible && e.agent.IsEquipped(maceSmashWeaponName)
 	case ActionUsePortal:
 		return e.cfg.PortalSearchRadius > 0 && e.portalVisible
+	case ActionLightPortal:
+		return e.cfg.LightPortalSearchRadius > 0 && e.portalFrameVisible
 	default:
 		return false
 	}
@@ -583,4 +609,15 @@ func coordArgs(x, y, z float64) []string {
 
 func formatCoord(v float64) string {
 	return fmt.Sprintf("%.4f", v)
+}
+
+// portalFrameArgs formats frame as LightPortal's 10-arg exact-frame form
+// (actions/commands.go's parsePortalFrameArgs is the inverse) — IgnitionFace
+// is deliberately not included, since it's always a deterministic function
+// of Axis on the parsing side.
+func portalFrameArgs(frame models.PortalFrame) []string {
+	args := []string{formatCoord(frame.IgnitionBlock.X), formatCoord(frame.IgnitionBlock.Y), formatCoord(frame.IgnitionBlock.Z), frame.Axis}
+	args = append(args, coordArgs(frame.InteriorMin.X, frame.InteriorMin.Y, frame.InteriorMin.Z)...)
+	args = append(args, coordArgs(frame.InteriorMax.X, frame.InteriorMax.Y, frame.InteriorMax.Z)...)
+	return args
 }

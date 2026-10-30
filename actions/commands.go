@@ -1467,11 +1467,31 @@ const lightPortalDefaultMaxDistance = 16
 
 type LightPortal struct{}
 
-func (LightPortal) Name() string  { return "lightportal" }
-func (LightPortal) Usage() string { return "lightPortal [maxDistance]" }
+func (LightPortal) Name() string { return "lightportal" }
+func (LightPortal) Usage() string {
+	return "lightPortal [maxDistance] | lightPortal <ignitionX> <ignitionY> <ignitionZ> <axis> <interiorMinX> <interiorMinY> <interiorMinZ> <interiorMaxX> <interiorMaxY> <interiorMaxZ>"
+}
 func (LightPortal) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	// Exact-frame form (10 args): a caller that already resolved a frame
+	// (rlenv, via FindPortalFrame) dispatches it directly, skipping a
+	// second, independently-radius'd search inside this command - same
+	// split usePortal's own exact-coordinate form uses.
+	if len(args) == 10 {
+		frame, err := parsePortalFrameArgs(args)
+		if err != nil {
+			_ = agent.SendChat("Invalid portal frame: " + err.Error())
+			return models.Done(nil), nil
+		}
+		return lightPortalFrame(ctx, agent, frame), nil
+	}
+
+	if len(args) > 1 {
+		_ = agent.SendChat("Usage: " + LightPortal{}.Usage())
+		return models.Done(nil), nil
+	}
+
 	maxDistance := lightPortalDefaultMaxDistance
-	if len(args) > 0 {
+	if len(args) == 1 {
 		d, err := strconv.Atoi(args[0])
 		if err != nil || d <= 0 {
 			_ = agent.SendChat("Usage: lightPortal [maxDistance] - maxDistance must be a positive integer")
@@ -1489,7 +1509,48 @@ func (LightPortal) Execute(ctx context.Context, agent models.CommandAgent, args 
 		_ = agent.SendChat(fmt.Sprintf("No unlit portal frame found within %d blocks", maxDistance))
 		return models.Done(nil), nil
 	}
+	return lightPortalFrame(ctx, agent, frame), nil
+}
 
+// parsePortalFrameArgs parses LightPortal's 10-arg exact-frame form:
+// <ignitionX> <ignitionY> <ignitionZ> <axis> <interiorMinX> <interiorMinY>
+// <interiorMinZ> <interiorMaxX> <interiorMaxY> <interiorMaxZ>. IgnitionFace
+// isn't a separate arg - it's always a deterministic function of axis
+// (east for "x", south for "z"), matching agent.FindPortalFrame's own
+// convention exactly.
+func parsePortalFrameArgs(args []string) (models.PortalFrame, error) {
+	coords := make([]float64, 0, 9)
+	for _, idx := range []int{0, 1, 2, 4, 5, 6, 7, 8, 9} {
+		v, err := parseFloat(args[idx])
+		if err != nil {
+			return models.PortalFrame{}, fmt.Errorf("argument %d: %w", idx+1, err)
+		}
+		coords = append(coords, v)
+	}
+	axis := args[3]
+	var face models.BlockFace
+	switch axis {
+	case "x":
+		face = models.FaceEast
+	case "z":
+		face = models.FaceSouth
+	default:
+		return models.PortalFrame{}, fmt.Errorf("axis must be \"x\" or \"z\", got %q", axis)
+	}
+	return models.PortalFrame{
+		Axis:          axis,
+		IgnitionBlock: models.V3{X: coords[0], Y: coords[1], Z: coords[2]},
+		IgnitionFace:  face,
+		InteriorMin:   models.V3{X: coords[3], Y: coords[4], Z: coords[5]},
+		InteriorMax:   models.V3{X: coords[6], Y: coords[7], Z: coords[8]},
+	}, nil
+}
+
+// lightPortalFrame launches LightPortalFrame in a goroutine (it blocks
+// until the server confirms ignition or the timeout passes) and returns a
+// Completion that resolves with the outcome - mirrors usePortalAt's own
+// pattern.
+func lightPortalFrame(ctx context.Context, agent models.CommandAgent, frame models.PortalFrame) models.Completion {
 	completion, resolve := models.NewCompletion()
 	go func() {
 		err := agent.LightPortalFrame(ctx, frame)
@@ -1500,7 +1561,7 @@ func (LightPortal) Execute(ctx context.Context, agent models.CommandAgent, args 
 		}
 		resolve(err)
 	}()
-	return completion, nil
+	return completion
 }
 
 type KillCreeperForGunpowder struct{}

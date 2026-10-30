@@ -109,6 +109,14 @@ type Environment struct {
 	portalX, portalY, portalZ float64
 	portalVisible             bool
 
+	// portalFrame/portalFrameVisible cache the last-resolved nearest
+	// unlit portal frame (see refreshPortalFrameTarget), mirroring
+	// portalX/Y/Z/portalVisible exactly - a frame carries more state than
+	// a single V3 (axis, interior bounds, ignition point) so this caches
+	// the whole models.PortalFrame rather than three floats.
+	portalFrame        models.PortalFrame
+	portalFrameVisible bool
+
 	// timeOfDayTicks/timeOfDayKnown and sleepWindowActive cache the
 	// world's current time of day and whether it currently falls inside
 	// vanilla's own sleep-allowed window (see refreshSleepTarget) -
@@ -614,6 +622,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBuried = override.MineTargetBuried
 		e.cfg.SleepSearchRadius = override.SleepSearchRadius
 		e.cfg.PortalSearchRadius = override.PortalSearchRadius
+		e.cfg.LightPortalSearchRadius = override.LightPortalSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
@@ -795,6 +804,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshPortalTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshPortalFrameTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	e.refreshDimension()
 	if err := e.refreshMineBuriedExistence(ctx); err != nil {
 		return rl.Observation{}, err
@@ -833,7 +845,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0)
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0)
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -1701,6 +1713,23 @@ func (e *Environment) refreshPortalTarget(ctx context.Context) error {
 	return nil
 }
 
+// refreshPortalFrameTarget mirrors refreshPortalTarget's own shape
+// exactly, searching for an unlit frame instead of a lit portal block: a
+// safe no-op (portalFrameVisible left false) when
+// Config.LightPortalSearchRadius <= 0 (see its own doc comment).
+func (e *Environment) refreshPortalFrameTarget(ctx context.Context) error {
+	if e.cfg.LightPortalSearchRadius <= 0 {
+		e.portalFrame, e.portalFrameVisible = models.PortalFrame{}, false
+		return nil
+	}
+	frame, found, err := e.agent.FindPortalFrame(ctx, e.cfg.LightPortalSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving portal frame target: %w", err)
+	}
+	e.portalFrame, e.portalFrameVisible = frame, found
+	return nil
+}
+
 // vanillaSleepWindowStart/End are the Time-of-day tick bounds (0-23999,
 // see models.World.GetTimeOfDay's own doc comment) within which vanilla
 // allows a player to enter a bed - minecraft.wiki/w/Daylight_cycle's own
@@ -1838,6 +1867,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// dispatch - is still caught when e.refreshDimension() runs again
 	// below.
 	prevDimensionTypeID, prevDimensionName, prevDimensionInitialized := e.dimensionTypeID, e.dimensionName, e.dimensionInitialized
+	// prevFrame/prevFrameVisible/prevFrameInteriorBlockName back
+	// lightPortalRewardBonus's own reward check (see litThisStep below) -
+	// mirrors prevMineVisible/prevMineBlockName's own reasoning exactly:
+	// captured before dispatch so the comparison is "before this step"
+	// vs "after," regardless of whether this step dispatches
+	// ActionLightPortal specifically.
+	prevFrame, prevFrameVisible := e.portalFrame, e.portalFrameVisible
+	prevFrameInteriorBlockName := ""
+	if prevFrameVisible {
+		prevFrameInteriorBlockName = e.agent.BlockNameAt(int(prevFrame.InteriorMin.X), int(prevFrame.InteriorMin.Y), int(prevFrame.InteriorMin.Z))
+	}
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -1882,6 +1922,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		newMineBlockName := e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 		mined = newMineBlockName != prevMineBlockName
+	}
+	// litThisStep mirrors mined's own "block name changed" shape exactly,
+	// for the frame the step started with (prevFrame) - judged from
+	// actual world state, not from whether ActionLightPortal was the
+	// dispatched action (see reward.go's lightPortalRewardBonus doc
+	// comment).
+	litThisStep := false
+	if prevFrameVisible {
+		newFrameInteriorBlockName := e.agent.BlockNameAt(int(prevFrame.InteriorMin.X), int(prevFrame.InteriorMin.Y), int(prevFrame.InteriorMin.Z))
+		litThisStep = newFrameInteriorBlockName != prevFrameInteriorBlockName
 	}
 	// Blind-destruction fallback (BuriedTargetAgent): refreshed
 	// unconditionally, the same way refreshMineTarget itself always runs
@@ -2180,6 +2230,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if err := e.refreshPortalTarget(ctx); err != nil {
 		return rl.StepResult{}, err
 	}
+	if err := e.refreshPortalFrameTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
 	// sleptThroughNight: the time of day jumped backward from within the
 	// vanilla sleep-allowed window - see sleptThroughNightBonus's own doc
 	// comment (reward.go) for why a backward jump specifically, not just
@@ -2207,6 +2260,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		reward += portalRewardBonus
 		done = true
 		doneReason = "portal"
+	}
+	if litThisStep {
+		reward += lightPortalRewardBonus
+		done = true
+		doneReason = "lightportal"
 	}
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.StepResult{}, err
@@ -2260,7 +2318,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0)
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0)
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
