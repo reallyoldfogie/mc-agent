@@ -173,6 +173,35 @@ type CommandAgent interface {
 	// its own search.
 	UsePortalAt(ctx context.Context, pos V3) error
 
+	// FindPortalFrame searches for the nearest unlit nether portal frame
+	// (a rectangular obsidian ring with a passable interior — any size
+	// vanilla allows, 2x3 to 21x21 interior, not just the canonical 2x3)
+	// within maxDistance blocks. found is false if none was located.
+	// Exposed separately from LightPortal for the same reason
+	// FindNearestPortal is exposed separately from UsePortal: a caller
+	// that dispatches movement far more often than a human types a chat
+	// command (rlenv) can resolve a frame once and pass it directly to
+	// LightPortalFrame.
+	FindPortalFrame(ctx context.Context, maxDistance int) (frame PortalFrame, found bool, err error)
+
+	// LightPortalFrame is LightPortal's already-resolved counterpart:
+	// ignites the frame already known (e.g. from FindPortalFrame) —
+	// walks to a reachable position with line of sight to its ignition
+	// block, equips flint and steel, right-clicks it, and waits for the
+	// interior to actually turn into nether_portal blocks — without
+	// performing its own search.
+	LightPortalFrame(ctx context.Context, frame PortalFrame) error
+
+	// LightPortal finds the nearest unlit nether portal frame within
+	// maxDistance blocks (0 uses a sensible default) and ignites it.
+	// Returns an error if no frame is found, no flint and steel is held,
+	// walking there fails, or the interior never turns into
+	// nether_portal blocks within a timeout. Finding/building the
+	// obsidian frame itself is out of scope — this assumes one already
+	// exists (built via buildStructure/place/mine, or found in the
+	// world) and are unlit.
+	LightPortal(ctx context.Context, maxDistance int) error
+
 	// GetDimension returns the bot's current dimension type registry index
 	// and name (e.g. "minecraft:the_nether"). initialized is false until
 	// the first ClientboundLogin or ClientboundRespawn has been processed.

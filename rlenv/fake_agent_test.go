@@ -1444,6 +1444,25 @@ func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (mo
 	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
 }
 
+// FindPortalFrame and LightPortalFrame/LightPortal make fakeAgent satisfy
+// models.CommandAgent's lit-portal-frame-detection additions. No test
+// currently exercises any of these (nothing in rlenv drives portal
+// lighting), so these are minimal, honest stubs - FindPortalFrame reports
+// no frame found rather than pretending to detect one, and
+// LightPortalFrame/LightPortal report "not supported" rather than
+// pretending to ignite anything.
+func (f *fakeAgent) FindPortalFrame(context.Context, int) (models.PortalFrame, bool, error) {
+	return models.PortalFrame{}, false, nil
+}
+
+func (f *fakeAgent) LightPortalFrame(context.Context, models.PortalFrame) error {
+	return errors.New("fakeAgent does not support LightPortalFrame")
+}
+
+func (f *fakeAgent) LightPortal(context.Context, int) error {
+	return errors.New("fakeAgent does not support LightPortal")
+}
+
 // UsePortal mirrors the real agent's own shape: resolve via
 // FindNearestPortal, then delegate to UsePortalAt. Simulated, not stubbed
 // out, now that ActionUsePortal actually dispatches through this path

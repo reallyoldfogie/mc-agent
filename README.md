@@ -98,6 +98,7 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `sleep [<x> <y> <z>]` | Sleep in the nearest visible bed, or one at exact coordinates |
 | `wakeUp` | Leave the bed the agent is currently sleeping in |
 | `usePortal [maxDistance]` / `usePortal <x> <y> <z>` | Walk to the nearest nether/end portal within maxDistance blocks (default 16), or to an exact position, and wait for the dimension to actually change |
+| `lightPortal [maxDistance]` | Find the nearest unlit nether portal frame (any vanilla size, 2x3 to 21x21 interior) within maxDistance blocks (default 16) and ignite it with flint and steel |
 
 Example:
 ```

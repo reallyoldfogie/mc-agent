@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1459,6 +1459,48 @@ func usePortalAt(ctx context.Context, agent models.CommandAgent, pos models.V3) 
 		resolve(err)
 	}()
 	return completion
+}
+
+// lightPortalDefaultMaxDistance mirrors usePortalDefaultMaxDistance's own
+// default, for LightPortal's by-radius form.
+const lightPortalDefaultMaxDistance = 16
+
+type LightPortal struct{}
+
+func (LightPortal) Name() string  { return "lightportal" }
+func (LightPortal) Usage() string { return "lightPortal [maxDistance]" }
+func (LightPortal) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	maxDistance := lightPortalDefaultMaxDistance
+	if len(args) > 0 {
+		d, err := strconv.Atoi(args[0])
+		if err != nil || d <= 0 {
+			_ = agent.SendChat("Usage: lightPortal [maxDistance] - maxDistance must be a positive integer")
+			return models.Done(nil), nil
+		}
+		maxDistance = d
+	}
+
+	frame, found, err := agent.FindPortalFrame(ctx, maxDistance)
+	if err != nil {
+		_ = agent.SendChat("Find portal frame error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if !found {
+		_ = agent.SendChat(fmt.Sprintf("No unlit portal frame found within %d blocks", maxDistance))
+		return models.Done(nil), nil
+	}
+
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.LightPortalFrame(ctx, frame)
+		if err != nil {
+			_ = agent.SendChat("Light portal error: " + err.Error())
+		} else {
+			_ = agent.SendChat("Portal lit")
+		}
+		resolve(err)
+	}()
+	return completion, nil
 }
 
 type KillCreeperForGunpowder struct{}
