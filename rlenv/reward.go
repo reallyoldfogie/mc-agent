@@ -168,6 +168,29 @@ const (
 	// action ran, same philosophy as mineRewardBonus/craftRewardBonus.
 	// Same magnitude as those two: "this episode's task was accomplished."
 	sleptThroughNightBonus float32 = 10.0
+	// portalRewardBonus is added once, the step LiveAgent.GetDimension()'s
+	// tracked dimension type/name is observed to change from what it was
+	// at the start of the step — same magnitude/philosophy as
+	// mineRewardBonus/craftRewardBonus/sleptThroughNightBonus: "this
+	// episode's task was accomplished," judged from an actual world-state
+	// delta rather than from whether ActionUsePortal specifically was
+	// dispatched (a server-initiated transfer — e.g. a win-game credits
+	// sequence completing on its own — counts exactly the same as one
+	// this episode caused). Deliberately NOT gated on
+	// Config.PortalSearchRadius > 0, mirroring sleptThroughNightBonus's
+	// own lack of a Config gate exactly: without this, ActionUsePortal
+	// has no training signal at all — it's legal whenever a portal is
+	// visible, but nothing ever differentiates choosing it from choosing
+	// ActionWait, so a policy has no gradient pushing it toward using one
+	// at the right time (see action.go's own ActionReturnHome removal
+	// for what an ungraded, always-available action costs: pure wasted
+	// probability mass). Ends the episode on the same "world fundamentally
+	// changed" reasoning flyRewardBonus/arrivalBonus already use for
+	// their own one-shot conditions — a dimension transfer invalidates
+	// this episode's own position-relative goals (GoToTarget's target,
+	// any named-block/item search radius) the same way reaching a fly
+	// target does.
+	portalRewardBonus float32 = 10.0
 )
 
 // stepOutcome bundles what computeReward needs from a Step call: the

@@ -123,9 +123,12 @@ type Config struct {
 	// search. <= 0 (the default) means this Environment instance doesn't
 	// pose a dimension-transfer task: ActionUsePortal becomes a safe
 	// no-op, the same way ActionMine/ActionCraft/ActionSleep do when
-	// unconfigured. Deliberately has no reward component of its own yet —
-	// see action.go's own ActionUsePortal doc comment — this field only
-	// makes the action choosable, not part of any posed goal.
+	// unconfigured. Note that reward.go's portalRewardBonus is
+	// deliberately NOT gated on this field (mirrors sleptThroughNightBonus's
+	// own lack of a Config gate) — a dimension change is rewarded whenever
+	// observed, whether or not this instance posed it as the task, same
+	// "judge from world-state deltas" philosophy as every other reward in
+	// this package.
 	PortalSearchRadius int
 
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")

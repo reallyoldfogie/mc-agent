@@ -343,13 +343,18 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // point" one rather than replacing it (all three can be configured on the
 // same instance; see task.go). See doc.go.
 //
-// Changing this length is a breaking change for any checkpoint trained
-// against a shorter observation — see actorcritic.Load's existing
-// EnvironmentID/shape validation, and mint a new EnvironmentID for
-// anything trained against this length (e.g. cmd/rl-train's own
-// "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
-// ObservationSize()/ActionSpace() directly, so it picks up this change
-// automatically with no separate version bump needed there). Indices
+// Growing this length (always by appending, never by changing an existing
+// index) is no longer a forced cold start: cmd/rl-train's own
+// "mc-agent-rlenv:actions=%d:obs=%d" EnvironmentID already derives from
+// ObservationSize()/ActionSpace() directly, so it picks up a change here
+// with no separate version bump, and a checkpoint resume path that uses
+// actorcritic.LoadExpanding/RecurrentLoadExpanding (cRL-go/pkg/actorcritic/
+// expand.go — both cmd/rsi-train and pkg/lineage already do) transparently
+// zero-pads the old Params' new input columns/output rows to the new
+// shape instead of rejecting the file, preserving every existing learned
+// weight. A plain Load/RecurrentLoad call still rejects a shape mismatch
+// outright, so this only holds for call sites that actually use the
+// Expanding variants. Indices
 // 21-24 (unknownDx/Dy/Dz/unknownValid) are new relative to the 21-length
 // observation every currently-checkpointed policy was trained against —
 // no exception from this length's own rule. Indices 31-75 are

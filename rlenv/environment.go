@@ -120,6 +120,19 @@ type Environment struct {
 	timeOfDayKnown    bool
 	sleepWindowActive bool
 
+	// dimensionTypeID/dimensionName/dimensionInitialized cache
+	// LiveAgent.GetDimension() (see refreshDimension) — mirrors
+	// timeOfDayTicks/timeOfDayKnown's own shape exactly: Step captures
+	// these as "before this step" at the top (the value refreshDimension
+	// last wrote, from the end of the previous step or Reset), then
+	// refreshes them again after dispatch, so portalRewardBonus's
+	// before/after comparison (reward.go) catches a dimension change
+	// caused by anything - not only this step's own dispatched action -
+	// the same way sleptThroughNight's comparison does for time of day.
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+
 	// mineKnownX/Y/Z/mineEverSeen are the minimum-viable "memory map"
 	// (docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer):
 	// the last position Config.MineTargetBlock was actually confirmed
@@ -782,6 +795,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshPortalTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	e.refreshDimension()
 	if err := e.refreshMineBuriedExistence(ctx); err != nil {
 		return rl.Observation{}, err
 	}
@@ -1720,6 +1734,14 @@ func (e *Environment) refreshTimeOfDay() {
 	e.sleepWindowActive = known && ticks >= vanillaSleepWindowStart && ticks <= vanillaSleepWindowEnd
 }
 
+// refreshDimension mirrors refreshTimeOfDay's own shape exactly, for
+// portalRewardBonus's before/after comparison (reward.go) instead of
+// sleptThroughNight's.
+func (e *Environment) refreshDimension() {
+	typeID, name, initialized := e.agent.GetDimension()
+	e.dimensionTypeID, e.dimensionName, e.dimensionInitialized = typeID, name, initialized
+}
+
 // Step implements rl.Environment.
 //
 // Movement completion, resolved via models.Completion: actions.MoveToQuiet.Execute
@@ -1806,6 +1828,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// reasoning above, for the mace-smash task.
 	prevMaceEntityID := e.maceEntityID
 	prevMaceVisible := e.maceVisible
+	// prevDimensionTypeID/prevDimensionName/prevDimensionInitialized back
+	// portalRewardBonus's own reward check (see dimensionChangedThisStep
+	// below) — read from the environment's own cache (refreshDimension),
+	// not a fresh live call, the same reason prevTimeOfDayTicks reads
+	// e.timeOfDayTicks rather than calling GetTimeOfDay() again here: this
+	// must reflect the END of the *previous* step (or Reset), so a change
+	// that happens between steps - not only during this step's own
+	// dispatch - is still caught when e.refreshDimension() runs again
+	// below.
+	prevDimensionTypeID, prevDimensionName, prevDimensionInitialized := e.dimensionTypeID, e.dimensionName, e.dimensionInitialized
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -2160,6 +2192,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		reward += sleptThroughNightBonus
 		done = true
 		doneReason = "slept"
+	}
+	// dimensionChangedThisStep mirrors sleptThroughNight's own "world-state
+	// delta, not which action ran" shape — see portalRewardBonus's own doc
+	// comment (reward.go) for why this is deliberately not gated on
+	// Config.PortalSearchRadius. e.refreshDimension() updates the cache
+	// prevDimensionTypeID/Name was captured from at the top of Step to the
+	// current live value, so this comparison is "before this step" vs
+	// "after."
+	e.refreshDimension()
+	dimensionChangedThisStep := prevDimensionInitialized && e.dimensionInitialized &&
+		(e.dimensionTypeID != prevDimensionTypeID || e.dimensionName != prevDimensionName)
+	if dimensionChangedThisStep {
+		reward += portalRewardBonus
+		done = true
+		doneReason = "portal"
 	}
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.StepResult{}, err

@@ -237,11 +237,14 @@ const (
 	// independently-radius'd search. A safe no-op (like an unconfigured
 	// ActionMine) when Config.PortalSearchRadius <= 0 or nothing is
 	// currently visible — docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md
-	// (local/untracked) Phase 7's rlenv follow-up. Deliberately has no
-	// reward component of its own (same reasoning as ActionUseItem's own
-	// doc comment): no task/curriculum poses a dimension-transfer goal
-	// yet, so a successful transfer currently has nothing to be rewarded
-	// against — this only wires the action into the vocabulary.
+	// (local/untracked) Phase 7's rlenv follow-up. Rewarded via
+	// reward.go's portalRewardBonus — unlike ActionUseItem (a pure
+	// mechanical follow-up to an already-rewarded ActionEquip),
+	// ActionUsePortal's own outcome (the dimension actually changing) is
+	// not covered by any other reward term, so without one here a policy
+	// would have no gradient ever pushing it toward using a portal at the
+	// right time (see this file's own ActionReturnHome removal for what
+	// an ungraded, always-available action costs).
 	ActionUsePortal
 
 	// NumActions is this environment's ActionSpace().

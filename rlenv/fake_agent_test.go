@@ -57,7 +57,14 @@ type fakeAgent struct {
 	portalFound               bool
 	usePortalAtErr            error
 	usePortalAtCalls          int
-	timeOfDayKnown            bool
+
+	// dimensionTypeID/dimensionName/dimensionInitialized back GetDimension
+	// - defaults to the zero value (Overworld, uninitialized), settable so
+	// a test can simulate a dimension change.
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+	timeOfDayKnown       bool
 
 	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
 	// name is mineBlockName ("" means nothing is there). FindVisibleBlock
@@ -1475,13 +1482,14 @@ func (f *fakeAgent) UsePortalAt(context.Context, models.V3) error {
 	return f.usePortalAtErr
 }
 
-// GetDimension reports the Overworld, uninitialized, same as a real agent
-// before its first Login/Respawn. No test currently needs this fake to
-// simulate an actual dimension change (ActionUsePortal has no reward
-// component of its own yet - see action.go's own doc comment), so this
-// stays a minimal, honest stub rather than tracked state.
+// GetDimension reports dimensionTypeID/dimensionName/dimensionInitialized
+// - defaults to the Overworld, uninitialized, same as a real agent before
+// its first Login/Respawn, but settable so a test can simulate a
+// dimension change for portalRewardBonus's own reward check (reward.go).
 func (f *fakeAgent) GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool) {
-	return 0, "", false
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dimensionTypeID, f.dimensionName, f.dimensionInitialized
 }
 
 // ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.
