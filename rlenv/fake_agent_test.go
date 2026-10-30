@@ -56,14 +56,14 @@ type fakeAgent struct {
 	// which simulates it no longer existing at all), for exercising the
 	// mine-target "memory" (docs/plans/14-buried-block-mining-and-memory-map.md,
 	// mc-rsi-trainer).
-	mineBlockHidden bool
-	collectDropsCalls                  int
+	mineBlockHidden   bool
+	collectDropsCalls int
 
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
 	// recipes, instead of the single mine block / craft target above.
-	chainInv         map[string]int
-	chainBlocks      map[[3]int]string
+	chainInv    map[string]int
+	chainBlocks map[[3]int]string
 	// chainBlocksHidden mirrors mineBlockHidden's own role (see its doc
 	// comment), but for the chainBlocks-backed FindVisibleBlock path: a
 	// block can be present in chainBlocks (so BlockNameAt/MineBlockAt
@@ -71,9 +71,9 @@ type fakeAgent struct {
 	// not found, simulating a buried target that hasn't been glimpsed yet.
 	chainBlocksHidden bool
 	chainDrops        int
-	clearedInventory int
-	clearedDropAreas [][4]int
-	failNextPlace    bool
+	clearedInventory  int
+	clearedDropAreas  [][4]int
+	failNextPlace     bool
 	// placeThenFail places the block but reports failure once: the world
 	// changed, the caller was not told (the bot's view lagged).
 	placeThenFail         bool
@@ -786,6 +786,20 @@ func (f *fakeAgent) PlaceBlockAt(_ context.Context, pos models.V3, itemName stri
 // pretending to implement behavior nothing here exercises or verifies.
 func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (models.BuildStructureResult, error) {
 	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
+}
+
+// UsePortal and GetDimension make fakeAgent satisfy models.CommandAgent's
+// dimension-transfer additions. No test currently exercises either
+// (nothing in rlenv drives portal use or dimension changes), so these are
+// minimal, honest stubs - UsePortal reports no portal found rather than
+// pretending to walk somewhere, and GetDimension reports the Overworld,
+// uninitialized, same as a real agent before its first Login/Respawn.
+func (f *fakeAgent) UsePortal(context.Context, int) error {
+	return errors.New("fakeAgent does not support UsePortal")
+}
+
+func (f *fakeAgent) GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool) {
+	return 0, "", false
 }
 
 // ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.
