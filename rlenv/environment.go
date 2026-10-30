@@ -30,9 +30,18 @@ type Environment struct {
 
 	targetX, targetY, targetZ float64
 	prevDistance              float64
-	prevHealth                float32
-	prevHealthKnown           bool
-	episodeStarted            bool
+
+	// prevGoToTargetX/Y/Z cache the last currentGoToTarget() result, so
+	// Step can tell whether it moved since the previous step (the
+	// buried-search exploration point can, unlike targetX/Y/Z itself,
+	// which only ever changes at Reset) — see currentGoToTarget's own doc
+	// comment for why a silent jump needs re-baselining rather than being
+	// diffed through computeReward directly.
+	prevGoToTargetX, prevGoToTargetY, prevGoToTargetZ float64
+
+	prevHealth      float32
+	prevHealthKnown bool
+	episodeStarted  bool
 	// lastDoneReason explains the most recent Step that returned Done=true.
 	// It is intentionally separate from rl.StepResult, whose public shape is
 	// only observation/reward/done. Callers such as the trainer can use this
@@ -87,6 +96,51 @@ type Environment struct {
 	mineX, mineY, mineZ float64
 	mineVisible         bool
 
+	// sleepX/Y/Z/sleepVisible cache the last-resolved nearest visible bed
+	// (see refreshSleepTarget), mirroring mineX/Y/Z/mineVisible exactly -
+	// no "ever seen" memory tracking, unlike mine, since sleep has no
+	// buried/memory-map concept to need one.
+	sleepX, sleepY, sleepZ float64
+	sleepVisible           bool
+
+	// portalX/Y/Z/portalVisible cache the last-resolved nearest visible
+	// portal (see refreshPortalTarget), mirroring sleepX/Y/Z/sleepVisible
+	// exactly - no "ever seen" memory tracking, same reasoning as sleep.
+	portalX, portalY, portalZ float64
+	portalVisible             bool
+
+	// portalFrame/portalFrameVisible cache the last-resolved nearest
+	// unlit portal frame (see refreshPortalFrameTarget), mirroring
+	// portalX/Y/Z/portalVisible exactly - a frame carries more state than
+	// a single V3 (axis, interior bounds, ignition point) so this caches
+	// the whole models.PortalFrame rather than three floats.
+	portalFrame        models.PortalFrame
+	portalFrameVisible bool
+
+	// timeOfDayTicks/timeOfDayKnown and sleepWindowActive cache the
+	// world's current time of day and whether it currently falls inside
+	// vanilla's own sleep-allowed window (see refreshSleepTarget) -
+	// isNight/timeUntilDawn's own observation features (observation.go)
+	// and ActionSleep's legality gate (action.go) both read this exact
+	// same cached value, so a policy's own "is it night" perception can
+	// never disagree with whether sleeping is actually legal this step.
+	timeOfDayTicks    int64
+	timeOfDayKnown    bool
+	sleepWindowActive bool
+
+	// dimensionTypeID/dimensionName/dimensionInitialized cache
+	// LiveAgent.GetDimension() (see refreshDimension) — mirrors
+	// timeOfDayTicks/timeOfDayKnown's own shape exactly: Step captures
+	// these as "before this step" at the top (the value refreshDimension
+	// last wrote, from the end of the previous step or Reset), then
+	// refreshes them again after dispatch, so portalRewardBonus's
+	// before/after comparison (reward.go) catches a dimension change
+	// caused by anything - not only this step's own dispatched action -
+	// the same way sleptThroughNight's comparison does for time of day.
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+
 	// mineKnownX/Y/Z/mineEverSeen are the minimum-viable "memory map"
 	// (docs/plans/14-buried-block-mining-and-memory-map.md, mc-rsi-trainer):
 	// the last position Config.MineTargetBlock was actually confirmed
@@ -104,6 +158,77 @@ type Environment struct {
 	// position from a world state that's since been restored/reseeded.
 	mineKnownX, mineKnownY, mineKnownZ float64
 	mineEverSeen                       bool
+
+	// mineSearchAnchorX/Y/Z/exploredOctants are the exploration-signal
+	// companion to mineKnownX/Y/Z/mineEverSeen above (docs/plans/14-buried-
+	// block-mining-and-memory-map.md's option 2, mc-rsi-trainer): while
+	// mineEverSeen is false, the policy's observation otherwise carries no
+	// information at all about where to dig (see buildObservation's
+	// unknownDx/Dy/Dz). A real per-cell visibility grid (option 2's literal
+	// reading) would need either a new agent-level primitive exposing which
+	// cells FindVisibleBlock's shell search actually checked, or a
+	// dedicated FindAllVisibleBlocksInSphere-style ray-trace every Step —
+	// the latter already costs ~6-14k rays per call at this search radius
+	// (see mc-rsi-trainer's cmd/rsi-train/worldstream.go, which only runs
+	// it at 1Hz for a spectator view, not per training Step across several
+	// parallel envs). Instead this tracks, at the coarsest resolution that
+	// still gives a usable direction, which of the 4 horizontal quadrants
+	// around this episode's mine-search anchor (where the bot started,
+	// since mine_buried/chain_mine have no separate goto target — see
+	// mineBuriedTask's own doc comment in mc-rsi-trainer) the bot has
+	// genuinely reached — within Config.ArrivalThreshold of that
+	// quadrant's own target point, not merely crossed into its half of
+	// the anchor plane (see markExploredQuadrant's own doc comment for
+	// the live bug that distinction fixes) — this episode. No new
+	// raycasts, no new agent-level method — reuses data already on hand.
+	//
+	// Deliberately horizontal-only (4 quadrants, not a full 8-octant
+	// sphere): mine_buried/chain_mine's ore is always seeded into the
+	// stone band *beneath* the dirt surface the bot spawns on (mc-rsi-
+	// trainer's own curriculum/seeding never places it above spawn), so an
+	// "explore upward" direction is never useful and — worse, found live
+	// building this — can be actively harmful: a naive ±Y scheme points
+	// unexplored-upward octants at a fixed point floating in open air
+	// above the surface, which has no walkable cell at all, so a
+	// MoveTo-style controller's pathfinding fails outright and the walk
+	// gets stuck retargeting that same unreachable point forever once the
+	// reachable quadrants run out (confirmed in
+	// testing/mine_buried_unknown_direction_test.go before this fix).
+	// observationUnknownDirection's target Y is always anchored half the
+	// search radius *below* the anchor for exactly this reason, not a
+	// per-quadrant choice.
+	//
+	// Coarser than true visibility (entering a quadrant doesn't mean the
+	// bot can see or has dug through all of it), but turns "which general
+	// direction haven't I tried yet" from no signal into a cheap one;
+	// revisit with a real visibility grid only if live data shows this
+	// MVP isn't enough, per docs/plans/14's own "ship the cheapest option
+	// first" precedent for mineKnownX/Y/Z itself.
+	mineSearchAnchorX, mineSearchAnchorY, mineSearchAnchorZ float64
+	exploredQuadrants                                       [4]bool
+
+	// mineBuriedExists is the line-of-sight-free companion to
+	// mineX/Y/Z/mineVisible — see BuriedTargetAgent and
+	// refreshMineBuriedExistence's own doc comments for what this backs
+	// and why it exists (a destroyed-but-never-seen buried target
+	// otherwise earns zero reward). Cleared at Reset the same way
+	// mineKnownX/Y/Z/mineEverSeen are, for the same reason: carrying a
+	// stale "exists" reading across episodes would misjudge a freshly
+	// re-seeded world.
+	mineBuriedExists bool
+
+	// prevBlocksMinedCount is BlocksMinedCounter's last-read value, this
+	// episode's "before this step" baseline for digProgressBonus — Step
+	// diffs the new read against it the same way prevDistance/prevHealth
+	// cache their own "before" state. Refreshed every Step regardless of
+	// buriedTargetActive() (even during chain_mine's gather phase, where
+	// chopping logs also goes through MineBlockAt) so that phase's digging
+	// never accumulates into a single windfall delta once buriedTargetActive()
+	// turns true later in the same episode; only whether the *reward* fires
+	// is gated on that. Reset at Reset the same way, to the agent's current
+	// (whole-lifetime-monotonic) count, so a prior episode's digging is
+	// never credited to this one.
+	prevBlocksMinedCount int64
 
 	// mineTargetNameInUse is whichever block name the most recent
 	// refreshMineTarget call actually resolved against (see
@@ -469,6 +594,14 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.arrived = false
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 	e.mineTargetNameInUse = ""
+	// x/y/z here already reflect any ResetOrigin teleport/groundSnap above
+	// (nothing moves the bot again before this episode's first
+	// observation) - this episode's mine-search anchor, see
+	// exploredQuadrants' own doc comment.
+	e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ = x, y, z
+	e.exploredQuadrants = [4]bool{}
+	e.mineBuriedExists = false
+	e.prevBlocksMinedCount = e.currentBlocksMinedCount()
 
 	// Config.TaskSelector: choose this episode's active task(s), if the
 	// caller opted in. Deliberately after the ResetOrigin teleport above
@@ -485,7 +618,11 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBlock = override.MineTargetBlock
 		e.cfg.MineSearchRadius = override.MineSearchRadius
 		e.cfg.MineRequiredTool = override.MineRequiredTool
+		e.cfg.MineRequiredToolEnchantments = override.MineRequiredToolEnchantments
 		e.cfg.MineTargetBuried = override.MineTargetBuried
+		e.cfg.SleepSearchRadius = override.SleepSearchRadius
+		e.cfg.PortalSearchRadius = override.PortalSearchRadius
+		e.cfg.LightPortalSearchRadius = override.LightPortalSearchRadius
 		e.cfg.CraftTargetItem = override.CraftTargetItem
 		e.cfg.CraftSearchRadius = override.CraftSearchRadius
 		e.cfg.SeedAtGoal = override.SeedAtGoal
@@ -611,7 +748,9 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		}
 	}
 
-	e.prevDistance = distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
+	resetGoalX, resetGoalY, resetGoalZ := e.currentGoToTarget()
+	e.prevDistance = distance3(x, y, z, resetGoalX, resetGoalY, resetGoalZ)
+	e.prevGoToTargetX, e.prevGoToTargetY, e.prevGoToTargetZ = resetGoalX, resetGoalY, resetGoalZ
 
 	// The flight target is a fixed point, resolved once here like
 	// targetX/Y/Z above — no walkability/reachability retry loop applies
@@ -659,6 +798,19 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
+	if err := e.refreshSleepTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshPortalTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	if err := e.refreshPortalFrameTarget(ctx); err != nil {
+		return rl.Observation{}, err
+	}
+	e.refreshDimension()
+	if err := e.refreshMineBuriedExistence(ctx); err != nil {
+		return rl.Observation{}, err
+	}
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.Observation{}, err
 	}
@@ -688,10 +840,12 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.followed = e.agent.IsFollowing()
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
+	e.markExploredQuadrant(x, y, z)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
+	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0)
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -1164,11 +1318,316 @@ func (e *Environment) mineTargetMemoryEnabled() bool {
 	return e.cfg.MineTargetBuried || e.cfg.ChainStage == ChainMine
 }
 
+// buriedTargetActive reports whether mineTargetBlockInUse() is currently a
+// buried target for this episode — mirrors that function's own
+// stage/craftedGoal-aware switch exactly, deliberately narrower than
+// mineTargetMemoryEnabled(): ChainStage is fixed for a chain_mine
+// episode's entire duration (set once from Config, unlike chainState's
+// own milestone progression), so mineTargetMemoryEnabled() alone is true
+// from step 1 — including during gather/table/place/use, well before the
+// ore-search phase starts. goToTargetActive/currentGoToTarget must not
+// redirect movement away from the tree during gather, so they consult
+// this narrower condition instead.
+func (e *Environment) buriedTargetActive() bool {
+	if e.cfg.MineTargetBuried {
+		return true
+	}
+	return e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal
+}
+
+// buriedTargetUnresolved reports whether a buried target is active for
+// this episode and hasn't been resolved via FindVisibleBlock even once
+// yet — the window currentGoToTarget steers toward the live exploration
+// signal rather than the exact known position.
+func (e *Environment) buriedTargetUnresolved() bool {
+	return e.buriedTargetActive() && !e.mineEverSeen
+}
+
+// goToTargetActive reports whether ActionGoToTarget is currently a
+// meaningful choice: either this episode's own configured goto task
+// (Config.GoToTargetDisabled's original meaning), or — new — a buried
+// target, where walking toward currentGoToTarget's live point is the only
+// way to ever actually search for one. Before this, mine_buried/chain_mine
+// had an observation feature (unknownDx/Dy/Dz) with literally no action
+// able to act on it: mine_buried sets GoToTargetDisabled unconditionally
+// (the plain "mine" task it's modeled on assumes the target is already in
+// reach), so ActionWait was the *only* ever-legal action for the entire
+// episode (confirmed live via rsi_action_mask_total, mc-rsi-trainer,
+// 2026-10-26) — the bot sat frozen, not wandering, not mining. chain_mine
+// could move, but only ever back toward its already-reached chain
+// ChainTargetOffsets point, never toward wherever the ore search signal
+// pointed.
+func (e *Environment) goToTargetActive() bool {
+	return !e.cfg.GoToTargetDisabled || e.buriedTargetActive()
+}
+
+// currentGoToTarget returns where ActionGoToTarget currently dispatches to
+// and what the observation's dx/dy/dz (indices 0-2) and reward.go's
+// distance shaping both measure progress against — a single source of
+// truth so none of the three can silently diverge from the others. For an
+// ordinary task this is just Config.TargetOffset's fixed point
+// (targetX/Y/Z, unchanged since Reset). While buriedTargetUnresolved(),
+// it's instead the live exploration-quadrant point
+// (observationUnknownDirection's own target, re-resolved to an absolute
+// coordinate here rather than the delta form the observation uses) —
+// falling back to the search anchor itself if nothing's unexplored left
+// or the agent doesn't support BuriedTargetAgent (a stable, harmless
+// default: already there, zero shaping either way). Once the target has
+// been seen even once (mineEverSeen), switches to the exact resolved
+// position (mineKnownX/Y/Z) so the bot can be walked precisely there
+// instead of just to the right general quadrant.
+//
+// This can change from one Step to the next in ways targetX/Y/Z itself
+// never does (a different quadrant becoming nearest, or the target
+// finally resolving) — see Step's own prevGoToTargetX/Y/Z handling for why
+// that needs a re-baseline, not a direct diff.
+func (e *Environment) currentGoToTarget() (x, y, z float64) {
+	if !e.buriedTargetActive() {
+		return e.targetX, e.targetY, e.targetZ
+	}
+	if e.mineEverSeen {
+		return e.mineKnownX, e.mineKnownY, e.mineKnownZ
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ
+	}
+	dx, dy, dz, valid := e.observationUnknownDirection(pos.X, pos.Y, pos.Z)
+	if !valid {
+		return e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ
+	}
+	return pos.X + dx, pos.Y + dy, pos.Z + dz
+}
+
 func (e *Environment) observationMineTarget() (x, y, z float64, visible bool) {
 	if e.mineTargetMemoryEnabled() {
 		return e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen
 	}
 	return e.mineX, e.mineY, e.mineZ, e.mineVisible
+}
+
+// BuriedTargetAgent is the optional capability Step uses to detect a
+// buried mine target's destruction even when it's mined blind - found
+// live (mc-rsi-trainer, with an Efficiency V tool): the pathfinder's own
+// overburden-clearing routinely digs straight through the actual ore on
+// its way to wherever it's headed, destroying it before FindVisibleBlock
+// ever resolves it even once. The generic `mined` check a few lines below
+// is gated on prevMineVisible precisely because it diffs one *specific,
+// already-resolved* coordinate's block name before/after - with no
+// coordinate ever resolved, it has nothing to diff and silently never
+// fires, so a real destruction earns zero reward and never ends the
+// episode. A separate capability, not a new models.CommandAgent method:
+// unlike FindVisibleBlock (which the policy's own mine action and
+// observation legitimately need, gated by line-of-sight so the policy
+// never gets X-rayed information), this exists purely for the reward
+// function's own ground-truth bookkeeping - the *existence* check it
+// backs is never exposed to the policy's observation, only used to decide
+// whether this step's `mined` should be true.
+type BuriedTargetAgent interface {
+	// BlockExistsInRadius reports whether any instance of blockName
+	// exists within radius blocks of (x, y, z), in loaded chunks, with no
+	// line-of-sight requirement (unlike FindVisibleBlock) - existence,
+	// not location, which is all a destruction check needs.
+	BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error)
+}
+
+// TimeOfDayAgent is an optional capability (same pattern as
+// BuriedTargetAgent above - not every CommandAgent implementation knows
+// the world's own clock) that refreshTimeOfDay uses to drive
+// isNight/timeUntilDawn's own observation features and ActionSleep's
+// night-window legality gate. The real agent forwards this to its own
+// GetWorld().GetTimeOfDay() (agent/sleep.go); a narrower interface than
+// WalkabilityAgent deliberately, so a test fake only needs two
+// controllable fields instead of a full fake models.World (14 methods,
+// most irrelevant here) just to drive this one signal.
+type TimeOfDayAgent interface {
+	// GetTimeOfDay returns the current time of day in ticks (0-23999)
+	// and whether it's been initialized yet - see models.World's own
+	// method of the same name, which the real implementation forwards
+	// to directly.
+	GetTimeOfDay() (int64, bool)
+}
+
+// BlocksMinedCounter is the optional capability Step uses to reward actual
+// digging during a buried-target search, not just movement toward it —
+// found live (mc-rsi-trainer, 2026-10-27) that distance shaping plus the
+// (now per-quadrant) arrival bonus still has nothing distinguishing a bot
+// that genuinely digs through overburden from one that paces back and
+// forth toward currentGoToTarget without ever breaking a block, risking a
+// policy that learns to "wander" for the shaping reward alone. Same "an
+// agent that doesn't implement this is left alone, not failed over"
+// convention as BuriedTargetAgent/EnchantedToolSeedAgent.
+type BlocksMinedCounter interface {
+	// BlocksMinedCount returns the number of blocks this agent has
+	// confirmed broken over its whole lifetime (monotonic, never reset) —
+	// Step diffs successive reads itself; see prevBlocksMinedCount's own
+	// doc comment.
+	BlocksMinedCount() int64
+}
+
+// currentBlocksMinedCount reads BlocksMinedCounter, or 0 if the agent
+// doesn't implement it (digProgressBonus then never fires — a stable,
+// harmless default, matching refreshMineBuriedExistence's own handling of
+// an unsupported optional capability).
+func (e *Environment) currentBlocksMinedCount() int64 {
+	counter, ok := e.agent.(BlocksMinedCounter)
+	if !ok {
+		return 0
+	}
+	return counter.BlocksMinedCount()
+}
+
+// refreshMineBuriedExistence updates e.mineBuriedExists for the next
+// Step's "before this step" read - mineVisible/refreshMineTarget's own
+// caching shape (see that field's own doc comment), but LOS-free (see
+// BuriedTargetAgent). No-op (leaves mineBuriedExists at whatever it
+// already was) unless mineTargetMemoryEnabled() and the agent implements
+// BuriedTargetAgent - matches this project's existing "an agent that
+// doesn't support an optional capability is left alone, not failed over"
+// convention (ToolSeedAgent/EnchantedToolSeedAgent).
+//
+// Known limitation, inherited from exploredQuadrants/mineSearchAnchorX/Y/Z
+// (see that field's own doc comment): the search center is this episode's
+// mine-search anchor (captured once at Reset, i.e. where the bot started),
+// which is right for mine_buried (no separate goto target - the whole
+// working area is the search volume) but not for chain_mine, where the
+// bot travels to a far ChainTargetOffset before ever reaching the
+// ChainMine stage. For chain_mine specifically this check degrades to a
+// safe no-op (the baseline existence read at Reset finds nothing near a
+// spawn point the buried ore was never seeded close to, so
+// prevMineBuriedExists starts false and this never fires) rather than a
+// wrong one - not yet fixed here, since mc-rsi-trainer's own notes flag
+// chain_mine's buried-mining phase as still awaiting its first live
+// validation independent of this fix.
+func (e *Environment) refreshMineBuriedExistence(ctx context.Context) error {
+	if !e.mineTargetMemoryEnabled() {
+		return nil
+	}
+	target := e.mineTargetBlockInUse()
+	if target == "" {
+		e.mineBuriedExists = false
+		return nil
+	}
+	checker, ok := e.agent.(BuriedTargetAgent)
+	if !ok {
+		return nil
+	}
+	radius := e.cfg.MineSearchRadius
+	if radius <= 0 {
+		radius = DefaultConfig().MineSearchRadius
+	}
+	exists, err := checker.BlockExistsInRadius(ctx, e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ, target, radius)
+	if err != nil {
+		return fmt.Errorf("rlenv: checking buried target existence: %w", err)
+	}
+	e.mineBuriedExists = exists
+	return nil
+}
+
+// markExploredQuadrant records that this episode's bot has genuinely
+// reached — within Config.ArrivalThreshold of — a horizontal quadrant's
+// own target point around mineSearchAnchorX/Y/Z (the same point
+// observationUnknownDirection itself points at), not merely crossed into
+// its half of the anchor plane. Found live (mc-rsi-trainer, 2026-10-26,
+// validating this signal end to end through the real discrete action
+// space): the earlier sign-crossing criterion let a single
+// StepTimeout-interrupted GoToTarget dispatch — digging toward a
+// quadrant's point can easily take longer than one Step's StepTimeout,
+// see this session's own MineThrough timing notes — nudge just past the
+// boundary without the bot ever getting remotely close to that point (or
+// the buried target near it), exhausting all 4 quadrants' exploration
+// value in a handful of partial, interrupted attempts instead of 4
+// genuine arrivals, with no exploration signal left for the rest of the
+// episode. No-op outside mineTargetMemoryEnabled() tasks or a
+// non-positive MineSearchRadius, matching mineKnownX/Y/Z's own gating;
+// cheap enough to call unconditionally every Step/Reset regardless (at
+// most 4 distance checks, no new raycasts).
+//
+// Single point per quadrant, still — not a recursive subdivision (a
+// quad-tree, say, requiring every sub-cell explored before the parent
+// counts): discussed and deliberately deferred, 2026-10-26. Per-block
+// movement/dig cost measured this session (3-10+ seconds even after the
+// MineThrough fix) means a policy will rarely finish walking to even
+// these 4 coarse points within any realistic step budget, let alone a
+// deeper subdivision's many more sub-targets — so the added bookkeeping
+// wouldn't pay for itself yet. Revisit only once the step-budget cap
+// itself is raised and live data then shows this single-point-per-
+// quadrant granularity is the limiting factor, not before.
+//
+// Returns how many quadrants this call newly marked (almost always 0 or 1,
+// never negative) — Step's reward logic pays arrivalBonus per newly-marked
+// quadrant with it (see that constant's own doc comment); Reset's own call,
+// made before any reward exists to pay, simply discards it.
+func (e *Environment) markExploredQuadrant(x, y, z float64) (newlyExplored int) {
+	if !e.mineTargetMemoryEnabled() || e.cfg.MineSearchRadius <= 0 {
+		return 0
+	}
+	half := float64(e.cfg.MineSearchRadius) / 2
+	targetY := e.mineSearchAnchorY - half
+	for idx := 0; idx < 4; idx++ {
+		if e.exploredQuadrants[idx] {
+			continue
+		}
+		qx, qz := quadrantDirection(idx)
+		tx := e.mineSearchAnchorX + qx*half
+		tz := e.mineSearchAnchorZ + qz*half
+		if distance3(x, y, z, tx, targetY, tz) <= e.cfg.ArrivalThreshold {
+			e.exploredQuadrants[idx] = true
+			newlyExplored++
+		}
+	}
+	return newlyExplored
+}
+
+// observationUnknownDirection is the exploration-signal companion to
+// observationMineTarget (see exploredQuadrants' own doc comment):
+// unknownDx/Dy/Dz point toward the nearest not-yet-entered horizontal
+// quadrant around this episode's mine-search anchor, scaled the same way
+// mineDx/Dy/Dz is — an actual block delta from (x, y, z), not a unit
+// vector. The Y component always aims half the search radius *below* the
+// anchor (see exploredQuadrants' own doc comment on why this is downward-
+// only, not a per-quadrant choice). valid is false (dx/dy/dz left at the
+// zero value) outside mineTargetMemoryEnabled() tasks, once the real
+// target has ever been seen (mineEverSeen — the memory-map-backed
+// mineDx/Dy/Dz is a strictly better signal from then on, see its own doc
+// comment), every quadrant has already been entered, or
+// Config.MineSearchRadius isn't positive (mirrors FindVisibleBlock's own
+// "<=0 means not meaningfully configured" handling rather than inventing a
+// different convention here).
+func (e *Environment) observationUnknownDirection(x, y, z float64) (dx, dy, dz float64, valid bool) {
+	if !e.mineTargetMemoryEnabled() || e.mineEverSeen || e.cfg.MineSearchRadius <= 0 {
+		return 0, 0, 0, false
+	}
+	half := float64(e.cfg.MineSearchRadius) / 2
+	targetY := e.mineSearchAnchorY - half
+	bestDistSq := math.MaxFloat64
+	for idx := 0; idx < 4; idx++ {
+		if e.exploredQuadrants[idx] {
+			continue
+		}
+		qx, qz := quadrantDirection(idx)
+		ddx := e.mineSearchAnchorX + qx*half - x
+		ddy := targetY - y
+		ddz := e.mineSearchAnchorZ + qz*half - z
+		if distSq := ddx*ddx + ddy*ddy + ddz*ddz; distSq < bestDistSq {
+			bestDistSq, dx, dy, dz, valid = distSq, ddx, ddy, ddz, true
+		}
+	}
+	return dx, dy, dz, valid
+}
+
+// quadrantDirection is the ±1-per-axis horizontal direction (bit0/1 =
+// x/z >= 0) for a given quadrant index 0-3 — see exploredQuadrants' own
+// doc comment.
+func quadrantDirection(idx int) (dx, dz float64) {
+	dx, dz = -1, -1
+	if idx&1 != 0 {
+		dx = 1
+	}
+	if idx&2 != 0 {
+		dz = 1
+	}
+	return dx, dz
 }
 
 // refreshMineTarget re-resolves the nearest currently-visible instance of
@@ -1216,6 +1675,102 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	return nil
 }
 
+// refreshSleepTarget mirrors refreshMineTarget exactly, searching for a bed
+// instead of a named block: a safe no-op (sleepVisible left false) when
+// Config.SleepSearchRadius <= 0, since that's what "this Environment
+// instance doesn't pose a sleep task" means for Sleep (there is no
+// companion target-name field to gate on, unlike Mine/Craft - see
+// Config.SleepSearchRadius's own doc comment).
+func (e *Environment) refreshSleepTarget(ctx context.Context) error {
+	e.refreshTimeOfDay()
+	if e.cfg.SleepSearchRadius <= 0 {
+		e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible = 0, 0, 0, false
+		return nil
+	}
+	pos, found, err := e.agent.FindNearestBed(ctx, e.cfg.SleepSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving sleep target: %w", err)
+	}
+	e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible = pos.X, pos.Y, pos.Z, found
+	return nil
+}
+
+// refreshPortalTarget mirrors refreshSleepTarget exactly, searching for a
+// nether_portal/end_portal/end_gateway instead of a bed: a safe no-op
+// (portalVisible left false) when Config.PortalSearchRadius <= 0, since
+// that's what "this Environment instance doesn't pose a dimension-transfer
+// task" means (see Config.PortalSearchRadius's own doc comment).
+func (e *Environment) refreshPortalTarget(ctx context.Context) error {
+	if e.cfg.PortalSearchRadius <= 0 {
+		e.portalX, e.portalY, e.portalZ, e.portalVisible = 0, 0, 0, false
+		return nil
+	}
+	pos, found, err := e.agent.FindNearestPortal(ctx, e.cfg.PortalSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving portal target: %w", err)
+	}
+	e.portalX, e.portalY, e.portalZ, e.portalVisible = pos.X, pos.Y, pos.Z, found
+	return nil
+}
+
+// refreshPortalFrameTarget mirrors refreshPortalTarget's own shape
+// exactly, searching for an unlit frame instead of a lit portal block: a
+// safe no-op (portalFrameVisible left false) when
+// Config.LightPortalSearchRadius <= 0 (see its own doc comment).
+func (e *Environment) refreshPortalFrameTarget(ctx context.Context) error {
+	if e.cfg.LightPortalSearchRadius <= 0 {
+		e.portalFrame, e.portalFrameVisible = models.PortalFrame{}, false
+		return nil
+	}
+	frame, found, err := e.agent.FindPortalFrame(ctx, e.cfg.LightPortalSearchRadius)
+	if err != nil {
+		return fmt.Errorf("rlenv: resolving portal frame target: %w", err)
+	}
+	e.portalFrame, e.portalFrameVisible = frame, found
+	return nil
+}
+
+// vanillaSleepWindowStart/End are the Time-of-day tick bounds (0-23999,
+// see models.World.GetTimeOfDay's own doc comment) within which vanilla
+// allows a player to enter a bed - minecraft.wiki/w/Daylight_cycle's own
+// documented values (dusk at 12542, just before sunrise at 23459), not a
+// guess. Verify this live against the actual target server version before
+// relying on it for anything beyond this environment's own legality gate -
+// see docs/plans/SLEEP_ACTION_PLAN.md (local/untracked) for why.
+const (
+	vanillaSleepWindowStart = 12542
+	vanillaSleepWindowEnd   = 23459
+	ticksPerDay             = 24000
+)
+
+// refreshTimeOfDay caches the world's current time of day and whether
+// it's within vanillaSleepWindowStart/End, via the WalkabilityAgent
+// optional capability (GetWorld/BlockShapeManager - same interface
+// environment.go's own terrain-snap-after-reset logic already uses, see
+// that call site's own doc comment). Leaves timeOfDayKnown false (and
+// sleepWindowActive false) if the concrete agent doesn't implement it, or
+// the server hasn't sent an Update Time packet yet - the same
+// "not yet known" convention healthKnown/mineVisible already use, not an
+// error.
+func (e *Environment) refreshTimeOfDay() {
+	timeAgent, ok := e.agent.(TimeOfDayAgent)
+	if !ok {
+		e.timeOfDayTicks, e.timeOfDayKnown, e.sleepWindowActive = 0, false, false
+		return
+	}
+	ticks, known := timeAgent.GetTimeOfDay()
+	e.timeOfDayTicks, e.timeOfDayKnown = ticks, known
+	e.sleepWindowActive = known && ticks >= vanillaSleepWindowStart && ticks <= vanillaSleepWindowEnd
+}
+
+// refreshDimension mirrors refreshTimeOfDay's own shape exactly, for
+// portalRewardBonus's before/after comparison (reward.go) instead of
+// sleptThroughNight's.
+func (e *Environment) refreshDimension() {
+	typeID, name, initialized := e.agent.GetDimension()
+	e.dimensionTypeID, e.dimensionName, e.dimensionInitialized = typeID, name, initialized
+}
+
 // Step implements rl.Environment.
 //
 // Movement completion, resolved via models.Completion: actions.MoveToQuiet.Execute
@@ -1255,6 +1810,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		prevMineBlockName = e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 	}
+	// prevMineBuriedExists mirrors prevMineVisible's own "before this
+	// step" caching shape — see BuriedTargetAgent's doc comment for why
+	// this exists alongside the prevMineVisible-gated check above, not
+	// instead of it.
+	prevMineBuriedExists := e.mineBuriedExists
 	// e.craftCount still holds whatever the previous Step (or Reset) last
 	// resolved — read here as "before this step's action" state, regardless
 	// of whether that action was ActionCraft (mirrors prevMineVisible's own
@@ -1297,6 +1857,27 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// reasoning above, for the mace-smash task.
 	prevMaceEntityID := e.maceEntityID
 	prevMaceVisible := e.maceVisible
+	// prevDimensionTypeID/prevDimensionName/prevDimensionInitialized back
+	// portalRewardBonus's own reward check (see dimensionChangedThisStep
+	// below) — read from the environment's own cache (refreshDimension),
+	// not a fresh live call, the same reason prevTimeOfDayTicks reads
+	// e.timeOfDayTicks rather than calling GetTimeOfDay() again here: this
+	// must reflect the END of the *previous* step (or Reset), so a change
+	// that happens between steps - not only during this step's own
+	// dispatch - is still caught when e.refreshDimension() runs again
+	// below.
+	prevDimensionTypeID, prevDimensionName, prevDimensionInitialized := e.dimensionTypeID, e.dimensionName, e.dimensionInitialized
+	// prevFrame/prevFrameVisible/prevFrameInteriorBlockName back
+	// lightPortalRewardBonus's own reward check (see litThisStep below) -
+	// mirrors prevMineVisible/prevMineBlockName's own reasoning exactly:
+	// captured before dispatch so the comparison is "before this step"
+	// vs "after," regardless of whether this step dispatches
+	// ActionLightPortal specifically.
+	prevFrame, prevFrameVisible := e.portalFrame, e.portalFrameVisible
+	prevFrameInteriorBlockName := ""
+	if prevFrameVisible {
+		prevFrameInteriorBlockName = e.agent.BlockNameAt(int(prevFrame.InteriorMin.X), int(prevFrame.InteriorMin.Y), int(prevFrame.InteriorMin.Z))
+	}
 
 	if shouldDispatch {
 		e.cancelInflight()
@@ -1341,6 +1922,34 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if prevMineVisible {
 		newMineBlockName := e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 		mined = newMineBlockName != prevMineBlockName
+	}
+	// litThisStep mirrors mined's own "block name changed" shape exactly,
+	// for the frame the step started with (prevFrame) - judged from
+	// actual world state, not from whether ActionLightPortal was the
+	// dispatched action (see reward.go's lightPortalRewardBonus doc
+	// comment).
+	litThisStep := false
+	if prevFrameVisible {
+		newFrameInteriorBlockName := e.agent.BlockNameAt(int(prevFrame.InteriorMin.X), int(prevFrame.InteriorMin.Y), int(prevFrame.InteriorMin.Z))
+		litThisStep = newFrameInteriorBlockName != prevFrameInteriorBlockName
+	}
+	// Blind-destruction fallback (BuriedTargetAgent): refreshed
+	// unconditionally, the same way refreshMineTarget itself always runs
+	// regardless of what happened above — mineTargetBlockInUse() can
+	// change mid-episode (a ChainMine-stage chain switching targets once
+	// its goal item is crafted, mirroring mineKnownX/Y/Z's own
+	// staleness-avoidance reasoning), so leaving this stale on any step
+	// would risk comparing against the wrong target's last reading on a
+	// later one. Only consulted for `mined` while the target has never
+	// been resolved via FindVisibleBlock (!mineEverSeen) — once it has,
+	// the exact-coordinate check above is the better signal and this
+	// would be redundant (harmlessly so: a bool OR'd true twice is still
+	// just true).
+	if err := e.refreshMineBuriedExistence(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if !mined && !e.mineEverSeen && prevMineBuriedExists && !e.mineBuriedExists {
+		mined = true
 	}
 
 	// craftedThisStep is judged from an actual inventory-count increase,
@@ -1471,11 +2080,28 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// phantom "target" (the jittered reset position, 1.5-2.8 blocks away):
 	// moving toward it paid +1 per block, and reaching it paid +10 and ended
 	// the episode without the block ever being mined or the item crafted.
-	gotoActive := !e.cfg.GoToTargetDisabled
-	newDistance := distance3(x, y, z, e.targetX, e.targetY, e.targetZ)
-	if !gotoActive {
+	gotoActive := e.goToTargetActive()
+	goalX, goalY, goalZ := e.currentGoToTarget()
+	// currentGoToTarget can change out from under this diff in a way
+	// targetX/Y/Z itself never used to (a different unexplored quadrant
+	// becoming nearest, or the buried target finally resolving) - see its
+	// own doc comment. Diffing prevDistance against a point it wasn't
+	// computed against would score that change itself as fabricated
+	// progress or penalty, not anything the bot actually did, so a moved
+	// target re-baselines instead: this step scores zero shaping, and the
+	// next one tracks real progress toward the (now stable, until it
+	// moves again) new point.
+	targetMoved := goalX != e.prevGoToTargetX || goalY != e.prevGoToTargetY || goalZ != e.prevGoToTargetZ
+	newDistance := distance3(x, y, z, goalX, goalY, goalZ)
+	if !gotoActive || targetMoved {
 		newDistance = e.prevDistance
 	}
+	// Captured before refreshSleepTarget's own second call below
+	// (end of this Step) overwrites e.timeOfDayTicks/Known - e.timeOfDayTicks
+	// at this point still holds whatever Reset/the previous Step last
+	// refreshed it to, i.e. genuinely the value from before this step's
+	// own dispatched action ran.
+	prevTimeOfDayTicks, prevTimeOfDayKnown, prevSleepWindowActive := e.timeOfDayTicks, e.timeOfDayKnown, e.sleepWindowActive
 	reward, done := computeReward(stepOutcome{
 		timePenalty:       e.cfg.TimePenalty,
 		prevDistance:      e.prevDistance,
@@ -1493,8 +2119,14 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		if e.compositeGotoTask() {
 			// "Go there, then mine/craft": reaching the target pays once
 			// but doesn't end the episode - the mine or craft still has to
-			// happen.
-			if !e.arrived {
+			// happen. During a buried-target search specifically, this
+			// bonus is paid per-quadrant instead (see markExploredQuadrant's
+			// call below and arrivalBonus's own doc comment) - e.arrived is
+			// still set so actionLegal's mask-gating keeps working, but
+			// nothing is paid through this branch for that case.
+			if e.buriedTargetActive() {
+				e.arrived = true
+			} else if !e.arrived {
 				reward += arrivalBonus
 				e.arrived = true
 			}
@@ -1581,6 +2213,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		doneReason = "chain"
 	}
 	e.prevDistance = newDistance
+	e.prevGoToTargetX, e.prevGoToTargetY, e.prevGoToTargetZ = goalX, goalY, goalZ
 	e.prevHealth, e.prevHealthKnown = newHealth, newHealthKnown
 
 	// Refresh the cached mine target for the observation returned to the
@@ -1590,6 +2223,48 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// position/health already do.
 	if err := e.refreshMineTarget(ctx); err != nil {
 		return rl.StepResult{}, err
+	}
+	if err := e.refreshSleepTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshPortalTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	if err := e.refreshPortalFrameTarget(ctx); err != nil {
+		return rl.StepResult{}, err
+	}
+	// sleptThroughNight: the time of day jumped backward from within the
+	// vanilla sleep-allowed window - see sleptThroughNightBonus's own doc
+	// comment (reward.go) for why a backward jump specifically, not just
+	// "it's a new day," is the unambiguous signal. prevSleepWindowActive
+	// (not a fresh range check against prevTimeOfDayTicks) gates this so
+	// it agrees exactly with whatever ActionSleep's own legality gate
+	// would have said about the step that just ran.
+	sleptThroughNight := prevTimeOfDayKnown && e.timeOfDayKnown && prevSleepWindowActive && e.timeOfDayTicks < prevTimeOfDayTicks
+	if sleptThroughNight {
+		reward += sleptThroughNightBonus
+		done = true
+		doneReason = "slept"
+	}
+	// dimensionChangedThisStep mirrors sleptThroughNight's own "world-state
+	// delta, not which action ran" shape — see portalRewardBonus's own doc
+	// comment (reward.go) for why this is deliberately not gated on
+	// Config.PortalSearchRadius. e.refreshDimension() updates the cache
+	// prevDimensionTypeID/Name was captured from at the top of Step to the
+	// current live value, so this comparison is "before this step" vs
+	// "after."
+	e.refreshDimension()
+	dimensionChangedThisStep := prevDimensionInitialized && e.dimensionInitialized &&
+		(e.dimensionTypeID != prevDimensionTypeID || e.dimensionName != prevDimensionName)
+	if dimensionChangedThisStep {
+		reward += portalRewardBonus
+		done = true
+		doneReason = "portal"
+	}
+	if litThisStep {
+		reward += lightPortalRewardBonus
+		done = true
+		doneReason = "lightportal"
 	}
 	if err := e.refreshPickupTarget(ctx); err != nil {
 		return rl.StepResult{}, err
@@ -1619,6 +2294,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// picked up, not the target item itself).
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
+	if newlyExplored := e.markExploredQuadrant(x, y, z); newlyExplored > 0 {
+		reward += arrivalBonus * float32(newlyExplored)
+	}
+	// digProgressBonus: reward actual digging during a buried-target
+	// search, not just movement toward it - see that constant's own doc
+	// comment. The baseline still advances every Step regardless of
+	// buriedTargetActive() (see prevBlocksMinedCount's own doc comment),
+	// only the reward itself is gated.
+	minedCountNow := e.currentBlocksMinedCount()
+	if e.buriedTargetActive() {
+		if delta := minedCountNow - e.prevBlocksMinedCount; delta > 0 {
+			reward += digProgressBonus * float32(delta)
+		}
+	}
+	e.prevBlocksMinedCount = minedCountNow
 	e.equipReady = newEquipReady
 	e.pickupCount = newPickupCount
 	e.placeCount = newPlaceCount
@@ -1626,8 +2316,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.mounted = newMounted
 	e.followed = newFollowed
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
+	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, e.targetX, e.targetY, e.targetZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, e.craftReady, !e.cfg.GoToTargetDisabled, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "")
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0)
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
@@ -1854,11 +2545,52 @@ func (e *Environment) clearArea(ctx context.Context) {
 // defaultCloneAreaDepth is Config.CloneAreaDepth's default.
 const defaultCloneAreaDepth = 3
 
+// vanillaCloneBlockLimit is vanilla's own /clone command cap - the same
+// 32,768-block ceiling CloneArea's own doc comment already documents for a
+// single call. A radius big enough to need this (mc-rsi-trainer,
+// 2026-10-29: widening -clone-area-radius past -24 so a wider mine_buried
+// search radius can't point past the template's own, smaller-radius ground
+// truth - found live the two had silently drifted apart) exceeds it easily:
+// radius 32, the default height (4) and this run's own depth (8) is
+// 65*65*13 = 54,925 blocks, well over the cap in one /clone.
+const vanillaCloneBlockLimit = 32768
+
+// cloneAreaZBandSize returns how many Z rows one /clone call can safely
+// cover for a given X span and Y span (height+depth+1) without exceeding
+// vanillaCloneBlockLimit, and whether that's even possible at all (false
+// when xSpan*ySpan alone already exceeds the limit - a single Z row would
+// still be too big, meaning this radius/height/depth combination has no
+// safe single-axis split and the caller should give up rather than issue a
+// command vanilla will reject anyway). Pulled out of cloneArea as its own
+// function so the band-size arithmetic is unit-testable without a live
+// RCON connection.
+func cloneAreaZBandSize(xSpan, ySpan int) (bandSize int, ok bool) {
+	perRow := xSpan * ySpan
+	if perRow <= 0 || perRow > vanillaCloneBlockLimit {
+		return 0, false
+	}
+	return vanillaCloneBlockLimit / perRow, true
+}
+
 // cloneArea restores the space around ResetOrigin to a known-good template
 // (see Config.CloneAreaFrom's own doc comment for why this exists instead
 // of, or alongside, clearArea). Done before the teleport, same as
 // clearArea, while the area is still loaded around the bot. Best effort: a
 // failure is logged, never fails the Reset.
+//
+// Issues one /clone per Z-band of up to cloneAreaZBandSize rows rather than
+// one call for the whole box - found live, 2026-10-29, widening
+// -clone-area-radius to 32 (see vanillaCloneBlockLimit's own doc comment
+// for why): a radius/height/depth combination whose full box exceeds
+// vanilla's 32,768-block /clone cap used to just silently clone nothing (an
+// RCON error, logged and swallowed by this function's own "best effort"
+// contract) rather than ever splitting itself up. Splits along Z only, not
+// X too - every real combination so far keeps xSpan*ySpan comfortably
+// under the cap on its own (65*13=845 for radius 32/height 4/depth 8),
+// leaving plenty of room for a Z band wider than 1; a genuinely huge
+// xSpan*ySpan that doesn't would need a 2-axis split this doesn't attempt,
+// and cloneAreaZBandSize's own ok=false return makes that case a clear
+// no-op (logged) instead of a doomed, oversized RCON command.
 func (e *Environment) cloneArea(ctx context.Context) {
 	if e.cfg.CloneAreaFrom == nil || e.cfg.ResetOrigin == nil {
 		return
@@ -1882,6 +2614,14 @@ func (e *Environment) cloneArea(ctx context.Context) {
 	if r <= 0 {
 		return
 	}
+	xSpan := 2*r + 1
+	ySpan := height + depth + 1
+	bandSize, ok := cloneAreaZBandSize(xSpan, ySpan)
+	if !ok {
+		log.Printf("rlenv: clone-area-from radius %d/height %d/depth %d (%d x %d blocks per Z row) exceeds vanilla's %d-block /clone limit even one Z row at a time - reduce one of them", r, height, depth, xSpan, ySpan, vanillaCloneBlockLimit)
+		return
+	}
+
 	src := *e.cfg.CloneAreaFrom
 	sx, sy, sz := int(math.Floor(src[0])), int(math.Floor(src[1])), int(math.Floor(src[2]))
 	// dy is CloneAreaFrom's own Y, not ResetOrigin's - the entire point of
@@ -1889,8 +2629,16 @@ func (e *Environment) cloneArea(ctx context.Context) {
 	// is ever computed from the bot's own, possibly-imprecise position.
 	o := *e.cfg.ResetOrigin
 	dx, dz := int(math.Floor(o[0])), int(math.Floor(o[2]))
-	if err := cloner.CloneArea(ctx, sx-r, sy-depth, sz-r, sx+r, sy+height, sz+r, dx-r, sy-depth, dz-r); err != nil {
-		log.Printf("rlenv: cloning area from (%d,%d,%d) onto (%d,%d,%d): %v", sx, sy, sz, dx, sy, dz, err)
+
+	for zOffset := -r; zOffset <= r; zOffset += bandSize {
+		zEnd := zOffset + bandSize - 1
+		if zEnd > r {
+			zEnd = r
+		}
+		if err := cloner.CloneArea(ctx, sx-r, sy-depth, sz+zOffset, sx+r, sy+height, sz+zEnd, dx-r, sy-depth, dz+zOffset); err != nil {
+			log.Printf("rlenv: cloning area from (%d,%d,%d) onto (%d,%d,%d), Z band [%d,%d]: %v", sx, sy, sz, dx, sy, dz, zOffset, zEnd, err)
+			return
+		}
 	}
 }
 
@@ -2069,15 +2817,35 @@ func (e *Environment) clearChainDrops(ctx context.Context) {
 
 // compositeGotoTask reports whether this episode is "go to the target, then
 // mine/craft there": the goto task active alongside a mine or craft task.
-// Reaching the target doesn't end such an episode.
+// Reaching the target doesn't end such an episode. goToTargetActive(), not
+// the raw !GoToTargetDisabled this used before buried-target exploration
+// existed: mine_buried/chain_mine's target is always configured
+// (MineTargetBlock/ChainMineTargetBlock), so this now also covers the
+// buried-search window, giving it the same "arriving doesn't end the
+// episode" treatment any other goto-then-mine task already had.
 func (e *Environment) compositeGotoTask() bool {
-	return !e.cfg.GoToTargetDisabled && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
+	return e.goToTargetActive() && (e.cfg.MineTargetBlock != "" || e.cfg.CraftTargetItem != "")
 }
 
 // taskActionReady reports whether the mine or craft this episode's target is
 // for can be done right now: the block is visible, or the craft is ready.
+// taskActionReady reports whether the mine or craft this episode's target
+// is for can be done right now: the block is visible, or the craft is
+// ready. Once buriedTargetActive() (a buried target is this episode's
+// current task — mine_buried from the start, or chain_mine once
+// craftedGoal is true), only mine-readiness is consulted, ignoring
+// craftReady entirely — found live writing this wiring's own test:
+// chainCraftTarget() stays "ready" after the chain's goal item is crafted
+// whenever enough ingredients remain for a second one (nextChainCraft has
+// no "already done" check, only an ingredient-sufficiency one), which
+// otherwise disabled ActionGoToTarget via the rule below for a reason
+// that has nothing to do with the actual ore search.
 func (e *Environment) taskActionReady() bool {
-	return (e.cfg.MineTargetBlock != "" && e.mineVisible) || (e.cfg.CraftTargetItem != "" && e.craftReady)
+	mineReady := e.cfg.MineTargetBlock != "" && e.mineVisible
+	if e.buriedTargetActive() {
+		return mineReady
+	}
+	return mineReady || (e.cfg.CraftTargetItem != "" && e.craftReady)
 }
 
 // seedAtGoal reports whether this episode's mine block / crafting table go

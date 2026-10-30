@@ -146,6 +146,67 @@ type CommandAgent interface {
 	// docs/STRUCTURE_LOADER.md.
 	PlaceBlockAt(ctx context.Context, pos V3, itemName string) error
 
+	// UsePortal walks to the nearest nether_portal/end_portal/end_gateway
+	// block within maxDistance blocks (0 uses a sensible default) and waits
+	// for the dimension transfer to actually complete (a ClientboundRespawn
+	// changing the tracked dimension — see GetDimension), rather than
+	// treating "arrived at the portal's coordinates" as done. Returns an
+	// error if no portal block is found, pathfinding there fails, or the
+	// dimension hasn't changed within a timeout (a Nether portal needs a
+	// few ticks of continuous contact before the server initiates the
+	// teleport; an End portal/gateway teleports near-instantly either way).
+	UsePortal(ctx context.Context, maxDistance int) error
+
+	// FindNearestPortal searches for the nearest nether_portal/end_portal/
+	// end_gateway block within maxDistance blocks that the agent has a
+	// clear line of sight to. found is false if none was located. Exposed
+	// separately from UsePortal (not just an internal search step) so a
+	// caller that dispatches movement far more often than a human types a
+	// chat command (rlenv) can resolve a target once and pass exact
+	// coordinates to UsePortalAt — the same FindNearestBed/SleepInBed split
+	// uses.
+	FindNearestPortal(ctx context.Context, maxDistance int) (pos V3, found bool, err error)
+
+	// UsePortalAt is UsePortal's exact-coordinate counterpart: walks to the
+	// portal block already known to be at pos (e.g. from FindNearestPortal)
+	// and waits for the dimension to actually change, without performing
+	// its own search.
+	UsePortalAt(ctx context.Context, pos V3) error
+
+	// FindPortalFrame searches for the nearest unlit nether portal frame
+	// (a rectangular obsidian ring with a passable interior — any size
+	// vanilla allows, 2x3 to 21x21 interior, not just the canonical 2x3)
+	// within maxDistance blocks. found is false if none was located.
+	// Exposed separately from LightPortal for the same reason
+	// FindNearestPortal is exposed separately from UsePortal: a caller
+	// that dispatches movement far more often than a human types a chat
+	// command (rlenv) can resolve a frame once and pass it directly to
+	// LightPortalFrame.
+	FindPortalFrame(ctx context.Context, maxDistance int) (frame PortalFrame, found bool, err error)
+
+	// LightPortalFrame is LightPortal's already-resolved counterpart:
+	// ignites the frame already known (e.g. from FindPortalFrame) —
+	// walks to a reachable position with line of sight to its ignition
+	// block, equips flint and steel, right-clicks it, and waits for the
+	// interior to actually turn into nether_portal blocks — without
+	// performing its own search.
+	LightPortalFrame(ctx context.Context, frame PortalFrame) error
+
+	// LightPortal finds the nearest unlit nether portal frame within
+	// maxDistance blocks (0 uses a sensible default) and ignites it.
+	// Returns an error if no frame is found, no flint and steel is held,
+	// walking there fails, or the interior never turns into
+	// nether_portal blocks within a timeout. Finding/building the
+	// obsidian frame itself is out of scope — this assumes one already
+	// exists (built via buildStructure/place/mine, or found in the
+	// world) and are unlit.
+	LightPortal(ctx context.Context, maxDistance int) error
+
+	// GetDimension returns the bot's current dimension type registry index
+	// and name (e.g. "minecraft:the_nether"). initialized is false until
+	// the first ClientboundLogin or ClientboundRespawn has been processed.
+	GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool)
+
 	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
 	// within radius blocks that the agent has a clear line of sight to
 	// (the entity analogue of FindAllVisibleBlocksInSphere), sorted by
@@ -207,4 +268,33 @@ type CommandAgent interface {
 	// assumption the plain place <itemName> command already makes, not a
 	// new gap this introduces.
 	BuildStructure(ctx context.Context, path string, origin V3) (BuildStructureResult, error)
+
+	// FindNearestBed searches for the nearest bed block (any of the 16
+	// colors) within radius blocks that the agent has a clear line of
+	// sight to - the color-agnostic sibling of FindVisibleBlock, keyed on
+	// BlockShapeManager.IsBed instead of an exact block name, since no
+	// single name covers every bed color. found is false if none was
+	// located within radius.
+	FindNearestBed(ctx context.Context, radius int) (pos V3, found bool, err error)
+
+	// SleepInBed walks to a reachable position beside bedPos (same
+	// approach pattern PlaceBlockAt/MineBlockAt use) and right-clicks it,
+	// then confirms the attempt actually took effect by waiting for the
+	// agent's own tracked position to snap into the bed - the server
+	// moves a sleeping player's position there, and EntityPose metadata
+	// (which would otherwise confirm this) is never echoed back to the
+	// sleeping entity's own connection. Returns an error if no reachable
+	// standing position exists, or if the position never snaps within
+	// the confirmation deadline (most likely cause: it isn't night, or
+	// the bed is already occupied/obstructed - vanilla rejects the
+	// attempt rather than queuing it).
+	SleepInBed(ctx context.Context, bedPos V3) error
+
+	// WakeUp leaves the bed the agent is currently sleeping in (a no-op,
+	// not an error, if not currently sleeping - vanilla itself ignores
+	// the leave-bed action in that case). Unlike SleepInBed, this is a
+	// single fire-and-forget packet with no further confirmation -
+	// mirrors StartSneaking/StopSneaking's own one-shot EntityAction
+	// dispatch, just via the leave-bed action ID instead of sneak's.
+	WakeUp(ctx context.Context) error
 }

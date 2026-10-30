@@ -61,6 +61,61 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	index 19: chainTables — crafting tables held (not placed), / 8 when normalized.
 //	index 20: chainTablePlaced — 1.0 if this chain episode has placed its table.
 //
+//	index 21: unknownDx — nearest not-yet-entered horizontal quadrant
+//	          around this episode's mine-search anchor
+//	          (Environment.exploredQuadrants), X minus current X (blocks);
+//	          0 if not applicable (see unknownValid below).
+//	index 22: unknownDy — same, Y.
+//	index 23: unknownDz — same, Z.
+//	index 24: unknownValid — 1.0 if mine-target memory is enabled this
+//	          episode (Config.MineTargetBuried or ChainStage==ChainMine),
+//	          the real target hasn't been seen yet (mineVisible/index 12's
+//	          persistent cousin, mineEverSeen, is still false — once it's
+//	          true, mineDx/Dy/Dz is a strictly better signal and this goes
+//	          back to 0), and at least one quadrant is still unexplored;
+//	          0.0 otherwise. Gates unknownDx/Dy/Dz the same way mineVisible
+//	          gates mineDx/Dy/Dz: "nothing left to explore, or not this
+//	          episode's problem" must not be misread as "the unexplored
+//	          region is exactly here" (all-zero is also each field's own
+//	          zero value). Exists because mine_buried/chain_mine give the
+//	          policy literally nothing — no observation signal and (see
+//	          reward.go) no reward gradient either — until the buried
+//	          target is glimpsed purely by chance; see
+//	          docs/plans/14-buried-block-mining-and-memory-map.md's option
+//	          2 in mc-rsi-trainer, and exploredOctants' own doc comment for
+//	          why this is a coarse, downward-biased 4-quadrant signal
+//	          rather than a true per-cell visibility grid.
+//
+//	index 25: isNight — 1.0 if the world's current time of day falls
+//	          within vanilla's own sleep-allowed window
+//	          (Environment.sleepWindowActive — see refreshTimeOfDay),
+//	          0.0 otherwise (including "not yet known," same convention
+//	          as healthKnown: an unknown time of day must not read as
+//	          "definitely not night"). Deliberately the exact same signal
+//	          ActionSleep's own legality gate uses (action.go), not a
+//	          separately-computed "looks dark" approximation - a policy's
+//	          own perception of "is this a reasonable moment to try
+//	          sleeping" must never disagree with whether sleeping is
+//	          actually legal this step.
+//	index 26: timeUntilDawn — ticks remaining until the world clock wraps
+//	          to day (tick 0), 0 if time of day isn't known yet. Lets a
+//	          policy anticipate the window closing rather than only
+//	          reacting to isNight's own step-boundary flip.
+//	index 27: bedDx — nearest visible bed's X minus current X (blocks);
+//	          0 if not visible/not configured (Config.SleepSearchRadius
+//	          <= 0) - mirrors mineDx's exact shape.
+//	index 28: bedDy — same, Y.
+//	index 29: bedDz — same, Z.
+//	index 30: bedVisible — 1.0 if Config.SleepSearchRadius > 0 and a
+//	          visible bed was found this step (Environment.sleepVisible,
+//	          see refreshSleepTarget), 0.0 otherwise. Gates bedDx/Dy/Dz
+//	          the same way mineVisible gates mineDx/Dy/Dz.
+//
+// indices 25-30 are new relative to the 25-length observation every
+// currently-checkpointed policy was trained against (see
+// docs/plans/SLEEP_ACTION_PLAN.md, local/untracked) - no exception from
+// this length's own breaking-change rule below.
+//
 // indices 17-20 are the multi-step chain block (Config.ChainStage,
 // docs/plans/12 in mc-rsi-trainer): all zero outside chain episodes, so
 // every other task's observation differs from before only by four trailing
@@ -68,14 +123,14 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // change the checkpoint environment ID, so old checkpoints are refused
 // rather than misread.
 //
-//	index 21: equipReady — 1.0 if Config.EquipTargetItem is set and
+//	index 31: equipReady — 1.0 if Config.EquipTargetItem is set and
 //	          currently equipped (see LiveAgent.IsEquipped), 0.0 otherwise.
 //	          Plays the same role for the equip task that craftReady plays
 //	          for craft: no position/distance to encode (an item equips
 //	          from wherever it is in the inventory), so "is the task already
 //	          done" is the useful signal instead — see
 //	          docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1.
-//	index 22: goalEquipActive — 1.0 if ActionEquip/ActionUseItem are legal
+//	index 32: goalEquipActive — 1.0 if ActionEquip/ActionUseItem are legal
 //	          this episode (Config.EquipTargetItem set), 0.0 otherwise.
 //	          Same active-vs-ready distinction as goalMineActive/
 //	          goalCraftActive (indices 15-16) have against their own ready
@@ -85,68 +140,68 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          simpler and matches how the chain block (17-20) itself was
 //	          appended rather than interleaved.
 //
-//	index 23: pickupDx — nearest visible instance of Config.PickupTargetItem
+//	index 33: pickupDx — nearest visible instance of Config.PickupTargetItem
 //	          (resolved via LiveAgent.FindNearestVisibleItemOfType) minus
 //	          current X (blocks); 0 if not visible/not configured.
-//	index 24: pickupDy — same, Y.
-//	index 25: pickupDz — same, Z.
-//	index 26: pickupVisible — 1.0 if Config.PickupTargetItem is set and a
+//	index 34: pickupDy — same, Y.
+//	index 35: pickupDz — same, Z.
+//	index 36: pickupVisible — 1.0 if Config.PickupTargetItem is set and a
 //	          visible instance was found this step, 0.0 otherwise. Mirrors
 //	          mineVisible's role exactly (indices 9-12) — gates pickupDx/
 //	          Dy/Dz the same way, and also doubles as ActionPickUpItem's
 //	          legality/mask condition (see action.go's actionLegal), same
 //	          dual role mineVisible already plays for ActionMine.
-//	index 27: goalPickupActive — 1.0 if ActionPickUpItem is legal this
+//	index 37: goalPickupActive — 1.0 if ActionPickUpItem is legal this
 //	          episode (Config.PickupTargetItem set), 0.0 otherwise. Same
 //	          active-vs-ready distinction goalMineActive/goalCraftActive
 //	          have against their own ready bits (docs/plans/
 //	          RL_ACTION_SPACE_EXPANSION_II.md Phase 2).
 //
-//	index 28: flyDx — Environment.flyTargetX minus current X (blocks); 0
+//	index 38: flyDx — Environment.flyTargetX minus current X (blocks); 0
 //	          if Config.FlyTargetActive is false. Unlike mineDx/pickupDx,
 //	          always non-zero while active — the flight target is a fixed
 //	          point, not something that can be "not currently visible."
-//	index 29: flyDy — same, Y. Informational only (altitude difference) —
+//	index 39: flyDy — same, Y. Informational only (altitude difference) —
 //	          see Config.FlyTargetOffset's own doc comment on why Y never
 //	          drives arrival.
-//	index 30: flyDz — same, Z.
-//	index 31: isFlying — 1.0 if LiveAgent.IsGliding() reports elytra-
+//	index 40: flyDz — same, Z.
+//	index 41: isFlying — 1.0 if LiveAgent.IsGliding() reports elytra-
 //	          gliding physics currently active, 0.0 otherwise. Reflects
 //	          real bot state unconditionally (not gated on
 //	          Config.FlyTargetActive) — the bot could be gliding for
 //	          reasons unrelated to this episode's own task, and hiding
 //	          that would make the observation lie about physical reality.
-//	index 32: hasElytra — 1.0 if LiveAgent.IsEquipped("minecraft:elytra"),
+//	index 42: hasElytra — 1.0 if LiveAgent.IsEquipped("minecraft:elytra"),
 //	          0.0 otherwise. Same "real state, ungated" reasoning as
 //	          isFlying above.
-//	index 33: goalFlyActive — 1.0 if Config.FlyTargetActive, 0.0
+//	index 43: goalFlyActive — 1.0 if Config.FlyTargetActive, 0.0
 //	          otherwise. Same role as goalPickupActive/goalEquipActive
 //	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 3).
 //
-//	index 34: rideDx — nearest visible instance of Config.RideVehicleType
+//	index 44: rideDx — nearest visible instance of Config.RideVehicleType
 //	          (resolved via LiveAgent.FindNearestVisibleEntityOfType)
 //	          minus current X (blocks); 0 if not visible/not configured.
-//	index 35: rideDy — same, Y.
-//	index 36: rideDz — same, Z.
-//	index 37: rideVisible — 1.0 if Config.RideVehicleType is set and a
+//	index 45: rideDy — same, Y.
+//	index 46: rideDz — same, Z.
+//	index 47: rideVisible — 1.0 if Config.RideVehicleType is set and a
 //	          visible instance was found this step, 0.0 otherwise. Mirrors
 //	          mineVisible's dual role exactly — gates rideDx/Dy/Dz and
 //	          doubles as ActionMount's legality/mask condition.
-//	index 38: isMounted — 1.0 if LiveAgent.IsMounted(), 0.0 otherwise.
+//	index 48: isMounted — 1.0 if LiveAgent.IsMounted(), 0.0 otherwise.
 //	          Reflects real bot state unconditionally (not gated on
 //	          Config.RideVehicleType), same reasoning as isFlying/
 //	          hasElytra above.
-//	index 39: goalRideActive — 1.0 if Config.RideVehicleType is set, 0.0
+//	index 49: goalRideActive — 1.0 if Config.RideVehicleType is set, 0.0
 //	          otherwise. Same role as goalFlyActive/goalPickupActive above
 //	          (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 4).
 //
-//	index 40: combatDx — nearest visible instance of
+//	index 50: combatDx — nearest visible instance of
 //	          Config.CombatTargetMobType (resolved via
 //	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
 //	          (blocks); 0 if not visible/not configured.
-//	index 41: combatDy — same, Y.
-//	index 42: combatDz — same, Z.
-//	index 43: combatTargetHealth — the resolved target's last-known
+//	index 51: combatDy — same, Y.
+//	index 52: combatDz — same, Z.
+//	index 53: combatTargetHealth — the resolved target's last-known
 //	          health (LiveAgent.GetEntityHealth), 0 if not visible/not
 //	          configured. Gated the same way mineDx/Dy/Dz are, not
 //	          reported unconditionally like isFlying/hasElytra: unlike
@@ -154,27 +209,27 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          health is meaningless with no resolved target to attach it
 //	          to. The bot's OWN health is already index 5 — this is only
 //	          the opponent's.
-//	index 44: combatVisible — 1.0 if Config.CombatTargetMobType is set and
+//	index 54: combatVisible — 1.0 if Config.CombatTargetMobType is set and
 //	          a visible instance was found this step, 0.0 otherwise.
 //	          Mirrors mineVisible's dual role — gates combatDx/Dy/Dz/
 //	          combatTargetHealth and doubles as ActionCombat's legality/
 //	          mask condition.
-//	index 45: goalCombatActive — 1.0 if Config.CombatTargetMobType is set,
+//	index 55: goalCombatActive — 1.0 if Config.CombatTargetMobType is set,
 //	          0.0 otherwise. Same role as goalRideActive/goalFlyActive
 //	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 5).
 //
-//	index 46: placeReady — 1.0 if Environment.placeStandaloneReady()
+//	index 56: placeReady — 1.0 if Environment.placeStandaloneReady()
 //	          (Config.PlaceTargetItem set, outside a chain episode, and
 //	          currently held), 0.0 otherwise. Plays the same role for
 //	          standalone placement that craftReady plays for craft — no
 //	          position/distance to encode, so "is this attemptable right
 //	          now" is the useful signal (docs/plans/
 //	          RL_ACTION_SPACE_EXPANSION_III.md item 2).
-//	index 47: goalPlaceStandaloneActive — 1.0 if Config.PlaceTargetItem is
+//	index 57: goalPlaceStandaloneActive — 1.0 if Config.PlaceTargetItem is
 //	          set and Config.ChainStage == 0, 0.0 otherwise. Same
 //	          active-vs-ready distinction as goalCraftActive/craftReady.
 //
-//	index 48: followTargetVisible — 1.0 if Config.FollowTargetPlayerName is
+//	index 58: followTargetVisible — 1.0 if Config.FollowTargetPlayerName is
 //	          set and currently resolvable (CommandAgent.FindPlayerByName),
 //	          0.0 otherwise. Mirrors mineVisible's dual role — doubles as
 //	          ActionFollow's legality/mask condition. No position features
@@ -182,61 +237,87 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          own position isn't something the policy acts on directly once
 //	          following/manager.go takes over (docs/plans/
 //	          RL_ACTION_SPACE_EXPANSION_III.md item 4).
-//	index 49: isFollowing — 1.0 if CommandAgent.IsFollowing(), 0.0
+//	index 59: isFollowing — 1.0 if CommandAgent.IsFollowing(), 0.0
 //	          otherwise. Reflects real bot state unconditionally (not
 //	          gated on Config.FollowTargetPlayerName), same reasoning as
 //	          isFlying/hasElytra/isMounted above.
-//	index 50: goalFollowActive — 1.0 if Config.FollowTargetPlayerName is
+//	index 60: goalFollowActive — 1.0 if Config.FollowTargetPlayerName is
 //	          set, 0.0 otherwise. Same role as goalRideActive/
 //	          goalCombatActive above.
 //
-//	index 51: creeperDx — nearest visible creeper's X minus current X
+//	index 61: creeperDx — nearest visible creeper's X minus current X
 //	          (blocks); 0 if not visible/Config.CreeperGunpowderActive is
 //	          false. Unlike CombatTargetMobType, there is no mob-type
 //	          field: the search is always for "minecraft:creeper" (see
 //	          Config.CreeperGunpowderActive's own doc comment).
-//	index 52: creeperDy — same, Y.
-//	index 53: creeperDz — same, Z.
-//	index 54: creeperVisible — 1.0 if Config.CreeperGunpowderActive is
+//	index 62: creeperDy — same, Y.
+//	index 63: creeperDz — same, Z.
+//	index 64: creeperVisible — 1.0 if Config.CreeperGunpowderActive is
 //	          true and a visible creeper was found this step, 0.0
 //	          otherwise. Mirrors combatVisible's dual role — gates
 //	          creeperDx/Dy/Dz and doubles as
 //	          ActionKillCreeperForGunpowder's legality/mask condition.
-//	index 55: goalCreeperGunpowderActive — 1.0 if
+//	index 65: goalCreeperGunpowderActive — 1.0 if
 //	          Config.CreeperGunpowderActive is true, 0.0 otherwise. Same
 //	          role as goalCombatActive/goalRideActive above (docs/plans/
 //	          RL_ACTION_SPACE_EXPANSION_III.md item 5).
 //
-//	index 56: spearDx — nearest visible instance of
+//	index 66: spearDx — nearest visible instance of
 //	          Config.SpearChargeTargetMobType (resolved via
 //	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
 //	          (blocks); 0 if not visible/not configured.
-//	index 57: spearDy — same, Y.
-//	index 58: spearDz — same, Z.
-//	index 59: spearVisible — 1.0 if Config.SpearChargeTargetMobType is set
+//	index 67: spearDy — same, Y.
+//	index 68: spearDz — same, Z.
+//	index 69: spearVisible — 1.0 if Config.SpearChargeTargetMobType is set
 //	          and a visible instance was found this step, 0.0 otherwise.
 //	          Mirrors combatVisible's dual role — gates spearDx/Dy/Dz and
 //	          doubles as ActionSpearChargeWithApproach's legality/mask
 //	          condition.
-//	index 60: goalSpearChargeActive — 1.0 if
+//	index 70: goalSpearChargeActive — 1.0 if
 //	          Config.SpearChargeTargetMobType is set, 0.0 otherwise. Same
 //	          role as goalCombatActive above (docs/plans/
 //	          RL_ACTION_SPACE_EXPANSION_III.md item 6).
 //
-//	index 61: maceDx — nearest visible instance of
+//	index 71: maceDx — nearest visible instance of
 //	          Config.MaceSmashTargetMobType (resolved via
 //	          LiveAgent.FindNearestVisibleEntityOfType) minus current X
 //	          (blocks); 0 if not visible/not configured.
-//	index 62: maceDy — same, Y.
-//	index 63: maceDz — same, Z.
-//	index 64: maceVisible — 1.0 if Config.MaceSmashTargetMobType is set
+//	index 72: maceDy — same, Y.
+//	index 73: maceDz — same, Z.
+//	index 74: maceVisible — 1.0 if Config.MaceSmashTargetMobType is set
 //	          and a visible instance was found this step, 0.0 otherwise.
 //	          Mirrors spearVisible's dual role — gates maceDx/Dy/Dz and
 //	          doubles as ActionMaceSmashWithApproach's legality/mask
 //	          condition.
-//	index 65: goalMaceSmashActive — 1.0 if Config.MaceSmashTargetMobType
+//	index 75: goalMaceSmashActive — 1.0 if Config.MaceSmashTargetMobType
 //	          is set, 0.0 otherwise. Same role as goalSpearChargeActive
 //	          above (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
+//	index 76: portalDx — nearest visible nether_portal/end_portal/
+//	          end_gateway (resolved via LiveAgent.FindNearestPortal) minus
+//	          current X (blocks); 0 if not visible/not configured.
+//	index 77: portalDy — same, Y.
+//	index 78: portalDz — same, Z.
+//	index 79: portalVisible — 1.0 if Config.PortalSearchRadius > 0 and a
+//	          visible portal was found this step (Environment.portalVisible,
+//	          see refreshPortalTarget), 0.0 otherwise. Gates portalDx/Dy/Dz
+//	          and doubles as ActionUsePortal's legality/mask condition —
+//	          same dual role as bedVisible/mineVisible.
+//	index 80: goalPortalActive — 1.0 if Config.PortalSearchRadius > 0,
+//	          0.0 otherwise. Same role as goalMaceSmashActive above
+//	          (docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md, local/untracked,
+//	          Phase 7's rlenv follow-up).
+//	index 81: frameDx — nearest visible unlit portal frame's ignition
+//	          block (resolved via LiveAgent.FindPortalFrame) minus current
+//	          X (blocks); 0 if not visible/not configured.
+//	index 82: frameDy — same, Y.
+//	index 83: frameDz — same, Z.
+//	index 84: frameVisible — 1.0 if Config.LightPortalSearchRadius > 0 and
+//	          a frame was found this step (Environment.portalFrameVisible,
+//	          see refreshPortalFrameTarget), 0.0 otherwise. Gates
+//	          frameDx/Dy/Dz and doubles as ActionLightPortal's
+//	          legality/mask condition — same dual role as portalVisible.
+//	index 85: goalFrameActive — 1.0 if Config.LightPortalSearchRadius > 0,
+//	          0.0 otherwise. Same role as goalPortalActive above.
 //
 // indices 14-16 are this environment's goal-conditioning block
 // (../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md):
@@ -274,14 +355,28 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 // point" one rather than replacing it (all three can be configured on the
 // same instance; see task.go). See doc.go.
 //
-// Changing this length is a breaking change for any checkpoint trained
-// against the old 14-length observation — see actorcritic.Load's existing
-// EnvironmentID/shape validation, and mint a new EnvironmentID for
-// anything trained against this length (e.g. cmd/rl-train's own
-// "mc-agent-rlenv:actions=%d:obs=%d" already derives its ID from
-// ObservationSize()/ActionSpace() directly, so it picks up this change
-// automatically with no separate version bump needed there).
-const observationSize = 66
+// Growing this length (always by appending, never by changing an existing
+// index) is no longer a forced cold start: cmd/rl-train's own
+// "mc-agent-rlenv:actions=%d:obs=%d" EnvironmentID already derives from
+// ObservationSize()/ActionSpace() directly, so it picks up a change here
+// with no separate version bump, and a checkpoint resume path that uses
+// actorcritic.LoadExpanding/RecurrentLoadExpanding (cRL-go/pkg/actorcritic/
+// expand.go — both cmd/rsi-train and pkg/lineage already do) transparently
+// zero-pads the old Params' new input columns/output rows to the new
+// shape instead of rejecting the file, preserving every existing learned
+// weight. A plain Load/RecurrentLoad call still rejects a shape mismatch
+// outright, so this only holds for call sites that actually use the
+// Expanding variants. Indices
+// 21-24 (unknownDx/Dy/Dz/unknownValid) are new relative to the 21-length
+// observation every currently-checkpointed policy was trained against —
+// no exception from this length's own rule. Indices 31-75 are
+// rl-action-space-expansion-ii's own block (equip through mace smash),
+// shifted from that branch's own 21-65 numbering to make room for the
+// buried-target exploration (21-24) and Sleep (25-30) blocks already on
+// master when it merged. Index 76-80 (portalDx/Dy/Dz/portalVisible/
+// goalPortalActive) is ActionUsePortal's own block, appended the same way
+// rl-action-space-expansion-ii's block was.
+const observationSize = 86
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -303,7 +398,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool, portalX, portalY, portalZ float64, portalVisible, portalActive bool, frameX, frameY, frameZ float64, frameVisible, frameActive bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -312,9 +407,22 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	if mineVisible {
 		mineDx, mineDy, mineDz, visible = float32(mineX-x), float32(mineY-y), float32(mineZ-z), 1
 	}
+	unknownDx, unknownDy, unknownDz, unknownValid := float32(0), float32(0), float32(0), float32(0)
+	if unknownValidIn {
+		unknownDx, unknownDy, unknownDz, unknownValid = float32(unknownDxIn), float32(unknownDyIn), float32(unknownDzIn), 1
+	}
 	ready := float32(0)
 	if craftReady {
 		ready = 1
+	}
+	isNightFlag := boolToFloat32(isNight)
+	timeUntilDawn := float32(0)
+	if timeOfDayKnown {
+		timeUntilDawn = float32(ticksPerDay - timeUntilDawnIn)
+	}
+	bedDx, bedDy, bedDz, bedVis := float32(0), float32(0), float32(0), float32(0)
+	if bedVisible {
+		bedDx, bedDy, bedDz, bedVis = float32(bedX-x), float32(bedY-y), float32(bedZ-z), 1
 	}
 	pickupDx, pickupDy, pickupDz, pickupVisibleFlag := float32(0), float32(0), float32(0), float32(0)
 	if pickupVisible {
@@ -344,6 +452,14 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	if maceVisible {
 		maceDx, maceDy, maceDz, maceVisibleFlag = float32(maceX-x), float32(maceY-y), float32(maceZ-z), 1
 	}
+	portalDx, portalDy, portalDz, portalVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if portalVisible {
+		portalDx, portalDy, portalDz, portalVisibleFlag = float32(portalX-x), float32(portalY-y), float32(portalZ-z), 1
+	}
+	frameDx, frameDy, frameDz, frameVisibleFlag := float32(0), float32(0), float32(0), float32(0)
+	if frameVisible {
+		frameDx, frameDy, frameDz, frameVisibleFlag = float32(frameX-x), float32(frameY-y), float32(frameZ-z), 1
+	}
 	if normalize {
 		return rl.Observation{
 			Values: []float32{
@@ -368,6 +484,16 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				float32(chain.planks) / chainInventoryCountNorm,
 				float32(chain.tables) / chainInventoryCountNorm,
 				boolToFloat32(chain.placed),
+				unknownDx / obsDistanceScale,
+				unknownDy / obsDistanceScale,
+				unknownDz / obsDistanceScale,
+				unknownValid,
+				isNightFlag,
+				timeUntilDawn / float32(ticksPerDay),
+				bedDx / obsDistanceScale,
+				bedDy / obsDistanceScale,
+				bedDz / obsDistanceScale,
+				bedVis,
 				boolToFloat32(equipReady),
 				boolToFloat32(equipActive),
 				pickupDx / obsDistanceScale,
@@ -413,6 +539,16 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				maceDz / obsDistanceScale,
 				maceVisibleFlag,
 				boolToFloat32(maceActive),
+				portalDx / obsDistanceScale,
+				portalDy / obsDistanceScale,
+				portalDz / obsDistanceScale,
+				portalVisibleFlag,
+				boolToFloat32(portalActive),
+				frameDx / obsDistanceScale,
+				frameDy / obsDistanceScale,
+				frameDz / obsDistanceScale,
+				frameVisibleFlag,
+				boolToFloat32(frameActive),
 			},
 		}
 	}
@@ -439,6 +575,16 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			float32(chain.planks),
 			float32(chain.tables),
 			boolToFloat32(chain.placed),
+			unknownDx,
+			unknownDy,
+			unknownDz,
+			unknownValid,
+			isNightFlag,
+			timeUntilDawn,
+			bedDx,
+			bedDy,
+			bedDz,
+			bedVis,
 			boolToFloat32(equipReady),
 			boolToFloat32(equipActive),
 			pickupDx,
@@ -484,6 +630,16 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			maceDz,
 			maceVisibleFlag,
 			boolToFloat32(maceActive),
+			portalDx,
+			portalDy,
+			portalDz,
+			portalVisibleFlag,
+			boolToFloat32(portalActive),
+			frameDx,
+			frameDy,
+			frameDz,
+			frameVisibleFlag,
+			boolToFloat32(frameActive),
 		},
 	}
 }

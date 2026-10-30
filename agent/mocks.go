@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"sync"
+
 	pk "github.com/Tnze/go-mc/net/packet"
 )
 
@@ -35,6 +37,13 @@ type MockPlayer struct {
 	teleportConfirmed bool
 	conn              *MockConn
 	packetMgr         interface{} // Minimal packet manager mock
+
+	// respawnMu guards respawnCalls - Respawn() runs from a background
+	// goroutine in real usage (onDeath/onGameEvent's win-game branch both
+	// call it after a time.Sleep), so a test reading RespawnCalls()
+	// concurrently needs this synchronized.
+	respawnMu    sync.Mutex
+	respawnCalls int
 }
 
 func NewMockPlayer(conn *MockConn) *MockPlayer {
@@ -53,6 +62,22 @@ func (m *MockPlayer) AcceptTeleportation(teleportID pk.VarInt) error {
 
 func (m *MockPlayer) WasTeleportConfirmed() bool {
 	return m.teleportConfirmed
+}
+
+// Respawn implements models.Respawner, so a *MockPlayer assigned to
+// agent.player satisfies the type assertion getRespawner() makes.
+func (m *MockPlayer) Respawn() error {
+	m.respawnMu.Lock()
+	m.respawnCalls++
+	m.respawnMu.Unlock()
+	return nil
+}
+
+// RespawnCalls returns how many times Respawn has been called so far.
+func (m *MockPlayer) RespawnCalls() int {
+	m.respawnMu.Lock()
+	defer m.respawnMu.Unlock()
+	return m.respawnCalls
 }
 
 // MockClient wraps client functionality for testing

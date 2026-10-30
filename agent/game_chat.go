@@ -47,6 +47,21 @@ func (a *agent) onHealthChange(health float32, food int32, saturation float32) {
 	a.logf("Health: %.2f, Food: %d, Saturation: %.2f", health, food, saturation)
 }
 
+// getRespawner returns the models.Respawner to send ServerboundClientCommand
+// (PerformRespawn) through — the same packet vanilla sends both to respawn
+// after death and to proceed past the End's win-game credits screen. Prefers
+// the auto-created player subsystem, falls back to an injected teleport
+// accepter. Returns nil if neither is available (e.g. in tests).
+func (a *agent) getRespawner() models.Respawner {
+	if rr, ok := any(a.player).(models.Respawner); ok {
+		return rr
+	}
+	if rr, ok := any(a.teleport).(models.Respawner); ok {
+		return rr
+	}
+	return nil
+}
+
 // onDeath handles player death events.
 func (a *agent) onDeath() {
 	a.logf("Died and respawn scheduled")
@@ -58,14 +73,7 @@ func (a *agent) onDeath() {
 		notifier.NotifyDead()
 	}
 	// Auto-respawn after 5 seconds when respawner is available
-	// Prefer auto-created player subsystem, fall back to injected teleport
-	var r models.Respawner
-	if rr, ok := any(a.player).(models.Respawner); ok {
-		r = rr
-	} else if rr, ok := any(a.teleport).(models.Respawner); ok {
-		r = rr
-	}
-	if r != nil {
+	if r := a.getRespawner(); r != nil {
 		go func() { time.Sleep(5 * time.Second); _ = r.Respawn() }()
 	}
 }
@@ -221,6 +229,7 @@ func (a *agent) sendChatMessage(message string) error {
 func (a *agent) OnSystemChat(c chat.Message, overlay bool) error {
 	a.logf("System Chat: %#v, Overlay: %v", c, overlay)
 	a.emitChatEvent(c)
+	a.recordSleepStatusMessage(c.Text)
 
 	text, ok := a.extractCommandFromMessage(c)
 	if !ok {

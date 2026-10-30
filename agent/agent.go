@@ -211,6 +211,17 @@ type agent struct {
 	gameMode            models.GameMode
 	gameModeInitialized bool
 
+	// dimensionMu guards dimensionTypeID/dimensionName/dimensionInitialized.
+	dimensionMu sync.RWMutex
+	// dimensionTypeID is the index into the dimension_type registry for the
+	// bot's current dimension, and dimensionName is that dimension's own
+	// identifier (e.g. "minecraft:the_nether"). Set from the Login packet at
+	// join and kept current via ClientboundRespawn (nether/end portal use,
+	// the end's exit portal, or an operator's /execute in).
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+
 	// camFollowMu guards camFollowCancel.
 	camFollowMu sync.Mutex
 	// camFollowCancel stops the currently active StartCamFollow loop, if
@@ -254,6 +265,18 @@ type agent struct {
 	// itself to the right entity instead of being dropped.
 	pendingEntityContainerID int32
 
+	// sleepStatusMu guards sleepStatusEvents.
+	sleepStatusMu sync.Mutex
+	// sleepStatusEvents records each recognized vanilla sleep-status or
+	// bed-rejection system/action-bar message (see sleepSuccessMessageKeys/
+	// sleepRejectionMessageKeys, agent/sleep.go) as it arrives, each with
+	// its receipt time - awaitSleepConfirmed polls this instead of
+	// position, which vanilla never updates on a successful bed-entry (see
+	// that function's own doc comment and docs/plans/SLEEP_ACTION_PLAN.md).
+	// Bounded to a handful of entries (sleepStatusEventsCap); nothing needs
+	// more than that.
+	sleepStatusEvents []sleepStatusEvent
+
 	// e.g., player, playerList, world, movement, pathfinding, registries, etc.
 	// registries
 	regMu      sync.RWMutex
@@ -272,11 +295,17 @@ type agent struct {
 	// Chunk batching (1.20.2+): track number of batches received for acknowledgement
 	chunkBatchCount float32
 
-	// playerLoadedSent fires once-per-connection. The vanilla client sends
-	// ServerboundPlayerLoaded after the world finishes loading; without it the
-	// 1.21.4+ server silently drops interact/vehicle packets for the first 60
-	// server ticks (PlayerEntity.isLoaded gate).
-	playerLoadedSent sync.Once
+	// playerLoadedSentMu guards playerLoadedSent.
+	playerLoadedSentMu sync.Mutex
+	// playerLoadedSent fires once per "load" — initial join, and again after
+	// every dimension change (ClientboundRespawn resets it). The vanilla
+	// client sends ServerboundPlayerLoaded after the world finishes loading;
+	// without it the 1.21.4+ server silently drops interact/vehicle packets
+	// for the first 60 server ticks (PlayerEntity.isLoaded gate), and that
+	// gate is re-armed by the server on every dimension transfer, not just
+	// once per TCP connection — a sync.Once here would permanently disable
+	// this after the first portal use. See resetPlayerLoadedGate.
+	playerLoadedSent bool
 
 	// optional subsystems (for dependency injection override)
 	teleport   TeleportAccepter // override player if needed
@@ -399,6 +428,23 @@ type agent struct {
 	// treated as vanilla's 20 TPS. Atomic because the packet handler
 	// writes it while MineBlockAt reads it from another goroutine.
 	serverTickRateBits atomic.Uint32
+
+	// blocksMinedCount counts every block MineBlockAt has confirmed broken
+	// (awaitBlockChanged returning nil) over the agent's whole lifetime —
+	// both deliberate ActionMine dispatches and incidental
+	// overburden-clearing during pathfinding (MineThrough/MineDown/
+	// MineDownDiagonal all funnel through MineBlockAt). rlenv reads this via
+	// BlocksMinedCounter to reward dig progress per Step, not just the final
+	// target block — see that interface's own doc comment. Monotonic,
+	// never reset; callers diff successive reads themselves.
+	blocksMinedCount atomic.Int64
+}
+
+// BlocksMinedCount returns the number of blocks MineBlockAt has confirmed
+// broken since this agent was created. See blocksMinedCount's own doc
+// comment.
+func (a *agent) BlocksMinedCount() int64 {
+	return a.blocksMinedCount.Load()
 }
 
 // New constructs an agent with the provided configuration.

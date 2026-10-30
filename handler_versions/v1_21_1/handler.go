@@ -223,6 +223,18 @@ func (p *playHandler) ParseLogin(pkt pk.Packet) (entityID int32, gameMode agent_
 	return int32(login.EntityId), agent_models.ParseGameModeString(login.WorldState.Gamemode.Value), nil
 }
 
+// ParseRespawn parses the ClientboundRespawn packet to extract the
+// destination dimension. Sent whenever the local player's dimension
+// changes (portal use, /execute in); unlike Login this carries no new
+// entity ID.
+func (p *playHandler) ParseRespawn(pkt pk.Packet) (dimensionTypeID int32, dimensionName string, err error) {
+	respawn := cb.NewRespawn()
+	if err = respawn.Scan(pkt); err != nil {
+		return 0, "", common.ErrPacketParse{PacketName: "Respawn", Cause: err}
+	}
+	return int32(respawn.WorldState.Dimension), string(respawn.WorldState.Name), nil
+}
+
 // ParseClientboundAbilities parses a ClientboundAbilities packet.
 func (p *playHandler) ParseClientboundAbilities(pkt pk.Packet) (abilities agent_models.PlayerAbilities, err error) {
 	abilitiesPkt := cb.NewAbilities()

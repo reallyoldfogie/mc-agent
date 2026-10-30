@@ -111,6 +111,22 @@ func extractNBTString(nbt protocol_models.AnonymousNBT) string {
 				}
 			}
 		}
+		// No literal "text" field - fall back to the raw "translate" key
+		// (e.g. "sleep.players_sleeping", "block.minecraft.bed.obstructed").
+		// Vanilla sends several server-driven status/rejection messages as
+		// Text.translatable(...) with no "text" field at all - without this,
+		// the generic %v fallback below produced unreadable output like
+		// "&{[{translate 0xc0001...}]}" instead of the actual key. This
+		// codebase has no lang-file lookup, so "with" args (if any) aren't
+		// resolved - callers that need to recognize which message arrived
+		// match against this raw key, not a fully localized sentence.
+		for _, tag := range compound.Tags {
+			if tag.Name == "translate" {
+				if strVal, ok := tag.Value.(*protocol_models.NBTString); ok {
+					return strVal.Value
+				}
+			}
+		}
 	}
 
 	// Fall back to string representation

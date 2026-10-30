@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // Action vocabulary. RL_POLICY_INTEGRATION_PLAN.md originally sketched
@@ -74,6 +75,23 @@ const (
 	// >= ChainPlace) holding a table with none placed yet. Appended after
 	// the original four so their numbers never change.
 	ActionPlace
+
+	// ActionSleep dispatches "sleep <x> <y> <z>" at Environment's own
+	// already-resolved e.sleepX/Y/Z (see refreshSleepTarget) - the same
+	// "dispatch Environment's own already-resolved coordinates, don't
+	// let the dispatched action re-search independently" reasoning as
+	// ActionMine's own doc comment. Structurally always available (like
+	// ActionWait), not gated behind a target-name Config field the way
+	// ActionMine/ActionCraft are: this is what makes it usable as a
+	// general-purpose defensive option during any other active task, not
+	// just a dedicated sleep episode. There is deliberately no separate
+	// ActionWakeUp: the environment auto-wakes once morning arrives (or
+	// after a fixed tick budget), same reasoning as ActionReturnHome's
+	// own removal above - "sleep, then remember to wake up" is a
+	// two-step sequence with no reward benefit over the environment just
+	// doing the second step automatically. See
+	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
+	ActionSleep
 
 	// ActionEquip dispatches "equip <Config.EquipTargetItem>" — mc-agent's
 	// own Equip action (actions/commands.go) finds the item anywhere in the
@@ -209,8 +227,46 @@ const (
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
 	ActionMaceSmashWithApproach
 
+	// ActionUsePortal dispatches "usePortal <x> <y> <z>" at Environment's
+	// own already-resolved e.portalX/Y/Z (see refreshPortalTarget) — the
+	// same "dispatch Environment's own already-resolved coordinates, don't
+	// let the dispatched action re-search independently" reasoning as
+	// ActionMine/ActionSleep's own doc comments. usePortal's exact-position
+	// form (agent.UsePortalAt) walks there and waits for the dimension to
+	// actually change, same as its by-radius form
+	// (agent.UsePortal/agent.FindNearestPortal) but without a second,
+	// independently-radius'd search. A safe no-op (like an unconfigured
+	// ActionMine) when Config.PortalSearchRadius <= 0 or nothing is
+	// currently visible — docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md
+	// (local/untracked) Phase 7's rlenv follow-up. Rewarded via
+	// reward.go's portalRewardBonus — unlike ActionUseItem (a pure
+	// mechanical follow-up to an already-rewarded ActionEquip),
+	// ActionUsePortal's own outcome (the dimension actually changing) is
+	// not covered by any other reward term, so without one here a policy
+	// would have no gradient ever pushing it toward using a portal at the
+	// right time (see this file's own ActionReturnHome removal for what
+	// an ungraded, always-available action costs).
+	ActionUsePortal
+
+	// ActionLightPortal dispatches "lightPortal <ignitionX> <ignitionY>
+	// <ignitionZ> <axis> <interiorMinX> <interiorMinY> <interiorMinZ>
+	// <interiorMaxX> <interiorMaxY> <interiorMaxZ>" at Environment's own
+	// already-resolved e.portalFrame (see refreshPortalFrameTarget) —
+	// same "dispatch Environment's own already-resolved state, don't let
+	// the dispatched action re-search independently" reasoning as
+	// ActionUsePortal's own doc comment; a frame has more state than a
+	// single V3 so the exact-frame form takes all of it instead of three
+	// coordinates. A safe no-op when Config.LightPortalSearchRadius <= 0
+	// or nothing is currently visible — docs/plans/
+	// NETHER_END_PORTAL_TRANSFER_PLAN.md (local/untracked) Phase 7's
+	// lightPortal follow-up. Rewarded via reward.go's
+	// lightPortalRewardBonus, same reasoning as ActionUsePortal's own
+	// portalRewardBonus: igniting a frame is this action's own distinct
+	// outcome, not covered by any other reward term.
+	ActionLightPortal
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionMaceSmashWithApproach) + 1
+	NumActions = int(ActionLightPortal) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -229,6 +285,7 @@ const (
 	mineActionName                    = "mine"
 	craftActionName                   = "craft"
 	placeActionName                   = "place"
+	sleepActionName                   = "sleep"
 	equipActionName                   = "equip"
 	useItemActionName                 = "useitem"
 	useItemOffhandArg                 = "offhand"
@@ -244,6 +301,8 @@ const (
 	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
 	spearChargeWithApproachActionName = "spearchargewithapproach"
 	maceSmashWithApproachActionName   = "macesmashwithapproach"
+	usePortalActionName               = "useportal"
+	lightPortalActionName             = "lightportal"
 )
 
 // actionDispatch describes what Step should send through the
@@ -292,9 +351,9 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		// there's no separate action/reward for this, just which quiet
 		// movement primitive gets dispatched.
 		if e.cfg.ArriveSneaking {
-			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
+			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
 		}
-		return actionDispatch{name: moveToActionName, args: coordArgs(e.targetX, e.targetY, e.targetZ)}, true, nil
+		return actionDispatch{name: moveToActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
 	case ActionMine:
 		if !e.actionLegal(ActionMine) {
 			return actionDispatch{}, false, nil
@@ -318,6 +377,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		// Standalone placement (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
 		// item 2) — Config.ChainStage's own branch above is unchanged.
 		return actionDispatch{name: placeActionName, args: []string{e.cfg.PlaceTargetItem}}, true, nil
+	case ActionSleep:
+		if !e.actionLegal(ActionSleep) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: sleepActionName, args: coordArgs(e.sleepX, e.sleepY, e.sleepZ)}, true, nil
 	case ActionEquip:
 		if !e.actionLegal(ActionEquip) {
 			return actionDispatch{}, false, nil
@@ -406,6 +470,16 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			fmt.Sprintf("%d", e.maceEntityID),
 			maceSmashWeaponName,
 		}}, true, nil
+	case ActionUsePortal:
+		if !e.actionLegal(ActionUsePortal) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: usePortalActionName, args: coordArgs(e.portalX, e.portalY, e.portalZ)}, true, nil
+	case ActionLightPortal:
+		if !e.actionLegal(ActionLightPortal) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: lightPortalActionName, args: portalFrameArgs(e.portalFrame)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -427,7 +501,7 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionWait:
 		return true
 	case ActionGoToTarget:
-		if e.cfg.GoToTargetDisabled {
+		if !e.goToTargetActive() {
 			return false
 		}
 		// In a go-there-then-mine/craft episode, once the bot has arrived
@@ -454,6 +528,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// item 2) — gated on actually holding the target item, the same
 		// masking-efficiency reasoning craftReady's own gate uses.
 		return e.placeStandaloneReady()
+	case ActionSleep:
+		return e.cfg.SleepSearchRadius > 0 && e.sleepVisible && e.sleepWindowActive
 	case ActionEquip, ActionUseItem:
 		// Both gated on the same field — see Config.EquipTargetItem's own
 		// doc comment for why ActionUseItem has no independent enable flag.
@@ -496,6 +572,10 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// masking-efficiency reasoning ActionSpearChargeWithApproach's own
 		// weapon gate uses.
 		return e.cfg.MaceSmashTargetMobType != "" && e.maceVisible && e.agent.IsEquipped(maceSmashWeaponName)
+	case ActionUsePortal:
+		return e.cfg.PortalSearchRadius > 0 && e.portalVisible
+	case ActionLightPortal:
+		return e.cfg.LightPortalSearchRadius > 0 && e.portalFrameVisible
 	default:
 		return false
 	}
@@ -529,4 +609,15 @@ func coordArgs(x, y, z float64) []string {
 
 func formatCoord(v float64) string {
 	return fmt.Sprintf("%.4f", v)
+}
+
+// portalFrameArgs formats frame as LightPortal's 10-arg exact-frame form
+// (actions/commands.go's parsePortalFrameArgs is the inverse) — IgnitionFace
+// is deliberately not included, since it's always a deterministic function
+// of Axis on the parsing side.
+func portalFrameArgs(frame models.PortalFrame) []string {
+	args := []string{formatCoord(frame.IgnitionBlock.X), formatCoord(frame.IgnitionBlock.Y), formatCoord(frame.IgnitionBlock.Z), frame.Axis}
+	args = append(args, coordArgs(frame.InteriorMin.X, frame.InteriorMin.Y, frame.InteriorMin.Z)...)
+	args = append(args, coordArgs(frame.InteriorMax.X, frame.InteriorMax.Y, frame.InteriorMax.Z)...)
+	return args
 }

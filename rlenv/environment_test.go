@@ -49,37 +49,31 @@ func TestNewRejectsInvalidArguments(t *testing.T) {
 
 func TestObservationSizeAndActionSpace(t *testing.T) {
 	env := newTestEnvironment(t, newFakeAgent(0, 0, 0), testConfig())
-	// 46 (40 before the combat block, 34 before the ride block, 28 before
-	// the fly block, 23 before the pickup block, 21 before the equip
-	// block, 17 before the chain block, 14 before the goal block):
-	// indices 0-13 are the original per-task numeric features; 14-16 are
-	// the goal-conditioning block (goalGoToActive/goalMineActive/
-	// goalCraftActive) added by
+	// 76 (31 before rl-action-space-expansion-ii's own block, 25 before
+	// the Sleep block, 21 before the exploration-signal block, 17 before
+	// the chain block, 14 before the goal block): indices 0-13 are the
+	// original per-task numeric features; 14-16 are the goal-conditioning
+	// block (goalGoToActive/goalMineActive/goalCraftActive) added by
 	// ../mc-rsi-trainer/docs/plans/06-per-episode-task-selection-and-goal-conditioning.md;
-	// 17-20 are the chain block; 21-22 are the equip block (equipReady/
-	// goalEquipActive, docs/plans/RL_ACTION_SPACE_EXPANSION_II.md Phase 1);
-	// 23-27 are the pickup block (pickupDx/Dy/Dz/pickupVisible/
-	// goalPickupActive, that plan's Phase 2); 28-33 are the fly block
-	// (flyDx/Dy/Dz/isFlying/hasElytra/goalFlyActive, that plan's Phase 3);
-	// 34-39 are the ride block (rideDx/Dy/Dz/rideVisible/isMounted/
-	// goalRideActive, that plan's Phase 4); 40-45 are the combat block
-	// (combatDx/Dy/Dz/combatTargetHealth/combatVisible/goalCombatActive,
-	// that plan's Phase 5); 46-47 are the standalone-place block
-	// (placeReady/goalPlaceStandaloneActive, docs/plans/
-	// RL_ACTION_SPACE_EXPANSION_III.md item 2); 48-50 are the follow block
-	// (followTargetVisible/isFollowing/goalFollowActive, that plan's item
-	// 4); 51-55 are the creeper-gunpowder block (creeperDx/Dy/Dz/
-	// creeperVisible/goalCreeperGunpowderActive, that plan's item 5); 56-60
-	// are the spear-charge block (spearDx/Dy/Dz/spearVisible/
-	// goalSpearChargeActive, that plan's item 6); 61-65 are the
-	// mace-smash block (maceDx/Dy/Dz/maceVisible/goalMaceSmashActive,
-	// that plan's item 7) — see observation.go's own doc comment on
+	// 17-20 are the chain block; 21-24 are unknownDx/Dy/Dz/unknownValid,
+	// added by
+	// ../mc-rsi-trainer/docs/plans/14-buried-block-mining-and-memory-map.md's
+	// option 2; 25-30 are isNight/timeUntilDawn/bedDx/Dy/Dz/bedVisible,
+	// added by docs/plans/SLEEP_ACTION_PLAN.md (local/untracked); 31-75
+	// are rl-action-space-expansion-ii's own equip-through-mace-smash
+	// block (equip 31-32, pickup 33-37, fly 38-43, ride 44-49, combat
+	// 50-55, standalone-place 56-57, follow 58-60, creeper-gunpowder
+	// 61-65, spear-charge 66-70, mace-smash 71-75), shifted from that
+	// branch's own 21-65 numbering when it merged; 76-80 are
+	// portalDx/Dy/Dz/portalVisible/goalPortalActive, added by
+	// docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md (local/untracked)
+	// Phase 7's rlenv follow-up — see observation.go's own doc comment on
 	// observationSize for the full layout. This exact value is also what
-	// makes cmd/rl-train's EnvironmentID
-	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
-	// checkpoint trained against an earlier size.
-	if got := env.ObservationSize(); got != 66 {
-		t.Fatalf("ObservationSize() = %d, want 66", got)
+	// makes cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
+	// automatically reject an old checkpoint trained against a shorter
+	// observation.
+	if got := env.ObservationSize(); got != 86 {
+		t.Fatalf("ObservationSize() = %d, want 86", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -94,8 +88,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 66 {
-		t.Fatalf("len(obs.Values) = %d, want 66 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 86 {
+		t.Fatalf("len(obs.Values) = %d, want 86 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)
@@ -442,6 +436,65 @@ func TestResetClonesTheTemplateInsteadOfClearingWhenBothAreSet(t *testing.T) {
 	want := clonedArea{-3, -64, 4997, 3, -57, 5003, 7, -64, 2}
 	if len(agent.clonedAreas) != 1 || agent.clonedAreas[0] != want {
 		t.Fatalf("cloned = %v, want exactly [%v]", agent.clonedAreas, want)
+	}
+}
+
+// TestResetClonesInZBandsWhenTheFullBoxExceedsVanillasCloneLimit confirms
+// cloneArea splits into multiple /clone calls rather than issuing one
+// doomed-to-fail oversized command, or silently cloning nothing - found
+// live, 2026-10-29, widening -clone-area-radius to 32 so it covers
+// mine_buried's own, larger search radius (the two had silently drifted
+// apart: a radius-16 template left a third of mine_buried's 24-radius
+// search volume with no ore ever possible). Radius 32/height 4(default)/
+// depth 8 is 65*65*13=54,925 blocks, over vanilla's 32,768-block /clone
+// cap in one call.
+func TestResetClonesInZBandsWhenTheFullBoxExceedsVanillasCloneLimit(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10, -60, 5}
+	template := [3]float64{0, -60, 5000}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.CloneAreaFrom = &template
+	cfg.CloneAreaRadius = 32
+	cfg.CloneAreaDepth = 8
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	if len(agent.clonedAreas) < 2 {
+		t.Fatalf("clonedAreas = %v, want at least 2 calls (one would exceed vanilla's 32,768-block /clone limit)", agent.clonedAreas)
+	}
+
+	const r = 32
+	const wantXSpan = 2*r + 1 // 65
+	const wantYSpan = 4 + 8 + 1
+	wantZRows := 0
+	for i, c := range agent.clonedAreas {
+		if c.srcX1 != -r || c.srcX2 != r {
+			t.Fatalf("call %d: X span = [%d,%d], want [%d,%d] unchanged by Z-banding", i, c.srcX1, c.srcX2, -r, r)
+		}
+		rows := c.srcZ2 - c.srcZ1 + 1
+		if blocks := wantXSpan * rows * wantYSpan; blocks > 32768 {
+			t.Fatalf("call %d covers %d blocks (%d x %d x %d), over vanilla's 32,768 limit", i, blocks, wantXSpan, rows, wantYSpan)
+		}
+		if got, want := c.dstX1-10, c.srcX1; got != want {
+			t.Fatalf("call %d: dst X offset from src = %d, want %d (same relative offset every band)", i, got, want)
+		}
+		if c.dstZ1-c.srcZ1 != 5-5000 {
+			t.Fatalf("call %d: dst/src Z offset = %d, want %d (every band must carry the same relative Z shift)", i, c.dstZ1-c.srcZ1, 5-5000)
+		}
+		wantZRows += rows
+	}
+	if wantZRows != wantXSpan {
+		t.Fatalf("total Z rows across all calls = %d, want %d (the whole span, no gaps, no overlaps)", wantZRows, wantXSpan)
+	}
+	// No gaps/overlaps: each call's own srcZ1 must pick up exactly where
+	// the previous one's srcZ2 left off.
+	for i := 1; i < len(agent.clonedAreas); i++ {
+		if agent.clonedAreas[i].srcZ1 != agent.clonedAreas[i-1].srcZ2+1 {
+			t.Fatalf("call %d starts at Z=%d, want %d (right after call %d's own Z=%d)", i, agent.clonedAreas[i].srcZ1, agent.clonedAreas[i-1].srcZ2+1, i-1, agent.clonedAreas[i-1].srcZ2)
+		}
 	}
 }
 
@@ -1032,10 +1085,10 @@ func TestStepEquipWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if ready := result.Observation.Values[21]; ready != 0 {
+	if ready := result.Observation.Values[31]; ready != 0 {
 		t.Fatalf("equipReady = %v, want 0 (no task configured)", ready)
 	}
-	if active := result.Observation.Values[22]; active != 0 {
+	if active := result.Observation.Values[32]; active != 0 {
 		t.Fatalf("goalEquipActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -1079,7 +1132,7 @@ func TestStepEquipActionEquipsTargetAndEndsEpisode(t *testing.T) {
 	if result.Reward <= 0 {
 		t.Fatalf("Reward = %v, want positive (equipRewardBonus)", result.Reward)
 	}
-	if ready := result.Observation.Values[21]; ready != 1 {
+	if ready := result.Observation.Values[31]; ready != 1 {
 		t.Fatalf("equipReady = %v, want 1", ready)
 	}
 }
@@ -1096,10 +1149,10 @@ func TestStepObservationReflectsEquipReadyRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if ready := obs.Values[21]; ready != 1 {
+	if ready := obs.Values[31]; ready != 1 {
 		t.Fatalf("equipReady at Reset = %v, want 1", ready)
 	}
-	if active := obs.Values[22]; active != 1 {
+	if active := obs.Values[32]; active != 1 {
 		t.Fatalf("goalEquipActive at Reset = %v, want 1", active)
 	}
 
@@ -1110,7 +1163,7 @@ func TestStepObservationReflectsEquipReadyRegardlessOfAction(t *testing.T) {
 	if agent.useItemCalls != 0 {
 		t.Fatalf("UseItem calls = %d, want 0 (ActionWait doesn't dispatch useitem)", agent.useItemCalls)
 	}
-	if ready := result.Observation.Values[21]; ready != 1 {
+	if ready := result.Observation.Values[31]; ready != 1 {
 		t.Fatalf("equipReady after ActionWait = %v, want 1 (still equipped)", ready)
 	}
 	// Reset already satisfied the equip task (heldItem was pre-set), so
@@ -1191,7 +1244,7 @@ func TestStepPickUpWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[26]; visible != 0 {
+	if visible := result.Observation.Values[36]; visible != 0 {
 		t.Fatalf("pickupVisible = %v, want 0 (no task configured)", visible)
 	}
 }
@@ -1215,7 +1268,7 @@ func TestStepPickUpWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[26]; visible != 0 {
+	if visible := result.Observation.Values[36]; visible != 0 {
 		t.Fatalf("pickupVisible = %v, want 0", visible)
 	}
 }
@@ -1261,13 +1314,13 @@ func TestStepObservationReflectsPickupTargetDeltaRegardlessOfAction(t *testing.T
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[26]; visible != 1 {
+	if visible := obs.Values[36]; visible != 1 {
 		t.Fatalf("pickupVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[27]; active != 1 {
+	if active := obs.Values[37]; active != 1 {
 		t.Fatalf("goalPickupActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[23]; dx != 3 {
+	if dx := obs.Values[33]; dx != 3 {
 		t.Fatalf("pickupDx at Reset = %v, want 3", dx)
 	}
 
@@ -1278,7 +1331,7 @@ func TestStepObservationReflectsPickupTargetDeltaRegardlessOfAction(t *testing.T
 	if agent.moveToWithChatCalls != 0 {
 		t.Fatalf("MoveToWithChat calls = %d, want 0 (ActionWait doesn't dispatch pickupitem)", agent.moveToWithChatCalls)
 	}
-	if visible := result.Observation.Values[26]; visible != 1 {
+	if visible := result.Observation.Values[36]; visible != 1 {
 		t.Fatalf("pickupVisible after ActionWait = %v, want 1 (still visible, nothing consumed)", visible)
 	}
 }
@@ -1307,7 +1360,7 @@ func TestActionMaskPickUpItemLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[26]; visible != 1 {
+	if visible := result.Observation.Values[36]; visible != 1 {
 		t.Fatalf("pickupVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionPickUpItem]; !legal {
@@ -1343,7 +1396,7 @@ func TestStepFlyWithTargetInactiveIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[33]; active != 0 {
+	if active := result.Observation.Values[43]; active != 0 {
 		t.Fatalf("goalFlyActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -1365,7 +1418,7 @@ func TestStepFlyWithoutElytraDoesNotDispatch(t *testing.T) {
 	if pos, _, _, _ := agent.GetPosition(); pos.X != 0 {
 		t.Fatalf("position moved to x=%v, want 0 (no elytra equipped, must not dispatch)", pos.X)
 	}
-	if hasElytra := result.Observation.Values[32]; hasElytra != 0 {
+	if hasElytra := result.Observation.Values[42]; hasElytra != 0 {
 		t.Fatalf("hasElytra = %v, want 0 (sanity check)", hasElytra)
 	}
 }
@@ -1395,7 +1448,7 @@ func TestStepFlyActionReachesTargetAndEndsEpisode(t *testing.T) {
 	if pos, _, _, _ := agent.GetPosition(); pos.X != 20 {
 		t.Fatalf("position after Step x=%v, want 20 (FlyTo's own simulated arrival)", pos.X)
 	}
-	if flying := result.Observation.Values[31]; flying != 1 {
+	if flying := result.Observation.Values[41]; flying != 1 {
 		t.Fatalf("isFlying = %v, want 1 (FlyTo marks the bot gliding)", flying)
 	}
 }
@@ -1411,16 +1464,16 @@ func TestStepObservationReflectsFlyStateRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if dx := obs.Values[28]; dx != 20 {
+	if dx := obs.Values[38]; dx != 20 {
 		t.Fatalf("flyDx at Reset = %v, want 20", dx)
 	}
-	if dy := obs.Values[29]; dy != 5 {
+	if dy := obs.Values[39]; dy != 5 {
 		t.Fatalf("flyDy at Reset = %v, want 5", dy)
 	}
-	if hasElytra := obs.Values[32]; hasElytra != 1 {
+	if hasElytra := obs.Values[42]; hasElytra != 1 {
 		t.Fatalf("hasElytra at Reset = %v, want 1", hasElytra)
 	}
-	if active := obs.Values[33]; active != 1 {
+	if active := obs.Values[43]; active != 1 {
 		t.Fatalf("goalFlyActive at Reset = %v, want 1", active)
 	}
 
@@ -1431,7 +1484,7 @@ func TestStepObservationReflectsFlyStateRegardlessOfAction(t *testing.T) {
 	if pos, _, _, _ := agent.GetPosition(); pos.X != 0 {
 		t.Fatalf("position moved to x=%v, want 0 (ActionWait doesn't dispatch flyto)", pos.X)
 	}
-	if dx := result.Observation.Values[28]; dx != 20 {
+	if dx := result.Observation.Values[38]; dx != 20 {
 		t.Fatalf("flyDx after ActionWait = %v, want 20 (still unreached)", dx)
 	}
 }
@@ -1483,7 +1536,7 @@ func TestStepMountWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[39]; active != 0 {
+	if active := result.Observation.Values[49]; active != 0 {
 		t.Fatalf("goalRideActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -1507,7 +1560,7 @@ func TestStepMountWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[37]; visible != 0 {
+	if visible := result.Observation.Values[47]; visible != 0 {
 		t.Fatalf("rideVisible = %v, want 0", visible)
 	}
 }
@@ -1535,7 +1588,7 @@ func TestStepMountActionMountsTargetAndEndsEpisode(t *testing.T) {
 	if result.Reward <= 0 {
 		t.Fatalf("Reward = %v, want positive (rideRewardBonus)", result.Reward)
 	}
-	if mounted := result.Observation.Values[38]; mounted != 1 {
+	if mounted := result.Observation.Values[48]; mounted != 1 {
 		t.Fatalf("isMounted = %v, want 1", mounted)
 	}
 }
@@ -1550,13 +1603,13 @@ func TestStepObservationReflectsRideStateRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[37]; visible != 1 {
+	if visible := obs.Values[47]; visible != 1 {
 		t.Fatalf("rideVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[39]; active != 1 {
+	if active := obs.Values[49]; active != 1 {
 		t.Fatalf("goalRideActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[34]; dx != 3 {
+	if dx := obs.Values[44]; dx != 3 {
 		t.Fatalf("rideDx at Reset = %v, want 3", dx)
 	}
 
@@ -1567,7 +1620,7 @@ func TestStepObservationReflectsRideStateRegardlessOfAction(t *testing.T) {
 	if agent.IsMounted() {
 		t.Fatalf("IsMounted() = true, want false (ActionWait doesn't dispatch mount)")
 	}
-	if visible := result.Observation.Values[37]; visible != 1 {
+	if visible := result.Observation.Values[47]; visible != 1 {
 		t.Fatalf("rideVisible after ActionWait = %v, want 1 (still visible)", visible)
 	}
 }
@@ -1626,7 +1679,7 @@ func TestActionMaskMountDismountVehicleJumpGating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[37]; visible != 1 {
+	if visible := result.Observation.Values[47]; visible != 1 {
 		t.Fatalf("rideVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionMount]; !legal {
@@ -1675,7 +1728,7 @@ func TestStepCombatWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[45]; active != 0 {
+	if active := result.Observation.Values[55]; active != 0 {
 		t.Fatalf("goalCombatActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -1699,7 +1752,7 @@ func TestStepCombatWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[44]; visible != 0 {
+	if visible := result.Observation.Values[54]; visible != 0 {
 		t.Fatalf("combatVisible = %v, want 0", visible)
 	}
 }
@@ -1798,16 +1851,16 @@ func TestStepObservationReflectsCombatTargetHealthRegardlessOfAction(t *testing.
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[44]; visible != 1 {
+	if visible := obs.Values[54]; visible != 1 {
 		t.Fatalf("combatVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[45]; active != 1 {
+	if active := obs.Values[55]; active != 1 {
 		t.Fatalf("goalCombatActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[40]; dx != 5 {
+	if dx := obs.Values[50]; dx != 5 {
 		t.Fatalf("combatDx at Reset = %v, want 5", dx)
 	}
-	if health := obs.Values[43]; health != 20 {
+	if health := obs.Values[53]; health != 20 {
 		t.Fatalf("combatTargetHealth at Reset = %v, want 20", health)
 	}
 
@@ -1818,7 +1871,7 @@ func TestStepObservationReflectsCombatTargetHealthRegardlessOfAction(t *testing.
 	if len(agent.runCombatCalls) != 0 {
 		t.Fatalf("RunCombat calls = %v, want none (ActionWait doesn't dispatch runcombat)", agent.runCombatCalls)
 	}
-	if health := result.Observation.Values[43]; health != 20 {
+	if health := result.Observation.Values[53]; health != 20 {
 		t.Fatalf("combatTargetHealth after ActionWait = %v, want 20 (unchanged)", health)
 	}
 }
@@ -1872,7 +1925,7 @@ func TestActionMaskCombatLegalOnlyWhenConfiguredAndVisible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[44]; visible != 1 {
+	if visible := result.Observation.Values[54]; visible != 1 {
 		t.Fatalf("combatVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionCombat]; !legal {
@@ -2078,7 +2131,7 @@ func TestStepPlaceStandaloneWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[47]; active != 0 {
+	if active := result.Observation.Values[57]; active != 0 {
 		t.Fatalf("goalPlaceStandaloneActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -2099,7 +2152,7 @@ func TestStepPlaceStandaloneWithNothingHeldDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false (nothing held to place)")
 	}
-	if ready := result.Observation.Values[46]; ready != 0 {
+	if ready := result.Observation.Values[56]; ready != 0 {
 		t.Fatalf("placeReady = %v, want 0 (nothing held)", ready)
 	}
 }
@@ -2139,10 +2192,10 @@ func TestStepObservationReflectsPlaceReadyRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if ready := obs.Values[46]; ready != 1 {
+	if ready := obs.Values[56]; ready != 1 {
 		t.Fatalf("placeReady at Reset = %v, want 1", ready)
 	}
-	if active := obs.Values[47]; active != 1 {
+	if active := obs.Values[57]; active != 1 {
 		t.Fatalf("goalPlaceStandaloneActive at Reset = %v, want 1", active)
 	}
 
@@ -2153,7 +2206,7 @@ func TestStepObservationReflectsPlaceReadyRegardlessOfAction(t *testing.T) {
 	if got := agent.InventoryCount("minecraft:dirt"); got != 1 {
 		t.Fatalf("held count after ActionWait = %d, want 1 (nothing placed)", got)
 	}
-	if ready := result.Observation.Values[46]; ready != 1 {
+	if ready := result.Observation.Values[56]; ready != 1 {
 		t.Fatalf("placeReady after ActionWait = %v, want 1 (still held)", ready)
 	}
 }
@@ -2204,7 +2257,7 @@ func TestStepFollowWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[50]; active != 0 {
+	if active := result.Observation.Values[60]; active != 0 {
 		t.Fatalf("goalFollowActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -2228,7 +2281,7 @@ func TestStepFollowWithUnresolvableTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[48]; visible != 0 {
+	if visible := result.Observation.Values[58]; visible != 0 {
 		t.Fatalf("followTargetVisible = %v, want 0", visible)
 	}
 }
@@ -2256,7 +2309,7 @@ func TestStepFollowActionStartsFollowingAndEndsEpisode(t *testing.T) {
 	if result.Reward <= 0 {
 		t.Fatalf("Reward = %v, want positive (followRewardBonus)", result.Reward)
 	}
-	if following := result.Observation.Values[49]; following != 1 {
+	if following := result.Observation.Values[59]; following != 1 {
 		t.Fatalf("isFollowing = %v, want 1", following)
 	}
 }
@@ -2271,10 +2324,10 @@ func TestStepObservationReflectsFollowStateRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[48]; visible != 1 {
+	if visible := obs.Values[58]; visible != 1 {
 		t.Fatalf("followTargetVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[50]; active != 1 {
+	if active := obs.Values[60]; active != 1 {
 		t.Fatalf("goalFollowActive at Reset = %v, want 1", active)
 	}
 
@@ -2285,7 +2338,7 @@ func TestStepObservationReflectsFollowStateRegardlessOfAction(t *testing.T) {
 	if agent.IsFollowing() {
 		t.Fatalf("IsFollowing() = true, want false (ActionWait doesn't dispatch follow)")
 	}
-	if visible := result.Observation.Values[48]; visible != 1 {
+	if visible := result.Observation.Values[58]; visible != 1 {
 		t.Fatalf("followTargetVisible after ActionWait = %v, want 1 (still resolvable)", visible)
 	}
 }
@@ -2381,7 +2434,7 @@ func TestStepKillCreeperForGunpowderWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[55]; active != 0 {
+	if active := result.Observation.Values[65]; active != 0 {
 		t.Fatalf("goalCreeperGunpowderActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -2405,7 +2458,7 @@ func TestStepKillCreeperForGunpowderWithNoVisibleTargetDoesNotDispatch(t *testin
 	if result.Done {
 		t.Fatalf("Done = true, want false (nothing visible to fight)")
 	}
-	if visible := result.Observation.Values[54]; visible != 0 {
+	if visible := result.Observation.Values[64]; visible != 0 {
 		t.Fatalf("creeperVisible = %v, want 0", visible)
 	}
 }
@@ -2508,13 +2561,13 @@ func TestStepObservationReflectsCreeperStateRegardlessOfAction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[54]; visible != 1 {
+	if visible := obs.Values[64]; visible != 1 {
 		t.Fatalf("creeperVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[55]; active != 1 {
+	if active := obs.Values[65]; active != 1 {
 		t.Fatalf("goalCreeperGunpowderActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[51]; dx != 5 {
+	if dx := obs.Values[61]; dx != 5 {
 		t.Fatalf("creeperDx at Reset = %v, want 5", dx)
 	}
 
@@ -2525,7 +2578,7 @@ func TestStepObservationReflectsCreeperStateRegardlessOfAction(t *testing.T) {
 	if !agent.creeperVisible {
 		t.Fatalf("creeperVisible = false, want true (ActionWait doesn't dispatch killcreeperforgunpowder)")
 	}
-	if visible := result.Observation.Values[54]; visible != 1 {
+	if visible := result.Observation.Values[64]; visible != 1 {
 		t.Fatalf("creeperVisible after ActionWait = %v, want 1 (still visible)", visible)
 	}
 }
@@ -2547,7 +2600,7 @@ func TestActionMaskKillCreeperForGunpowderGatedOnConfiguredVisibleAndWeapon(t *t
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[54]; visible != 1 {
+	if visible := result.Observation.Values[64]; visible != 1 {
 		t.Fatalf("creeperVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionKillCreeperForGunpowder]; legal {
@@ -2595,7 +2648,7 @@ func TestStepSpearChargeWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[60]; active != 0 {
+	if active := result.Observation.Values[70]; active != 0 {
 		t.Fatalf("goalSpearChargeActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -2622,7 +2675,7 @@ func TestStepSpearChargeWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[59]; visible != 0 {
+	if visible := result.Observation.Values[69]; visible != 0 {
 		t.Fatalf("spearVisible = %v, want 0", visible)
 	}
 }
@@ -2743,13 +2796,13 @@ func TestStepObservationReflectsSpearTargetVisibilityRegardlessOfAction(t *testi
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[59]; visible != 1 {
+	if visible := obs.Values[69]; visible != 1 {
 		t.Fatalf("spearVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[60]; active != 1 {
+	if active := obs.Values[70]; active != 1 {
 		t.Fatalf("goalSpearChargeActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[56]; dx != 5 {
+	if dx := obs.Values[66]; dx != 5 {
 		t.Fatalf("spearDx at Reset = %v, want 5", dx)
 	}
 
@@ -2760,7 +2813,7 @@ func TestStepObservationReflectsSpearTargetVisibilityRegardlessOfAction(t *testi
 	if len(agent.spearChargeCalls) != 0 {
 		t.Fatalf("SpearChargeAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the charge)", agent.spearChargeCalls)
 	}
-	if visible := result.Observation.Values[59]; visible != 1 {
+	if visible := result.Observation.Values[69]; visible != 1 {
 		t.Fatalf("spearVisible after ActionWait = %v, want 1 (still visible)", visible)
 	}
 }
@@ -2782,7 +2835,7 @@ func TestActionMaskSpearChargeGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[59]; visible != 1 {
+	if visible := result.Observation.Values[69]; visible != 1 {
 		t.Fatalf("spearVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionSpearChargeWithApproach]; legal {
@@ -2830,7 +2883,7 @@ func TestStepMaceSmashWithNoConfiguredTargetIsNoOp(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if active := result.Observation.Values[65]; active != 0 {
+	if active := result.Observation.Values[75]; active != 0 {
 		t.Fatalf("goalMaceSmashActive = %v, want 0 (no task configured)", active)
 	}
 }
@@ -2857,7 +2910,7 @@ func TestStepMaceSmashWithNoVisibleTargetDoesNotDispatch(t *testing.T) {
 	if result.Done {
 		t.Fatalf("Done = true, want false")
 	}
-	if visible := result.Observation.Values[64]; visible != 0 {
+	if visible := result.Observation.Values[74]; visible != 0 {
 		t.Fatalf("maceVisible = %v, want 0", visible)
 	}
 }
@@ -2979,13 +3032,13 @@ func TestStepObservationReflectsMaceTargetVisibilityRegardlessOfAction(t *testin
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if visible := obs.Values[64]; visible != 1 {
+	if visible := obs.Values[74]; visible != 1 {
 		t.Fatalf("maceVisible at Reset = %v, want 1", visible)
 	}
-	if active := obs.Values[65]; active != 1 {
+	if active := obs.Values[75]; active != 1 {
 		t.Fatalf("goalMaceSmashActive at Reset = %v, want 1", active)
 	}
-	if dx := obs.Values[61]; dx != 5 {
+	if dx := obs.Values[71]; dx != 5 {
 		t.Fatalf("maceDx at Reset = %v, want 5", dx)
 	}
 
@@ -2996,7 +3049,7 @@ func TestStepObservationReflectsMaceTargetVisibilityRegardlessOfAction(t *testin
 	if len(agent.maceSmashCalls) != 0 {
 		t.Fatalf("MaceSmashAtWithApproach calls = %v, want none (ActionWait doesn't dispatch the smash)", agent.maceSmashCalls)
 	}
-	if visible := result.Observation.Values[64]; visible != 1 {
+	if visible := result.Observation.Values[74]; visible != 1 {
 		t.Fatalf("maceVisible after ActionWait = %v, want 1 (still visible)", visible)
 	}
 }
@@ -3018,7 +3071,7 @@ func TestActionMaskMaceSmashGatedOnConfiguredVisibleAndWeapon(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step: %v", err)
 	}
-	if visible := result.Observation.Values[64]; visible != 1 {
+	if visible := result.Observation.Values[74]; visible != 1 {
 		t.Fatalf("maceVisible = %v, want 1 (sanity check target is now visible)", visible)
 	}
 	if legal := env.ActionMask()[rlenv.ActionMaceSmashWithApproach]; legal {
@@ -3119,6 +3172,71 @@ func TestResetSeedsMineRequiredToolBeforeTheMineTarget(t *testing.T) {
 	}
 	if got := agent.seedGiveItemCalls[0]; got.itemName != "minecraft:wooden_pickaxe" || got.count != 1 {
 		t.Fatalf("SeedGiveItem call = %+v, want {minecraft:wooden_pickaxe 1}", got)
+	}
+}
+
+// TestResetGivesEnchantedToolWhenAgentSupportsIt confirms
+// Config.MineRequiredToolEnchantments routes to SeedGiveEnchantedItem
+// (rlenv.EnchantedToolSeedAgent) instead of the plain SeedGiveItem path
+// when the agent implements it.
+func TestResetGivesEnchantedToolWhenAgentSupportsIt(t *testing.T) {
+	agent := &fakeEnchantedToolAgent{fakeAgent: newFakeAgent(0, 0, 0)}
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineSearchRadius = 10
+	cfg.MineRequiredTool = "minecraft:netherite_pickaxe"
+	cfg.MineRequiredToolEnchantments = map[string]int{"minecraft:efficiency": 5}
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	// newTestEnvironment's *fakeAgent parameter type would drop the
+	// wrapper's extra EnchantedToolSeedAgent method, so construct
+	// directly against the wrapper instead — rlenv.New resolves
+	// SeedAgent/ToolSeedAgent/EnchantedToolSeedAgent from whatever this
+	// value actually implements.
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.fakeAgent.seedGiveItemCalls) != 0 {
+		t.Fatalf("plain SeedGiveItem calls = %d, want 0 (enchanted path should have been taken instead)", len(agent.fakeAgent.seedGiveItemCalls))
+	}
+	if len(agent.seedGiveEnchantedItemCalls) != 1 {
+		t.Fatalf("SeedGiveEnchantedItem calls = %d, want 1", len(agent.seedGiveEnchantedItemCalls))
+	}
+	got := agent.seedGiveEnchantedItemCalls[0]
+	if got.itemName != "minecraft:netherite_pickaxe" || got.count != 1 {
+		t.Fatalf("SeedGiveEnchantedItem call = %+v, want itemName=minecraft:netherite_pickaxe count=1", got)
+	}
+	if got.enchantments["minecraft:efficiency"] != 5 {
+		t.Fatalf("SeedGiveEnchantedItem enchantments = %+v, want minecraft:efficiency=5", got.enchantments)
+	}
+}
+
+// TestResetFallsBackToPlainToolWhenAgentLacksEnchantedSupport confirms
+// Config.MineRequiredToolEnchantments never fails an episode just because
+// the agent in use doesn't implement rlenv.EnchantedToolSeedAgent — see
+// that field's own doc comment.
+func TestResetFallsBackToPlainToolWhenAgentLacksEnchantedSupport(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0) // plain fakeAgent: no SeedGiveEnchantedItem
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.MineSearchRadius = 10
+	cfg.MineRequiredTool = "minecraft:netherite_pickaxe"
+	cfg.MineRequiredToolEnchantments = map[string]int{"minecraft:efficiency": 5}
+	cfg.Seeder = rlenv.DefaultEpisodeSeeder
+	env := newTestEnvironment(t, agent, cfg)
+
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if len(agent.seedGiveItemCalls) != 1 {
+		t.Fatalf("SeedGiveItem calls = %d, want 1 (fallback path)", len(agent.seedGiveItemCalls))
+	}
+	if got := agent.seedGiveItemCalls[0]; got.itemName != "minecraft:netherite_pickaxe" || got.count != 1 {
+		t.Fatalf("SeedGiveItem call = %+v, want {minecraft:netherite_pickaxe 1}", got)
 	}
 }
 

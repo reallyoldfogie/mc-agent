@@ -60,6 +60,24 @@ type Config struct {
 	// this field entirely rather than fail the episode over it).
 	MineRequiredTool string
 
+	// MineRequiredToolEnchantments, if non-empty, asks DefaultEpisodeSeeder
+	// to give MineRequiredTool pre-enchanted (via SeedGiveEnchantedItem)
+	// instead of plain (SeedGiveItem) — keys are enchantment IDs (e.g.
+	// "efficiency" or "minecraft:efficiency" — normalized the same
+	// lenient way item names already are), values their level. Exists
+	// because a
+	// live validation run found digging through solid ground is
+	// dominated by movement/pathing overhead, not break time, but a
+	// faster break time is still free, safe, and compounds with any later
+	// fix to that overhead — see
+	// docs/plans/14-buried-block-mining-and-memory-map.md's follow-up
+	// notes (mc-rsi-trainer). Ignored if MineRequiredTool is empty, or if
+	// the seeder/agent in use doesn't implement EnchantedToolSeedAgent
+	// (DefaultEpisodeSeeder then falls back to ToolSeedAgent's plain
+	// SeedGiveItem, exactly as if this field were unset — never fails the
+	// episode just because enchanting isn't available).
+	MineRequiredToolEnchantments map[string]int
+
 	// MineTargetBuried, if true, tells DefaultEpisodeSeeder that
 	// MineTargetBlock is already present somewhere in the world (e.g.
 	// baked into a shared clone-reset template's underground stone band —
@@ -78,6 +96,56 @@ type Config struct {
 	// composite goto episode. Ignored if MineTargetBlock is empty; has no
 	// effect on MineRequiredTool's own seeding, which still runs.
 	MineTargetBuried bool
+
+	// SleepSearchRadius, if > 0, enables ActionSleep: FindNearestBed
+	// searches this many blocks for a bed to sleep in. Unlike
+	// MineTargetBlock/CraftTargetItem, there is no companion "target
+	// name" field — a bed isn't identified by name (it comes in 16
+	// colors, see models.BlockShapeManager.IsBed), so SleepSearchRadius
+	// alone both enables the capability and bounds the search, following
+	// MineSearchRadius's own shape. <= 0 (the default) means this
+	// Environment instance doesn't pose a sleep task: ActionSleep becomes
+	// a safe no-op, the same way ActionMine/ActionCraft do when
+	// unconfigured — see action.go's resolveDispatch/actionLegal. Because
+	// ActionSleep is structurally always available (unlike ActionMine/
+	// ActionCraft, which additionally need a non-empty target field),
+	// this single field is what makes the whole feature inert everywhere
+	// until something explicitly turns it on — see
+	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
+	SleepSearchRadius int
+
+	// PortalSearchRadius, if > 0, enables ActionUsePortal:
+	// FindNearestPortal searches this many blocks for a
+	// nether_portal/end_portal/end_gateway block to walk into. Same shape
+	// as SleepSearchRadius's own doc comment: no companion "target name"
+	// field (a portal isn't identified by name — any of the three counts),
+	// so this single field both enables the capability and bounds the
+	// search. <= 0 (the default) means this Environment instance doesn't
+	// pose a dimension-transfer task: ActionUsePortal becomes a safe
+	// no-op, the same way ActionMine/ActionCraft/ActionSleep do when
+	// unconfigured. Note that reward.go's portalRewardBonus is
+	// deliberately NOT gated on this field (mirrors sleptThroughNightBonus's
+	// own lack of a Config gate) — a dimension change is rewarded whenever
+	// observed, whether or not this instance posed it as the task, same
+	// "judge from world-state deltas" philosophy as every other reward in
+	// this package.
+	PortalSearchRadius int
+
+	// LightPortalSearchRadius, if > 0, enables ActionLightPortal:
+	// FindPortalFrame searches this many blocks for an unlit nether
+	// portal frame (any vanilla size, 2x3 to 21x21 interior) to ignite.
+	// Same shape as PortalSearchRadius's own doc comment: no companion
+	// "target name" field, since a frame isn't identified by name either.
+	// <= 0 (the default) means this Environment instance doesn't pose a
+	// portal-lighting task: ActionLightPortal becomes a safe no-op.
+	// Unlike PortalSearchRadius/SleepSearchRadius's reward (deliberately
+	// NOT Config-gated), reward.go's lightPortalRewardBonus IS
+	// effectively gated by this field: the frame it judges "did this
+	// ignite" against (Environment.portalFrame) is only ever tracked
+	// while this is > 0 (see refreshPortalFrameTarget) — there's no
+	// frame-identifying signal to compare against otherwise, unlike
+	// GetDimension()/GetTimeOfDay(), which are always trackable.
+	LightPortalSearchRadius int
 
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's crafting task targets — enables ActionCraft, following
@@ -621,14 +689,18 @@ type TaskOverride struct {
 
 	GoToTargetDisabled bool
 	// ArriveSneaking is Config.ArriveSneaking for this episode.
-	ArriveSneaking    bool
-	TargetOffset      [3]float64
-	MineTargetBlock   string
-	MineSearchRadius  int
-	MineRequiredTool  string
-	MineTargetBuried  bool
-	CraftTargetItem   string
-	CraftSearchRadius int
+	ArriveSneaking               bool
+	TargetOffset                 [3]float64
+	MineTargetBlock              string
+	MineSearchRadius             int
+	MineRequiredTool             string
+	MineRequiredToolEnchantments map[string]int
+	MineTargetBuried             bool
+	SleepSearchRadius            int
+	PortalSearchRadius           int
+	LightPortalSearchRadius      int
+	CraftTargetItem              string
+	CraftSearchRadius            int
 
 	// EquipTargetItem is Config.EquipTargetItem for this episode.
 	EquipTargetItem string

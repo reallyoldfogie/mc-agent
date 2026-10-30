@@ -254,6 +254,23 @@ func (a *agent) setGameMode(gameMode models.GameMode) {
 	a.gameModeMu.Unlock()
 }
 
+// GetDimension returns the bot's own current dimension. initialized is
+// false until the Login packet has been processed.
+func (a *agent) GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool) {
+	a.dimensionMu.RLock()
+	defer a.dimensionMu.RUnlock()
+	return a.dimensionTypeID, a.dimensionName, a.dimensionInitialized
+}
+
+// setDimension updates the bot's own tracked dimension.
+func (a *agent) setDimension(dimensionTypeID int32, dimensionName string) {
+	a.dimensionMu.Lock()
+	a.dimensionTypeID = dimensionTypeID
+	a.dimensionName = dimensionName
+	a.dimensionInitialized = true
+	a.dimensionMu.Unlock()
+}
+
 // setMountedEntity sets the mounted vehicle entity ID and our seat index within
 // that vehicle's passenger list. Pass entityID -1 (and index -1) to indicate
 // dismounted. Both are written under one lock so a reader can never observe a
@@ -323,6 +340,17 @@ func (a *agent) GetCamelState() (*models.CamelState, bool) {
 		return inspector.GetCamelState()
 	}
 	return nil, false
+}
+
+// resetEntityTracking discards all tracked entities. Called on a
+// ClientboundRespawn (dimension change) — every entity visible before the
+// transfer belonged to a dimension the bot has just left, and the server
+// does not send individual Remove Entities packets for them; the Respawn
+// packet itself is the signal that they're all gone.
+func (a *agent) resetEntityTracking() {
+	a.entitiesMu.Lock()
+	a.entities = make(map[int32]*trackedEntity)
+	a.entitiesMu.Unlock()
 }
 
 // snapshotEntities returns a shallow copy of tracked entities for external consumption/tests.

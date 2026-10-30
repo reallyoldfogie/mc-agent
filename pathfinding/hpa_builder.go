@@ -597,3 +597,20 @@ func (b *HPABuilder) GetClusterManager() *ClusterManager {
 func (b *HPABuilder) GetAbstractGraph() *AbstractGraph {
 	return b.abstractGraph
 }
+
+// Reset discards all built clusters and abstract-graph nodes/edges. Called
+// on a dimension change: the Overworld/Nether/End all reuse the same X/Z/Y
+// coordinate space, so without this, HPA* would silently answer pathfinding
+// queries in the new dimension with cluster/entrance data built against the
+// dimension just left. Safe to call concurrently with in-flight builds —
+// clusterManager and abstractGraph each clear their own map under their own
+// existing lock rather than being replaced, so any build already holding a
+// reference to either keeps working against the now-emptied instance.
+func (b *HPABuilder) Reset() {
+	b.buildMu.Lock()
+	b.building = make(map[ClusterID]chan struct{})
+	b.buildMu.Unlock()
+
+	b.clusterManager.Clear()
+	b.abstractGraph.Clear()
+}

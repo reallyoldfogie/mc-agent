@@ -35,6 +35,44 @@ type ToolSeedAgent interface {
 	SeedGiveItem(ctx context.Context, itemName string, count int) error
 }
 
+// EnchantedToolSeedAgent is the optional capability
+// Config.MineRequiredToolEnchantments needs: giving the bot itemName
+// pre-enchanted, not plain. A separate interface from ToolSeedAgent
+// rather than a new method on it — not every agent that can give a plain
+// item can build an enchanted one (see agent.SeedGiveEnchantedItem's own
+// doc comment on how), and DefaultEpisodeSeeder already has a clean
+// fallback (ToolSeedAgent's plain SeedGiveItem) for an agent that only
+// implements that.
+type EnchantedToolSeedAgent interface {
+	// SeedGiveEnchantedItem ensures at least count of itemName, enchanted
+	// with enchantments (full enchantment ID -> level), is in the bot's
+	// inventory.
+	SeedGiveEnchantedItem(ctx context.Context, itemName string, enchantments map[string]int, count int) error
+}
+
+// SeedBedAgent is the optional capability a sleep task
+// (Config.SleepSearchRadius) needs: ensuring a complete, sleepable bed
+// exists nearby, since FindNearestBed has nothing to find in a fresh/
+// cleared world otherwise. A separate interface from SeedAgent's own
+// SeedNearbyBlock, not a reuse of it: a bed is two blocks sharing a
+// "facing"/"part" blockstate pair, not a single named block a plain
+// /setblock can place complete - see agent.SeedBed's own doc comment.
+// DefaultEpisodeSeeder uses it when the SeedAgent passed in also
+// implements it; a SeedAgent that doesn't is free to leave
+// SleepSearchRadius unhonored rather than fail the episode over it, same
+// convention as ToolSeedAgent. Debris cleanup is not this interface's
+// job: a seeded bed is cleared the same way a seeded crafting table
+// already is, via Config.ClearAreaRadius/CloneAreaFrom's existing
+// generic "wipe debris near the reset origin" mechanism (see
+// AreaClearer/AreaCloner, reset.go) - no sleep-specific cleanup exists
+// or is needed.
+type SeedBedAgent interface {
+	// SeedBed ensures a bed exists within radius blocks of the bot's
+	// current position - see agent.SeedBed's doc comment for exactly
+	// how.
+	SeedBed(ctx context.Context, radius int) error
+}
+
 // EpisodeSeeder, if set on Config, is called once per Reset (after origin
 // is captured, before mine/craft state is resolved for the returned
 // observation) to prepare the world for this episode's configured task(s).
@@ -83,9 +121,25 @@ const anyItemPickupSeedItem = "minecraft:stick"
 func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) error {
 	if cfg.MineTargetBlock != "" {
 		if cfg.MineRequiredTool != "" {
-			if toolSeeder, ok := agent.(ToolSeedAgent); ok {
-				if err := toolSeeder.SeedGiveItem(ctx, cfg.MineRequiredTool, defaultMineRequiredToolCount); err != nil {
-					return fmt.Errorf("seeding mine required tool: %w", err)
+			// Prefer the enchanted path when both the config and the
+			// agent support it; otherwise fall back to the plain one —
+			// matches MineRequiredToolEnchantments' own doc comment:
+			// never fail an episode just because enchanting isn't
+			// available.
+			gaveEnchantedTool := false
+			if len(cfg.MineRequiredToolEnchantments) > 0 {
+				if enchantedSeeder, ok := agent.(EnchantedToolSeedAgent); ok {
+					if err := enchantedSeeder.SeedGiveEnchantedItem(ctx, cfg.MineRequiredTool, cfg.MineRequiredToolEnchantments, defaultMineRequiredToolCount); err != nil {
+						return fmt.Errorf("seeding enchanted mine required tool: %w", err)
+					}
+					gaveEnchantedTool = true
+				}
+			}
+			if !gaveEnchantedTool {
+				if toolSeeder, ok := agent.(ToolSeedAgent); ok {
+					if err := toolSeeder.SeedGiveItem(ctx, cfg.MineRequiredTool, defaultMineRequiredToolCount); err != nil {
+						return fmt.Errorf("seeding mine required tool: %w", err)
+					}
 				}
 			}
 		}
@@ -102,6 +156,13 @@ func DefaultEpisodeSeeder(ctx context.Context, agent SeedAgent, cfg Config) erro
 	if cfg.CraftTargetItem != "" {
 		if err := agent.SeedCraftIngredients(ctx, cfg.CraftTargetItem); err != nil {
 			return fmt.Errorf("seeding craft ingredients: %w", err)
+		}
+	}
+	if cfg.SleepSearchRadius > 0 {
+		if bedSeeder, ok := agent.(SeedBedAgent); ok {
+			if err := bedSeeder.SeedBed(ctx, cfg.SleepSearchRadius); err != nil {
+				return fmt.Errorf("seeding bed: %w", err)
+			}
 		}
 	}
 	if cfg.PickupTargetItem != "" {

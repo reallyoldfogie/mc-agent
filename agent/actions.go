@@ -1249,6 +1249,58 @@ func (a *agent) blockStateMatchesName(stateID uint32, targetName string) bool {
 	return strings.ToLower(block.Name) == targetName
 }
 
+// BlockExistsInRadius reports whether any instance of blockName exists
+// within radius blocks of (x, y, z), in loaded chunks, with no
+// line-of-sight requirement - see rlenv.BuriedTargetAgent's own doc
+// comment for why this needs to be a LOS-free sibling of FindVisibleBlock
+// rather than reusing it: existence is all a destruction check needs, and
+// skipping the LOS raycast makes this strictly cheaper too. Scans the
+// same cubic volume FindVisibleBlock would (shellOffsets, early-exit on
+// the first match found - unlike FindVisibleBlock's "keep looking for
+// something closer," this only ever needs one), but around an explicit
+// center rather than the bot's own current position: the caller is
+// usually checking a buried target's Reset-time search anchor, not
+// wherever the bot happens to be standing right now.
+func (a *agent) BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error) {
+	world := a.GetWorld()
+	if world == nil {
+		return false, errors.New("world not available")
+	}
+	if a.blockMgr == nil {
+		return false, errors.New("block manager not available")
+	}
+	if radius <= 0 {
+		radius = 8
+	}
+	targetName := strings.ToLower(blockName)
+	baseX, baseY, baseZ := math.Floor(x), math.Floor(y), math.Floor(z)
+	nameMatchCache := make(map[uint32]bool)
+
+	for r := 0; r <= radius; r++ {
+		for _, off := range shellOffsets(r) {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			cx := baseX + float64(off[0])
+			cy := baseY + float64(off[1])
+			cz := baseZ + float64(off[2])
+			stateID, loaded := world.GetBlockAt(cx, cy, cz)
+			if !loaded || stateID == 0 {
+				continue
+			}
+			matches, cached := nameMatchCache[stateID]
+			if !cached {
+				matches = a.blockStateMatchesName(stateID, targetName)
+				nameMatchCache[stateID] = matches
+			}
+			if matches {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // FindAllVisibleBlocksInSphere returns all non-air blocks within the given radius that have line of sight.
 // Uses efficient surface-based raycasting: only ~6000 rays for radius=32 instead of 137K block checks.
 // Blocks are returned sorted by distance from the agent's eye position.
@@ -1396,7 +1448,11 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	// Instant break: hardness 0 or break time <= 1 tick
 	if breakTime <= 0.05 {
 		a.logf("[MineBlockAt] Instant break for %s", blockName)
-		return a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID)
+		if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
+			return err
+		}
+		a.blocksMinedCount.Add(1)
+		return nil
 	}
 
 	// Wait for the block to break, sending arm swings periodically
@@ -1426,6 +1482,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
 		return err
 	}
+	a.blocksMinedCount.Add(1)
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
 }

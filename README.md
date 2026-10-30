@@ -122,6 +122,10 @@ own dispatch and are omitted here — see [RL Action Space](#rl-action-space-rle
 | `runCombat [radius] [includeNeutral]` | Run autonomous combat - melee, ranged weapons, shields, spear support |
 | `runCombatWithPolicy <radius> [includePlayers] [includeNeutral]` | Run autonomous combat with explicit target-category policy (PvP opt-in via `includePlayers`) |
 | `killCreeperForGunpowder` | Fight a creeper, keep a safe distance, collect gunpowder when it drops (caller must equip a melee weapon first) |
+| `sleep [<x> <y> <z>]` | Sleep in the nearest visible bed, or one at exact coordinates |
+| `wakeUp` | Leave the bed the agent is currently sleeping in |
+| `usePortal [maxDistance]` / `usePortal <x> <y> <z>` | Walk to the nearest nether/end portal within maxDistance blocks (default 16), or to an exact position, and wait for the dimension to actually change |
+| `lightPortal [maxDistance]` | Find the nearest unlit nether portal frame (any vanilla size, 2x3 to 21x21 interior) within maxDistance blocks (default 16) and ignite it with flint and steel |
 
 ### Vehicles & flight
 

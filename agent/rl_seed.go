@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -360,6 +361,68 @@ func (a *agent) SeedGiveItem(ctx context.Context, itemName string, count int) er
 	for a.InventoryCount(itemName) == 0 {
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("seed give item: gave %s but it never synced to this bot's inventory within %s", normalized, seedSyncTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(seedSyncPollInterval):
+		}
+	}
+	return nil
+}
+
+// SeedGiveEnchantedItem ensures at least count of itemName, enchanted with
+// enchantments (ID -> level, e.g. {"efficiency": 5}), is in the bot's own
+// inventory - see rlenv.EnchantedToolSeedAgent. Shares SeedGiveItem's
+// idempotent, RCON-only, inventory-preserving behavior (see its own doc
+// comment); differs only in using 1.20.5+'s item-component /give syntax
+// (give <player> <item>[minecraft:enchantments={levels:{...}}] <count>)
+// instead of a bare item name, so the given tool actually carries the
+// requested enchantments rather than needing a separate step to add them.
+// Idempotency here only checks count, not that an existing stack already
+// carries these exact enchantments - matches SeedGiveItem's own "leftover
+// from a previous episode" reasoning: nothing clears a mine task's
+// inventory between episodes, so a tool already present (enchanted or
+// not) is left alone rather than re-given every episode.
+func (a *agent) SeedGiveEnchantedItem(ctx context.Context, itemName string, enchantments map[string]int, count int) error {
+	if len(enchantments) == 0 {
+		return a.SeedGiveItem(ctx, itemName, count)
+	}
+	if a.cfg.RCON == nil {
+		return fmt.Errorf("seed give enchanted item: RCON not configured for this agent")
+	}
+	if a.InventoryCount(itemName) >= count {
+		return nil
+	}
+
+	normalized := normalizeItemName(itemName)
+	// Sorted for a deterministic command string (map iteration order
+	// isn't) - matters for anything that logs/asserts the exact RCON
+	// command, not for the server's own interpretation of it.
+	ids := make([]string, 0, len(enchantments))
+	for id := range enchantments {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	// No "levels:" wrapper - confirmed live against a real 1.21.5 server:
+	// give ...[minecraft:enchantments={levels:{"minecraft:efficiency":5}}]
+	// fails ("Malformed 'minecraft:enchantments' component... missed
+	// input: {levels:{...}}"); the component's value is the ID->level map
+	// directly, give ...[minecraft:enchantments={"minecraft:efficiency":5}].
+	levels := make([]string, 0, len(enchantments))
+	for _, id := range ids {
+		levels = append(levels, fmt.Sprintf("%q:%d", normalizeItemName(id), enchantments[id]))
+	}
+	command := fmt.Sprintf("give %s %s[minecraft:enchantments={%s}] %d",
+		a.cfg.Name, normalized, strings.Join(levels, ","), count)
+	if _, err := a.cfg.RCON.Exec(ctx, command); err != nil {
+		return fmt.Errorf("give enchanted %s via RCON: %w", normalized, err)
+	}
+
+	deadline := time.Now().Add(seedSyncTimeout)
+	for a.InventoryCount(itemName) == 0 {
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("seed give enchanted item: gave %s but it never synced to this bot's inventory within %s", normalized, seedSyncTimeout)
 		}
 		select {
 		case <-ctx.Done():

@@ -106,6 +106,9 @@ func (w *testMockWorld) GetDifficulty() (difficulty uint8, locked bool, ok bool)
 }
 
 func (w *testMockWorld) SetDifficulty(difficulty uint8, locked bool) {}
+func (w *testMockWorld) Reset()                                      {}
+func (w *testMockWorld) GetHeightBounds() (minY, maxY int32)         { return -64, 319 }
+func (w *testMockWorld) SetHeightBounds(minY, maxY int32)            {}
 
 // testMockShapeManager is a simple mock block shape manager
 type testMockShapeManager struct{}

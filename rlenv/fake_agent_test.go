@@ -35,6 +35,48 @@ type fakeAgent struct {
 	moveToCanceled      bool          // set when a delayed MoveTo observed its context being canceled
 	moveToWithChatCalls int
 
+	// Sleep/time-of-day simulation: bedX/Y/Z/bedFound is what
+	// FindNearestBed reports; timeOfDayTicks/timeOfDayKnown is what
+	// GetTimeOfDay reports (see TimeOfDayAgent). sleepErr, if set, is
+	// what SleepInBed returns instead of succeeding - lets a test drive
+	// the "position never snapped into the bed" rejection path without
+	// a real server. sleepCalls/wakeUpCalls just count invocations.
+	bedX, bedY, bedZ float64
+	bedFound         bool
+	sleepErr         error
+	sleepCalls       int
+	wakeUpCalls      int
+	timeOfDayTicks   int64
+
+	// Portal simulation: portalX/Y/Z/portalFound is what FindNearestPortal
+	// reports; usePortalAtErr, if set, is what UsePortalAt returns instead
+	// of succeeding (simulating the dimension never changing) -
+	// usePortalAtCalls just counts invocations. Mirrors bed/sleep's own
+	// shape exactly.
+	portalX, portalY, portalZ float64
+	portalFound               bool
+	usePortalAtErr            error
+	usePortalAtCalls          int
+
+	// Portal frame simulation: frame/frameFound is what FindPortalFrame
+	// reports; lightPortalFrameErr, if set, is what LightPortalFrame
+	// returns instead of succeeding (simulating the ignition never
+	// confirming) - lightPortalFrameCalls just counts invocations. Mirrors
+	// portal/UsePortalAt's own shape exactly.
+	frame                  models.PortalFrame
+	frameFound             bool
+	lightPortalFrameErr    error
+	lightPortalFrameCalls  int
+	frameInteriorBlockName string
+
+	// dimensionTypeID/dimensionName/dimensionInitialized back GetDimension
+	// - defaults to the zero value (Overworld, uninitialized), settable so
+	// a test can simulate a dimension change.
+	dimensionTypeID      int32
+	dimensionName        string
+	dimensionInitialized bool
+	timeOfDayKnown       bool
+
 	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
 	// name is mineBlockName ("" means nothing is there). FindVisibleBlock
 	// only reports it found when the queried name matches; MineBlockAt
@@ -64,12 +106,18 @@ type fakeAgent struct {
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
 	// recipes, instead of the single mine block / craft target above.
-	chainInv         map[string]int
-	chainBlocks      map[[3]int]string
-	chainDrops       int
-	clearedInventory int
-	clearedDropAreas [][4]int
-	failNextPlace    bool
+	chainInv    map[string]int
+	chainBlocks map[[3]int]string
+	// chainBlocksHidden mirrors mineBlockHidden's own role (see its doc
+	// comment), but for the chainBlocks-backed FindVisibleBlock path: a
+	// block can be present in chainBlocks (so BlockNameAt/MineBlockAt
+	// still resolve it) while this makes FindVisibleBlock report it as
+	// not found, simulating a buried target that hasn't been glimpsed yet.
+	chainBlocksHidden bool
+	chainDrops        int
+	clearedInventory  int
+	clearedDropAreas  [][4]int
+	failNextPlace     bool
 	// placeThenFail places the block but reports failure once: the world
 	// changed, the caller was not told (the bot's view lagged).
 	placeThenFail         bool
@@ -877,6 +925,48 @@ func (f *fakeAgent) SetFlying(context.Context, bool) error { return nil }
 func (f *fakeAgent) StartCamFollow(context.Context, string, float64) error { return nil }
 func (f *fakeAgent) StopCamFollow() error                                  { return nil }
 
+// FindNearestBed reports the simulated bed's position, same simple
+// contract as the mine-block simulation fields above - one instance,
+// visible exactly when the test configured it to be.
+func (f *fakeAgent) FindNearestBed(context.Context, int) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.bedFound {
+		return models.V3{}, false, nil
+	}
+	return models.V3{X: f.bedX, Y: f.bedY, Z: f.bedZ}, true, nil
+}
+
+// SleepInBed records the call and returns sleepErr if the test configured
+// one (simulating the server rejecting/never confirming the attempt),
+// nil otherwise (simulating a successful sleep with no further state
+// change - this fake has no notion of "currently sleeping" to track).
+func (f *fakeAgent) SleepInBed(context.Context, models.V3) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sleepCalls++
+	return f.sleepErr
+}
+
+// WakeUp just records the call - nothing downstream of it needs
+// WakeUp's own effect simulated yet (there is no ActionWakeUp; see
+// action.go's own doc comment on why).
+func (f *fakeAgent) WakeUp(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wakeUpCalls++
+	return nil
+}
+
+// GetTimeOfDay implements rlenv.TimeOfDayAgent for tests that need direct
+// control over simulated time-of-day (the sleep legality gate, the
+// night-to-morning reward) without a real server's own clock.
+func (f *fakeAgent) GetTimeOfDay() (int64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.timeOfDayTicks, f.timeOfDayKnown
+}
+
 // FindVisibleBlock reports the simulated mine block's position only when
 // its current name matches blockName — mirrors the real implementation's
 // contract (finds the nearest visible instance of that specific block name)
@@ -887,9 +977,11 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 	defer f.mu.Unlock()
 	f.findVisibleBlockCalls++
 	if f.chainBlocks != nil {
-		for pos, name := range f.chainBlocks {
-			if name == blockName {
-				return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+		if !f.chainBlocksHidden {
+			for pos, name := range f.chainBlocks {
+				if name == blockName {
+					return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+				}
 			}
 		}
 		return 0, 0, 0, false, nil
@@ -952,6 +1044,9 @@ func (f *fakeAgent) BlockNameAt(ix, iy, iz int) string {
 	}
 	if f.mineBlockName != "" && ix == int(f.mineBlockX) && iy == int(f.mineBlockY) && iz == int(f.mineBlockZ) {
 		return f.mineBlockName
+	}
+	if f.frameInteriorBlockName != "" && ix == int(f.frame.InteriorMin.X) && iy == int(f.frame.InteriorMin.Y) && iz == int(f.frame.InteriorMin.Z) {
+		return f.frameInteriorBlockName
 	}
 	return "minecraft:air"
 }
@@ -1071,6 +1166,72 @@ func (f *fakeAgent) SeedGiveItem(_ context.Context, itemName string, count int) 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.seedGiveItemCalls = append(f.seedGiveItemCalls, seedGiveItemCall{itemName: itemName, count: count})
+	return f.seedErr
+}
+
+// fakeEnchantedToolAgent wraps fakeAgent to additionally satisfy
+// rlenv.EnchantedToolSeedAgent — a separate type, not a method directly on
+// fakeAgent, so existing tests using plain fakeAgent keep exercising
+// DefaultEpisodeSeeder's fallback path (an agent that only implements
+// ToolSeedAgent) rather than silently gaining the enchanted capability too.
+type fakeEnchantedToolAgent struct {
+	*fakeAgent
+	seedGiveEnchantedItemCalls []seedGiveEnchantedItemCall
+}
+
+type seedGiveEnchantedItemCall struct {
+	itemName     string
+	enchantments map[string]int
+	count        int
+}
+
+// fakeBuriedTargetAgent wraps fakeAgent to additionally satisfy
+// rlenv.BuriedTargetAgent — a separate type for the same reason
+// fakeEnchantedToolAgent is: existing tests using plain fakeAgent keep
+// exercising refreshMineBuriedExistence's own "agent doesn't support this
+// capability" no-op path. exists is mutable directly by the test (not
+// computed from any simulated world state) so a test can flip it mid-
+// episode to simulate the buried target being destroyed.
+type fakeBuriedTargetAgent struct {
+	*fakeAgent
+	exists                   bool
+	blockExistsInRadiusCalls []blockExistsInRadiusCall
+}
+
+type blockExistsInRadiusCall struct {
+	x, y, z   float64
+	blockName string
+	radius    int
+}
+
+func (f *fakeBuriedTargetAgent) BlockExistsInRadius(_ context.Context, x, y, z float64, blockName string, radius int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blockExistsInRadiusCalls = append(f.blockExistsInRadiusCalls, blockExistsInRadiusCall{x: x, y: y, z: z, blockName: blockName, radius: radius})
+	return f.exists, nil
+}
+
+// fakeBlocksMinedAgent wraps fakeAgent to additionally satisfy
+// rlenv.BlocksMinedCounter — same reason as fakeBuriedTargetAgent: existing
+// tests using plain fakeAgent keep exercising the digProgressBonus "agent
+// doesn't support this capability" no-op path. count is mutable directly
+// by the test (not derived from any simulated mining action) so a test can
+// bump it to simulate confirmed block breaks between Step calls.
+type fakeBlocksMinedAgent struct {
+	*fakeAgent
+	count int64
+}
+
+func (f *fakeBlocksMinedAgent) BlocksMinedCount() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.count
+}
+
+func (f *fakeEnchantedToolAgent) SeedGiveEnchantedItem(_ context.Context, itemName string, enchantments map[string]int, count int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedGiveEnchantedItemCalls = append(f.seedGiveEnchantedItemCalls, seedGiveEnchantedItemCall{itemName: itemName, enchantments: enchantments, count: count})
 	return f.seedErr
 }
 
@@ -1295,6 +1456,95 @@ func (f *fakeAgent) PlaceBlockAt(_ context.Context, pos models.V3, itemName stri
 // pretending to implement behavior nothing here exercises or verifies.
 func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (models.BuildStructureResult, error) {
 	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
+}
+
+// FindPortalFrame reports frame/frameFound, mirroring FindNearestPortal's
+// own shape exactly.
+func (f *fakeAgent) FindPortalFrame(context.Context, int) (models.PortalFrame, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.frameFound {
+		return models.PortalFrame{}, false, nil
+	}
+	return f.frame, true, nil
+}
+
+// LightPortalFrame records the call and returns lightPortalFrameErr if the
+// test configured one (simulating the ignition never confirming), nil
+// otherwise (simulating a successful ignition - this fake has no notion of
+// "currently lit" to track beyond what the test mutates directly on frame).
+// Mirrors UsePortalAt's own shape exactly.
+func (f *fakeAgent) LightPortalFrame(context.Context, models.PortalFrame) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lightPortalFrameCalls++
+	if f.lightPortalFrameErr == nil {
+		f.frameInteriorBlockName = "minecraft:nether_portal"
+	}
+	return f.lightPortalFrameErr
+}
+
+// LightPortal mirrors the real agent's own shape: resolve via
+// FindPortalFrame, then delegate to LightPortalFrame. Simulated, not
+// stubbed out, now that ActionLightPortal actually dispatches through this
+// path (see refreshPortalFrameTarget/resolveDispatch).
+func (f *fakeAgent) LightPortal(ctx context.Context, maxDistance int) error {
+	frame, found, err := f.FindPortalFrame(ctx, maxDistance)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("no portal frame found")
+	}
+	return f.LightPortalFrame(ctx, frame)
+}
+
+// UsePortal mirrors the real agent's own shape: resolve via
+// FindNearestPortal, then delegate to UsePortalAt. Simulated, not stubbed
+// out, now that ActionUsePortal actually dispatches through this path
+// (see refreshPortalTarget/resolveDispatch).
+func (f *fakeAgent) UsePortal(ctx context.Context, maxDistance int) error {
+	pos, found, err := f.FindNearestPortal(ctx, maxDistance)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no portal block found within %d blocks", maxDistance)
+	}
+	return f.UsePortalAt(ctx, pos)
+}
+
+// FindNearestPortal reports portalX/Y/Z/portalFound, mirroring
+// FindNearestBed's own shape exactly.
+func (f *fakeAgent) FindNearestPortal(context.Context, int) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.portalFound {
+		return models.V3{}, false, nil
+	}
+	return models.V3{X: f.portalX, Y: f.portalY, Z: f.portalZ}, true, nil
+}
+
+// UsePortalAt records the call and returns usePortalAtErr if the test
+// configured one (simulating the dimension never changing), nil otherwise
+// (simulating a successful transfer with no further state change - this
+// fake has no notion of "currently in a different dimension" to track).
+// Mirrors SleepInBed's own shape exactly.
+func (f *fakeAgent) UsePortalAt(context.Context, models.V3) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.usePortalAtCalls++
+	return f.usePortalAtErr
+}
+
+// GetDimension reports dimensionTypeID/dimensionName/dimensionInitialized
+// - defaults to the Overworld, uninitialized, same as a real agent before
+// its first Login/Respawn, but settable so a test can simulate a
+// dimension change for portalRewardBonus's own reward check (reward.go).
+func (f *fakeAgent) GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dimensionTypeID, f.dimensionName, f.dimensionInitialized
 }
 
 // ClearInventory and ClearDroppedItems make fakeAgent a rlenv.ChainSeedAgent.

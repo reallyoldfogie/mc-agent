@@ -23,8 +23,26 @@ const (
 	// damagePenaltyScale converts health lost this step into reward: -1
 	// per point of health lost.
 	damagePenaltyScale float32 = 1.0
-	// arrivalBonus is added once, the step the target is reached.
+	// arrivalBonus is added once, the step the target is reached — except
+	// during a buried-target search (Environment.buriedTargetActive()),
+	// where Step pays it once per newly-explored quadrant instead (see
+	// markExploredQuadrant's return value and its call site in Step) rather
+	// than only the first-ever arrival: a bot that has already collected
+	// this bonus by reaching quadrant 1 would otherwise have no reward
+	// signal left to keep searching quadrants 2-4 once the ore isn't there.
 	arrivalBonus float32 = 10.0
+	// digProgressBonus is added per confirmed block break
+	// (BlocksMinedCounter) during a buried-target search specifically —
+	// found live (mc-rsi-trainer, 2026-10-27) that distance-shaping plus a
+	// per-quadrant arrival bonus still rewards pure wandering toward a
+	// goto point, with nothing distinguishing a bot that actually digs
+	// through overburden from one that paces back and forth just inside
+	// Config.ArrivalThreshold. Deliberately much smaller than
+	// arrivalBonus/mineRewardBonus (10.0): it's meant to outweigh a few
+	// steps' worth of timePenalty drag during a multi-second dig, not to
+	// rival the bonuses for genuinely finishing the search or the task.
+	// Tunable; revisit if live data shows it's mispriced either direction.
+	digProgressBonus float32 = 0.5
 	// mineRewardBonus is added once, the step Config.MineTargetBlock's
 	// nearest visible instance is observed to change (see
 	// Environment.Step's before/after BlockNameAt comparison) — same
@@ -135,6 +153,57 @@ const (
 	// deathPenalty is added (as a negative) the step health is observed to
 	// reach zero.
 	deathPenalty float32 = -20.0
+	// sleptThroughNightBonus is added once, the step the world's time of
+	// day is observed to jump backward from within vanilla's own
+	// sleep-allowed window (Environment.sleepWindowActive at the START of
+	// the step - see refreshTimeOfDay/vanillaSleepWindowStart/End) to a
+	// smaller value - the one way that can happen other than a full
+	// natural day passing mid-step (steps are far shorter than a 24000-tick
+	// day), so it's an unambiguous "slept through the night" signal, not a
+	// guess. Avoid mob damage (goal 2 of docs/plans/SLEEP_ACTION_PLAN.md,
+	// local/untracked) needs no reward term of its own: damagePenaltyScale
+	// already penalizes health loss every step, so a policy using
+	// ActionSleep to avoid Phantom/mob damage is rewarded by that penalty
+	// simply not firing - judged from world-state deltas, not from which
+	// action ran, same philosophy as mineRewardBonus/craftRewardBonus.
+	// Same magnitude as those two: "this episode's task was accomplished."
+	sleptThroughNightBonus float32 = 10.0
+	// portalRewardBonus is added once, the step LiveAgent.GetDimension()'s
+	// tracked dimension type/name is observed to change from what it was
+	// at the start of the step — same magnitude/philosophy as
+	// mineRewardBonus/craftRewardBonus/sleptThroughNightBonus: "this
+	// episode's task was accomplished," judged from an actual world-state
+	// delta rather than from whether ActionUsePortal specifically was
+	// dispatched (a server-initiated transfer — e.g. a win-game credits
+	// sequence completing on its own — counts exactly the same as one
+	// this episode caused). Deliberately NOT gated on
+	// Config.PortalSearchRadius > 0, mirroring sleptThroughNightBonus's
+	// own lack of a Config gate exactly: without this, ActionUsePortal
+	// has no training signal at all — it's legal whenever a portal is
+	// visible, but nothing ever differentiates choosing it from choosing
+	// ActionWait, so a policy has no gradient pushing it toward using one
+	// at the right time (see action.go's own ActionReturnHome removal
+	// for what an ungraded, always-available action costs: pure wasted
+	// probability mass). Ends the episode on the same "world fundamentally
+	// changed" reasoning flyRewardBonus/arrivalBonus already use for
+	// their own one-shot conditions — a dimension transfer invalidates
+	// this episode's own position-relative goals (GoToTarget's target,
+	// any named-block/item search radius) the same way reaching a fly
+	// target does.
+	portalRewardBonus float32 = 10.0
+	// lightPortalRewardBonus is added once, the step the frame
+	// Environment started the step tracking (Environment.portalFrame) is
+	// observed to ignite - its interior's block name changing at all
+	// (mirrors mineRewardBonus's own "changed at all, not narrowly
+	// 'became X'" reasoning) - judged from actual world state, not from
+	// whether ActionLightPortal specifically was dispatched. Same
+	// magnitude/philosophy as every other one-shot task-accomplished
+	// bonus in this file. Unlike portalRewardBonus/sleptThroughNightBonus,
+	// this one IS effectively gated by Config.LightPortalSearchRadius:
+	// there's no frame to judge "did it ignite" against unless this
+	// Environment is actually tracking one (see
+	// Config.LightPortalSearchRadius's own doc comment).
+	lightPortalRewardBonus float32 = 10.0
 )
 
 // stepOutcome bundles what computeReward needs from a Step call: the

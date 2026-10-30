@@ -13,7 +13,19 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
+	mcworld "github.com/reallyoldfogie/mc-agent/world"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
+)
+
+// winGameRespawnDelaySeenCredits/winGameRespawnDelayAlreadySeenCredits are
+// how long onGameEvent's win-game branch waits before sending
+// PERFORM_RESPAWN. Vanilla lets a human player skip the end credits by
+// pressing any key the moment they start scrolling, so neither value
+// attempts to match the credits' real runtime - they only need to be "long
+// enough not to race the server's own processing of the win-game event."
+const (
+	winGameRespawnDelaySeenCredits        = 2 * time.Second
+	winGameRespawnDelayAlreadySeenCredits = 500 * time.Millisecond
 )
 
 // handlers returns set of packet handlers needed.
@@ -166,6 +178,12 @@ func (a *agent) handlers() []bot.PacketHandler {
 			Name:     "ClientboundLogin",
 			Priority: 100,
 			F:        a.onLogin,
+		},
+		{
+			ID:       a.packetMgr.GetClientboundPacketID("ClientboundRespawn"),
+			Name:     "ClientboundRespawn",
+			Priority: 100,
+			F:        a.onRespawn,
 		},
 		{
 			ID:       a.packetMgr.GetClientboundPacketID("ClientboundPosition"),
@@ -1693,6 +1711,73 @@ func (a *agent) onGameEvent(p pk.Packet) error {
 		a.setGameMode(gameMode)
 	}
 
+	// LEVEL_CHUNKS_LOAD_START (game event reason 13) - sent shortly after a
+	// ClientboundRespawn to tell the client the dimension transfer is a
+	// clean reset and new terrain is about to stream in. onRespawn already
+	// pauses outbound position updates (NotifyDead) the moment the Respawn
+	// itself arrives, and onClientboundPosition already resumes them
+	// (NotifyRespawned) on the teleport that always follows, so this event
+	// carries no additional action for a bot with no renderer to hold off —
+	// it's handled here only to keep the signal visible/logged rather than
+	// silently ignored, and to pause defensively (idempotent — safe even if
+	// already paused) in case some server implementation ever sends it
+	// without a preceding Respawn.
+	const gameEventStartWaitingForChunks = 13
+	if eventType == gameEventStartWaitingForChunks {
+		a.logf("[onGameEvent] Level chunks load start (dimension transfer in progress)")
+		a.movementMu.RLock()
+		moveExec := a.moveExec
+		a.movementMu.RUnlock()
+		if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
+			notifier.NotifyDead()
+		}
+	}
+
+	// WIN_GAME (game event reason 4) - sent when the local player touches
+	// the End's exit portal after killing the Ender Dragon. The server does
+	// NOT respawn the player on its own: the *client* is responsible for
+	// sending ServerboundClientCommand(PERFORM_RESPAWN) - the exact same
+	// packet models.Respawner.Respawn() already sends for death - once it's
+	// done with the credits screen (or immediately, if value==0, meaning
+	// this player has already seen them on a prior dragon kill/portal use).
+	// Only then does the server send the ClientboundRespawn that actually
+	// moves the player back to the Overworld, flowing through the same
+	// onRespawn dispatch as any other dimension transfer - no special
+	// casing needed there.
+	const gameEventWinGame = 4
+	if eventType == gameEventWinGame {
+		// value!=0 signals the full first-time credits roll; vanilla lets a
+		// player skip it immediately by pressing any key once it starts, so
+		// this is deliberately a short, bot-appropriate wait rather than an
+		// attempt to match the human-facing credits' real runtime - there's
+		// no server-side minimum hold before PERFORM_RESPAWN is accepted.
+		// TODO: confirm against a live capture if this ever needs to be
+		// more than "long enough not to race the server."
+		wait := winGameRespawnDelaySeenCredits
+		if value == 0 {
+			wait = winGameRespawnDelayAlreadySeenCredits
+		}
+		a.logf("[onGameEvent] Win game (value=%.1f) - sending PERFORM_RESPAWN after %s", value, wait)
+
+		a.movementMu.RLock()
+		moveExec := a.moveExec
+		a.movementMu.RUnlock()
+		if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
+			notifier.NotifyDead()
+		}
+
+		if r := a.getRespawner(); r != nil {
+			go func() {
+				time.Sleep(wait)
+				if err := r.Respawn(); err != nil {
+					a.logf("[onGameEvent][ERROR] Win-game Respawn() failed: %v", err)
+				}
+			}()
+		} else {
+			a.logf("[onGameEvent][WARN] Win game: no Respawner available, bot will remain in the End")
+		}
+	}
+
 	return nil
 }
 
@@ -2069,12 +2154,93 @@ func (a *agent) onLogin(p pk.Packet) error {
 	return nil
 }
 
-// sendPlayerLoadedOnce sends ServerboundPlayerLoaded exactly once per connection
-// lifecycle. Required for 1.21.4+ where the server keeps a per-player
-// remainingLoadTicks=60 counter and silently drops interact/vehicle/use-entity
-// packets while !PlayerEntity.isLoaded(). Vanilla clients send this packet once
-// after finishing the world load. For 1.21.1–1.21.3 the version-specific
-// implementation is a no-op (the packet doesn't exist server-side).
+// onRespawn handles ClientboundRespawn — sent whenever the local player's
+// dimension changes (nether/end portal use, the end's exit portal, or an
+// operator's /execute in). Per the protocol, this is a blanket wipe: the
+// server does not send individual Remove Entities/Unload Chunk packets for
+// the dimension being left, so everything tied to that dimension's
+// coordinate space needs to be discarded here rather than trickling out
+// via packets that never arrive. Unlike onLogin, this does not carry a new
+// entity ID (the connection and entity stay the same).
+func (a *agent) onRespawn(p pk.Packet) error {
+	if a.versionHandler == nil {
+		return fmt.Errorf("missing version handler")
+	}
+
+	dimensionTypeID, dimensionName, err := a.versionHandler.Play().ParseRespawn(p)
+	if err != nil {
+		return err
+	}
+
+	a.logf("[Agent %s] Respawn: dimension=%s (type %d)", a.cfg.Name, dimensionName, dimensionTypeID)
+	a.setDimension(dimensionTypeID, dimensionName)
+
+	// Dimension-specific build height (Nether/End use min_y=0/height=256 —
+	// 16 sections — vs the Overworld's -64..319/24 sections). Falls back
+	// to the Overworld's own bounds if the lookup fails for any reason
+	// (registry not yet received, unknown dimension, missing NBT fields)
+	// rather than silently keeping whatever dimension's bounds were active
+	// before this transfer.
+	if a.worldMgr != nil {
+		if minY, maxY, ok := a.getDimensionHeightBounds(dimensionName); ok {
+			a.logf("[Agent %s] Dimension %s height bounds: %d..%d", a.cfg.Name, dimensionName, minY, maxY)
+			a.worldMgr.SetHeightBounds(minY, maxY)
+		} else {
+			a.logf("[Agent %s][WARN] No height bounds found for dimension %s, defaulting to the Overworld's", a.cfg.Name, dimensionName)
+			a.worldMgr.SetHeightBounds(mcworld.MIN_SECTION_Y*mcworld.SECTION_HEIGHT, (mcworld.MIN_SECTION_Y+mcworld.SECTION_COUNT)*mcworld.SECTION_HEIGHT-1)
+		}
+	}
+
+	// Discard every chunk, block override, world-age/time-of-day,
+	// difficulty, and world-border value tied to the dimension just left —
+	// the new dimension sends its own copies of all of these independently,
+	// on no particular guaranteed schedule.
+	if a.worldMgr != nil {
+		a.worldMgr.Reset()
+	}
+
+	// Entities visible before the transfer belonged to the old dimension.
+	a.resetEntityTracking()
+
+	// HPA* clusters/entrances are keyed by X/Z/Y only; the Overworld,
+	// Nether, and End all reuse the same coordinate space, so without this
+	// a stale cluster from the dimension just left could silently answer a
+	// pathfinding query once the bot is physically in the new dimension at
+	// the same coordinates.
+	if a.hpaUpdateHandler != nil {
+		a.hpaUpdateHandler.Reset()
+	}
+
+	// Re-arm ServerboundPlayerLoaded for the new dimension — the server
+	// re-gates PlayerEntity.isLoaded() per dimension transfer, not just
+	// once per TCP connection.
+	a.resetPlayerLoadedGate()
+
+	// Pause outbound position updates until the server's post-Respawn
+	// ClientboundPosition places the bot at the new dimension's spawn —
+	// mirrors onDeath's NotifyDead(), for the same reason: don't send a
+	// position computed against a world that was just cleared out from
+	// under the physics simulation. onClientboundPosition already calls
+	// NotifyRespawned() unconditionally on every position packet, so no
+	// separate resume call is needed here.
+	a.movementMu.RLock()
+	moveExec := a.moveExec
+	a.movementMu.RUnlock()
+	if notifier, ok := moveExec.(interface{ NotifyDead() }); ok {
+		notifier.NotifyDead()
+	}
+
+	return nil
+}
+
+// sendPlayerLoadedOnce sends ServerboundPlayerLoaded exactly once per "load"
+// (initial join, and again after every dimension change — see
+// resetPlayerLoadedGate). Required for 1.21.4+ where the server keeps a
+// per-player remainingLoadTicks=60 counter and silently drops
+// interact/vehicle/use-entity packets while !PlayerEntity.isLoaded().
+// Vanilla clients send this packet once after finishing each world load.
+// For 1.21.1–1.21.3 the version-specific implementation is a no-op (the
+// packet doesn't exist server-side).
 func (a *agent) sendPlayerLoadedOnce() {
 	if a.versionHandler == nil || a.client == nil {
 		a.logf("[Agent %s][WARN] Version handler or client not available; cannot send PlayerLoaded", a.cfg.Name)
@@ -2087,18 +2253,35 @@ func (a *agent) sendPlayerLoadedOnce() {
 		return
 	}
 
-	a.playerLoadedSent.Do(func() {
-		conn := a.client.Conn()
-		if conn == nil {
-			a.logf("[Agent %s][WARN] Client connection not available; skipping SendPlayerLoaded (likely in tests)", a.cfg.Name)
-			return
-		}
-		if err := lifecycle.SendPlayerLoaded(conn); err != nil {
-			a.logf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
-			return
-		}
-		a.logf("[Agent %s] Sent ServerboundPlayerLoaded (post first-teleport-ack)", a.cfg.Name)
-	})
+	a.playerLoadedSentMu.Lock()
+	alreadySent := a.playerLoadedSent
+	a.playerLoadedSent = true
+	a.playerLoadedSentMu.Unlock()
+	if alreadySent {
+		return
+	}
+
+	conn := a.client.Conn()
+	if conn == nil {
+		a.logf("[Agent %s][WARN] Client connection not available; skipping SendPlayerLoaded (likely in tests)", a.cfg.Name)
+		return
+	}
+	if err := lifecycle.SendPlayerLoaded(conn); err != nil {
+		a.logf("[Agent %s][ERROR] SendPlayerLoaded failed: %v", a.cfg.Name, err)
+		return
+	}
+	a.logf("[Agent %s] Sent ServerboundPlayerLoaded (post first-teleport-ack)", a.cfg.Name)
+}
+
+// resetPlayerLoadedGate re-arms sendPlayerLoadedOnce so the next
+// ClientboundPosition in the new dimension sends a fresh
+// ServerboundPlayerLoaded. Called on ClientboundRespawn (dimension change) —
+// the server re-gates PlayerEntity.isLoaded() per dimension transfer, not
+// just once per TCP connection.
+func (a *agent) resetPlayerLoadedGate() {
+	a.playerLoadedSentMu.Lock()
+	a.playerLoadedSent = false
+	a.playerLoadedSentMu.Unlock()
 }
 
 // onClientboundPosition updates absolute position and applies rotation flags.

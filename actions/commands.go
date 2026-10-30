@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1110,6 +1110,78 @@ func mineAt(ctx context.Context, agent models.CommandAgent, x, y, z float64) mod
 	return completion
 }
 
+// sleepSearchRadius is "sleep"'s own default bed-search radius when no
+// exact coordinates are given - mirrors mineSearchRadius's own role for
+// "mine <blockName>".
+const sleepSearchRadius = 32
+
+type Sleep struct{}
+
+func (Sleep) Name() string  { return "sleep" }
+func (Sleep) Usage() string { return "sleep [<x> <y> <z>]" }
+func (Sleep) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) == 0 {
+		pos, found, err := agent.FindNearestBed(ctx, sleepSearchRadius)
+		if err != nil {
+			_ = agent.SendChat("Find bed error: " + err.Error())
+			return models.Done(nil), nil
+		}
+		if !found {
+			_ = agent.SendChat(fmt.Sprintf("No visible bed found within %d blocks", sleepSearchRadius))
+			return models.Done(nil), nil
+		}
+		return sleepAt(ctx, agent, pos), nil
+	}
+
+	if len(args) != 3 {
+		_ = agent.SendChat("Usage: sleep [<x> <y> <z>]")
+		return models.Done(nil), nil
+	}
+	x, err := parseFloat(args[0])
+	if err != nil {
+		_ = agent.SendChat("Invalid X coordinate")
+		return models.Done(nil), nil
+	}
+	y, err := parseFloat(args[1])
+	if err != nil {
+		_ = agent.SendChat("Invalid Y coordinate")
+		return models.Done(nil), nil
+	}
+	z, err := parseFloat(args[2])
+	if err != nil {
+		_ = agent.SendChat("Invalid Z coordinate")
+		return models.Done(nil), nil
+	}
+	return sleepAt(ctx, agent, models.V3{X: x, Y: y, Z: z}), nil
+}
+
+// sleepAt launches SleepInBed in a goroutine (it blocks until the server
+// confirms or the confirmation deadline passes) and returns a Completion
+// that resolves with the outcome - mirrors mineAt's own pattern.
+func sleepAt(ctx context.Context, agent models.CommandAgent, pos models.V3) models.Completion {
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.SleepInBed(ctx, pos)
+		if err != nil {
+			_ = agent.SendChat("Sleep error: " + err.Error())
+		}
+		resolve(err)
+	}()
+	return completion
+}
+
+type WakeUp struct{}
+
+func (WakeUp) Name() string  { return "wakeup" }
+func (WakeUp) Usage() string { return "wakeUp" }
+func (WakeUp) Execute(ctx context.Context, agent models.CommandAgent, _ []string) (models.Completion, error) {
+	err := agent.WakeUp(ctx)
+	if err != nil {
+		_ = agent.SendChat("Wake up error: " + err.Error())
+	}
+	return models.Done(err), nil
+}
+
 // lookAroundDefaultRadius is the search radius (in blocks) "lookAround"
 // uses when no explicit radius argument is given.
 const lookAroundDefaultRadius = 16.0
@@ -1309,6 +1381,187 @@ func (PickUpItem) Execute(ctx context.Context, agent models.CommandAgent, args [
 		resolve(err)
 	}()
 	return completion, nil
+}
+
+// usePortalDefaultMaxDistance mirrors sleepSearchRadius's own default, for
+// UsePortal's by-radius form.
+const usePortalDefaultMaxDistance = 16
+
+type UsePortal struct{}
+
+func (UsePortal) Name() string  { return "useportal" }
+func (UsePortal) Usage() string { return "usePortal [maxDistance] | usePortal <x> <y> <z>" }
+func (UsePortal) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	// Exact-position form (3 args): a caller that already resolved a
+	// target (rlenv, via FindNearestPortal) dispatches coordinates
+	// directly, skipping a second, independently-radius'd search inside
+	// this command — same split Sleep/SleepInBed uses.
+	if len(args) == 3 {
+		x, err := parseFloat(args[0])
+		if err != nil {
+			_ = agent.SendChat("Invalid X coordinate")
+			return models.Done(nil), nil
+		}
+		y, err := parseFloat(args[1])
+		if err != nil {
+			_ = agent.SendChat("Invalid Y coordinate")
+			return models.Done(nil), nil
+		}
+		z, err := parseFloat(args[2])
+		if err != nil {
+			_ = agent.SendChat("Invalid Z coordinate")
+			return models.Done(nil), nil
+		}
+		return usePortalAt(ctx, agent, models.V3{X: x, Y: y, Z: z}), nil
+	}
+
+	if len(args) > 1 {
+		_ = agent.SendChat("Usage: usePortal [maxDistance] | usePortal <x> <y> <z>")
+		return models.Done(nil), nil
+	}
+
+	maxDistance := usePortalDefaultMaxDistance
+	if len(args) == 1 {
+		d, err := strconv.Atoi(args[0])
+		if err != nil || d <= 0 {
+			_ = agent.SendChat("Usage: usePortal [maxDistance] - maxDistance must be a positive integer")
+			return models.Done(nil), nil
+		}
+		maxDistance = d
+	}
+
+	pos, found, err := agent.FindNearestPortal(ctx, maxDistance)
+	if err != nil {
+		_ = agent.SendChat("Find portal error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if !found {
+		_ = agent.SendChat(fmt.Sprintf("No visible portal found within %d blocks", maxDistance))
+		return models.Done(nil), nil
+	}
+	return usePortalAt(ctx, agent, pos), nil
+}
+
+// usePortalAt launches UsePortalAt in a goroutine (it blocks until the
+// server confirms the dimension change or the timeout passes) and returns
+// a Completion that resolves with the outcome - mirrors sleepAt's own
+// pattern.
+func usePortalAt(ctx context.Context, agent models.CommandAgent, pos models.V3) models.Completion {
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.UsePortalAt(ctx, pos)
+		if err != nil {
+			_ = agent.SendChat("Use portal error: " + err.Error())
+		} else {
+			_, dimName, _ := agent.GetDimension()
+			_ = agent.SendChat("Arrived in " + dimName)
+		}
+		resolve(err)
+	}()
+	return completion
+}
+
+// lightPortalDefaultMaxDistance mirrors usePortalDefaultMaxDistance's own
+// default, for LightPortal's by-radius form.
+const lightPortalDefaultMaxDistance = 16
+
+type LightPortal struct{}
+
+func (LightPortal) Name() string { return "lightportal" }
+func (LightPortal) Usage() string {
+	return "lightPortal [maxDistance] | lightPortal <ignitionX> <ignitionY> <ignitionZ> <axis> <interiorMinX> <interiorMinY> <interiorMinZ> <interiorMaxX> <interiorMaxY> <interiorMaxZ>"
+}
+func (LightPortal) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	// Exact-frame form (10 args): a caller that already resolved a frame
+	// (rlenv, via FindPortalFrame) dispatches it directly, skipping a
+	// second, independently-radius'd search inside this command - same
+	// split usePortal's own exact-coordinate form uses.
+	if len(args) == 10 {
+		frame, err := parsePortalFrameArgs(args)
+		if err != nil {
+			_ = agent.SendChat("Invalid portal frame: " + err.Error())
+			return models.Done(nil), nil
+		}
+		return lightPortalFrame(ctx, agent, frame), nil
+	}
+
+	if len(args) > 1 {
+		_ = agent.SendChat("Usage: " + LightPortal{}.Usage())
+		return models.Done(nil), nil
+	}
+
+	maxDistance := lightPortalDefaultMaxDistance
+	if len(args) == 1 {
+		d, err := strconv.Atoi(args[0])
+		if err != nil || d <= 0 {
+			_ = agent.SendChat("Usage: lightPortal [maxDistance] - maxDistance must be a positive integer")
+			return models.Done(nil), nil
+		}
+		maxDistance = d
+	}
+
+	frame, found, err := agent.FindPortalFrame(ctx, maxDistance)
+	if err != nil {
+		_ = agent.SendChat("Find portal frame error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if !found {
+		_ = agent.SendChat(fmt.Sprintf("No unlit portal frame found within %d blocks", maxDistance))
+		return models.Done(nil), nil
+	}
+	return lightPortalFrame(ctx, agent, frame), nil
+}
+
+// parsePortalFrameArgs parses LightPortal's 10-arg exact-frame form:
+// <ignitionX> <ignitionY> <ignitionZ> <axis> <interiorMinX> <interiorMinY>
+// <interiorMinZ> <interiorMaxX> <interiorMaxY> <interiorMaxZ>. IgnitionFace
+// isn't a separate arg - it's always a deterministic function of axis
+// (east for "x", south for "z"), matching agent.FindPortalFrame's own
+// convention exactly.
+func parsePortalFrameArgs(args []string) (models.PortalFrame, error) {
+	coords := make([]float64, 0, 9)
+	for _, idx := range []int{0, 1, 2, 4, 5, 6, 7, 8, 9} {
+		v, err := parseFloat(args[idx])
+		if err != nil {
+			return models.PortalFrame{}, fmt.Errorf("argument %d: %w", idx+1, err)
+		}
+		coords = append(coords, v)
+	}
+	axis := args[3]
+	var face models.BlockFace
+	switch axis {
+	case "x":
+		face = models.FaceEast
+	case "z":
+		face = models.FaceSouth
+	default:
+		return models.PortalFrame{}, fmt.Errorf("axis must be \"x\" or \"z\", got %q", axis)
+	}
+	return models.PortalFrame{
+		Axis:          axis,
+		IgnitionBlock: models.V3{X: coords[0], Y: coords[1], Z: coords[2]},
+		IgnitionFace:  face,
+		InteriorMin:   models.V3{X: coords[3], Y: coords[4], Z: coords[5]},
+		InteriorMax:   models.V3{X: coords[6], Y: coords[7], Z: coords[8]},
+	}, nil
+}
+
+// lightPortalFrame launches LightPortalFrame in a goroutine (it blocks
+// until the server confirms ignition or the timeout passes) and returns a
+// Completion that resolves with the outcome - mirrors usePortalAt's own
+// pattern.
+func lightPortalFrame(ctx context.Context, agent models.CommandAgent, frame models.PortalFrame) models.Completion {
+	completion, resolve := models.NewCompletion()
+	go func() {
+		err := agent.LightPortalFrame(ctx, frame)
+		if err != nil {
+			_ = agent.SendChat("Light portal error: " + err.Error())
+		} else {
+			_ = agent.SendChat("Portal lit")
+		}
+		resolve(err)
+	}()
+	return completion
 }
 
 type KillCreeperForGunpowder struct{}
