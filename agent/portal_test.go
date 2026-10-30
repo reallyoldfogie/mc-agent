@@ -48,7 +48,7 @@ func TestUsePortal_NoPortalFound(t *testing.T) {
 }
 
 // TestUsePortal_WalksInThenTimesOutWaitingForDimensionChange exercises the
-// real findNearestPortalBlock -> MoveTo -> wait-for-dimension-change
+// real FindNearestPortal -> MoveTo -> wait-for-dimension-change
 // sequence end to end, with the agent starting exactly at the portal
 // block's coordinates (so MoveTo's "already at target" shortcut applies
 // and no real pathfinder run is needed) and nothing ever triggering a
@@ -75,13 +75,13 @@ func TestUsePortal_WalksInThenTimesOutWaitingForDimensionChange(t *testing.T) {
 	require.Contains(t, err.Error(), "timed out waiting for dimension change")
 }
 
-// TestFindNearestPortalBlock_PicksNearestAcrossNames seeds an end_portal
+// TestFindNearestPortal_PicksNearestAcrossNames seeds an end_portal
 // far away and a nether_portal close by, confirming the nearer one wins
 // even though it isn't the first name searched (portalBlockNames searches
 // nether_portal first) - a bug that only compared within one name at a
 // time, or kept whichever matched last, wouldn't show up with only one
 // portal type present.
-func TestFindNearestPortalBlock_PicksNearestAcrossNames(t *testing.T) {
+func TestFindNearestPortal_PicksNearestAcrossNames(t *testing.T) {
 	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565"})
 	require.NoError(t, err)
 	a := agentInt.(*agent)
@@ -107,10 +107,10 @@ func TestFindNearestPortalBlock_PicksNearestAcrossNames(t *testing.T) {
 	a.mcAgentWorld.HandleBlockUpdate(0, 64, 20, int32(netherStateID)) // far
 	a.mcAgentWorld.HandleBlockUpdate(0, 64, 3, int32(endStateID))     // near
 
-	x, y, z, found, err := a.findNearestPortalBlock(context.Background(), 30)
+	pos, found, err := a.FindNearestPortal(context.Background(), 30)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, 0.0, x)
-	require.Equal(t, 64.0, y)
-	require.Equal(t, 3.0, z)
+	require.Equal(t, 0.0, pos.X)
+	require.Equal(t, 64.0, pos.Y)
+	require.Equal(t, 3.0, pos.Z)
 }

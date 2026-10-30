@@ -114,6 +114,20 @@ type Config struct {
 	// docs/plans/SLEEP_ACTION_PLAN.md (local/untracked).
 	SleepSearchRadius int
 
+	// PortalSearchRadius, if > 0, enables ActionUsePortal:
+	// FindNearestPortal searches this many blocks for a
+	// nether_portal/end_portal/end_gateway block to walk into. Same shape
+	// as SleepSearchRadius's own doc comment: no companion "target name"
+	// field (a portal isn't identified by name — any of the three counts),
+	// so this single field both enables the capability and bounds the
+	// search. <= 0 (the default) means this Environment instance doesn't
+	// pose a dimension-transfer task: ActionUsePortal becomes a safe
+	// no-op, the same way ActionMine/ActionCraft/ActionSleep do when
+	// unconfigured. Deliberately has no reward component of its own yet —
+	// see action.go's own ActionUsePortal doc comment — this field only
+	// makes the action choosable, not part of any posed goal.
+	PortalSearchRadius int
+
 	// CraftTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's crafting task targets — enables ActionCraft, following
 	// MineTargetBlock's exact "environment poses the task" pattern
@@ -664,6 +678,7 @@ type TaskOverride struct {
 	MineRequiredToolEnchantments map[string]int
 	MineTargetBuried             bool
 	SleepSearchRadius            int
+	PortalSearchRadius           int
 	CraftTargetItem              string
 	CraftSearchRadius            int
 

@@ -226,8 +226,26 @@ const (
 	// (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md item 7).
 	ActionMaceSmashWithApproach
 
+	// ActionUsePortal dispatches "usePortal <x> <y> <z>" at Environment's
+	// own already-resolved e.portalX/Y/Z (see refreshPortalTarget) — the
+	// same "dispatch Environment's own already-resolved coordinates, don't
+	// let the dispatched action re-search independently" reasoning as
+	// ActionMine/ActionSleep's own doc comments. usePortal's exact-position
+	// form (agent.UsePortalAt) walks there and waits for the dimension to
+	// actually change, same as its by-radius form
+	// (agent.UsePortal/agent.FindNearestPortal) but without a second,
+	// independently-radius'd search. A safe no-op (like an unconfigured
+	// ActionMine) when Config.PortalSearchRadius <= 0 or nothing is
+	// currently visible — docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md
+	// (local/untracked) Phase 7's rlenv follow-up. Deliberately has no
+	// reward component of its own (same reasoning as ActionUseItem's own
+	// doc comment): no task/curriculum poses a dimension-transfer goal
+	// yet, so a successful transfer currently has nothing to be rewarded
+	// against — this only wires the action into the vocabulary.
+	ActionUsePortal
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionMaceSmashWithApproach) + 1
+	NumActions = int(ActionUsePortal) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -262,6 +280,7 @@ const (
 	killCreeperForGunpowderActionName = "killcreeperforgunpowder"
 	spearChargeWithApproachActionName = "spearchargewithapproach"
 	maceSmashWithApproachActionName   = "macesmashwithapproach"
+	usePortalActionName               = "useportal"
 )
 
 // actionDispatch describes what Step should send through the
@@ -429,6 +448,11 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			fmt.Sprintf("%d", e.maceEntityID),
 			maceSmashWeaponName,
 		}}, true, nil
+	case ActionUsePortal:
+		if !e.actionLegal(ActionUsePortal) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: usePortalActionName, args: coordArgs(e.portalX, e.portalY, e.portalZ)}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -521,6 +545,8 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		// masking-efficiency reasoning ActionSpearChargeWithApproach's own
 		// weapon gate uses.
 		return e.cfg.MaceSmashTargetMobType != "" && e.maceVisible && e.agent.IsEquipped(maceSmashWeaponName)
+	case ActionUsePortal:
+		return e.cfg.PortalSearchRadius > 0 && e.portalVisible
 	default:
 		return false
 	}

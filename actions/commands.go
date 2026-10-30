@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1383,13 +1383,45 @@ func (PickUpItem) Execute(ctx context.Context, agent models.CommandAgent, args [
 	return completion, nil
 }
 
+// usePortalDefaultMaxDistance mirrors sleepSearchRadius's own default, for
+// UsePortal's by-radius form.
+const usePortalDefaultMaxDistance = 16
+
 type UsePortal struct{}
 
 func (UsePortal) Name() string  { return "useportal" }
-func (UsePortal) Usage() string { return "usePortal [maxDistance]" }
+func (UsePortal) Usage() string { return "usePortal [maxDistance] | usePortal <x> <y> <z>" }
 func (UsePortal) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
-	maxDistance := 16
-	if len(args) > 0 {
+	// Exact-position form (3 args): a caller that already resolved a
+	// target (rlenv, via FindNearestPortal) dispatches coordinates
+	// directly, skipping a second, independently-radius'd search inside
+	// this command — same split Sleep/SleepInBed uses.
+	if len(args) == 3 {
+		x, err := parseFloat(args[0])
+		if err != nil {
+			_ = agent.SendChat("Invalid X coordinate")
+			return models.Done(nil), nil
+		}
+		y, err := parseFloat(args[1])
+		if err != nil {
+			_ = agent.SendChat("Invalid Y coordinate")
+			return models.Done(nil), nil
+		}
+		z, err := parseFloat(args[2])
+		if err != nil {
+			_ = agent.SendChat("Invalid Z coordinate")
+			return models.Done(nil), nil
+		}
+		return usePortalAt(ctx, agent, models.V3{X: x, Y: y, Z: z}), nil
+	}
+
+	if len(args) > 1 {
+		_ = agent.SendChat("Usage: usePortal [maxDistance] | usePortal <x> <y> <z>")
+		return models.Done(nil), nil
+	}
+
+	maxDistance := usePortalDefaultMaxDistance
+	if len(args) == 1 {
 		d, err := strconv.Atoi(args[0])
 		if err != nil || d <= 0 {
 			_ = agent.SendChat("Usage: usePortal [maxDistance] - maxDistance must be a positive integer")
@@ -1398,9 +1430,26 @@ func (UsePortal) Execute(ctx context.Context, agent models.CommandAgent, args []
 		maxDistance = d
 	}
 
+	pos, found, err := agent.FindNearestPortal(ctx, maxDistance)
+	if err != nil {
+		_ = agent.SendChat("Find portal error: " + err.Error())
+		return models.Done(nil), nil
+	}
+	if !found {
+		_ = agent.SendChat(fmt.Sprintf("No visible portal found within %d blocks", maxDistance))
+		return models.Done(nil), nil
+	}
+	return usePortalAt(ctx, agent, pos), nil
+}
+
+// usePortalAt launches UsePortalAt in a goroutine (it blocks until the
+// server confirms the dimension change or the timeout passes) and returns
+// a Completion that resolves with the outcome - mirrors sleepAt's own
+// pattern.
+func usePortalAt(ctx context.Context, agent models.CommandAgent, pos models.V3) models.Completion {
 	completion, resolve := models.NewCompletion()
 	go func() {
-		err := agent.UsePortal(ctx, maxDistance)
+		err := agent.UsePortalAt(ctx, pos)
 		if err != nil {
 			_ = agent.SendChat("Use portal error: " + err.Error())
 		} else {
@@ -1409,7 +1458,7 @@ func (UsePortal) Execute(ctx context.Context, agent models.CommandAgent, args []
 		}
 		resolve(err)
 	}()
-	return completion, nil
+	return completion
 }
 
 type KillCreeperForGunpowder struct{}

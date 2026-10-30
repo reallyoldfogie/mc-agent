@@ -64,13 +64,16 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// block (equip 31-32, pickup 33-37, fly 38-43, ride 44-49, combat
 	// 50-55, standalone-place 56-57, follow 58-60, creeper-gunpowder
 	// 61-65, spear-charge 66-70, mace-smash 71-75), shifted from that
-	// branch's own 21-65 numbering when it merged — see observation.go's
-	// own doc comment on observationSize for the full layout. This exact
-	// value is also what makes cmd/rl-train's EnvironmentID
-	// ("mc-agent-rlenv:actions=%d:obs=%d") automatically reject an old
-	// checkpoint trained against a shorter observation.
-	if got := env.ObservationSize(); got != 76 {
-		t.Fatalf("ObservationSize() = %d, want 76", got)
+	// branch's own 21-65 numbering when it merged; 76-80 are
+	// portalDx/Dy/Dz/portalVisible/goalPortalActive, added by
+	// docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md (local/untracked)
+	// Phase 7's rlenv follow-up — see observation.go's own doc comment on
+	// observationSize for the full layout. This exact value is also what
+	// makes cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
+	// automatically reject an old checkpoint trained against a shorter
+	// observation.
+	if got := env.ObservationSize(); got != 81 {
+		t.Fatalf("ObservationSize() = %d, want 81", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -85,8 +88,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 76 {
-		t.Fatalf("len(obs.Values) = %d, want 76 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 81 {
+		t.Fatalf("len(obs.Values) = %d, want 81 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)

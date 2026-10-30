@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/reallyoldfogie/mc-agent/models"
 )
 
 // portalBlockNames are the three block types that teleport a player on
@@ -28,20 +30,26 @@ var portalBlockNames = []string{
 // tightening.
 var usePortalDimensionChangeTimeout = 15 * time.Second
 
-// findNearestPortalBlock searches for the nearest block matching any of
+// FindNearestPortal searches for the nearest block matching any of
 // portalBlockNames within maxDistance, by calling FindVisibleBlock once
 // per name and keeping the closest result - a Nether portal and an End
-// portal are never the same search, and there's no existing
-// multi-name variant of FindVisibleBlock to share one shell-scan across
-// all three names in a single pass.
-func (a *agent) findNearestPortalBlock(ctx context.Context, maxDistance int) (x, y, z float64, found bool, err error) {
+// portal are never the same search, and there's no existing multi-name
+// variant of FindVisibleBlock to share one shell-scan across all three
+// names in a single pass. Exposed (not just an internal helper of
+// UsePortal) so a caller that dispatches movement far more often than a
+// human types a chat command (rlenv) can resolve a target once and pass
+// exact coordinates to UsePortalAt, the same FindNearestBed/SleepInBed
+// split uses.
+func (a *agent) FindNearestPortal(ctx context.Context, maxDistance int) (models.V3, bool, error) {
 	pos, _, _, posOK := a.GetPosition()
 	bestDistSq := math.MaxFloat64
+	var best models.V3
+	var found bool
 
 	for _, name := range portalBlockNames {
 		px, py, pz, ok, ferr := a.FindVisibleBlock(ctx, name, maxDistance)
 		if ferr != nil {
-			return 0, 0, 0, false, ferr
+			return models.V3{}, false, ferr
 		}
 		if !ok {
 			continue
@@ -51,7 +59,7 @@ func (a *agent) findNearestPortalBlock(ctx context.Context, maxDistance int) (x,
 		// against - keep whichever name matched first.
 		if !posOK {
 			if !found {
-				x, y, z, found = px, py, pz, true
+				best, found = models.V3{X: px, Y: py, Z: pz}, true
 			}
 			continue
 		}
@@ -61,10 +69,10 @@ func (a *agent) findNearestPortalBlock(ctx context.Context, maxDistance int) (x,
 		if !found || distSq < bestDistSq {
 			found = true
 			bestDistSq = distSq
-			x, y, z = px, py, pz
+			best = models.V3{X: px, Y: py, Z: pz}
 		}
 	}
-	return x, y, z, found, nil
+	return best, found, nil
 }
 
 // UsePortal walks to the nearest nether_portal/end_portal/end_gateway
@@ -76,21 +84,30 @@ func (a *agent) UsePortal(ctx context.Context, maxDistance int) error {
 		maxDistance = 16
 	}
 
-	beforeTypeID, beforeName, _ := a.GetDimension()
-
-	x, y, z, found, err := a.findNearestPortalBlock(ctx, maxDistance)
+	pos, found, err := a.FindNearestPortal(ctx, maxDistance)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return fmt.Errorf("no portal block found within %d blocks", maxDistance)
 	}
+	return a.UsePortalAt(ctx, pos)
+}
+
+// UsePortalAt walks to the exact portal block at pos and waits for the
+// dimension to actually change — the exact-coordinate counterpart to
+// UsePortal's by-radius search, for a caller (rlenv) that already resolved
+// a target via FindNearestPortal and wants to avoid a second,
+// independently-radius'd search inside the dispatched action, the same
+// FindNearestBed/SleepInBed split uses.
+func (a *agent) UsePortalAt(ctx context.Context, pos models.V3) error {
+	beforeTypeID, beforeName, _ := a.GetDimension()
 
 	// Portal blocks have no collision (confirmed against mc-data-gen's
 	// collision data for all three names) — walking "to" one means
 	// standing inside it, not approaching an adjacent cell.
-	if err := a.MoveTo(ctx, x, y, z, false); err != nil {
-		return fmt.Errorf("failed to walk to portal at (%.1f, %.1f, %.1f): %w", x, y, z, err)
+	if err := a.MoveTo(ctx, pos.X, pos.Y, pos.Z, false); err != nil {
+		return fmt.Errorf("failed to walk to portal at (%.1f, %.1f, %.1f): %w", pos.X, pos.Y, pos.Z, err)
 	}
 
 	deadline := time.Now().Add(usePortalDimensionChangeTimeout)
@@ -105,5 +122,5 @@ func (a *agent) UsePortal(ctx context.Context, maxDistance int) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("timed out waiting for dimension change after entering portal at (%.1f, %.1f, %.1f)", x, y, z)
+	return fmt.Errorf("timed out waiting for dimension change after entering portal at (%.1f, %.1f, %.1f)", pos.X, pos.Y, pos.Z)
 }

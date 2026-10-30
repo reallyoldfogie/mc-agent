@@ -47,7 +47,17 @@ type fakeAgent struct {
 	sleepCalls       int
 	wakeUpCalls      int
 	timeOfDayTicks   int64
-	timeOfDayKnown   bool
+
+	// Portal simulation: portalX/Y/Z/portalFound is what FindNearestPortal
+	// reports; usePortalAtErr, if set, is what UsePortalAt returns instead
+	// of succeeding (simulating the dimension never changing) -
+	// usePortalAtCalls just counts invocations. Mirrors bed/sleep's own
+	// shape exactly.
+	portalX, portalY, portalZ float64
+	portalFound               bool
+	usePortalAtErr            error
+	usePortalAtCalls          int
+	timeOfDayKnown            bool
 
 	// Mine simulation: a single block instance at (mineBlockX,Y,Z) whose
 	// name is mineBlockName ("" means nothing is there). FindVisibleBlock
@@ -1427,16 +1437,49 @@ func (f *fakeAgent) BuildStructure(_ context.Context, _ string, _ models.V3) (mo
 	return models.BuildStructureResult{}, errors.New("fakeAgent does not support BuildStructure")
 }
 
-// UsePortal and GetDimension make fakeAgent satisfy models.CommandAgent's
-// dimension-transfer additions. No test currently exercises either
-// (nothing in rlenv drives portal use or dimension changes), so these are
-// minimal, honest stubs - UsePortal reports no portal found rather than
-// pretending to walk somewhere, and GetDimension reports the Overworld,
-// uninitialized, same as a real agent before its first Login/Respawn.
-func (f *fakeAgent) UsePortal(context.Context, int) error {
-	return errors.New("fakeAgent does not support UsePortal")
+// UsePortal mirrors the real agent's own shape: resolve via
+// FindNearestPortal, then delegate to UsePortalAt. Simulated, not stubbed
+// out, now that ActionUsePortal actually dispatches through this path
+// (see refreshPortalTarget/resolveDispatch).
+func (f *fakeAgent) UsePortal(ctx context.Context, maxDistance int) error {
+	pos, found, err := f.FindNearestPortal(ctx, maxDistance)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("no portal block found within %d blocks", maxDistance)
+	}
+	return f.UsePortalAt(ctx, pos)
 }
 
+// FindNearestPortal reports portalX/Y/Z/portalFound, mirroring
+// FindNearestBed's own shape exactly.
+func (f *fakeAgent) FindNearestPortal(context.Context, int) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.portalFound {
+		return models.V3{}, false, nil
+	}
+	return models.V3{X: f.portalX, Y: f.portalY, Z: f.portalZ}, true, nil
+}
+
+// UsePortalAt records the call and returns usePortalAtErr if the test
+// configured one (simulating the dimension never changing), nil otherwise
+// (simulating a successful transfer with no further state change - this
+// fake has no notion of "currently in a different dimension" to track).
+// Mirrors SleepInBed's own shape exactly.
+func (f *fakeAgent) UsePortalAt(context.Context, models.V3) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.usePortalAtCalls++
+	return f.usePortalAtErr
+}
+
+// GetDimension reports the Overworld, uninitialized, same as a real agent
+// before its first Login/Respawn. No test currently needs this fake to
+// simulate an actual dimension change (ActionUsePortal has no reward
+// component of its own yet - see action.go's own doc comment), so this
+// stays a minimal, honest stub rather than tracked state.
 func (f *fakeAgent) GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool) {
 	return 0, "", false
 }

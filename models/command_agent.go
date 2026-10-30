@@ -157,6 +157,22 @@ type CommandAgent interface {
 	// teleport; an End portal/gateway teleports near-instantly either way).
 	UsePortal(ctx context.Context, maxDistance int) error
 
+	// FindNearestPortal searches for the nearest nether_portal/end_portal/
+	// end_gateway block within maxDistance blocks that the agent has a
+	// clear line of sight to. found is false if none was located. Exposed
+	// separately from UsePortal (not just an internal search step) so a
+	// caller that dispatches movement far more often than a human types a
+	// chat command (rlenv) can resolve a target once and pass exact
+	// coordinates to UsePortalAt — the same FindNearestBed/SleepInBed split
+	// uses.
+	FindNearestPortal(ctx context.Context, maxDistance int) (pos V3, found bool, err error)
+
+	// UsePortalAt is UsePortal's exact-coordinate counterpart: walks to the
+	// portal block already known to be at pos (e.g. from FindNearestPortal)
+	// and waits for the dimension to actually change, without performing
+	// its own search.
+	UsePortalAt(ctx context.Context, pos V3) error
+
 	// GetDimension returns the bot's current dimension type registry index
 	// and name (e.g. "minecraft:the_nether"). initialized is false until
 	// the first ClientboundLogin or ClientboundRespawn has been processed.
