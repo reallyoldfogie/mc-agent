@@ -146,6 +146,22 @@ type CommandAgent interface {
 	// docs/STRUCTURE_LOADER.md.
 	PlaceBlockAt(ctx context.Context, pos V3, itemName string) error
 
+	// UsePortal walks to the nearest nether_portal/end_portal/end_gateway
+	// block within maxDistance blocks (0 uses a sensible default) and waits
+	// for the dimension transfer to actually complete (a ClientboundRespawn
+	// changing the tracked dimension — see GetDimension), rather than
+	// treating "arrived at the portal's coordinates" as done. Returns an
+	// error if no portal block is found, pathfinding there fails, or the
+	// dimension hasn't changed within a timeout (a Nether portal needs a
+	// few ticks of continuous contact before the server initiates the
+	// teleport; an End portal/gateway teleports near-instantly either way).
+	UsePortal(ctx context.Context, maxDistance int) error
+
+	// GetDimension returns the bot's current dimension type registry index
+	// and name (e.g. "minecraft:the_nether"). initialized is false until
+	// the first ClientboundLogin or ClientboundRespawn has been processed.
+	GetDimension() (dimensionTypeID int32, dimensionName string, initialized bool)
+
 	// FindAllVisibleEntitiesInSphere returns every currently-tracked entity
 	// within radius blocks that the agent has a clear line of sight to
 	// (the entity analogue of FindAllVisibleBlocksInSphere), sorted by

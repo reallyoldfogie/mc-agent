@@ -984,6 +984,18 @@ func (mv *MovementValidator) getExitClimbTargetY(from, to models.V3) float64 {
 func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSearchDepth float64) float64 {
 	utils.DebugVerbose(mv.logger, "[FindGroundBelow] searching", "x", x, "z", z, "startY", startY)
 
+	// Dimension-specific build height (Overworld: -64..319; Nether/End:
+	// 0..255) — searching past either bound would either waste time
+	// (Nether's column is shallower than the Overworld's) or miss valid
+	// ground near a dimension's own true ceiling/floor if it were ever
+	// narrower than the Overworld's hardcoded range this used to assume
+	// unconditionally.
+	minWorldY, maxWorldY := -64.0, 319.0
+	if mv.world != nil {
+		lo, hi := mv.world.GetHeightBounds()
+		minWorldY, maxWorldY = float64(lo), float64(hi)
+	}
+
 	// Check current position first
 	currentStateID, _ := mv.getBlock(x, startY, z)
 
@@ -996,7 +1008,7 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 				"startY", startY, "stateID", currentStateID)
 
 			// Search upward to find the top of the solid terrain
-			for y := startY; y <= startY+maxSearchDepth && y <= 320; y++ {
+			for y := startY; y <= startY+maxSearchDepth && y <= maxWorldY; y++ {
 				pos := models.V3{X: x, Y: y, Z: z}
 
 				// Check if this is a valid standing position (air with solid below)
@@ -1013,7 +1025,7 @@ func (mv *MovementValidator) FindGroundBelow(x, z float64, startY float64, maxSe
 	// If not in solid block, search downward for valid ground
 	utils.DebugVerbose(mv.logger, "[FindGroundBelow] searching downward for valid standing position", "startY", startY)
 
-	for y := startY; y >= startY-maxSearchDepth && y >= -64; y-- {
+	for y := startY; y >= startY-maxSearchDepth && y >= minWorldY; y-- {
 		pos := models.V3{X: x, Y: y, Z: z}
 
 		// Check if this position is valid:

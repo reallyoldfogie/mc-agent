@@ -19,11 +19,19 @@ const (
 	SECTION_HEIGHT = 16
 	// SECTION_WIDTH is the width/depth of a section in blocks
 	SECTION_WIDTH = 16
-	// MIN_SECTION_Y is the minimum section Y index (for Y=-64)
+
+	// MIN_SECTION_Y is the Overworld's minimum section Y index (for
+	// Y=-64) — the *default* used when a ChunkData's MinSectionY/
+	// SectionCount haven't been explicitly set (e.g. by Manager, which
+	// derives them from the active dimension's registry data; see
+	// Manager.SetHeightBounds). The Nether and The End both use a
+	// different range (min_y=0, height=256 — 16 sections, not 24).
 	MIN_SECTION_Y = -4
-	// MAX_SECTION_Y is the maximum section Y index (for Y=319)
+	// MAX_SECTION_Y is the Overworld default's maximum section Y index
+	// (for Y=319). See MIN_SECTION_Y's doc comment.
 	MAX_SECTION_Y = 19
-	// SECTION_COUNT is the total number of sections in a chunk
+	// SECTION_COUNT is the Overworld default's total section count per
+	// chunk column. See MIN_SECTION_Y's doc comment.
 	SECTION_COUNT = MAX_SECTION_Y - MIN_SECTION_Y + 1 // 24 sections
 )
 
@@ -43,8 +51,20 @@ type ChunkData struct {
 	// versionHasFluidCount in manager.go.
 	HasFluidCount bool
 
-	// Cached decoded sections (lazy populated on first access)
-	sections     [SECTION_COUNT]*Section
+	// MinSectionY/SectionCount describe the active dimension's build
+	// height range in section-index terms (Overworld: -4/24; Nether/End:
+	// 0/16). Zero value (SectionCount == 0) means "unset" — effBounds()
+	// falls back to the Overworld default (MIN_SECTION_Y/SECTION_COUNT)
+	// so a ChunkData built via a bare struct literal (existing tests,
+	// anything not yet updated to set these) keeps working exactly as
+	// before. Manager.HandleChunkLoad sets both from its own
+	// minSectionY/sectionCount fields, which SetHeightBounds updates.
+	MinSectionY  int32
+	SectionCount int32
+
+	// Cached decoded sections (lazy populated and sized on first access —
+	// see getOrLoadSection)
+	sections     []*Section
 	sectionsLock sync.RWMutex
 
 	// Light data, keyed by light-section slot index — see lightSlotForY's
@@ -61,23 +81,37 @@ type ChunkData struct {
 	logger *slog.Logger
 }
 
-// LIGHT_SECTION_COUNT is the number of light sections per chunk column: one
-// per block section (SECTION_COUNT), plus one extra below the lowest block
-// section and one extra above the highest — vanilla sends light for the
-// "cap" sections immediately outside the block range too, since light
-// propagates from/through them. Slot 0 is the below-bottom cap, slot
-// LIGHT_SECTION_COUNT-1 is the above-top cap.
+// effBounds returns this chunk's effective MinSectionY/SectionCount,
+// falling back to the Overworld default when SectionCount hasn't been set
+// (see the ChunkData.MinSectionY/SectionCount doc comment).
+func (c *ChunkData) effBounds() (minSectionY, sectionCount int32) {
+	if c.SectionCount <= 0 {
+		return MIN_SECTION_Y, SECTION_COUNT
+	}
+	return c.MinSectionY, c.SectionCount
+}
+
+// lightSectionCount is the number of light sections for this chunk: one
+// per block section, plus one extra below the lowest block section and one
+// extra above the highest — vanilla sends light for the "cap" sections
+// immediately outside the block range too, since light propagates
+// from/through them. Slot 0 is the below-bottom cap, slot
+// lightSectionCount-1 is the above-top cap.
 //
-// This range (SECTION_COUNT+2, i.e. one cap section on each side) is the
+// This range (sectionCount+2, i.e. one cap section on each side) is the
 // standard convention documented for LevelChunkWithLight/UpdateLight's
 // light masks; verify against a live capture during implementation review
 // if light values look off by one section (16 blocks) at column edges.
-const LIGHT_SECTION_COUNT = SECTION_COUNT + 2
+func (c *ChunkData) lightSectionCount() int {
+	_, sectionCount := c.effBounds()
+	return int(sectionCount) + 2
+}
 
 // lightSlotForY maps a world Y coordinate to its light-section slot index.
-func lightSlotForY(y int) int {
+func (c *ChunkData) lightSlotForY(y int) int {
+	minSectionY, _ := c.effBounds()
 	sectionIdx := y >> 4
-	return sectionIdx - (MIN_SECTION_Y - 1)
+	return sectionIdx - (int(minSectionY) - 1)
 }
 
 // SetLightData stores light data parsed from a ClientboundLevelChunkWithLight
@@ -126,8 +160,8 @@ func applyLightMask(mask []int64, arrays [][]byte, dst map[int][]byte) {
 // coordinate. ok is false if no light data has been received for the
 // containing section.
 func (c *ChunkData) GetLightLevel(x, y, z int) (sky, block uint8, ok bool) {
-	slot := lightSlotForY(y)
-	if slot < 0 || slot >= LIGHT_SECTION_COUNT {
+	slot := c.lightSlotForY(y)
+	if slot < 0 || slot >= c.lightSectionCount() {
 		return 0, 0, false
 	}
 
@@ -209,12 +243,14 @@ type Section struct {
 // GetBlockAt returns the block state ID at the given chunk-relative coordinates.
 // x and z should be 0-15, y is the world Y coordinate.
 func (c *ChunkData) GetBlockAt(x, y, z int) uint32 {
+	minSectionY, sectionCount := c.effBounds()
+
 	// Calculate section index
 	sectionIdx := y >> 4 // y / 16
-	sectionSlotIdx := sectionIdx - MIN_SECTION_Y
+	sectionSlotIdx := sectionIdx - int(minSectionY)
 
 	// Bounds check
-	if sectionSlotIdx < 0 || sectionSlotIdx >= SECTION_COUNT {
+	if sectionSlotIdx < 0 || sectionSlotIdx >= int(sectionCount) {
 		return 0 // Air for out of bounds
 	}
 
@@ -237,8 +273,9 @@ func (c *ChunkData) GetBlockAt(x, y, z int) uint32 {
 // ChunkBiomeUpdate) and swaps the biome fields into each of this chunk's
 // sections, forcing lazy-loading of any section not already loaded.
 func (c *ChunkData) ApplyBiomeUpdate(data []byte, useCalculatedLen bool) error {
+	_, sectionCount := c.effBounds()
 	r := bytes.NewReader(data)
-	for i := 0; i < SECTION_COUNT; i++ {
+	for i := 0; i < int(sectionCount); i++ {
 		biomes, err := parsePaletteContainer(r, BIOME_SECTION_SIZE, useCalculatedLen)
 		if err != nil {
 			return err
@@ -263,10 +300,11 @@ func (c *ChunkData) ApplyBiomeUpdate(data []byte, useCalculatedLen bool) error {
 // are stored at 4x4x4 granularity, so this covers a 4x4x4 region of blocks
 // per distinct returned value.
 func (c *ChunkData) GetBiomeAt(x, y, z int) uint32 {
+	minSectionY, sectionCount := c.effBounds()
 	sectionIdx := y >> 4
-	sectionSlotIdx := sectionIdx - MIN_SECTION_Y
+	sectionSlotIdx := sectionIdx - int(minSectionY)
 
-	if sectionSlotIdx < 0 || sectionSlotIdx >= SECTION_COUNT {
+	if sectionSlotIdx < 0 || sectionSlotIdx >= int(sectionCount) {
 		return 0
 	}
 
@@ -284,7 +322,10 @@ func (c *ChunkData) GetBiomeAt(x, y, z int) uint32 {
 func (c *ChunkData) getOrLoadSection(sectionSlotIdx int) *Section {
 	// Fast path: check cache with read lock
 	c.sectionsLock.RLock()
-	section := c.sections[sectionSlotIdx]
+	var section *Section
+	if c.sections != nil {
+		section = c.sections[sectionSlotIdx]
+	}
 	c.sectionsLock.RUnlock()
 
 	if section != nil {
@@ -294,6 +335,15 @@ func (c *ChunkData) getOrLoadSection(sectionSlotIdx int) *Section {
 	// Slow path: need to load section
 	c.sectionsLock.Lock()
 	defer c.sectionsLock.Unlock()
+
+	// sections is sized here, on first touch, rather than at construction
+	// time, so a ChunkData built via a bare struct literal (MinSectionY/
+	// SectionCount left zero) still gets a correctly-sized slice via
+	// effBounds()'s Overworld-default fallback.
+	if c.sections == nil {
+		_, sectionCount := c.effBounds()
+		c.sections = make([]*Section, sectionCount)
+	}
 
 	// Double check after acquiring write lock
 	if c.sections[sectionSlotIdx] != nil {

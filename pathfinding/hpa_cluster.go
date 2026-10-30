@@ -304,6 +304,17 @@ func (cm *ClusterManager) MarkPositionDirty(pos models.V3) {
 	cm.MarkClusterDirty(id)
 }
 
+// Clear discards every built cluster. Called on a dimension change — the
+// Nether/Overworld/End all reuse the same X/Z/Y coordinate space, so without
+// this, clusters built against the dimension just left would silently
+// answer pathfinding queries with stale geometry once the bot is physically
+// in the new dimension at the same coordinates.
+func (cm *ClusterManager) Clear() {
+	cm.mu.Lock()
+	cm.clusters = make(map[ClusterID]*Cluster)
+	cm.mu.Unlock()
+}
+
 // Direction represents the six possible directions in 3D space
 type Direction int
 

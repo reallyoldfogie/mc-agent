@@ -50,6 +50,9 @@ func (w *raceWorld) SetWorldBorderWarningDelay(warningTimeTicks int32)      {}
 func (w *raceWorld) SetWorldBorderWarningDistance(warningBlocks int32)      {}
 func (w *raceWorld) GetDifficulty() (uint8, bool, bool)                     { return 0, false, false }
 func (w *raceWorld) SetDifficulty(difficulty uint8, locked bool)            {}
+func (w *raceWorld) Reset()                                                 {}
+func (w *raceWorld) GetHeightBounds() (minY, maxY int32)                    { return -64, 319 }
+func (w *raceWorld) SetHeightBounds(minY, maxY int32)                       {}
 
 // TestIsObscuringReturnsTheStateIDItRead covers the field this function
 // gained when the TOCTOU race in findAllVisibleSurfaceBlocks was fixed

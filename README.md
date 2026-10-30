@@ -97,6 +97,7 @@ The bot responds to commands in chat prefixed with `>>>BOTNAME<<<` (e.g., `>>>RO
 | `killCreeperForGunpowder` | Fight a creeper, maintain a safe distance, and collect gunpowder when it drops (caller must equip a melee weapon first) |
 | `sleep [<x> <y> <z>]` | Sleep in the nearest visible bed, or one at exact coordinates |
 | `wakeUp` | Leave the bed the agent is currently sleeping in |
+| `usePortal [maxDistance]` | Walk to the nearest nether/end portal within maxDistance blocks (default 16) and wait for the dimension to actually change |
 
 Example:
 ```
