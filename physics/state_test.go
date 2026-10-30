@@ -87,6 +87,10 @@ func (m *mockWorld) SetDifficulty(difficulty uint8, locked bool) {}
 
 func (m *mockWorld) Reset() {}
 
+func (m *mockWorld) GetHeightBounds() (minY, maxY int32) { return -64, 319 }
+
+func (m *mockWorld) SetHeightBounds(minY, maxY int32) {}
+
 // mockShapeProvider provides simple block collision data
 type mockShapeProvider struct {
 	passableBlocks    map[uint32]bool

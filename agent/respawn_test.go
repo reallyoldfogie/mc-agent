@@ -58,6 +58,14 @@ func TestOnRespawn_ResetsDimensionAndWorldState(t *testing.T) {
 	require.Equal(t, int32(5), dimTypeID)
 	require.Equal(t, "minecraft:the_nether", dimName)
 
+	// No registry data was received (no live connection in this test), so
+	// onRespawn's height-bounds lookup should fail closed and fall back to
+	// the Overworld's default bounds rather than leaving the pre-Respawn
+	// value in place or crashing.
+	minY, maxY := a.worldMgr.GetHeightBounds()
+	require.Equal(t, int32(-64), minY)
+	require.Equal(t, int32(319), maxY)
+
 	_, ok := a.worldMgr.GetWorldAge()
 	require.False(t, ok, "world age should be cleared by Reset()")
 	_, ok = a.worldMgr.GetTimeOfDay()

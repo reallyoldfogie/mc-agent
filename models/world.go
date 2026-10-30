@@ -82,6 +82,15 @@ type World interface {
 	// ClientboundChangeDifficulty packet is received.
 	SetDifficulty(difficulty uint8, locked bool)
 
+	// GetHeightBounds returns the active dimension's world-Y build height
+	// range [minY, maxY] inclusive. Defaults to the Overworld's -64..319
+	// until SetHeightBounds is called with a different dimension's bounds.
+	GetHeightBounds() (minY, maxY int32)
+	// SetHeightBounds updates the active dimension's world-Y build height
+	// range. Called on a dimension change once the new dimension's name is
+	// known (its min_y/height come from the dimension_type registry data).
+	SetHeightBounds(minY, maxY int32)
+
 	// Reset clears all chunks, block overrides, world age/time of day,
 	// difficulty, and world border state. Called on a ClientboundRespawn
 	// (dimension change) — the new dimension is a different coordinate

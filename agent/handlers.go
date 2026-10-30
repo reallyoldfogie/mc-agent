@@ -13,6 +13,7 @@ import (
 
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/physics"
+	mcworld "github.com/reallyoldfogie/mc-agent/world"
 	bot "github.com/reallyoldfogie/mc-bot-go/bot"
 )
 
@@ -2167,6 +2168,22 @@ func (a *agent) onRespawn(p pk.Packet) error {
 
 	a.logf("[Agent %s] Respawn: dimension=%s (type %d)", a.cfg.Name, dimensionName, dimensionTypeID)
 	a.setDimension(dimensionTypeID, dimensionName)
+
+	// Dimension-specific build height (Nether/End use min_y=0/height=256 —
+	// 16 sections — vs the Overworld's -64..319/24 sections). Falls back
+	// to the Overworld's own bounds if the lookup fails for any reason
+	// (registry not yet received, unknown dimension, missing NBT fields)
+	// rather than silently keeping whatever dimension's bounds were active
+	// before this transfer.
+	if a.worldMgr != nil {
+		if minY, maxY, ok := a.getDimensionHeightBounds(dimensionName); ok {
+			a.logf("[Agent %s] Dimension %s height bounds: %d..%d", a.cfg.Name, dimensionName, minY, maxY)
+			a.worldMgr.SetHeightBounds(minY, maxY)
+		} else {
+			a.logf("[Agent %s][WARN] No height bounds found for dimension %s, defaulting to the Overworld's", a.cfg.Name, dimensionName)
+			a.worldMgr.SetHeightBounds(mcworld.MIN_SECTION_Y*mcworld.SECTION_HEIGHT, (mcworld.MIN_SECTION_Y+mcworld.SECTION_COUNT)*mcworld.SECTION_HEIGHT-1)
+		}
+	}
 
 	// Discard every chunk, block override, world-age/time-of-day,
 	// difficulty, and world-border value tied to the dimension just left —

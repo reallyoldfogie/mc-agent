@@ -85,6 +85,15 @@ type Manager struct {
 	difficulty       uint8
 	difficultyLocked bool
 	hasDifficulty    bool
+
+	// heightBoundsMu protects minSectionY/sectionCount — the active
+	// dimension's build height range, in section-index terms. Defaults to
+	// the Overworld's (MIN_SECTION_Y/SECTION_COUNT); SetHeightBounds
+	// updates them from the dimension_type registry data once a
+	// dimension's name is known (see agent.getDimensionHeightBounds).
+	heightBoundsMu sync.RWMutex
+	minSectionY    int32
+	sectionCount   int32
 }
 
 // NewManager creates a new world manager.
@@ -108,6 +117,8 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener, log
 		blockOverrides:       make(map[blockPos]uint32),
 		worldAge:             -1, // Sentinel: not yet initialized
 		timeOfDay:            -1, // Sentinel: not yet initialized
+		minSectionY:          MIN_SECTION_Y,
+		sectionCount:         SECTION_COUNT,
 	}
 }
 
@@ -456,9 +467,41 @@ func (m *Manager) SetDifficulty(difficulty uint8, locked bool) {
 	m.hasDifficulty = true
 }
 
+// GetHeightBounds returns the active dimension's world-Y build height
+// range [minY, maxY] inclusive. Defaults to the Overworld's -64..319 until
+// SetHeightBounds is called with a different dimension's bounds.
+func (m *Manager) GetHeightBounds() (minY, maxY int32) {
+	m.heightBoundsMu.RLock()
+	defer m.heightBoundsMu.RUnlock()
+	minY = m.minSectionY * SECTION_HEIGHT
+	maxY = (m.minSectionY+m.sectionCount)*SECTION_HEIGHT - 1
+	return minY, maxY
+}
+
+// SetHeightBounds updates the active dimension's world-Y build height
+// range from [minY, maxY] inclusive (e.g. from a dimension_type registry
+// entry's min_y/height NBT fields: maxY = min_y + height - 1). Both are
+// always 16-aligned in vanilla (every dimension's height is a whole number
+// of 16-block sections). Called on a dimension change once the new
+// dimension's name is known (see agent.getDimensionHeightBounds) — chunks
+// loaded after this call (via HandleChunkLoad) use the new bounds; chunks
+// already loaded keep whatever bounds they were created with (irrelevant
+// in practice, since Reset() clears all chunks on every dimension change
+// anyway).
+func (m *Manager) SetHeightBounds(minY, maxY int32) {
+	m.heightBoundsMu.Lock()
+	defer m.heightBoundsMu.Unlock()
+	m.minSectionY = minY / SECTION_HEIGHT
+	m.sectionCount = (maxY - minY + 1) / SECTION_HEIGHT
+}
+
 // HandleChunkLoad processes a chunk data packet and stores the chunk.
 func (m *Manager) HandleChunkLoad(chunkX, chunkZ int32, data []byte) error {
 	pos := ChunkPos{X: chunkX, Z: chunkZ}
+
+	m.heightBoundsMu.RLock()
+	minSectionY, sectionCount := m.minSectionY, m.sectionCount
+	m.heightBoundsMu.RUnlock()
 
 	// Create chunk data with version-appropriate parsing flag
 	chunk := &ChunkData{
@@ -467,6 +510,8 @@ func (m *Manager) HandleChunkLoad(chunkX, chunkZ int32, data []byte) error {
 		RawData:              data,
 		UseCalculatedDataLen: m.useCalculatedDataLen,
 		HasFluidCount:        m.hasFluidCount,
+		MinSectionY:          minSectionY,
+		SectionCount:         sectionCount,
 		logger:               m.logger,
 	}
 
