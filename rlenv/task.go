@@ -97,6 +97,19 @@ type Config struct {
 	// effect on MineRequiredTool's own seeding, which still runs.
 	MineTargetBuried bool
 
+	// MineBuriedExploreDepth is how many blocks below the mine-search
+	// anchor (Environment.mineSearchAnchorY) buried-search exploration
+	// waypoints use for their Y — observationUnknownDirection /
+	// markExploredQuadrant / currentGoToTarget while
+	// buriedTargetUnresolved(). Decouples vertical explore depth from
+	// MineSearchRadius (which is a horizontal/LOS search bound): the
+	// historical formula anchorY - MineSearchRadius/2 sent bots to Y-8
+	// when radius was 16 while template ore often lived only 2–4 deep.
+	// This field is a pure knob — the trainer/curriculum owns the value
+	// for the run's ore band; rlenv never hardcodes a distribution.
+	// <= 0 keeps the legacy MineSearchRadius/2 behavior for back-compat.
+	MineBuriedExploreDepth int
+
 	// SleepSearchRadius, if > 0, enables ActionSleep: FindNearestBed
 	// searches this many blocks for a bed to sleep in. Unlike
 	// MineTargetBlock/CraftTargetItem, there is no companion "target
@@ -696,11 +709,13 @@ type TaskOverride struct {
 	MineRequiredTool             string
 	MineRequiredToolEnchantments map[string]int
 	MineTargetBuried             bool
-	SleepSearchRadius            int
-	PortalSearchRadius           int
-	LightPortalSearchRadius      int
-	CraftTargetItem              string
-	CraftSearchRadius            int
+	// MineBuriedExploreDepth is Config.MineBuriedExploreDepth for this episode.
+	MineBuriedExploreDepth  int
+	SleepSearchRadius       int
+	PortalSearchRadius      int
+	LightPortalSearchRadius int
+	CraftTargetItem         string
+	CraftSearchRadius       int
 
 	// EquipTargetItem is Config.EquipTargetItem for this episode.
 	EquipTargetItem string

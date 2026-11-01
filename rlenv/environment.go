@@ -216,6 +216,10 @@ type Environment struct {
 	// stale "exists" reading across episodes would misjudge a freshly
 	// re-seeded world.
 	mineBuriedExists bool
+	// buriedDepthBonusPaid is how many whole blocks of depth below the
+	// mine-search anchor this buried episode has already paid
+	// depthProgressBonus for (capped at buriedExploreDepth).
+	buriedDepthBonusPaid int
 
 	// prevBlocksMinedCount is BlocksMinedCounter's last-read value, this
 	// episode's "before this step" baseline for digProgressBonus — Step
@@ -600,6 +604,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	// exploredQuadrants' own doc comment.
 	e.mineSearchAnchorX, e.mineSearchAnchorY, e.mineSearchAnchorZ = x, y, z
 	e.exploredQuadrants = [4]bool{}
+	e.buriedDepthBonusPaid = 0
 	e.mineBuriedExists = false
 	e.prevBlocksMinedCount = e.currentBlocksMinedCount()
 
@@ -620,6 +625,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineRequiredTool = override.MineRequiredTool
 		e.cfg.MineRequiredToolEnchantments = override.MineRequiredToolEnchantments
 		e.cfg.MineTargetBuried = override.MineTargetBuried
+		e.cfg.MineBuriedExploreDepth = override.MineBuriedExploreDepth
 		e.cfg.SleepSearchRadius = override.SleepSearchRadius
 		e.cfg.PortalSearchRadius = override.PortalSearchRadius
 		e.cfg.LightPortalSearchRadius = override.LightPortalSearchRadius
@@ -1318,6 +1324,24 @@ func (e *Environment) mineTargetMemoryEnabled() bool {
 	return e.cfg.MineTargetBuried || e.cfg.ChainStage == ChainMine
 }
 
+// BuriedSearchStats reports whether this episode is in an active buried
+// search and, if so, whether the ore was ever LOS-resolved and how many
+// exploration quadrants have been marked. Used by mc-rsi-trainer metrics
+// (docs/plans/21-buried-mining-success.md Phase 0) — not part of the
+// observation vector (would be X-ray-adjacent if exposed to the policy).
+func (e *Environment) BuriedSearchStats() (active bool, everVisible bool, quadrantsExplored int) {
+	if !e.buriedTargetActive() {
+		return false, false, 0
+	}
+	n := 0
+	for _, explored := range e.exploredQuadrants {
+		if explored {
+			n++
+		}
+	}
+	return true, e.mineEverSeen, n
+}
+
 // buriedTargetActive reports whether mineTargetBlockInUse() is currently a
 // buried target for this episode — mirrors that function's own
 // stage/craftedGoal-aware switch exactly, deliberately narrower than
@@ -1554,6 +1578,22 @@ func (e *Environment) refreshMineBuriedExistence(ctx context.Context) error {
 // itself is raised and live data then shows this single-point-per-
 // quadrant granularity is the limiting factor, not before.
 //
+
+// buriedExploreDepth is the vertical offset (blocks below the mine-search
+// anchor) used for buried-search exploration waypoints. Config.
+// MineBuriedExploreDepth, when > 0, is the operator/curriculum-chosen
+// ore-band depth; <= 0 preserves the legacy MineSearchRadius/2 formula
+// so existing configs do not silently change mid-flight.
+func (e *Environment) buriedExploreDepth() float64 {
+	if e.cfg.MineBuriedExploreDepth > 0 {
+		return float64(e.cfg.MineBuriedExploreDepth)
+	}
+	if e.cfg.MineSearchRadius <= 0 {
+		return 0
+	}
+	return float64(e.cfg.MineSearchRadius) / 2
+}
+
 // Returns how many quadrants this call newly marked (almost always 0 or 1,
 // never negative) — Step's reward logic pays arrivalBonus per newly-marked
 // quadrant with it (see that constant's own doc comment); Reset's own call,
@@ -1563,7 +1603,8 @@ func (e *Environment) markExploredQuadrant(x, y, z float64) (newlyExplored int) 
 		return 0
 	}
 	half := float64(e.cfg.MineSearchRadius) / 2
-	targetY := e.mineSearchAnchorY - half
+	exploreDepth := e.buriedExploreDepth()
+	targetY := e.mineSearchAnchorY - exploreDepth
 	for idx := 0; idx < 4; idx++ {
 		if e.exploredQuadrants[idx] {
 			continue
@@ -1599,7 +1640,8 @@ func (e *Environment) observationUnknownDirection(x, y, z float64) (dx, dy, dz f
 		return 0, 0, 0, false
 	}
 	half := float64(e.cfg.MineSearchRadius) / 2
-	targetY := e.mineSearchAnchorY - half
+	exploreDepth := e.buriedExploreDepth()
+	targetY := e.mineSearchAnchorY - exploreDepth
 	bestDistSq := math.MaxFloat64
 	for idx := 0; idx < 4; idx++ {
 		if e.exploredQuadrants[idx] {
@@ -2306,6 +2348,24 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if e.buriedTargetActive() {
 		if delta := minedCountNow - e.prevBlocksMinedCount; delta > 0 {
 			reward += digProgressBonus * float32(delta)
+		}
+		// depthProgressBonus: once per whole block first reached below the
+		// mine-search anchor while the buried target is still unresolved,
+		// capped at buriedExploreDepth so diving past the configured ore
+		// band is not free reward (docs/plans/21-buried-mining-success.md).
+		if e.buriedTargetUnresolved() {
+			depthBelow := e.mineSearchAnchorY - y
+			if depthBelow > 0 {
+				reached := int(depthBelow) // whole blocks below anchor
+				cap := int(e.buriedExploreDepth())
+				if cap > 0 && reached > cap {
+					reached = cap
+				}
+				if newly := reached - e.buriedDepthBonusPaid; newly > 0 {
+					reward += depthProgressBonus * float32(newly)
+					e.buriedDepthBonusPaid = reached
+				}
+			}
 		}
 	}
 	e.prevBlocksMinedCount = minedCountNow

@@ -137,3 +137,38 @@ func TestUnknownDirectionTracksExploredQuadrants(t *testing.T) {
 		t.Fatalf("unknownValid = %v, want 0 once every quadrant's target point has been reached", valid)
 	}
 }
+
+// TestUnknownDirectionUsesConfiguredExploreDepth confirms MineBuriedExploreDepth
+// decouples waypoint Y from MineSearchRadius/2 (docs/plans/21-buried-mining-success.md).
+func TestUnknownDirectionUsesConfiguredExploreDepth(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true)
+	cfg := buriedTestConfig()
+	cfg.MineSearchRadius = 16
+	cfg.MineBuriedExploreDepth = 3
+	env := newTestEnvironment(t, agent, cfg)
+
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if valid := obs.Values[24]; valid != 1 {
+		t.Fatalf("unknownValid = %v, want 1", valid)
+	}
+	dy := obs.Values[22]
+	// From anchor Y=0, explore depth 3 => targetY=-3 => dy around -3 (not -8).
+	if dy > -2.5 || dy < -3.5 {
+		t.Fatalf("unknownDy = %v, want about -3 with MineBuriedExploreDepth=3 (not -8 from radius/2)", dy)
+	}
+
+	cfg.MineBuriedExploreDepth = 10
+	env = newTestEnvironment(t, agent, cfg)
+	obs, err = env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	dy = obs.Values[22]
+	if dy > -9.5 || dy < -10.5 {
+		t.Fatalf("unknownDy = %v, want about -10 with MineBuriedExploreDepth=10", dy)
+	}
+}
