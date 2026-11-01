@@ -93,7 +93,7 @@ func TestDigProgressBonusRewardsConfirmedBlockBreaksDuringBuriedSearch(t *testin
 		t.Fatalf("Step: %v", err)
 	}
 	if result.Reward < 1 {
-		t.Fatalf("Reward after 3 confirmed block breaks = %v, want >= 1 (should include digProgressBonus*3 = 1.5)", result.Reward)
+		t.Fatalf("Reward after 3 confirmed block breaks = %v, want >= 1 (should include digProgressBonus*3)", result.Reward)
 	}
 }
 

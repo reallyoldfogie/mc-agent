@@ -42,7 +42,15 @@ const (
 	// steps' worth of timePenalty drag during a multi-second dig, not to
 	// rival the bonuses for genuinely finishing the search or the task.
 	// Tunable; revisit if live data shows it's mispriced either direction.
-	digProgressBonus float32 = 0.5
+	// Raised from 0.5 (docs/plans/21-buried-mining-success.md): multi-block
+	// dig must outweigh several steps of a non-trivial time penalty or the
+	// policy learns to skip buried episodes entirely.
+	digProgressBonus float32 = 1.5
+	// depthProgressBonus is paid once per whole block of depth below the
+	// mine-search anchor first reached during a buried unresolved search,
+	// capped at buriedExploreDepth — encourages going underground without
+	// rewarding infinite bedrock diving past the configured ore band.
+	depthProgressBonus float32 = 1.0
 	// mineRewardBonus is added once, the step Config.MineTargetBlock's
 	// nearest visible instance is observed to change (see
 	// Environment.Step's before/after BlockNameAt comparison) — same
