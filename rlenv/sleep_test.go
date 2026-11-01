@@ -125,7 +125,9 @@ func TestStepSleepDispatchesAtNightWithVisibleBed(t *testing.T) {
 func TestStepSleptThroughNightPaysBonusAndEndsEpisode(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.timeOfDayTicks, agent.timeOfDayKnown = 13000, true // within the sleep window
-	env := newTestEnvironment(t, agent, testConfig())
+	cfg := testConfig()
+	cfg.SleepSearchRadius = 8 // this episode must actually have Sleep turned on
+	env := newTestEnvironment(t, agent, cfg)
 	if _, err := env.Reset(context.Background()); err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
@@ -158,6 +160,72 @@ func TestStepSleptThroughNightPaysBonusAndEndsEpisode(t *testing.T) {
 	// needs to clearly be "the bonus fired," not match it to the exact cent.
 	if result.Reward < sleptThroughNightBonusForTest-1 {
 		t.Fatalf("reward = %v, want at least sleptThroughNightBonus (%v) minus a small time penalty", result.Reward, sleptThroughNightBonusForTest)
+	}
+}
+
+// TestStepSleptThroughNightRequiresSleepSearchRadius confirms the exact
+// bug found live, 2026-11-01 (docs/plans/21-buried-mining-success.md's
+// own triage), is fixed: a backward time jump must not end/reward an
+// episode whose own Config.SleepSearchRadius is 0 (Sleep never turned on
+// for it) - a `-shared-server` clock wraparound (see
+// sleptThroughNightMorningTolerance's own doc comment) was doing exactly
+// that, crediting every concurrently-running episode regardless of task.
+func TestStepSleptThroughNightRequiresSleepSearchRadius(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.timeOfDayTicks, agent.timeOfDayKnown = 13000, true
+	cfg := testConfig() // SleepSearchRadius left at 0 - the default
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	agent.timeOfDayTicks = 500 // backward jump, lands near the true morning boundary
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true with Config.SleepSearchRadius unset (0), want false - Sleep was never turned on for this episode")
+	}
+	if result.Reward >= sleptThroughNightBonusForTest-1 {
+		t.Fatalf("reward = %v, want well under sleptThroughNightBonus (%v) - must not be credited", result.Reward, sleptThroughNightBonusForTest)
+	}
+}
+
+// TestStepSleptThroughNightRejectsLandingFarFromMorning confirms a
+// backward jump landing well away from tick 0 - the signature of an
+// ordinary clock wraparound lapping one or more full days between two
+// samples, not vanilla's own sleep mechanic (which sets time to exactly
+// the next day boundary) - does not fire, even with Sleep turned on.
+func TestStepSleptThroughNightRejectsLandingFarFromMorning(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.timeOfDayTicks, agent.timeOfDayKnown = 20000, true // deep in the sleep window
+	cfg := testConfig()
+	cfg.SleepSearchRadius = 8
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	// Backward (20000 -> 15000) and still inside the sleep window, but
+	// nowhere near the morning boundary - consistent with the clock
+	// having lapped one or more full days, not a real sleep-skip.
+	agent.timeOfDayTicks = 15000
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true for a backward jump landing far from the morning boundary (15000), want false")
+	}
+	if result.Reward >= sleptThroughNightBonusForTest-1 {
+		t.Fatalf("reward = %v, want well under sleptThroughNightBonus (%v) - must not be credited", result.Reward, sleptThroughNightBonusForTest)
 	}
 }
 

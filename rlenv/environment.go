@@ -1783,6 +1783,40 @@ const (
 	vanillaSleepWindowStart = 12542
 	vanillaSleepWindowEnd   = 23459
 	ticksPerDay             = 24000
+
+	// sleptThroughNightMorningTolerance bounds how far past tick 0
+	// e.timeOfDayTicks may sit for sleptThroughNight (below) to still
+	// credit it as a genuine sleep-skip. Vanilla's own sleep mechanic sets
+	// the time to the exact next multiple of ticksPerDay - tick 0 of the
+	// new day, precisely, not "sometime in the morning" - so a sample
+	// landing well past 0 is evidence against this particular backward
+	// jump being that event. Found live, 2026-11-01 (docs/plans/21-buried-
+	// mining-success.md's own triage): a `-shared-server` run with Sleep
+	// entirely disabled (Config.SleepSearchRadius == 0 everywhere) still
+	// logged `doneReason="slept"` as the single largest success-reward
+	// contributor. Root cause: the server's own tick rate was boosted to
+	// 300/day (vanilla is 20), so one full day (ticksPerDay) elapses in
+	// ~80 real seconds - comfortably less than one Step's own dispatch
+	// can take (a mine/pathfind retry easily runs tens of seconds). The
+	// *un-gated* earlier version of this check treated ANY backward jump
+	// out of vanillaSleepWindowStart/End (nearly half the day) as proof
+	// of sleep; an ordinary multi-lap clock wraparound between two
+	// samples satisfies that just as well, landing anywhere in [0,
+	// ticksPerDay), with no one ever attempting ActionSleep.
+	//
+	// This tolerance doesn't eliminate that residual risk once Sleep IS
+	// enabled (a long single Step can still drift meaningfully past 0 by
+	// the time this bot happens to sample it, and multiple wraps could in
+	// principle land inside this same narrow band too) - it reduces the
+	// false-positive surface from ~45% of the day
+	// (vanillaSleepWindowEnd-vanillaSleepWindowStart) to this tolerance's
+	// own, much smaller share of ticksPerDay. A fully precise fix would
+	// need this Environment to also know the server's actual tick rate
+	// (to bound how many ticks one Step's own wall-clock duration could
+	// plausibly advance) rather than inferring it from the tick value
+	// alone; not implemented - revisit only if live data on a Sleep-
+	// enabled run shows this tolerance is still too generous.
+	sleptThroughNightMorningTolerance = 1000
 )
 
 // refreshTimeOfDay caches the world's current time of day and whether
@@ -2282,7 +2316,26 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// (not a fresh range check against prevTimeOfDayTicks) gates this so
 	// it agrees exactly with whatever ActionSleep's own legality gate
 	// would have said about the step that just ran.
-	sleptThroughNight := prevTimeOfDayKnown && e.timeOfDayKnown && prevSleepWindowActive && e.timeOfDayTicks < prevTimeOfDayTicks
+	//
+	// Config.SleepSearchRadius > 0: this episode must actually have the
+	// capability turned on - mirrors actionLegal's own gate on
+	// ActionSleep. Without it, a shared-server clock wraparound (see
+	// sleptThroughNightMorningTolerance's own doc comment) could end and
+	// reward *any* episode, Sleep-enabled or not, the instant the world
+	// clock happened to lap - found live, 2026-11-01, on a run with Sleep
+	// disabled everywhere.
+	//
+	// e.timeOfDayTicks <= sleptThroughNightMorningTolerance: vanilla's own
+	// sleep mechanic sets time to the exact next day boundary (tick 0),
+	// not merely "earlier than it was" - requiring the post-jump sample to
+	// actually be near that boundary (rather than anywhere in the ~45%-
+	// of-the-day-wide sleep window) rejects most ordinary clock-wraparound
+	// false positives too, see that constant's own doc comment for the
+	// residual risk this does not eliminate.
+	sleptThroughNight := prevTimeOfDayKnown && e.timeOfDayKnown && prevSleepWindowActive &&
+		e.cfg.SleepSearchRadius > 0 &&
+		e.timeOfDayTicks < prevTimeOfDayTicks &&
+		e.timeOfDayTicks <= sleptThroughNightMorningTolerance
 	if sleptThroughNight {
 		reward += sleptThroughNightBonus
 		done = true
