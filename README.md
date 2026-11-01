@@ -258,10 +258,6 @@ mc-agent/
 └── logs/                  # Packet logs (auto-rotated, gitignored)
 ```
 
-(`code-archive/` - legacy implementations kept for local reference - and `docs/plans/`/`docs/archive/`
-- working design notes and session history - are gitignored: present on a machine that's been
-developing this project, not in a fresh clone.)
-
 ### Version-Specific Protocol Handlers
 
 The bot uses a modular architecture for handling Minecraft protocol differences across versions. Each supported version has its own handler package in `versions/`:
@@ -507,8 +503,6 @@ the interface fan-out that step 1 triggers and what "wire it into `rlenv`" actua
 
 ### Documentation
 
-- **CLAUDE.md** - Comprehensive codebase guide for Claude Code (gitignored - present when
-  developing locally with Claude Code, not in a fresh clone)
 - **[docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md)** - Guide for adding new Minecraft version support
 - **[docs/ADDING_NEW_ACTION.md](docs/ADDING_NEW_ACTION.md)** - Checklist for adding a new chat command/action, including RL (`rlenv`) wiring
 - **[docs/BOW_COMMANDS.md](docs/BOW_COMMANDS.md)** - Bow firing commands and ballistics documentation
@@ -518,13 +512,6 @@ the interface fan-out that step 1 triggers and what "wire it into `rlenv`" actua
 - **[scripts/README.md](scripts/README.md)** - Version automation scripts documentation
 - **[testing/README.md](testing/README.md)** - Integration testing framework documentation
 
-## Legacy Code
-
-Legacy implementations are kept locally for reference when porting features, under `code-archive/`
-(gitignored - not present in a fresh clone):
-- `code-archive/old/` - Original implementation with activity system
-- `code-archive/src/` - Intermediate version
-- `code-archive/phys/` - Physics experiment archive
 
 ## License
 
@@ -551,8 +538,12 @@ Currently tested and working with Minecraft Java Edition:
 - 1.21.6 (protocol 771)
 - 1.21.7 (protocol 772)
 - 1.21.8 (protocol 772)
+- 1.21.9 (protocol 773)
+- 1.21.10 (protocol 773)
+- 1.21.11 (protocol 774)
+- 26.1    (protocol 775)
 
-Each version has a dedicated handler in `versions/v1_21_X/`. See [docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md) for adding new versions.
+Each version has a dedicated handler in `versions/<version>/`. See [docs/ADDING_NEW_VERSION.md](docs/ADDING_NEW_VERSION.md) for adding new versions.
 
 ## Known Issues
 
