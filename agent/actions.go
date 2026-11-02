@@ -1451,7 +1451,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 		if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
 			return err
 		}
-		a.blocksMinedCount.Add(1)
+		a.recordBrokenBlock(blockX, blockY, blockZ, blockName)
 		return nil
 	}
 
@@ -1482,7 +1482,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
 		return err
 	}
-	a.blocksMinedCount.Add(1)
+	a.recordBrokenBlock(blockX, blockY, blockZ, blockName)
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
 }

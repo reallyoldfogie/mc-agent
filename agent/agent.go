@@ -438,6 +438,24 @@ type agent struct {
 	// target block — see that interface's own doc comment. Monotonic,
 	// never reset; callers diff successive reads themselves.
 	blocksMinedCount atomic.Int64
+
+	// brokenBlocksMu guards brokenBlocks - a plain count
+	// (blocksMinedCount above) can't be diffed to recover *which* blocks
+	// were broken, and a slice needs more than an atomic to append/drain
+	// safely.
+	brokenBlocksMu sync.Mutex
+	// brokenBlocks records the exact position and block name of every
+	// confirmed break since the last DrainBrokenBlocks call. See that
+	// method's own doc comment for why exact identity matters: an
+	// existence-or-count check over a search area (BuriedTargetAgent.
+	// BlockExistsInRadius) silently stops distinguishing "the target
+	// specifically got destroyed" once more than one instance of it
+	// exists in range, or once destroying one exposes another behind it
+	// (a vein) - found live, 2026-11-02, with a dense (150-instance) ore
+	// seeding: a bot repeatedly, genuinely destroyed real target ore and
+	// was never credited, because "does any instance still exist nearby"
+	// stayed true the whole time.
+	brokenBlocks []models.BrokenBlock
 }
 
 // BlocksMinedCount returns the number of blocks MineBlockAt has confirmed
@@ -445,6 +463,32 @@ type agent struct {
 // comment.
 func (a *agent) BlocksMinedCount() int64 {
 	return a.blocksMinedCount.Load()
+}
+
+// recordBrokenBlock updates both blocksMinedCount and brokenBlocks for one
+// confirmed break - the single call site MineBlockAt's own two success
+// paths both go through, so the two can never drift out of sync with each
+// other.
+func (a *agent) recordBrokenBlock(x, y, z int, blockName string) {
+	a.blocksMinedCount.Add(1)
+	a.brokenBlocksMu.Lock()
+	a.brokenBlocks = append(a.brokenBlocks, models.BrokenBlock{X: x, Y: y, Z: z, BlockName: blockName})
+	a.brokenBlocksMu.Unlock()
+}
+
+// DrainBrokenBlocks returns every confirmed block break since the last
+// call (or since agent creation, for the first call) and clears the
+// internal buffer - the caller owns the returned slice. See brokenBlocks'
+// own doc comment for why this exists alongside the plain
+// blocksMinedCount/BlocksMinedCount. Must be called regularly regardless
+// of task (rlenv.Environment.Step does, every Step, unconditionally) or
+// the buffer grows without bound for the agent's whole lifetime.
+func (a *agent) DrainBrokenBlocks() []models.BrokenBlock {
+	a.brokenBlocksMu.Lock()
+	defer a.brokenBlocksMu.Unlock()
+	drained := a.brokenBlocks
+	a.brokenBlocks = nil
+	return drained
 }
 
 // New constructs an agent with the provided configuration.

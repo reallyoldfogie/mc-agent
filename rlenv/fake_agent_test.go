@@ -1228,6 +1228,30 @@ func (f *fakeBlocksMinedAgent) BlocksMinedCount() int64 {
 	return f.count
 }
 
+// fakeBrokenBlocksAgent wraps fakeAgent to additionally satisfy
+// rlenv.BrokenBlocksReporter - same reason as fakeBuriedTargetAgent/
+// fakeBlocksMinedAgent: existing tests using plain fakeAgent keep
+// exercising the exact-coordinate fallback's "agent doesn't support this
+// capability" no-op path. pending is appended to directly by the test
+// (not derived from any simulated mining action) to queue up broken
+// blocks for the next DrainBrokenBlocks call; drainCalls counts how many
+// times Step actually drained, so a test can confirm draining happens
+// every Step regardless of task, not just while buriedTargetActive().
+type fakeBrokenBlocksAgent struct {
+	*fakeAgent
+	pending    []models.BrokenBlock
+	drainCalls int
+}
+
+func (f *fakeBrokenBlocksAgent) DrainBrokenBlocks() []models.BrokenBlock {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drainCalls++
+	drained := f.pending
+	f.pending = nil
+	return drained
+}
+
 func (f *fakeEnchantedToolAgent) SeedGiveEnchantedItem(_ context.Context, itemName string, enchantments map[string]int, count int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

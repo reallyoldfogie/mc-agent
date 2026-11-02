@@ -1501,6 +1501,30 @@ func (e *Environment) currentBlocksMinedCount() int64 {
 	return counter.BlocksMinedCount()
 }
 
+// BrokenBlocksReporter is the optional capability Step uses to credit a
+// buried target's destruction by exact coordinate+name, not by counting
+// or checking existence over a search area. BuriedTargetAgent's own
+// BlockExistsInRadius ("does any instance of the target block still
+// exist nearby") and a plain per-step dig count both silently stop
+// distinguishing "the target specifically" once more than one instance
+// of the target block exists within range (dense ore seeding) or once
+// destroying one exposes another behind it (a vein) - found live,
+// 2026-11-02, with 150 seeded ore instances: a bot could repeatedly,
+// genuinely destroy real target ore and never once be credited, because
+// "does any instance still exist" stayed true the whole time. Same "an
+// agent that doesn't implement this is left alone, not failed over"
+// convention as BuriedTargetAgent/BlocksMinedCounter.
+type BrokenBlocksReporter interface {
+	// DrainBrokenBlocks returns every block this agent has confirmed
+	// broken since the last call (or since agent creation, for the
+	// first), and clears its own internal buffer - the caller owns the
+	// returned slice. Must be called every Step regardless of task, or
+	// the agent's own buffer grows without bound; see Step's own call
+	// site for why crediting the result is still gated on
+	// buriedTargetActive() separately from draining it.
+	DrainBrokenBlocks() []models.BrokenBlock
+}
+
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
 // Step's "before this step" read - mineVisible/refreshMineTarget's own
 // caching shape (see that field's own doc comment), but LOS-free (see
@@ -2026,6 +2050,36 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 	if !mined && !e.mineEverSeen && prevMineBuriedExists && !e.mineBuriedExists {
 		mined = true
+	}
+	// Exact-coordinate fallback (BrokenBlocksReporter): the
+	// existence-radius check immediately above answers "does *any*
+	// instance of the target block still exist nearby," which silently
+	// stops distinguishing "the target specifically got destroyed" once
+	// more than one instance exists within radius (dense seeding - found
+	// live, 2026-11-02, with 150 seeded instances) or once destroying one
+	// exposes another behind it (a vein - existence stays true either
+	// way). Comparing each confirmed break's own exact coordinate+name
+	// against mineTargetBlockInUse() is immune to both: it doesn't matter
+	// how many other instances exist or get exposed, only whether *this*
+	// specific break matches. Drained unconditionally every Step, not
+	// just while buriedTargetActive(), so an unrelated task's own
+	// incidental breaks (e.g. chain_gather's tree) never pile up unread
+	// in the agent's own buffer - only buriedTargetActive() gates whether
+	// a match actually credits mined.
+	if reporter, ok := e.agent.(BrokenBlocksReporter); ok {
+		broken := reporter.DrainBrokenBlocks()
+		if e.buriedTargetActive() {
+			target := e.mineTargetBlockInUse()
+			for _, b := range broken {
+				if mined || target == "" || b.BlockName != target {
+					continue
+				}
+				mined = true
+				if restorableBlockName(b.BlockName) {
+					e.minedBlocks = append(e.minedBlocks, minedBlock{b.X, b.Y, b.Z, b.BlockName})
+				}
+			}
+		}
 	}
 
 	// craftedThisStep is judged from an actual inventory-count increase,
