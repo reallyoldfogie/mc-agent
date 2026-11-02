@@ -331,6 +331,49 @@ func (a *agent) SeedBlockAt(ctx context.Context, blockName string, x, y, z int) 
 	return nil
 }
 
+// junkOverburdenBlocks lists common block drops that accumulate in a bot's
+// inventory purely from digging through the way to a buried target - never
+// the actual goal, never useful for anything else, but still occupying a
+// slot each. Found live, 2026-11-02: a mine_buried bot's inventory query
+// came back with all 36 slots full of exactly these (mostly minecraft:dirt
+// x64), and a /give for its required tool kept reporting server-side
+// success ("Gave 1 ... to X") while the client's own inventory never
+// reflected it - the server has nowhere to put a new item once every slot
+// already holds something, and silently drops it on the ground instead.
+// Clearing just these specific items (not ClearInventory's "everything")
+// keeps a leftover required tool from a previous episode intact while
+// guaranteeing the give that follows actually has room to land.
+var junkOverburdenBlocks = []string{
+	"minecraft:dirt",
+	"minecraft:stone",
+	"minecraft:cobblestone",
+	"minecraft:gravel",
+	"minecraft:sand",
+	"minecraft:deepslate",
+	"minecraft:cobbled_deepslate",
+	"minecraft:andesite",
+	"minecraft:diorite",
+	"minecraft:granite",
+	"minecraft:tuff",
+	"minecraft:calcite",
+	"minecraft:clay",
+}
+
+// clearJunkOverburden best-effort clears junkOverburdenBlocks from the
+// bot's inventory via RCON, freeing slots before a give that needs room -
+// see junkOverburdenBlocks' own doc comment. Errors are swallowed: this is
+// a precaution, not the seed itself, and a /clear that fails for one item
+// (or on a server where junk never accumulated) should never block the
+// give that follows.
+func (a *agent) clearJunkOverburden(ctx context.Context) {
+	if a.cfg.RCON == nil {
+		return
+	}
+	for _, item := range junkOverburdenBlocks {
+		_, _ = a.cfg.RCON.Exec(ctx, fmt.Sprintf("clear %s %s", a.cfg.Name, item))
+	}
+}
+
 // SeedGiveItem ensures at least count of itemName is in the bot's own
 // inventory, giving it via RCON if not already present - see
 // rlenv.ToolSeedAgent. Deliberately RCON-only, not a player/chat command -
@@ -343,7 +386,8 @@ func (a *agent) SeedBlockAt(ctx context.Context, blockName string, x, y, z int) 
 // starts with a durable tool already in inventory (left over from a
 // previous episode, since nothing clears it) is left alone, so this doesn't
 // hand out a fresh, redundant tool every single episode the way an
-// unconditional give would.
+// unconditional give would. Does clear junkOverburdenBlocks first, every
+// time it's about to give - see that function's own doc comment for why.
 func (a *agent) SeedGiveItem(ctx context.Context, itemName string, count int) error {
 	if a.cfg.RCON == nil {
 		return fmt.Errorf("seed give item: RCON not configured for this agent")
@@ -351,6 +395,7 @@ func (a *agent) SeedGiveItem(ctx context.Context, itemName string, count int) er
 	if a.InventoryCount(itemName) >= count {
 		return nil
 	}
+	a.clearJunkOverburden(ctx)
 
 	normalized := normalizeItemName(itemName)
 	if _, err := a.cfg.RCON.Exec(ctx, fmt.Sprintf("give %s %s %d", a.cfg.Name, normalized, count)); err != nil {
@@ -394,6 +439,7 @@ func (a *agent) SeedGiveEnchantedItem(ctx context.Context, itemName string, ench
 	if a.InventoryCount(itemName) >= count {
 		return nil
 	}
+	a.clearJunkOverburden(ctx)
 
 	normalized := normalizeItemName(itemName)
 	// Sorted for a deterministic command string (map iteration order

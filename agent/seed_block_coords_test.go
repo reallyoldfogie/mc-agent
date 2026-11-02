@@ -107,8 +107,9 @@ func TestClearAir_WaitsForBlockUpdatesOnlyWhenBlocksWereRemoved(t *testing.T) {
 // goes straight to RCON, which still targets this bot by name and still
 // reaches its own connection with the resulting inventory update. There is
 // no live connection in this test to ever satisfy InventoryCount, so the
-// call is expected to time out via ctx — the point is confirming the one
-// and only command it issued was the RCON give, never a player command.
+// call is expected to time out via ctx — the point is confirming the last
+// command issued was the RCON give, never a player command (clearJunkOverburden
+// issues its own RCON clears first - see TestSeedGiveItem_ClearsJunkOverburdenBeforeGiving).
 func TestSeedGiveItem_GivesViaRCONNotPlayerCommand(t *testing.T) {
 	rc := &execOnlyRCON{response: "Gave 1 [Wooden Pickaxe] to BuriedSmoke"}
 	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", Name: "BuriedSmoke", RCON: rc})
@@ -123,8 +124,78 @@ func TestSeedGiveItem_GivesViaRCONNotPlayerCommand(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("SeedGiveItem error = %v, want context.DeadlineExceeded (no live connection in this test to sync inventory)", err)
 	}
-	if want := "give BuriedSmoke minecraft:wooden_pickaxe 1"; len(rc.cmds) != 1 || rc.cmds[0] != want {
-		t.Errorf("RCON commands = %v, want exactly [%s] — must give via RCON directly, never a player command first", rc.cmds, want)
+	if len(rc.cmds) == 0 {
+		t.Fatal("RCON commands = [], want at least the give command")
+	}
+	if want := "give BuriedSmoke minecraft:wooden_pickaxe 1"; rc.cmds[len(rc.cmds)-1] != want {
+		t.Errorf("last RCON command = %q, want %q — must give via RCON directly, never a player command first", rc.cmds[len(rc.cmds)-1], want)
+	}
+	for _, cmd := range rc.cmds {
+		if strings.Contains(cmd, "@s") {
+			t.Errorf("RCON command %q looks like a player/chat command, not RCON's targeted form", cmd)
+		}
+	}
+}
+
+// TestSeedGiveItem_ClearsJunkOverburdenBeforeGiving covers the 2026-11-02
+// fix: SeedGiveItem's RCON give kept reporting server-side success ("Gave 1
+// ... to X") while the bot's own inventory never reflected it, because
+// every one of its 36 slots was already full of accumulated dig-through
+// junk (minecraft:dirt, mostly) - there was nowhere for the server to put
+// the new item, so it silently dropped on the ground instead. Clearing
+// junkOverburdenBlocks first (not ClearInventory's "everything") guarantees
+// room without discarding a tool a previous episode already left behind.
+func TestSeedGiveItem_ClearsJunkOverburdenBeforeGiving(t *testing.T) {
+	rc := &execOnlyRCON{response: "Gave 1 [Wooden Pickaxe] to BuriedSmoke"}
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", Name: "BuriedSmoke", RCON: rc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := agentInt.(*agent)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_ = a.SeedGiveItem(ctx, "minecraft:wooden_pickaxe", 1)
+
+	if len(rc.cmds) != len(junkOverburdenBlocks)+1 {
+		t.Fatalf("RCON commands = %v (%d), want %d junk clears + 1 give", rc.cmds, len(rc.cmds), len(junkOverburdenBlocks)+1)
+	}
+	for i, item := range junkOverburdenBlocks {
+		want := "clear BuriedSmoke " + item
+		if rc.cmds[i] != want {
+			t.Errorf("RCON command[%d] = %q, want %q", i, rc.cmds[i], want)
+		}
+	}
+}
+
+// TestSeedGiveEnchantedItem_ClearsJunkOverburdenBeforeGiving mirrors
+// TestSeedGiveItem_ClearsJunkOverburdenBeforeGiving for the enchanted-tool
+// path (see its own doc comment) - the same full-inventory failure mode
+// applies regardless of which /give syntax is used.
+func TestSeedGiveEnchantedItem_ClearsJunkOverburdenBeforeGiving(t *testing.T) {
+	rc := &execOnlyRCON{response: "Gave 1 [Netherite Pickaxe] to BuriedSmoke"}
+	agentInt, err := New(models.AgentConfig{Version: "1.21.5", Address: "127.0.0.1:25565", Name: "BuriedSmoke", RCON: rc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := agentInt.(*agent)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_ = a.SeedGiveEnchantedItem(ctx, "minecraft:netherite_pickaxe", map[string]int{"minecraft:efficiency": 5}, 1)
+
+	if len(rc.cmds) != len(junkOverburdenBlocks)+1 {
+		t.Fatalf("RCON commands = %v (%d), want %d junk clears + 1 give", rc.cmds, len(rc.cmds), len(junkOverburdenBlocks)+1)
+	}
+	for i, item := range junkOverburdenBlocks {
+		want := "clear BuriedSmoke " + item
+		if rc.cmds[i] != want {
+			t.Errorf("RCON command[%d] = %q, want %q", i, rc.cmds[i], want)
+		}
+	}
+	last := rc.cmds[len(rc.cmds)-1]
+	if want := "give BuriedSmoke minecraft:netherite_pickaxe[minecraft:enchantments={\"minecraft:efficiency\":5}] 1"; last != want {
+		t.Errorf("last RCON command = %q, want %q", last, want)
 	}
 }
 
