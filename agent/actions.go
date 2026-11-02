@@ -1445,9 +1445,23 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	// Swing arm for visual feedback
 	_ = actions.SendSwing(conn, models.MainHand)
 
-	// Instant break: hardness 0 or break time <= 1 tick
+	// Instant break: hardness 0 or break time <= 1 tick. The server's own
+	// break-speed validation is authoritative and independent of our
+	// client-side estimate - it only completes the dig on an explicit
+	// PlayerActionFinishDigging, the same as the timed path below. Omitting
+	// it here (found live, 2026-11-02, via raw packet capture: a
+	// ServerboundBlockDig status=0 with no matching status=2, followed by
+	// the server re-asserting the pre-break state) left the server's own
+	// dig session permanently incomplete - the block was never actually
+	// destroyed server-side, no matter how many times the client thought it
+	// had broken it. There is nothing to wait for first here (that is the
+	// whole point of "instant"), so this sends Finish right after Start.
 	if breakTime <= 0.05 {
 		a.logf("[MineBlockAt] Instant break for %s", blockName)
+		sequence = a.getNextSequence()
+		if err := actions.SendPlayerAction(conn, int32(common.PlayerActionFinishDigging), blockX, blockY, blockZ, int32(face), sequence); err != nil {
+			return fmt.Errorf("send finish digging: %w", err)
+		}
 		if err := a.awaitBlockChanged(ctx, world, blockCenterX, blockCenterY, blockCenterZ, stateID); err != nil {
 			return err
 		}
