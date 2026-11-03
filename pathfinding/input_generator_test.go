@@ -565,14 +565,24 @@ func TestIsComplete(t *testing.T) {
 			description: "Within 0.18 horizontal, 0.08 vertical tolerance",
 		},
 		{
-			name:       "Traverse not complete - too far horizontally",
+			name:       "Traverse complete despite collision-hitbox offset",
 			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
 			targetStep: PathStep{
 				Position: models.V3{X: 1, Y: 64, Z: 0},
 				Movement: Traverse,
 			},
+			expected:    true,
+			description: "0.3 blocks short of a corner target is the unavoidable rest position against a corridor wall - within the wider tolerance shared with Descend/MineDown",
+		},
+		{
+			name:       "Traverse not complete - too far horizontally",
+			currentPos: models.V3{X: 1.4, Y: 64, Z: 0},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: Traverse,
+			},
 			expected:    false,
-			description: "0.3 blocks away horizontally > 0.18 threshold",
+			description: "0.4 blocks away horizontally > widened threshold",
 		},
 		{
 			name:       "Traverse not complete - too far above",

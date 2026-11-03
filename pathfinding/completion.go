@@ -146,6 +146,28 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 			deltaPos.Y >= -0.05 && // Tighter vertical range
 			deltaPos.Y <= 0.05
 
+	case Traverse, DiagonalTraverse, MineThrough:
+		// Horizontal corridor movement, including MineThrough once its
+		// obstruction is cleared (it's then an ordinary Traverse-shaped
+		// step).
+		//
+		// In a single-wide tunnel, the path target's X/Z is the mined
+		// block's raw integer coordinate (its corner, not its center -
+		// unlike Descend/MineDown/Drop2*, Traverse/MineThrough never get
+		// the input generator's block-center snap; see
+		// input_generator.go's GenerateInputs). With a solid wall on one
+		// side, the bot's own collision hitbox (~0.3 blocks radius)
+		// physically can't press its center all the way to that corner -
+		// it bottoms out ~0.3 blocks short. The default case's 0.18
+		// tolerance is tighter than that unavoidable offset, so the step
+		// never completes and stuck-recovery fires every few seconds for
+		// the rest of the tunnel. Use the same wider radius already
+		// proven for Descend/MineDown's identical corner-vs-hitbox issue.
+		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
+		return horizontalDist2 < (2*0.2*0.25) &&
+			deltaPos.Y >= -0.065 &&
+			deltaPos.Y <= 0.08
+
 	case AscendStairs, DescendStairs:
 		// Stair movements require special Y tolerance
 		//
@@ -169,9 +191,8 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 			deltaPos.Y <= 0.6 // Can be up to 0.6 blocks below target
 
 	default:
-		// Default completion threshold for Traverse, Ascend, DiagonalTraverse,
-		// MineThrough (once its obstruction is cleared, it's an ordinary
-		// Traverse-shaped step), etc.
+		// Default completion threshold for Ascend and other movement types
+		// not given their own case above.
 		//
 		// Horizontal threshold: 0.18 blocks (allows some wiggle room)
 		// Vertical threshold: -0.065 to +0.08 (accounts for step height and ground detection)
