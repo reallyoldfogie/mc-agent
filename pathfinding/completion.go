@@ -16,9 +16,17 @@ import (
 //
 // Based on phys archive bot/path/path.go:193-211 (Tile.IsComplete() logic).
 func IsComplete(currentPos models.V3, targetStep PathStep) bool {
-	// Use the original target position for completion checking
-	// (The input generator may adjust to block center for aiming, but completion
-	// is based on reaching the pathfinding target, not the precise landing spot)
+	// deltaPos is always measured against the raw target corner, never the
+	// input generator's centered steering aim-point - but what each case
+	// below does with it differs. Most cases (default, Traverse/MineThrough/
+	// etc.) use a tight radius around this same raw corner, consistent
+	// with never being centered for steering either. The movement types
+	// the input generator DOES center (Descend/MineDown/MineNeighborFloor/
+	// Drop2*/AscendJump/DiagonalAscend - see GenerateInputs' centering
+	// switch) instead check whether the bot landed anywhere inside the
+	// whole target cell, since a centered aim-point and a raw corner are
+	// both valid resting spots ~0.71 blocks apart - no single radius
+	// around either one alone covers both without rejecting the other.
 	targetPos := targetStep.Position
 
 	// Calculate delta from current position to target
@@ -26,28 +34,67 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 
 	// Movement-specific completion thresholds
 	switch targetStep.Movement {
-	case Descend, MineDown, MineDownDiagonal, MineNeighborFloor:
-		// Drop down movements (1-3 blocks), or MineDown/MineDownDiagonal/
+	case Descend, MineDown, MineDownDiagonal, MineNeighborFloor,
+		Drop2North, Drop2South, Drop2East, Drop2West:
+		// Drop down movements (1-3 blocks), MineDown/MineDownDiagonal/
 		// MineNeighborFloor's single- or two-level drop once the
-		// obstruction(s) are cleared - the
-		// physics executor never even calls IsComplete while a Mine* step is
-		// still waiting on the mine itself (see isMineActionStep), so by the time
-		// this runs, it's an ordinary drop into now-open space.
-		// Tighter horizontal tolerance, only check we're not above target.
-		// deltaPos.Y = target.Y - current.Y, so "not above target" means
-		// current.Y has come down to at or below target.Y, i.e. deltaPos.Y
-		// is not still strongly negative - the bound is >= -0.05, not <= 0.05
-		// (which was true even before any actual fall happened, since
-		// deltaPos.Y stays very negative the whole time the bot is still up
-		// at its pre-descend height).
-		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y >= -0.05
+		// obstruction(s) are cleared (the physics executor never even
+		// calls IsComplete while a Mine* step is still waiting on the mine
+		// itself - see isMineActionStep - so by the time this runs, it's
+		// an ordinary drop into now-open space), or a directional 2-block
+		// drop.
+		//
+		// All of these are in the input generator's block-centering list
+		// (GenerateInputs' centering switch, input_generator.go) - the bot
+		// is steered toward the target cell's CENTER
+		// (floor(X)+0.5, floor(Z)+0.5), not its raw corner, to stop
+		// throttle collapsing to zero right at a drop's lip. This check
+		// used to compare against the raw corner only, with a small fixed
+		// radius (2*0.2*0.25, radius ~0.316) - fine for a Descend/MineDown
+		// step, where the fall's own momentum usually carries the bot
+		// toward (or past) the corner before Y catches up to target. But
+		// found live for MineNeighborFloor: a bot that reaches the exact
+		// point it was told to steer toward - the cell CENTER - sits
+		// sqrt(0.5^2+0.5^2) ~= 0.71 blocks from the raw corner this check
+		// compared against, over double that radius, so the step never
+		// completed and stuck-recovery fired every 3 seconds with zero
+		// progress on any axis (pos 1297.51,-2.00,-58.50 vs raw target
+		// 1297,-2,-59 - exactly this movement's own centered aim point,
+		// 1297.5,-2,-58.5).
+		//
+		// Checking a radius around either single point is the wrong
+		// shape: a radius around the center would reject a bot that
+		// legitimately overshot toward the corner (the Descend/MineDown
+		// case above), and a radius around the corner is what just failed
+		// for MineNeighborFloor. The correct check is "did the bot's
+		// horizontal position land inside the target cell at all" - the
+		// cell spans its raw corner to corner+1 in both X and Z, and
+		// either a center-settled or a corner-overshot bot is inside it.
+		// Same pattern JumpToClimb/Jump2ToClimb already use below
+		// (insideBlockX/Z), with the same small margin for hitbox
+		// overlap just outside the cell's edges.
+		insideX := deltaPos.X >= -1.1 && deltaPos.X <= 0.1
+		insideZ := deltaPos.Z >= -1.1 && deltaPos.Z <= 0.1
+		return insideX && insideZ && deltaPos.Y >= -0.05
 
-	case Drop2North, Drop2South, Drop2East, Drop2West:
-		// 2-block drops (directional)
-		// Same as regular descend but for 2-block falls
-		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (2*0.2*0.25) && deltaPos.Y >= -0.05
+	case AscendJump, DiagonalAscend:
+		// Jump up one block (straight or diagonal) onto a platform. Also
+		// in the input generator's block-centering list (same reasoning
+		// as the Descend/MineDown/MineNeighborFloor case above - these
+		// get a centered steering target too), but previously had no
+		// dedicated case here at all and fell through to the tight
+		// default (0.18 horizontal) checked against the raw corner -
+		// the same mismatch that caused MineNeighborFloor's live stuck
+		// loop, just never observed for a jump: forward momentum from the
+		// jump itself tends to carry the bot past the center toward (or
+		// beyond) the corner before it needs to register as complete, so
+		// this was a latent inconsistency rather than a confirmed one.
+		// Same inside-cell check as above rather than a tight radius.
+		insideX := deltaPos.X >= -1.1 && deltaPos.X <= 0.1
+		insideZ := deltaPos.Z >= -1.1 && deltaPos.Z <= 0.1
+		return insideX && insideZ &&
+			deltaPos.Y >= -0.065 &&
+			deltaPos.Y <= 0.08
 
 	case Climb:
 		// Ladder climbing (both ascent and descent)

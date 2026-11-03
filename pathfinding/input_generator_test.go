@@ -615,6 +615,56 @@ func TestIsComplete(t *testing.T) {
 			description: "Approaching a ladder out of a single-wide tunnel hits the same corner-vs-hitbox offset",
 		},
 		{
+			name:       "MineNeighborFloor complete at its own centered steering aim-point",
+			currentPos: models.V3{X: 1.51, Y: 64, Z: 0.50},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: MineNeighborFloor,
+			},
+			expected:    true,
+			description: "Live bug: the input generator steers toward the cell center (1.5, 0.5), 0.71 blocks from the raw corner (1, 0) - a bot sitting right at the center it was told to aim for must count as arrived",
+		},
+		{
+			name:       "MineNeighborFloor still complete on a corner-overshoot (no regression)",
+			currentPos: models.V3{X: 1.05, Y: 64, Z: 0.05},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: MineNeighborFloor,
+			},
+			expected:    true,
+			description: "Momentum carrying the bot past center toward the corner (Descend/MineDown's usual case) must still complete",
+		},
+		{
+			name:       "MineNeighborFloor not complete - outside the target cell entirely",
+			currentPos: models.V3{X: 1.51, Y: 64, Z: 2.50},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: MineNeighborFloor,
+			},
+			expected:    false,
+			description: "2 blocks away in Z - nowhere near the cell, center or corner",
+		},
+		{
+			name:       "AscendJump complete at its own centered steering aim-point",
+			currentPos: models.V3{X: 1.5, Y: 65.02, Z: 0.5},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 65, Z: 0},
+				Movement: AscendJump,
+			},
+			expected:    true,
+			description: "Same centering mismatch as MineNeighborFloor - AscendJump had no dedicated case at all before this fix and fell through to the tight 0.18 default, which this exact landing spot would have failed",
+		},
+		{
+			name:       "AscendJump not complete - still below target height",
+			currentPos: models.V3{X: 1.5, Y: 64, Z: 0.5},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 65, Z: 0},
+				Movement: AscendJump,
+			},
+			expected:    false,
+			description: "Centered horizontally already, but hasn't risen to the target block yet",
+		},
+		{
 			name:       "Traverse not complete - too far above",
 			currentPos: models.V3{X: 1, Y: 64.1, Z: 0},
 			targetStep: PathStep{
