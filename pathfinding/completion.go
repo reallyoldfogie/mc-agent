@@ -146,23 +146,28 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 			deltaPos.Y >= -0.05 && // Tighter vertical range
 			deltaPos.Y <= 0.05
 
-	case Traverse, DiagonalTraverse, MineThrough:
-		// Horizontal corridor movement, including MineThrough once its
-		// obstruction is cleared (it's then an ordinary Traverse-shaped
-		// step).
+	case Traverse, DiagonalTraverse, MineThrough, WadeWater, Swim, EnterClimb:
+		// Horizontal corridor movement: walking (Traverse/MineThrough once
+		// its obstruction is cleared), wading/sprint-swimming through water
+		// (WadeWater/Swim), or approaching a ladder/vine to climb out of a
+		// tunnel (EnterClimb) - all share the same shape: continuous
+		// walking/swimming, never jumping, into a cell whose path target is
+		// the raw block corner.
 		//
-		// In a single-wide tunnel, the path target's X/Z is the mined
-		// block's raw integer coordinate (its corner, not its center -
-		// unlike Descend/MineDown/Drop2*, Traverse/MineThrough never get
-		// the input generator's block-center snap; see
-		// input_generator.go's GenerateInputs). With a solid wall on one
-		// side, the bot's own collision hitbox (~0.3 blocks radius)
-		// physically can't press its center all the way to that corner -
-		// it bottoms out ~0.3 blocks short. The default case's 0.18
-		// tolerance is tighter than that unavoidable offset, so the step
-		// never completes and stuck-recovery fires every few seconds for
-		// the rest of the tunnel. Use the same wider radius already
-		// proven for Descend/MineDown's identical corner-vs-hitbox issue.
+		// In a single-wide tunnel (or water channel), that target X/Z is the
+		// raw integer coordinate (the corner, not the center) - unlike
+		// Descend/MineDown/Drop2*, none of these movements get the input
+		// generator's block-center snap; see input_generator.go's
+		// GenerateInputs. With a solid wall on one side, the bot's own
+		// collision hitbox (~0.3 blocks radius) physically can't press its
+		// center all the way to that corner - it bottoms out ~0.3 blocks
+		// short. The default case's 0.18 tolerance is tighter than that
+		// unavoidable offset, so the step never completes and
+		// stuck-recovery fires every few seconds (confirmed live for
+		// Traverse/MineThrough digging a tunnel row; WadeWater/Swim/
+		// EnterClimb share the exact same geometry so get the same fix
+		// pre-emptively). Use the same wider radius already proven for
+		// Descend/MineDown's identical corner-vs-hitbox issue.
 		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
 		return horizontalDist2 < (2*0.2*0.25) &&
 			deltaPos.Y >= -0.065 &&

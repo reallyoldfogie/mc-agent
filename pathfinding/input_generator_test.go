@@ -585,6 +585,36 @@ func TestIsComplete(t *testing.T) {
 			description: "0.4 blocks away horizontally > widened threshold",
 		},
 		{
+			name:       "WadeWater complete despite collision-hitbox offset",
+			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: WadeWater,
+			},
+			expected:    true,
+			description: "Same corridor-wall geometry as Traverse, in a water channel",
+		},
+		{
+			name:       "Swim complete despite collision-hitbox offset",
+			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: Swim,
+			},
+			expected:    true,
+			description: "Same corridor-wall geometry as Traverse, sprint-swimming",
+		},
+		{
+			name:       "EnterClimb complete despite collision-hitbox offset",
+			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: EnterClimb,
+			},
+			expected:    true,
+			description: "Approaching a ladder out of a single-wide tunnel hits the same corner-vs-hitbox offset",
+		},
+		{
 			name:       "Traverse not complete - too far above",
 			currentPos: models.V3{X: 1, Y: 64.1, Z: 0},
 			targetStep: PathStep{
