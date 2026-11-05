@@ -313,6 +313,12 @@ type agent struct {
 	moveExec   models.MovementExecutor
 	pathfind   models.PathFinder
 	shapeMgr   models.BlockShapeManager
+	// moveInterrupt, if non-nil, is polled periodically by
+	// pathfindAndFollow's own background goroutine while a path is in
+	// flight, cancelling that call's context the moment it returns true -
+	// see SetMoveInterruptCheck's own doc comment (agent/actions.go).
+	// Guarded by movementMu, the same lock already guarding moveExec/pathfind.
+	moveInterrupt func() bool
 	stateProps *pathfinding.StatePropertyLoader
 	itemMgr    ItemManager
 	itemUsage  *items.ItemUsage

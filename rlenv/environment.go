@@ -1525,6 +1525,28 @@ type BrokenBlocksReporter interface {
 	DrainBrokenBlocks() []models.BrokenBlock
 }
 
+// MoveInterruptSetter is the optional capability Step uses to let a goto
+// dispatch react to the configured mine target becoming visible mid-path,
+// instead of only re-checking visibility once that whole dispatch's path
+// has already run to completion. Found live, 2026-11-04: a single
+// ActionGoToTarget dispatch can mine through several blocks along its own
+// path (BuriedTargetAgent's exploration digging), and refreshMineTarget
+// only re-resolves visibility once per Step, after that step's action has
+// already fully executed - so ore exposed partway through a long dig
+// wasn't noticed until the bot had already moved well past it. Same "an
+// agent that doesn't implement this is left alone, not failed over"
+// convention as BuriedTargetAgent/BrokenBlocksReporter.
+type MoveInterruptSetter interface {
+	// SetMoveInterruptCheck installs (non-nil) or clears (nil) the check
+	// a goto dispatch's own background poller consults periodically while
+	// its path is in flight - see the agent-side implementation's own doc
+	// comment for the cancellation mechanics. The check itself must be
+	// safe to call from a different goroutine than Step's own, and must
+	// not touch Environment state directly (see updateMoveInterruptCheck's
+	// own call site: it closes over e.agent.FindVisibleBlock, nothing else).
+	SetMoveInterruptCheck(check func() bool)
+}
+
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
 // Step's "before this step" read - mineVisible/refreshMineTarget's own
 // caching shape (see that field's own doc comment), but LOS-free (see
@@ -1739,6 +1761,40 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = x, y, z, true
 	}
 	return nil
+}
+
+// updateMoveInterruptCheck installs (or clears) e.agent's
+// MoveInterruptSetter check for dispatch, the action Step is about to
+// execute - see that interface's own doc comment for why this exists.
+// Only a goto dispatch (movetoquiet/movetoandsneakquiet) while a mine
+// target is actually configured gets a non-nil check; every other
+// dispatch (mine, craft, or a goto with no mine target at all) clears it,
+// since there is nothing useful for the background poller to interrupt
+// for. No-op if e.agent doesn't implement the capability.
+//
+// Called only from the shouldDispatch branch, right before cancelInflight
+// cancels whatever the previous dispatch left running: a step that
+// dispatches nothing new (shouldDispatch false - e.g. ActionWait while an
+// earlier goto is still inflight) correctly leaves this exactly as that
+// earlier goto's own dispatch set it, since the same still-running path is
+// what the poller needs to keep watching.
+func (e *Environment) updateMoveInterruptCheck(dispatch actionDispatch) {
+	setter, ok := e.agent.(MoveInterruptSetter)
+	if !ok {
+		return
+	}
+	target := e.mineTargetBlockInUse()
+	isGoto := dispatch.name == moveToActionName || dispatch.name == moveToAndSneakActionName
+	if !isGoto || target == "" {
+		setter.SetMoveInterruptCheck(nil)
+		return
+	}
+	radius := e.cfg.MineSearchRadius
+	agent := e.agent
+	setter.SetMoveInterruptCheck(func() bool {
+		_, _, _, found, err := agent.FindVisibleBlock(context.Background(), target, radius)
+		return err == nil && found
+	})
 }
 
 // refreshSleepTarget mirrors refreshMineTarget exactly, searching for a bed
@@ -1980,6 +2036,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 
 	if shouldDispatch {
+		e.updateMoveInterruptCheck(dispatch)
 		e.cancelInflight()
 		actionCtx, cancelAction := context.WithCancel(ctx)
 		completion, err := e.registry.Execute(actionCtx, dispatch.name, e.agent, dispatch.args)

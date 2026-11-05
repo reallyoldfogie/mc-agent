@@ -240,7 +240,53 @@ func (a *agent) pathfindAndFollow(ctx context.Context, start, goal models.V3) er
 		return fmt.Errorf("no path found")
 	}
 
+	ctx, stopInterruptPolling := a.withMoveInterrupt(ctx)
+	defer stopInterruptPolling()
 	return a.followPath(ctx, path)
+}
+
+// moveInterruptPollInterval is how often withMoveInterrupt's background
+// goroutine re-checks an installed SetMoveInterruptCheck - frequent enough
+// that a newly-exposed target gets noticed well within one game tick's
+// worth of further digging, infrequent enough that FindVisibleBlock's own
+// shell-scan-plus-LOS-raycast cost (see its own doc comment) is negligible
+// against a path that can run for many seconds.
+const moveInterruptPollInterval = 250 * time.Millisecond
+
+// withMoveInterrupt returns a derived context that gets cancelled the
+// moment a.moveInterruptCheck() (if one is installed) returns true, plus
+// the stop function the caller must defer to end the polling goroutine
+// once the path it's guarding is done - whether that installed check is
+// nil or not, so this is always safe to call unconditionally rather than
+// needing its own call-site guard.
+func (a *agent) withMoveInterrupt(ctx context.Context) (context.Context, func()) {
+	check := a.moveInterruptCheck()
+	if check == nil {
+		return ctx, func() {}
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(moveInterruptPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if check() {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return ctx, func() {
+		close(done)
+		cancel()
+	}
 }
 
 func (a *agent) cmdMoveForward(ds string) {
