@@ -102,6 +102,13 @@ type fakeAgent struct {
 	// mc-rsi-trainer).
 	mineBlockHidden   bool
 	collectDropsCalls int
+	// collectNearbyItemsFail makes CollectNearbyItems report nothing
+	// collected (0, nil - CollectNearbyItems's own doc comment: finding/
+	// collecting nothing is not itself an error) - simulates a drop that
+	// couldn't be reached in time, for proving Config.CollectDrops
+	// withholds mine/minedBuried's success on that outcome rather than
+	// crediting the break alone.
+	collectNearbyItemsFail bool
 
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
@@ -1008,15 +1015,15 @@ func (f *fakeAgent) MineBlockAt(_ context.Context, pos models.V3, _ models.Block
 		// Removing whatever's tracked there, not just oak_log, so a
 		// ChainMine-stage episode's buried block (docs/plans/14-buried-
 		// block-mining-and-memory-map.md, mc-rsi-trainer) can be "mined"
-		// in this simulation too - chainDrops stays oak_log-specific,
-		// feeding only the existing gather-stage log-collection
-		// simulation (CollectNearbyItems below), which nothing else
-		// needs generalizing for.
-		if name, ok := f.chainBlocks[key]; ok {
+		// in this simulation too. chainDrops increments for any block, not
+		// just oak_log: once Config.CollectDrops started gating mine/
+		// minedBuried's own success on collected > 0 (not just the break),
+		// the buried ore needed a drop to collect exactly as a log does,
+		// or a ChainMine test using CollectDrops could never reach success
+		// at all.
+		if _, ok := f.chainBlocks[key]; ok {
 			delete(f.chainBlocks, key)
-			if name == "minecraft:oak_log" {
-				f.chainDrops++
-			}
+			f.chainDrops++
 		}
 		f.mu.Unlock()
 		return nil
@@ -1354,6 +1361,9 @@ func (f *fakeAgent) CollectNearbyItems(context.Context, float64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.collectDropsCalls++
+	if f.collectNearbyItemsFail {
+		return 0, nil
+	}
 	if f.chainInv != nil {
 		n := f.chainDrops
 		f.chainInv["minecraft:oak_log"] += n

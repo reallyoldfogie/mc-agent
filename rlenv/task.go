@@ -566,17 +566,40 @@ type Config struct {
 	// mc-rsi-trainer).
 	ChainMineTargetBlock string
 
-	// CollectDrops makes a mine step also collect the drops it produced, so
-	// the mined item is in the inventory when the step's observation and
-	// reward are computed. Breaking a block leaves an item entity on the
-	// ground that the bot only collects if it happens to be within about a
-	// block of where it lands (drops land up to a block and a half away, and
-	// cannot be collected for half a second of server time), so without this
-	// a task whose next step needs the mined item - crafting planks from a
-	// log - fails at random. Off by default: existing mine tasks do not use
-	// the item, and collecting costs a fraction of a second per mine step.
+	// CollectDrops makes mining also collect the drop it produced, and -
+	// this is the stricter half, added once a mine task's own "success"
+	// turned out to mean only "the block broke," not "the bot has it":
+	// found live on mine_buried, 2026-11-04, roughly half the time -
+	// requires that collection to have actually happened before Step
+	// credits mineRewardBonus/doneReason="mine" (or, for chain_mine,
+	// advances past its ore-mining milestone). A mining task that broke its
+	// target but never kept the drop hasn't gathered anything; this is the
+	// flag a task sets to mean that, not the default - a task that only
+	// cares about the block being gone (no inventory consequence at all)
+	// leaves this false and keeps today's instant-on-break behavior.
+	//
+	// Triggered off mined itself (world state: the target's block state
+	// actually changed this step), not off which action was dispatched -
+	// a goto step that mines through blocks along its own path drops items
+	// exactly as a dedicated mine step does, and both need collecting
+	// equally; gating on the dispatched action name alone silently skipped
+	// collection whenever the break happened mid-goto, which is exactly how
+	// the live gap above went unnoticed.
+	//
+	// Breaking a block leaves an item entity on the ground that the bot
+	// only auto-collects if it happens to be within about a block of where
+	// it lands (drops land up to a block and a half away, and cannot be
+	// collected for half a second of server time); collectDrops instead
+	// walks to within pickup range and waits, so a task whose next step
+	// needs the mined item - crafting planks from a log - no longer fails
+	// at random either. If that walk-and-wait still can't collect anything
+	// (unreachable, or times out) the step simply doesn't credit success -
+	// nothing else is owed back, and (since the target block is already
+	// gone) there's no later step this could retry on.
 	// Needs an agent implementing models.ItemCollector; without one it is a
-	// no-op.
+	// no-op (collected always 0, so a caller that sets this on an agent
+	// without that capability will never see mine/minedBuried succeed -
+	// leave it false for such an agent).
 	CollectDrops bool
 
 	// SeedAtGoal is Config's copy of TaskOverride.SeedAtGoal (set per

@@ -2003,9 +2003,6 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if shouldDispatch && dispatch.name == placeActionName {
 		e.placeAttempted = true
 	}
-	if shouldDispatch && dispatch.name == mineActionName && e.cfg.CollectDrops {
-		e.collectDrops(ctx)
-	}
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
 		return rl.StepResult{}, errPositionUnknown
@@ -2080,6 +2077,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 				}
 			}
 		}
+	}
+
+	// collected is how many of this step's own drops collectDrops actually
+	// picked up. Gated on mined, not on dispatch.name == mineActionName (the
+	// bug this replaces): mined itself is judged from world state because a
+	// goto step can mine through blocks along its path just as a dedicated
+	// mine step can, and a drop from either must be collected just as
+	// reliably — tying collection to the dispatched action type silently
+	// skipped it whenever the break happened mid-goto (found live,
+	// 2026-11-04: roughly half of mine_buried's agents never held the ore
+	// they'd just "successfully" mined, see Config.CollectDrops's own doc
+	// comment for how this now gates success).
+	collected := 0
+	if mined && e.cfg.CollectDrops {
+		collected = e.collectDrops(ctx)
 	}
 
 	// craftedThisStep is judged from an actual inventory-count increase,
@@ -2200,7 +2212,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if e.chainActive() {
 		e.refreshChain()
 		goalCrafted := (e.cfg.ChainStage == ChainUse || e.cfg.ChainStage == ChainMine) && craftedThisStep
-		minedBuried := e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal && mined
+		minedBuried := e.cfg.ChainStage == ChainMine && e.chainState.craftedGoal && mined && (!e.cfg.CollectDrops || collected > 0)
 		chainReward, chainDone = e.chainState.advance(e.cfg.ChainStage, e.chainInv, e.chainTablePlaced, goalCrafted, minedBuried)
 		craftedThisStep = false
 	}
@@ -2267,7 +2279,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		}
 	}
 	if mined {
-		if !e.chainActive() {
+		// A mining task that broke its target but never kept the drop
+		// hasn't actually gathered anything - Config.CollectDrops's own doc
+		// comment is the single source of truth callers opt into; this just
+		// withholds the reward/termination until collected confirms it,
+		// rather than crediting the break alone. Nothing else about this
+		// step changes: no done, no reward, episode just keeps running (the
+		// target block is already gone, so a later step can't double-credit
+		// it, but also can't retry collecting it here - see that doc
+		// comment's own note on this).
+		if !e.chainActive() && (!e.cfg.CollectDrops || collected > 0) {
 			reward += mineRewardBonus
 			done = true
 			doneReason = "mine"
@@ -2813,20 +2834,24 @@ func (e *Environment) cloneArea(ctx context.Context) {
 // and a short wait each, well inside Config.StepTimeout's default.
 const collectDropsTimeout = 6 * time.Second
 
-// collectDrops collects the items a mine step just dropped (see
-// Config.CollectDrops). Best effort: a drop that cannot be collected leaves
-// the step as it was and the reward judges the inventory as it stands, so a
-// failure is logged, not returned.
-func (e *Environment) collectDrops(ctx context.Context) {
+// collectDrops collects the items a step that just mined something dropped
+// (see Config.CollectDrops) and returns how many it actually collected -
+// Step's own source of truth for whether that collection succeeded, since a
+// drop that cannot be collected (unreachable, or the attempt times out)
+// otherwise leaves no trace: CollectNearbyItems logs the failure itself but
+// returns 0, not an error, when nothing at all could be collected.
+func (e *Environment) collectDrops(ctx context.Context) int {
 	collector, ok := e.agent.(models.ItemCollector)
 	if !ok {
-		return
+		return 0
 	}
 	cctx, cancel := context.WithTimeout(ctx, collectDropsTimeout)
 	defer cancel()
-	if _, err := collector.CollectNearbyItems(cctx, collectDropsRadius); err != nil && ctx.Err() == nil {
+	n, err := collector.CollectNearbyItems(cctx, collectDropsRadius)
+	if err != nil && ctx.Err() == nil {
 		log.Printf("rlenv: collecting drops after a mine step: %v", err)
 	}
+	return n
 }
 
 // collectDropsRadius is how far around the bot collectDrops looks for drops:

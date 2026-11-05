@@ -3883,8 +3883,11 @@ func TestPlainGotoIsNeverMaskedByArrival(t *testing.T) {
 	}
 }
 
-// With Config.CollectDrops a mine step collects what it dropped; other
-// steps, and a Config without it, never do.
+// With Config.CollectDrops, a step that actually mined something collects
+// what it dropped; a step that mined nothing (here, in this scenario,
+// because it wasn't ActionMine - see TestMinedViaNonMineDispatchStillCollects
+// for the case where a non-mine step does mine something), and a Config
+// without CollectDrops, never do.
 func TestCollectDropsRunsAfterAMineStepOnly(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setMineBlock("minecraft:oak_log", 1, 0, 0)
