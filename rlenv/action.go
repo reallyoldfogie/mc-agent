@@ -350,10 +350,15 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 		// itself (distance-based, in Step) is unaffected either way, so
 		// there's no separate action/reward for this, just which quiet
 		// movement primitive gets dispatched.
+		//
+		// Dispatches to dispatchGoToTarget(), not currentGoToTarget()
+		// directly - see that function's own doc comment: identical to
+		// currentGoToTarget() outside blind buried-search exploration,
+		// clamped to a short hop during it.
 		if e.cfg.ArriveSneaking {
-			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
+			return actionDispatch{name: moveToAndSneakActionName, args: coordArgs(e.dispatchGoToTarget())}, true, nil
 		}
-		return actionDispatch{name: moveToActionName, args: coordArgs(e.currentGoToTarget())}, true, nil
+		return actionDispatch{name: moveToActionName, args: coordArgs(e.dispatchGoToTarget())}, true, nil
 	case ActionMine:
 		if !e.actionLegal(ActionMine) {
 			return actionDispatch{}, false, nil

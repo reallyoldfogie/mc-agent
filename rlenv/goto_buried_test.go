@@ -2,10 +2,21 @@ package rlenv_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
+	"github.com/reallyoldfogie/cRL-go/pkg/rl"
 	"github.com/reallyoldfogie/mc-agent/rlenv"
 )
+
+// arrivedAt reports whether pos is within floating-point slack of
+// (wantX,wantY,wantZ) - used below wherever a clamped, multi-hop dispatch
+// needs to be checked for exact eventual arrival, not just "closer than
+// before."
+func arrivedAt(x, y, z, wantX, wantY, wantZ float64) bool {
+	const eps = 1e-6
+	return math.Abs(x-wantX) < eps && math.Abs(y-wantY) < eps && math.Abs(z-wantZ) < eps
+}
 
 // TestGoToLegalAndTargetsExplorationPointWhenBuriedTargetUnseen is the
 // core regression this session's live-training finding demanded: before
@@ -35,19 +46,29 @@ func TestGoToLegalAndTargetsExplorationPointWhenBuriedTargetUnseen(t *testing.T)
 	if unknownValid != 1 {
 		t.Fatalf("unknownValid = %v, want 1 (buried target never seen, nothing explored yet)", unknownValid)
 	}
-
-	result := step(t, env, rlenv.ActionGoToTarget)
-	if result.Done {
-		t.Fatal("Done = true dispatching GoToTarget toward the exploration point — nothing should end the episode here")
-	}
-
-	pos, _, _, ok := agent.GetPosition()
-	if !ok {
-		t.Fatal("agent position should be known after Step")
-	}
 	wantX, wantY, wantZ := float64(unknownDx), float64(unknownDy), float64(unknownDz)
-	if pos.X != wantX || pos.Y != wantY || pos.Z != wantZ {
-		t.Fatalf("agent ended at (%v,%v,%v), want (%v,%v,%v) — the exploration point unknownDx/Dy/Dz pointed at from the origin", pos.X, pos.Y, pos.Z, wantX, wantY, wantZ)
+
+	// Each dispatch only travels a short, clamped hop toward the
+	// exploration point while exploration is still blind (mc-agent's
+	// dispatchGoToTarget, added 2026-11-05 to replace the reverted
+	// SetMoveInterruptCheck mechanism) - buriedTestConfig's own
+	// MineSearchRadius (10) puts this point well over one hop's clamp
+	// away, so arrival now takes several steps, not one.
+	var result rl.StepResult
+	arrived := false
+	for i := 0; i < 10 && !arrived; i++ {
+		result = step(t, env, rlenv.ActionGoToTarget)
+		if result.Done {
+			t.Fatal("Done = true dispatching GoToTarget toward the exploration point — nothing should end the episode here")
+		}
+		pos, _, _, ok := agent.GetPosition()
+		if !ok {
+			t.Fatal("agent position should be known after Step")
+		}
+		arrived = arrivedAt(pos.X, pos.Y, pos.Z, wantX, wantY, wantZ)
+	}
+	if !arrived {
+		t.Fatalf("never reached the exploration point (%v,%v,%v) after 10 clamped-hop dispatches", wantX, wantY, wantZ)
 	}
 	// Arrival at an exploration point reuses compositeGotoTask's existing
 	// one-shot arrival bonus (user's explicit choice, 2026-10-26: keep it
@@ -202,9 +223,25 @@ func TestChainMineGoToExploresBeforeOreSeenThenHomesInOnceSeen(t *testing.T) {
 		t.Fatal("Done = true dispatching GoToTarget toward the exploration point")
 	}
 	pos, _, _, _ := agent.GetPosition()
-	wantX, wantY, wantZ := posBefore.X+float64(unknownDx), posBefore.Y+float64(unknownDy), posBefore.Z+float64(unknownDz)
-	if pos.X != wantX || pos.Y != wantY || pos.Z != wantZ {
-		t.Fatalf("agent ended at (%v,%v,%v), want the exploration point (%v,%v,%v), not the chain's original target", pos.X, pos.Y, pos.Z, wantX, wantY, wantZ)
+	fullX, fullY, fullZ := posBefore.X+float64(unknownDx), posBefore.Y+float64(unknownDy), posBefore.Z+float64(unknownDz)
+	// One dispatch only travels a short, clamped hop toward the
+	// exploration point while exploration is still blind (mc-agent's
+	// dispatchGoToTarget, added 2026-11-05) - confirm it moved partway
+	// along the right line, not all the way to the full point (that
+	// would mean clamping isn't applying here) and not toward the
+	// chain's original, unrelated target.
+	movedDist := math.Sqrt((pos.X-posBefore.X)*(pos.X-posBefore.X) + (pos.Y-posBefore.Y)*(pos.Y-posBefore.Y) + (pos.Z-posBefore.Z)*(pos.Z-posBefore.Z))
+	fullDist := math.Sqrt((fullX-posBefore.X)*(fullX-posBefore.X) + (fullY-posBefore.Y)*(fullY-posBefore.Y) + (fullZ-posBefore.Z)*(fullZ-posBefore.Z))
+	if arrivedAt(pos.X, pos.Y, pos.Z, fullX, fullY, fullZ) {
+		t.Fatalf("agent reached the full exploration point (%v,%v,%v) in a single dispatch, want a clamped short hop instead", fullX, fullY, fullZ)
+	}
+	const wantHop = 4.0 // mirrors rlenv's own private blindExploreStepDistance
+	// coordArgs formats dispatch coordinates to 4 decimal places (action.go's
+	// formatCoord) - a round-trip through that string form drifts the
+	// landed distance by a bit more than 1e-6, so the tolerance here is
+	// 1e-3, not exact-equality precision.
+	if math.Abs(movedDist-wantHop) > 1e-3 {
+		t.Fatalf("distance moved = %v, want %v (the clamped hop distance) - fullDist to the exploration point was %v", movedDist, wantHop, fullDist)
 	}
 
 	// Reveal the ore (as if the bot had just dug into line of sight).

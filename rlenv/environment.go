@@ -1423,6 +1423,62 @@ func (e *Environment) currentGoToTarget() (x, y, z float64) {
 	return pos.X + dx, pos.Y + dy, pos.Z + dz
 }
 
+// blindExploreStepDistance caps how far a single ActionGoToTarget dispatch
+// travels while buried-search exploration is still blind (!mineEverSeen) -
+// see dispatchGoToTarget's own doc comment for why.
+const blindExploreStepDistance = 4.0
+
+// dispatchGoToTarget is what ActionGoToTarget actually dispatches to -
+// currentGoToTarget()'s own point, clamped to at most
+// blindExploreStepDistance away while buried-search exploration is still
+// blind. Deliberately a separate function from currentGoToTarget(): that
+// one also backs the observation's dx/dy/dz features and reward.go's
+// distance-shaping, both of which must keep measuring against the TRUE
+// quadrant point, not an artificially nearby waypoint - clamping those
+// too would quietly change what the policy has already learned to
+// perceive and how progress gets rewarded.
+//
+// Exists because a single long dispatch can mine through several blocks
+// along its own path (BuriedTargetAgent's exploration digging) before
+// refreshMineTarget ever gets a chance to notice something it exposed -
+// found live, 2026-11-04 (docs/plans/21-buried-mining-success.md): a bot
+// would walk straight past ore its own digging had just exposed, because
+// visibility is only re-checked once per Step, after that step's action
+// has already fully run. An async interrupt mid-path (SetMoveInterruptCheck/
+// withMoveInterrupt, mc-agent v0.0.64/v0.0.65) was tried and reverted
+// twice - both attempts caused severe live throughput regressions (0%
+// success/80% step_timeout, then a 15-17x epoch slowdown) never
+// reproduced in isolated testing, so abandoned in favor of this: no new
+// goroutines, timers, or cancellation - just dispatching a shorter hop so
+// the EXISTING once-per-Step refreshMineTarget call runs far more often
+// during blind digging, without needing to interrupt anything already in
+// flight. markExploredQuadrant (quadrant-arrival crediting) is unaffected
+// by this: it checks the bot's actual position against the true quadrant
+// point directly, not against whatever was dispatched.
+//
+// Only active while buriedTargetActive() && !mineEverSeen - once the
+// target is known, heading straight for it is already correct (see
+// currentGoToTarget's own mineEverSeen branch), and an ordinary
+// (non-buried) goto task's single fixed TargetOffset point was never the
+// problem this solves.
+func (e *Environment) dispatchGoToTarget() (x, y, z float64) {
+	x, y, z = e.currentGoToTarget()
+	if !e.buriedTargetActive() || e.mineEverSeen {
+		return x, y, z
+	}
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return x, y, z
+	}
+	dx, dy, dz := x-pos.X, y-pos.Y, z-pos.Z
+	dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
+	if dist <= blindExploreStepDistance || dist == 0 {
+		return x, y, z
+	}
+	scale := blindExploreStepDistance / dist
+	return pos.X + dx*scale, pos.Y + dy*scale, pos.Z + dz*scale
+}
+
 func (e *Environment) observationMineTarget() (x, y, z float64, visible bool) {
 	if e.mineTargetMemoryEnabled() {
 		return e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen
@@ -1525,27 +1581,6 @@ type BrokenBlocksReporter interface {
 	DrainBrokenBlocks() []models.BrokenBlock
 }
 
-// MoveInterruptSetter is the optional capability Step uses to let a goto
-// dispatch react to the configured mine target becoming visible mid-path,
-// instead of only re-checking visibility once that whole dispatch's path
-// has already run to completion. Found live, 2026-11-04: a single
-// ActionGoToTarget dispatch can mine through several blocks along its own
-// path (BuriedTargetAgent's exploration digging), and refreshMineTarget
-// only re-resolves visibility once per Step, after that step's action has
-// already fully executed - so ore exposed partway through a long dig
-// wasn't noticed until the bot had already moved well past it. Same "an
-// agent that doesn't implement this is left alone, not failed over"
-// convention as BuriedTargetAgent/BrokenBlocksReporter.
-type MoveInterruptSetter interface {
-	// SetMoveInterruptCheck installs (non-nil) or clears (nil) the check
-	// a goto dispatch's own background poller consults periodically while
-	// its path is in flight - see the agent-side implementation's own doc
-	// comment for the cancellation mechanics. The check itself must be
-	// safe to call from a different goroutine than Step's own, and must
-	// not touch Environment state directly (see updateMoveInterruptCheck's
-	// own call site: it closes over e.agent.FindVisibleBlock, nothing else).
-	SetMoveInterruptCheck(check func() bool)
-}
 
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
 // Step's "before this step" read - mineVisible/refreshMineTarget's own
@@ -1761,65 +1796,6 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = x, y, z, true
 	}
 	return nil
-}
-
-// updateMoveInterruptCheck installs (or clears) e.agent's
-// MoveInterruptSetter check for dispatch, the action Step is about to
-// execute - see that interface's own doc comment for why this exists.
-// Only a goto dispatch (movetoquiet/movetoandsneakquiet) while a mine
-// target is actually configured gets a non-nil check; every other
-// dispatch (mine, craft, or a goto with no mine target at all) clears it,
-// since there is nothing useful for the background poller to interrupt
-// for. No-op if e.agent doesn't implement the capability.
-//
-// Called only from the shouldDispatch branch, right before cancelInflight
-// cancels whatever the previous dispatch left running: a step that
-// dispatches nothing new (shouldDispatch false - e.g. ActionWait while an
-// earlier goto is still inflight) correctly leaves this exactly as that
-// earlier goto's own dispatch set it, since the same still-running path is
-// what the poller needs to keep watching.
-// moveInterruptCheckRadius bounds the installed check's own FindVisibleBlock
-// call to the bot's immediate vicinity - deliberately much smaller than
-// Config.MineSearchRadius (12 for mine_buried). The full search radius
-// answers "is the target anywhere in the whole area I'm searching," which
-// is the wrong question for a mid-path interrupt: in anything but a
-// sparse, isolated-single-instance area (found live, 2026-11-04, with
-// Phase 6c's clustered vein seeding active - docs/plans/21-buried-mining-
-// success.md) something matching the target is very often ALREADY
-// somewhere within a radius that large, which withMoveInterrupt's own
-// edge-triggering (agent/commands.go) would otherwise have to treat as
-// "already visible, no-op" for most dispatches anyway. Scoping the check
-// itself to roughly the bot's own digging reach keeps it answering the
-// question Fix 2 is actually for: did something become visible close by -
-// the way breaking into open space (a cave, or the void left by the
-// instance just mined) would - not "does anything exist anywhere nearby."
-// Matches collectDropsRadius's own magnitude (6) for "immediate digging
-// vicinity" rather than inventing a third unrelated constant, capped by
-// MineSearchRadius itself so a task configured with a smaller search
-// radius than this never gets a WIDER interrupt check than its own
-// refreshMineTarget resolution uses.
-const moveInterruptCheckRadius = 6
-
-func (e *Environment) updateMoveInterruptCheck(dispatch actionDispatch) {
-	setter, ok := e.agent.(MoveInterruptSetter)
-	if !ok {
-		return
-	}
-	target := e.mineTargetBlockInUse()
-	isGoto := dispatch.name == moveToActionName || dispatch.name == moveToAndSneakActionName
-	if !isGoto || target == "" {
-		setter.SetMoveInterruptCheck(nil)
-		return
-	}
-	radius := moveInterruptCheckRadius
-	if e.cfg.MineSearchRadius > 0 && e.cfg.MineSearchRadius < radius {
-		radius = e.cfg.MineSearchRadius
-	}
-	agent := e.agent
-	setter.SetMoveInterruptCheck(func() bool {
-		_, _, _, found, err := agent.FindVisibleBlock(context.Background(), target, radius)
-		return err == nil && found
-	})
 }
 
 // refreshSleepTarget mirrors refreshMineTarget exactly, searching for a bed
@@ -2061,7 +2037,6 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	}
 
 	if shouldDispatch {
-		e.updateMoveInterruptCheck(dispatch)
 		e.cancelInflight()
 		actionCtx, cancelAction := context.WithCancel(ctx)
 		completion, err := e.registry.Execute(actionCtx, dispatch.name, e.agent, dispatch.args)

@@ -462,45 +462,6 @@ func (a *agent) ChatEvents(ctx context.Context) <-chan string {
 	return a.chatEvents
 }
 
-// SetMoveInterruptCheck installs (or, with nil, clears) a check
-// pathfindAndFollow polls periodically while a path is in flight: the
-// moment it returns true, the in-flight MoveTo's context is cancelled,
-// making WaitForPathCompletion return early instead of running the whole
-// path to completion.
-//
-// Exists because mineTargetMemoryEnabled's own refreshMineTarget
-// (rlenv/environment.go) only re-resolves "is the target visible now" once
-// per Step, after that step's dispatched action has already fully
-// executed - and a single goto can mine through several blocks along its
-// own path (BuriedTargetAgent's exploration digging) before that action
-// finishes. Found live, 2026-11-04: a bot would walk straight past ore its
-// own digging had just exposed, because nothing re-checked visibility
-// until the whole path was already done and the bot had moved on.
-// rlenv.Environment sets this to its own "is my mine target visible now"
-// check immediately before dispatching ActionGoToTarget while a mine
-// target is configured, and clears it right after - see that dispatch
-// site's own comment for why only ActionGoToTarget needs this.
-//
-// Cancelling only ends the *wait* early, not the bot's own in-flight
-// movement: the continuous physics executor keeps following the abandoned
-// path for a few more ticks until the next dispatch calls SetPath again -
-// an acceptable, sub-second transient, not a correctness problem, matching
-// how resolveDispatch already cancels+replaces whatever was inflight on
-// every new ActionGoToTarget dispatch regardless of this feature.
-func (a *agent) SetMoveInterruptCheck(check func() bool) {
-	a.movementMu.Lock()
-	a.moveInterrupt = check
-	a.movementMu.Unlock()
-}
-
-// moveInterruptCheck reads the currently-installed check (if any) - see
-// SetMoveInterruptCheck's own doc comment.
-func (a *agent) moveInterruptCheck() func() bool {
-	a.movementMu.RLock()
-	defer a.movementMu.RUnlock()
-	return a.moveInterrupt
-}
-
 // MoveTo performs pathfinding-based movement to the target.
 func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool) error {
 	if a.pathfind == nil {
