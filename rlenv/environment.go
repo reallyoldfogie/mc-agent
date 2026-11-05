@@ -1778,6 +1778,28 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 // earlier goto is still inflight) correctly leaves this exactly as that
 // earlier goto's own dispatch set it, since the same still-running path is
 // what the poller needs to keep watching.
+// moveInterruptCheckRadius bounds the installed check's own FindVisibleBlock
+// call to the bot's immediate vicinity - deliberately much smaller than
+// Config.MineSearchRadius (12 for mine_buried). The full search radius
+// answers "is the target anywhere in the whole area I'm searching," which
+// is the wrong question for a mid-path interrupt: in anything but a
+// sparse, isolated-single-instance area (found live, 2026-11-04, with
+// Phase 6c's clustered vein seeding active - docs/plans/21-buried-mining-
+// success.md) something matching the target is very often ALREADY
+// somewhere within a radius that large, which withMoveInterrupt's own
+// edge-triggering (agent/commands.go) would otherwise have to treat as
+// "already visible, no-op" for most dispatches anyway. Scoping the check
+// itself to roughly the bot's own digging reach keeps it answering the
+// question Fix 2 is actually for: did something become visible close by -
+// the way breaking into open space (a cave, or the void left by the
+// instance just mined) would - not "does anything exist anywhere nearby."
+// Matches collectDropsRadius's own magnitude (6) for "immediate digging
+// vicinity" rather than inventing a third unrelated constant, capped by
+// MineSearchRadius itself so a task configured with a smaller search
+// radius than this never gets a WIDER interrupt check than its own
+// refreshMineTarget resolution uses.
+const moveInterruptCheckRadius = 6
+
 func (e *Environment) updateMoveInterruptCheck(dispatch actionDispatch) {
 	setter, ok := e.agent.(MoveInterruptSetter)
 	if !ok {
@@ -1789,7 +1811,10 @@ func (e *Environment) updateMoveInterruptCheck(dispatch actionDispatch) {
 		setter.SetMoveInterruptCheck(nil)
 		return
 	}
-	radius := e.cfg.MineSearchRadius
+	radius := moveInterruptCheckRadius
+	if e.cfg.MineSearchRadius > 0 && e.cfg.MineSearchRadius < radius {
+		radius = e.cfg.MineSearchRadius
+	}
 	agent := e.agent
 	setter.SetMoveInterruptCheck(func() bool {
 		_, _, _, found, err := agent.FindVisibleBlock(context.Background(), target, radius)
