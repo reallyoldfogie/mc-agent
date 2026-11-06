@@ -2149,6 +2149,20 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	collected := 0
 	if mined && e.cfg.CollectDrops {
 		collected = e.collectDrops(ctx)
+		if collected == 0 {
+			// Diagnostic only, 2026-11-05 (docs/plans/21-buried-mining-
+			// success.md): collectDrops' own internal log line only fires
+			// when CollectNearbyItems found something and then failed to
+			// actually collect it - "found nothing at all" is, by that
+			// function's own doc comment, not an error, so it was
+			// otherwise silent. Found live: of 821 collector_truncation
+			// outcomes, only ~20 unique items ever logged that "found but
+			// missed" error, meaning most of that truncation rate's cause
+			// was invisible until now. This line exists to measure it, not
+			// to fix anything yet - no behavior change here.
+			target := e.mineTargetBlockInUse()
+			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f)", target, x, y, z)
+		}
 	}
 
 	// craftedThisStep is judged from an actual inventory-count increase,
