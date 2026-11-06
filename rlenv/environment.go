@@ -1581,7 +1581,6 @@ type BrokenBlocksReporter interface {
 	DrainBrokenBlocks() []models.BrokenBlock
 }
 
-
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
 // Step's "before this step" read - mineVisible/refreshMineTarget's own
 // caching shape (see that field's own doc comment), but LOS-free (see
@@ -1972,6 +1971,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// this exists alongside the prevMineVisible-gated check above, not
 	// instead of it.
 	prevMineBuriedExists := e.mineBuriedExists
+	// prevDropItemName/prevDropItemCount back collectDrops' own diagnostic
+	// log (see its call site) only — this step's mine target's actual drop
+	// item name (see dropItemNameFor) and the bot's held count of it before
+	// this step's own action runs. Captured here, before dispatch, so that
+	// log can tell "nothing was collected at all" apart from "something was
+	// collected, just not by collectDrops itself" - e.g. vanilla's own
+	// passive pickup, which can beat collectDrops to a drop landing within
+	// about a block of the bot (see Config.CollectDrops own doc comment)
+	// and would otherwise look identical in this log to a drop that was
+	// simply lost. Never read for anything but that log.
+	prevDropItemName := e.dropItemNameFor(e.mineTargetBlockInUse())
+	prevDropItemCount := 0
+	if prevDropItemName != "" {
+		prevDropItemCount = e.agent.InventoryCount(prevDropItemName)
+	}
 	// e.craftCount still holds whatever the previous Step (or Reset) last
 	// resolved — read here as "before this step's action" state, regardless
 	// of whether that action was ActionCraft (mirrors prevMineVisible's own
@@ -2204,12 +2218,28 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 				} else {
 					parts := make([]string, len(sightings))
 					for i, s := range sightings {
-						parts[i] = fmt.Sprintf("{%.1f,%.1f,%.1f dist=%.2f visible=%t}", s.X, s.Y, s.Z, s.Distance, s.Visible)
+						itemDesc := "unknown item"
+						if s.ItemName != "" {
+							itemDesc = fmt.Sprintf("%s x%d", s.ItemName, s.ItemCount)
+						}
+						parts[i] = fmt.Sprintf("{%s at %.1f,%.1f,%.1f dist=%.2f visible=%t}", itemDesc, s.X, s.Y, s.Z, s.Distance, s.Visible)
 					}
 					itemInfo = fmt.Sprintf("%d tracked item(s) within radius: %s", len(sightings), strings.Join(parts, ", "))
 				}
 			}
-			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f) - %s - %s", target, x, y, z, breakInfo, itemInfo)
+			// invInfo answers "did the bot's inventory get this anyway" -
+			// see prevDropItemName/prevDropItemCount's own doc comment for
+			// why this is checked independently of collectDrops' own
+			// entity-chasing result.
+			invInfo := "inventory check unavailable (unrecognized ore block)"
+			if prevDropItemName != "" {
+				newDropItemCount := e.agent.InventoryCount(prevDropItemName)
+				invInfo = fmt.Sprintf("inventory %s: %d->%d", prevDropItemName, prevDropItemCount, newDropItemCount)
+				if newDropItemCount > prevDropItemCount {
+					invInfo += " (picked up anyway, not by collectDrops)"
+				}
+			}
+			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f) - %s - %s - %s", target, x, y, z, breakInfo, itemInfo, invInfo)
 		}
 	}
 
@@ -2787,6 +2817,75 @@ type minedBlock struct {
 // back - not air and not one of BlockNameAt's "couldn't tell" placeholders.
 func restorableBlockName(name string) bool {
 	return name != "" && name != "minecraft:air" && name != "unknown" && !strings.HasPrefix(name, "<")
+}
+
+// OreDropItemResolver is the optional capability of looking up a block's
+// own normal (non-Silk-Touch) drop item name straight from the connected
+// version's own loot table data (see agent.OreDropItem's own doc comment).
+// dropItemNameFor prefers this over oreDropItemGuess's short hand-checked
+// table whenever the agent implements it - it generalizes to any block
+// instead of only the handful oreDropItemGuess happens to list, and reads
+// ground truth rather than an assumption. Callers type-assert for it.
+type OreDropItemResolver interface {
+	OreDropItem(blockName string) (string, bool)
+}
+
+// dropItemNameFor resolves blockName's normal drop item for collectDrops'
+// own diagnostic log (see its call site): the connected agent's own loot
+// table data when available (OreDropItemResolver), falling back to
+// oreDropItemGuess's hand-checked short table otherwise (e.g. fakeAgent in
+// tests, or an agent implementation that hasn't wired loot table loading).
+func (e *Environment) dropItemNameFor(blockName string) string {
+	if resolver, ok := e.agent.(OreDropItemResolver); ok {
+		if name, ok := resolver.OreDropItem(blockName); ok {
+			return name
+		}
+	}
+	return oreDropItemGuess(blockName)
+}
+
+// oreDropItemGuess is a diagnostic-only fallback mapping from a common ore
+// block name to the item name vanilla drops when it breaks without silk
+// touch (that condition, and fortune's extra-roll count, aren't modeled -
+// only the drop item's identity matters here; this only backs
+// dropItemNameFor's own fallback, never a success/reward decision). Used
+// only when OreDropItemResolver isn't available (see dropItemNameFor) -
+// otherwise the live loot table data is the source of truth. Checked
+// against each block's real loot table
+// (data_generator/data/minecraft/loot_table/blocks/*.json, the
+// minecraft:alternatives entry without a silk_touch condition) rather than
+// assumed - nether_gold_ore drops minecraft:gold_nugget, not raw gold, and
+// ancient_debris drops itself (netherite_scrap only comes from smelting it),
+// both caught that way rather than by guessing. Returns "" for anything not
+// in this short list, meaning the diagnostic that uses it simply skips the
+// inventory check rather than guessing wrong.
+func oreDropItemGuess(blockName string) string {
+	switch blockName {
+	case "minecraft:coal_ore", "minecraft:deepslate_coal_ore":
+		return "minecraft:coal"
+	case "minecraft:iron_ore", "minecraft:deepslate_iron_ore":
+		return "minecraft:raw_iron"
+	case "minecraft:copper_ore", "minecraft:deepslate_copper_ore":
+		return "minecraft:raw_copper"
+	case "minecraft:gold_ore", "minecraft:deepslate_gold_ore":
+		return "minecraft:raw_gold"
+	case "minecraft:nether_gold_ore":
+		return "minecraft:gold_nugget"
+	case "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore":
+		return "minecraft:diamond"
+	case "minecraft:redstone_ore", "minecraft:deepslate_redstone_ore":
+		return "minecraft:redstone"
+	case "minecraft:lapis_ore", "minecraft:deepslate_lapis_ore":
+		return "minecraft:lapis_lazuli"
+	case "minecraft:emerald_ore", "minecraft:deepslate_emerald_ore":
+		return "minecraft:emerald"
+	case "minecraft:nether_quartz_ore":
+		return "minecraft:quartz"
+	case "minecraft:ancient_debris":
+		return "minecraft:ancient_debris"
+	default:
+		return ""
+	}
 }
 
 // restoreMinedBlocks puts back every block broken since the last Reset (see

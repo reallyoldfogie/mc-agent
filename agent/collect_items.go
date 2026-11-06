@@ -126,6 +126,7 @@ func (a *agent) NearbyItemPositions(ctx context.Context, maxDistance float64) ([
 	if !ok {
 		return nil, fmt.Errorf("position not initialized")
 	}
+	itemMgr := a.GetItemManager()
 	var found []models.ItemSighting
 	for _, ent := range a.GetTrackedEntities() {
 		if ent.Removed || ent.EntityType != itemTypeID {
@@ -140,7 +141,14 @@ func (a *agent) NearbyItemPositions(ctx context.Context, maxDistance float64) ([
 		if err != nil {
 			return found, err
 		}
-		found = append(found, models.ItemSighting{X: ent.X, Y: ent.Y, Z: ent.Z, Distance: d, Visible: visible})
+		sighting := models.ItemSighting{X: ent.X, Y: ent.Y, Z: ent.Z, Distance: d, Visible: visible}
+		if ent.HasItem {
+			sighting.ItemCount = ent.ItemCount
+			if itemMgr != nil {
+				sighting.ItemName = itemMgr.GetItemNameByID(ent.ItemID)
+			}
+		}
+		found = append(found, sighting)
 	}
 	return found, nil
 }

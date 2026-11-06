@@ -155,6 +155,14 @@ type ItemSighting struct {
 	// tracked within range but occluded, which CollectNearbyItems itself
 	// cannot distinguish from nothing being there at all.
 	Visible bool
+
+	// ItemName/ItemCount identify what the tracked item stack actually is
+	// (e.g. "minecraft:coal", 1) — resolved from the entity's own
+	// server-reported item-stack metadata, not guessed from the block that
+	// was mined. Empty/zero if the server hasn't sent that metadata yet
+	// (TrackedEntityInfo.HasItem false) or no item manager is available.
+	ItemName  string
+	ItemCount int32
 }
 
 // ItemVisibilityDiagnostic is the optional, diagnostic-only capability of
