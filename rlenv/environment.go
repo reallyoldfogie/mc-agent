@@ -2073,9 +2073,21 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// Judged from actual world state, not from whether ActionMine was the
 	// dispatched action (see reward.go's mineRewardBonus doc comment).
 	mined := false
+	// minedBreakX/Y/Z, when minedBreakKnown, is the exact coordinate of
+	// whichever break set mined true below — used only by the diagnostic
+	// log in the collectDrops call site further down, to tell "collectDrops
+	// searched from right where the block broke" apart from "the bot had
+	// already moved on by the time it searched" (not known for the
+	// existence-radius blind-destruction fallback, which has no single
+	// coordinate to report).
+	var minedBreakX, minedBreakY, minedBreakZ float64
+	minedBreakKnown := false
 	if prevMineVisible {
 		newMineBlockName := e.agent.BlockNameAt(int(prevMineX), int(prevMineY), int(prevMineZ))
 		mined = newMineBlockName != prevMineBlockName
+		if mined {
+			minedBreakX, minedBreakY, minedBreakZ, minedBreakKnown = prevMineX, prevMineY, prevMineZ, true
+		}
 	}
 	// litThisStep mirrors mined's own "block name changed" shape exactly,
 	// for the frame the step started with (prevFrame) - judged from
@@ -2129,6 +2141,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 					continue
 				}
 				mined = true
+				minedBreakX, minedBreakY, minedBreakZ, minedBreakKnown = float64(b.X), float64(b.Y), float64(b.Z), true
 				if restorableBlockName(b.BlockName) {
 					e.minedBlocks = append(e.minedBlocks, minedBlock{b.X, b.Y, b.Z, b.BlockName})
 				}
@@ -2160,8 +2173,43 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			// missed" error, meaning most of that truncation rate's cause
 			// was invisible until now. This line exists to measure it, not
 			// to fix anything yet - no behavior change here.
+			//
+			// Extended 2026-11-06 with two more diagnostic-only fields once
+			// the above showed the invisible case dominating: the break's
+			// own coordinate and distance from the bot right now (when
+			// known - see minedBreakKnown's own doc comment), and, via
+			// models.ItemVisibilityDiagnostic, every tracked item entity
+			// within collectDropsRadius with its own distance and
+			// HasLineOfSight result. That second part distinguishes two
+			// different failures CollectNearbyItems itself cannot tell
+			// apart: nothing tracked nearby at all, versus something
+			// tracked nearby that agent.nearestVisibleItem's raycast
+			// currently can't see through — plausible in a mining tunnel's
+			// own walls, and previously impossible to measure from this log
+			// alone. Still no behavior change.
 			target := e.mineTargetBlockInUse()
-			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f)", target, x, y, z)
+			breakInfo := "break pos unknown (blind-destruction fallback)"
+			if minedBreakKnown {
+				dbx, dby, dbz := minedBreakX-x, minedBreakY-y, minedBreakZ-z
+				breakDist := math.Sqrt(dbx*dbx + dby*dby + dbz*dbz)
+				breakInfo = fmt.Sprintf("break at %.1f,%.1f,%.1f (%.2f from bot)", minedBreakX, minedBreakY, minedBreakZ, breakDist)
+			}
+			itemInfo := "item-visibility diagnostic unavailable"
+			if diag, ok := e.agent.(models.ItemVisibilityDiagnostic); ok {
+				sightings, err := diag.NearbyItemPositions(ctx, collectDropsRadius)
+				if err != nil {
+					itemInfo = fmt.Sprintf("item-visibility diagnostic error: %v", err)
+				} else if len(sightings) == 0 {
+					itemInfo = "no tracked item entities within radius at all"
+				} else {
+					parts := make([]string, len(sightings))
+					for i, s := range sightings {
+						parts[i] = fmt.Sprintf("{%.1f,%.1f,%.1f dist=%.2f visible=%t}", s.X, s.Y, s.Z, s.Distance, s.Visible)
+					}
+					itemInfo = fmt.Sprintf("%d tracked item(s) within radius: %s", len(sightings), strings.Join(parts, ", "))
+				}
+			}
+			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f) - %s - %s", target, x, y, z, breakInfo, itemInfo)
 		}
 	}
 

@@ -111,6 +111,40 @@ func (a *agent) nearestVisibleItem(ctx context.Context, maxDistance float64, ski
 	return bestID, best, bestDist != math.MaxFloat64, nil
 }
 
+// NearbyItemPositions is models.ItemVisibilityDiagnostic's implementation —
+// see that interface's own doc comment for why this exists alongside
+// nearestVisibleItem instead of reusing it: this deliberately skips the
+// HasLineOfSight check (and returns every match, not just the nearest), so
+// a caller can tell "nothing tracked within range" apart from "something
+// tracked within range but not currently visible."
+func (a *agent) NearbyItemPositions(ctx context.Context, maxDistance float64) ([]models.ItemSighting, error) {
+	itemTypeID, ok := a.GetEntityTypeID("minecraft:item")
+	if !ok {
+		return nil, fmt.Errorf("minecraft:item entity type not found in registry")
+	}
+	pos, _, _, ok := a.GetPosition()
+	if !ok {
+		return nil, fmt.Errorf("position not initialized")
+	}
+	var found []models.ItemSighting
+	for _, ent := range a.GetTrackedEntities() {
+		if ent.Removed || ent.EntityType != itemTypeID {
+			continue
+		}
+		at := models.V3{X: ent.X, Y: ent.Y, Z: ent.Z}
+		d := pos.DistanceTo(at)
+		if maxDistance > 0 && d > maxDistance {
+			continue
+		}
+		visible, err := a.HasLineOfSight(ctx, ent.X, ent.Y, ent.Z)
+		if err != nil {
+			return found, err
+		}
+		found = append(found, models.ItemSighting{X: ent.X, Y: ent.Y, Z: ent.Z, Distance: d, Visible: visible})
+	}
+	return found, nil
+}
+
 // awaitVisibleItem polls nearestVisibleItem for up to collectItemAppearWait.
 func (a *agent) awaitVisibleItem(ctx context.Context, maxDistance float64, skip map[int32]bool) (int32, models.V3, bool, error) {
 	deadline := time.Now().Add(collectItemAppearWait)

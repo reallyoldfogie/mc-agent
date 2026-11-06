@@ -142,3 +142,28 @@ type ItemCollector interface {
 	// none is (0, nil).
 	CollectNearbyItems(ctx context.Context, maxDistance float64) (int, error)
 }
+
+// ItemSighting is one tracked item entity found by
+// ItemVisibilityDiagnostic.NearbyItemPositions.
+type ItemSighting struct {
+	X, Y, Z  float64
+	Distance float64
+
+	// Visible is whether a raycast from the agent's eye position to this
+	// item currently succeeds (the same check agent.nearestVisibleItem
+	// requires before it will collect something) — false means something is
+	// tracked within range but occluded, which CollectNearbyItems itself
+	// cannot distinguish from nothing being there at all.
+	Visible bool
+}
+
+// ItemVisibilityDiagnostic is the optional, diagnostic-only capability of
+// listing every tracked item entity within range of the agent, regardless
+// of line-of-sight — unlike ItemCollector's own search (which requires a
+// clear raycast, see agent.nearestVisibleItem), this exists purely so a
+// caller can tell "nothing nearby at all" apart from "something nearby but
+// occluded," the latter being plausible in a mining tunnel's own walls.
+// Callers type-assert for it; it never collects or moves anything.
+type ItemVisibilityDiagnostic interface {
+	NearbyItemPositions(ctx context.Context, maxDistance float64) ([]ItemSighting, error)
+}
