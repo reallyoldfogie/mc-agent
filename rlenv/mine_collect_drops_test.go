@@ -138,6 +138,62 @@ func TestMinedViaNonMineDispatchStillCollects(t *testing.T) {
 	}
 }
 
+// TestBrokenBlocksDrainRestoresNonTargetBlocksToo reproduces a gap found
+// live, 2026-11-07, while investigating collector_truncation's smaller
+// remaining bucket (docs/plans/21-buried-mining-success.md): the
+// BrokenBlocksReporter drain only ever tracked its *first* target-matching
+// block for restoration (e.minedBlocks) - a filler block (stone, dirt)
+// broken incidentally in the same drain, or a second target instance, was
+// silently dropped and never restored at the next Reset. Both must be
+// restored: restoreMinedBlocks is a generic "put back whatever broke"
+// mechanism, not one that should care why a block broke.
+func TestBrokenBlocksDrainRestoresNonTargetBlocksToo(t *testing.T) {
+	inner := newFakeAgent(0, 0, 0)
+	inner.setMineBlockHidden(true)
+	agent := &fakeBrokenBlocksAgent{fakeAgent: inner}
+	cfg := buriedTestConfig()
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.pending = []models.BrokenBlock{
+		{X: 1, Y: 0, Z: 0, BlockName: "minecraft:stone"},
+		{X: 5, Y: 0, Z: 0, BlockName: "minecraft:coal_ore"},
+		{X: 2, Y: 0, Z: 0, BlockName: "minecraft:stone"},
+	}
+	if _, err := env.Step(context.Background(), rlenv.ActionWait); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("second Reset: %v", err)
+	}
+
+	want := []restoredBlock{
+		{1, 0, 0, "minecraft:stone"},
+		{5, 0, 0, "minecraft:coal_ore"},
+		{2, 0, 0, "minecraft:stone"},
+	}
+	if len(agent.restoredBlocks) != len(want) {
+		t.Fatalf("restored = %v, want all %d broken blocks restored: %v", agent.restoredBlocks, len(want), want)
+	}
+	for _, w := range want {
+		found := false
+		for _, r := range agent.restoredBlocks {
+			if r == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("restored = %v, missing %v", agent.restoredBlocks, w)
+		}
+	}
+}
+
 // TestMinedViaNonMineDispatchWithheldWithoutCollection combines the two
 // fixes: a break credited through the non-mine-dispatch path (as above)
 // still must not succeed if collection then fails.

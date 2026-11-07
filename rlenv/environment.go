@@ -2149,16 +2149,50 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	if reporter, ok := e.agent.(BrokenBlocksReporter); ok {
 		broken := reporter.DrainBrokenBlocks()
 		if e.buriedTargetActive() {
+			// Diagnostic only, 2026-11-07 (docs/plans/21-buried-mining-
+			// success.md): investigating collector_truncation's smaller
+			// remaining bucket (a drop that's genuinely still sitting
+			// there, uncollected - see models.ItemVisibilityDiagnostic's
+			// own doc comment). A plausible cause is a single step's own
+			// clamped goto (dispatchGoToTarget's blindExploreStepDistance
+			// hop) digging through *several* blocks on its way - not just
+			// target ones; a filler block (stone, dirt) mined early in the
+			// same hop is just as informative here as a second ore
+			// instance would be, since either shows the bot moved on past
+			// an earlier break before this step's own checks ran. Logging
+			// every drained block, not only target matches, is what makes
+			// that visible - filtering to matches alone (the loop below)
+			// would hide exactly the filler-block case this is checking
+			// for. This log exists to confirm or rule that out before
+			// changing anything; it doesn't yet, and only the first target
+			// match's position is tracked/restorable below either way.
+			if len(broken) > 1 {
+				parts := make([]string, len(broken))
+				for i, b := range broken {
+					parts[i] = fmt.Sprintf("%s@%d,%d,%d", b.BlockName, b.X, b.Y, b.Z)
+				}
+				log.Printf("rlenv: step's own BrokenBlocksReporter drain broke %d blocks in one step: %s", len(broken), strings.Join(parts, ", "))
+			}
 			target := e.mineTargetBlockInUse()
 			for _, b := range broken {
+				// Tracked for restoration regardless of whether b matches
+				// target - a filler block (stone, dirt) broken incidentally
+				// during a clamped goto hop leaves just as real a hole as
+				// an ore block does, and restoreMinedBlocks is already a
+				// generic "put back whatever's in this list" mechanism,
+				// agnostic to why something's in it. Fixed 2026-11-07:
+				// previously this only ran for the first target match (the
+				// same mined-gated loop below), silently leaking
+				// un-restored filler-block holes into the world across
+				// episodes once a step broke more than one block.
+				if restorableBlockName(b.BlockName) {
+					e.minedBlocks = append(e.minedBlocks, minedBlock{b.X, b.Y, b.Z, b.BlockName})
+				}
 				if mined || target == "" || b.BlockName != target {
 					continue
 				}
 				mined = true
 				minedBreakX, minedBreakY, minedBreakZ, minedBreakKnown = float64(b.X), float64(b.Y), float64(b.Z), true
-				if restorableBlockName(b.BlockName) {
-					e.minedBlocks = append(e.minedBlocks, minedBlock{b.X, b.Y, b.Z, b.BlockName})
-				}
 			}
 		}
 	}
