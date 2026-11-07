@@ -110,6 +110,20 @@ type fakeAgent struct {
 	// crediting the break alone.
 	collectNearbyItemsFail bool
 
+	// silentPickupItem/silentPickupCount, when silentPickupItem is set,
+	// simulate vanilla's own passive item pickup beating CollectNearbyItems
+	// to a drop: InventoryCount(silentPickupItem) jumps by silentPickupCount
+	// the moment CollectNearbyItems is called (whether or not
+	// collectNearbyItemsFail is also set), modeling a step where the real
+	// collection already happened outside of collectDrops' own
+	// entity-chasing — see rlenv.Environment.Step's own inventory-delta
+	// fallback (the collectDrops call site) for why Step needs to detect
+	// this case. silentPickupCount applies only once, the first time
+	// CollectNearbyItems is called after it's set.
+	silentPickupItem  string
+	silentPickupCount int
+	silentPickupHeld  int // bumped by silentPickupCount, once, on first CollectNearbyItems call
+
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
 	// recipes, instead of the single mine block / craft target above.
@@ -1088,6 +1102,9 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	if f.chainInv != nil {
 		return f.chainInv[itemName]
 	}
+	if f.silentPickupItem != "" && itemName == f.silentPickupItem {
+		return f.silentPickupHeld
+	}
 	if f.craftTargetName != "" && itemName == f.craftTargetName {
 		return f.craftHeldCount
 	}
@@ -1361,6 +1378,10 @@ func (f *fakeAgent) CollectNearbyItems(context.Context, float64) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.collectDropsCalls++
+	if f.silentPickupItem != "" && f.silentPickupCount != 0 {
+		f.silentPickupHeld += f.silentPickupCount
+		f.silentPickupCount = 0
+	}
 	if f.collectNearbyItemsFail {
 		return 0, nil
 	}

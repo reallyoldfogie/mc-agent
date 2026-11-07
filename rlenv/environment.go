@@ -2176,6 +2176,31 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	collected := 0
 	if mined && e.cfg.CollectDrops {
 		collected = e.collectDrops(ctx)
+		// newDropItemCount, when prevDropItemName != "", is read once here
+		// (not once for the fallback below and again for the log) so both
+		// agree on the exact same snapshot.
+		newDropItemCount := prevDropItemCount
+		if prevDropItemName != "" {
+			newDropItemCount = e.agent.InventoryCount(prevDropItemName)
+		}
+		// Inventory-delta fallback, added 2026-11-06 once collectDrops' own
+		// diagnostic log (below) showed why it was needed: collectDrops'
+		// entity-chasing result only sees a drop it can still find and
+		// reach, but vanilla's own passive pickup (automatic once the bot
+		// stands within about a block of where an item lands) routinely
+		// beats it there first - the bot is usually standing right next to
+		// the block it just broke. Measured live: ~78% of "collectDrops
+		// found nothing nearby" cases showed the bot's own held count of
+		// the drop item increasing within this very step anyway -
+		// CollectNearbyItems genuinely found nothing left to chase, not
+		// because nothing was gathered. Checking the inventory delta
+		// directly is immune to that: it doesn't care who picked the item
+		// up. Mirrors craftedThisStep/pickedUpThisStep's own reasoning
+		// below for judging an effect from a before/after count rather
+		// than from which code path caused it.
+		if collected == 0 && newDropItemCount > prevDropItemCount {
+			collected = newDropItemCount - prevDropItemCount
+		}
 		if collected == 0 {
 			// Diagnostic only, 2026-11-05 (docs/plans/21-buried-mining-
 			// success.md): collectDrops' own internal log line only fires
@@ -2185,8 +2210,11 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			// otherwise silent. Found live: of 821 collector_truncation
 			// outcomes, only ~20 unique items ever logged that "found but
 			// missed" error, meaning most of that truncation rate's cause
-			// was invisible until now. This line exists to measure it, not
-			// to fix anything yet - no behavior change here.
+			// was invisible until now. This line exists to measure it -
+			// now that the inventory-delta fallback above handles the
+			// dominant case it measured, every remaining occurrence here
+			// is expected to be the other case: a drop that's genuinely
+			// still sitting there, unreached.
 			//
 			// Extended 2026-11-06 with two more diagnostic-only fields once
 			// the above showed the invisible case dominating: the break's
@@ -2200,7 +2228,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			// tracked nearby that agent.nearestVisibleItem's raycast
 			// currently can't see through — plausible in a mining tunnel's
 			// own walls, and previously impossible to measure from this log
-			// alone. Still no behavior change.
+			// alone.
 			target := e.mineTargetBlockInUse()
 			breakInfo := "break pos unknown (blind-destruction fallback)"
 			if minedBreakKnown {
@@ -2228,16 +2256,15 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 				}
 			}
 			// invInfo answers "did the bot's inventory get this anyway" -
-			// see prevDropItemName/prevDropItemCount's own doc comment for
-			// why this is checked independently of collectDrops' own
-			// entity-chasing result.
+			// see the inventory-delta fallback above for why this is
+			// checked independently of collectDrops' own entity-chasing
+			// result. Reuses newDropItemCount rather than re-reading
+			// InventoryCount: if that fallback had found an increase,
+			// collected would already be nonzero and this branch wouldn't
+			// run.
 			invInfo := "inventory check unavailable (unrecognized ore block)"
 			if prevDropItemName != "" {
-				newDropItemCount := e.agent.InventoryCount(prevDropItemName)
 				invInfo = fmt.Sprintf("inventory %s: %d->%d", prevDropItemName, prevDropItemCount, newDropItemCount)
-				if newDropItemCount > prevDropItemCount {
-					invInfo += " (picked up anyway, not by collectDrops)"
-				}
 			}
 			log.Printf("rlenv: mined %s but collectDrops found nothing nearby (bot at %.1f,%.1f,%.1f) - %s - %s - %s", target, x, y, z, breakInfo, itemInfo, invInfo)
 		}

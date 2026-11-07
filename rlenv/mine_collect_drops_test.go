@@ -40,6 +40,41 @@ func TestMineWithholdsSuccessUntilCollected(t *testing.T) {
 	}
 }
 
+// TestMineSucceedsViaInventoryDeltaWhenEntityChaseFindsNothing reproduces
+// the dominant live cause of collector_truncation found 2026-11-06
+// (docs/plans/21-buried-mining-success.md, collectDrops' own diagnostic
+// log): CollectNearbyItems' own entity-chasing result says nothing was
+// collected, but the bot's inventory count of the drop item increased
+// anyway within the same step - vanilla's own passive pickup (automatic
+// once the bot stands close enough) beat it there. The step must still
+// credit success: collected == 0 is not evidence nothing was gathered.
+func TestMineSucceedsViaInventoryDeltaWhenEntityChaseFindsNothing(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:coal_ore", 1, 0, 0)
+	agent.collectNearbyItemsFail = true
+	agent.silentPickupItem = "minecraft:coal"
+	agent.silentPickupCount = 1
+	cfg := testConfig()
+	cfg.GoToTargetDisabled = true
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	cfg.CollectDrops = true
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	result, err := env.Step(ctx, rlenv.ActionMine)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false even though the bot's own coal count increased this step, want true - collectDrops' own entity-chasing result finding nothing is not proof nothing was collected")
+	}
+	if agent.collectDropsCalls != 1 {
+		t.Fatalf("collectDropsCalls = %d, want 1 - collection must still be attempted", agent.collectDropsCalls)
+	}
+}
+
 // TestMineSucceedsOnceCollected is WithholdsSuccessUntilCollected's
 // opposite: once CollectNearbyItems actually collects the drop, the same
 // break does credit success exactly as it would without Config.CollectDrops
