@@ -340,9 +340,17 @@ func TestMaxConsecutiveStepTimeoutsEndsAWedgedEpisode(t *testing.T) {
 	}
 }
 
-// TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves: only consecutive
-// timeouts count, and a new episode starts from zero.
-func TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves(t *testing.T) {
+// TestMaxConsecutiveStepTimeoutsCountsFastFailuresTooNotJustRealTimeouts
+// reproduces the gap found live, 2026-11-07 (docs/plans/21-buried-mining-
+// success.md): a goto dispatched to a genuinely unreachable target
+// resolves quickly with its own failure (a pathfinding error), not a
+// StepTimeout - the original version of this budget only counted actual
+// timeouts, so a step resolving with an error used to silently *reset*
+// the count instead of contributing to it, leaving no way for a
+// persistently-failing-but-fast dispatch to ever end the episode. A
+// resolved error must count the same as a timeout; only a clean,
+// error-free resolution resets the count.
+func TestMaxConsecutiveStepTimeoutsCountsFastFailuresTooNotJustRealTimeouts(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	cfg := testConfig()
 	cfg.StepTimeout = 200 * time.Millisecond
@@ -353,21 +361,21 @@ func TestMaxConsecutiveStepTimeoutsResetsWhenAnActionResolves(t *testing.T) {
 		t.Fatalf("Reset: %v", err)
 	}
 
-	agent.moveToWithChatDelay = time.Second // times out
+	agent.moveToWithChatDelay = time.Second // times out: count -> 1
 	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
 		t.Fatal("one timeout must not end the episode")
 	}
-	// Resolves promptly (with an error, so the bot does not reach the target
-	// and end the episode by arrival), resetting the count.
+	// Resolves promptly, but with its own failure (so the bot does not
+	// reach the target and end the episode by arrival) - this must count
+	// toward the same budget as the timeout above, not reset it.
 	agent.moveToWithChatDelay = 0
 	agent.moveToWithChatErr = context.DeadlineExceeded
-	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
-		t.Fatal("a resolving step must not end the episode")
+	result, err := env.Step(ctx, rlenv.ActionGoToTarget)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
 	}
-	agent.moveToWithChatErr = nil
-	agent.moveToWithChatDelay = time.Second // one timeout again, still below 2
-	if r, _ := env.Step(ctx, rlenv.ActionGoToTarget); r.Done {
-		t.Fatal("the count must have reset when the action resolved")
+	if !result.Done {
+		t.Fatal("a resolved-with-error step must count toward MaxConsecutiveStepTimeouts, ending the episode once the count reaches it (1 timeout + 1 resolved error = 2)")
 	}
 }
 

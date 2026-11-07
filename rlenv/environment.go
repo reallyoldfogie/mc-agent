@@ -57,7 +57,18 @@ type Environment struct {
 	// (a step that timed out leaves it going); see cancelInflight.
 	inflight *inflightAction
 
-	// consecutiveStepTimeouts backs Config.MaxConsecutiveStepTimeouts.
+	// consecutiveStepTimeouts backs Config.MaxConsecutiveStepTimeouts -
+	// incremented not only when the dispatched action's own Completion
+	// doesn't resolve within Config.StepTimeout, but also (fixed
+	// 2026-11-07) when it resolves quickly with its own failure (a
+	// pathfinding error, say). Found live: a goto dispatched to a
+	// genuinely unreachable target (seen with Config.CloneAreaJitter
+	// widening which window of a seeded template gets cloned) resolved
+	// instantly, failing every single time, forever - the old "only a
+	// real timeout counts" rule gave that no way to ever trip this
+	// budget, so nothing could end an episode stuck doing it. A fast,
+	// repeated failure is just as much "not making progress" as a slow
+	// one and needs the same give-up budget, not a separate one.
 	consecutiveStepTimeouts int
 
 	// arrived is whether this episode's goto target has been reached yet;
@@ -2058,14 +2069,22 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 			cancelAction()
 			return rl.StepResult{}, fmt.Errorf("rlenv: dispatching %s: %w", dispatch.name, err)
 		}
-		resolved, err := e.awaitStep(ctx, completion)
+		resolved, actionErr, err := e.awaitStep(ctx, completion)
 		if err != nil {
 			cancelAction()
 			return rl.StepResult{}, err
 		}
 		if resolved {
 			cancelAction()
-			e.consecutiveStepTimeouts = 0
+			if actionErr != nil {
+				// Counts the same as a timeout - see
+				// consecutiveStepTimeouts' own doc comment for why a
+				// fast, repeated failure needs the same give-up budget a
+				// slow one already had.
+				e.consecutiveStepTimeouts++
+			} else {
+				e.consecutiveStepTimeouts = 0
+			}
 		} else {
 			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
 			e.consecutiveStepTimeouts++
@@ -2814,28 +2833,35 @@ func observationsEqual(a, b []float32) bool {
 // awaitStep waits, bounded by Config.StepTimeout, for completion (the
 // models.Completion the dispatched action returned) to resolve. Three
 // outcomes:
-//   - completion resolves within the timeout: its outcome is returned as
-//     Step's own final position/observation already reflects it, so a
-//     non-nil error here (the action's own effect failed, e.g. a
-//     pathfinding error) is not itself fatal to the step — the episode
-//     continues and reward is computed from wherever the bot actually
-//     ended up.
-//   - Config.StepTimeout elapses first: not an error (see Step's doc
-//     comment) — the dispatched action may still be running in the
-//     background past this call.
-//   - ctx is canceled by the caller: propagated as a real error, since
-//     that's a caller-initiated abort, distinguished from our own
+//   - completion resolves within the timeout: actionErr is its own
+//     outcome (nil on success) - Step's own final position/observation
+//     already reflects it either way, so a non-nil actionErr (the
+//     action's own effect failed, e.g. a pathfinding error) isn't itself
+//     fatal to the step and the episode continues, reward computed from
+//     wherever the bot actually ended up - but see
+//     consecutiveStepTimeouts' own doc comment for why the caller still
+//     counts it toward the same give-up budget as a timeout, not silently
+//     discards it the way this used to.
+//   - Config.StepTimeout elapses first: resolved=false, actionErr=nil -
+//     not an error (see Step's doc comment) — the dispatched action may
+//     still be running in the background past this call.
+//   - ctx is canceled by the caller: propagated as a real error via err,
+//     since that's a caller-initiated abort, distinguished from our own
 //     StepTimeout by checking ctx's own error after the wait.
 //
 // resolved reports whether the action finished within the timeout; false
 // means it is still running and the caller must track it (see inflight).
-func (e *Environment) awaitStep(ctx context.Context, completion models.Completion) (resolved bool, err error) {
+func (e *Environment) awaitStep(ctx context.Context, completion models.Completion) (resolved bool, actionErr error, err error) {
 	stepCtx, cancel := context.WithTimeout(ctx, e.cfg.StepTimeout)
 	defer cancel()
-	if err := completion.Wait(stepCtx); err != nil && ctx.Err() != nil {
-		return false, ctx.Err()
+	waitErr := completion.Wait(stepCtx)
+	if waitErr != nil && ctx.Err() != nil {
+		return false, nil, ctx.Err()
 	}
-	return stepCtx.Err() == nil, nil
+	if stepCtx.Err() != nil {
+		return false, nil, nil
+	}
+	return true, waitErr, nil
 }
 
 // inflightAction is a dispatched action that outlived its step.

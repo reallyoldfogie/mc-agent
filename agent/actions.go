@@ -504,12 +504,24 @@ func (a *agent) MoveTo(ctx context.Context, tx, ty, tz float64, notifyChat bool)
 	a.logf("[MoveTo] Pathfinding from (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
 		currentPos.X, currentPos.Y, currentPos.Z, finalGoal.X, finalGoal.Y, finalGoal.Z)
 
-	// Use HPA* to find and follow the full path directly
+	// Use HPA* to find and follow the full path directly - the error
+	// return below is unconditional (fixed 2026-11-07): it used to live
+	// inside the `if notifyChat` block above it, so a pathfinding failure
+	// for the RL path (MoveToQuiet, notifyChat=false - see that type's own
+	// doc comment) silently returned nil instead, reporting success for a
+	// move that never happened. Found live: a dispatched goto to a
+	// genuinely unreachable target (seen with -clone-area-jitter widening
+	// which window of a seeded template gets cloned) resolved instantly,
+	// "succeeding" every single time, so the policy kept redispatching the
+	// identical impossible move forever - nothing downstream of this ever
+	// saw an error to act on. notifyChat only ever controlled the chat
+	// narration; it was never meant to gate whether the caller learns the
+	// move failed at all.
 	if err := a.pathfindAndFollow(ctx, currentPos, finalGoal); err != nil {
 		if notifyChat {
 			_ = a.SendChat(fmt.Sprintf("pathfindAndFollow - Pathfinding failed: %v", err.Error()))
-			return fmt.Errorf("pathfinding failed: %w", err)
 		}
+		return fmt.Errorf("pathfinding failed: %w", err)
 	}
 
 	if notifyChat {

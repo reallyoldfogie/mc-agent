@@ -455,15 +455,22 @@ type Config struct {
 	StuckTimeout int
 
 	// MaxConsecutiveStepTimeouts, if > 0, ends the current episode once that
-	// many dispatched Steps in a row hit StepTimeout without their action
-	// resolving. StuckTimeout can't catch a wedged bot whose position jitters
-	// by float noise each step (found live: a bot straddling the edge of a
-	// slot it could never descend into, re-dispatching a craft that timed out
-	// every step), so its episode ran the whole step budget - about 17
+	// many dispatched Steps in a row either hit StepTimeout without their
+	// action resolving, or had their action resolve with its own failure
+	// (e.g. a pathfinding error) - see consecutiveStepTimeouts' own doc
+	// comment for why a fast, repeated failure counts the same as a slow
+	// one, not a separate budget: found live, 2026-11-07, a goto
+	// dispatched to a genuinely unreachable target resolved instantly,
+	// failing every single time, forever, and the original "only a real
+	// timeout counts" version of this field had no way to ever catch that.
+	// StuckTimeout can't catch a wedged bot whose position jitters by float
+	// noise each step either (found live: a bot straddling the edge of a
+	// slot it could never descend into, re-dispatching a craft that timed
+	// out every step), so its episode ran the whole step budget - about 17
 	// minutes at a 10s StepTimeout - while every other environment waited on
-	// it at the epoch barrier. A step whose action resolves resets the count;
-	// steps that dispatch nothing leave it unchanged. 0 (the default)
-	// disables the check.
+	// it at the epoch barrier. A step whose action resolves without error
+	// resets the count; steps that dispatch nothing leave it unchanged. 0
+	// (the default) disables the check.
 	MaxConsecutiveStepTimeouts int
 
 	// ClearAreaRadius, if > 0 (and ResetOrigin is set and the agent is an
