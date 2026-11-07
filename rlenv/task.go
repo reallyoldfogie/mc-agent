@@ -522,6 +522,36 @@ type Config struct {
 	// if left 0 while CloneAreaFrom is set (this run's own soil depth -
 	// stop short of bedrock, which never changes so never needs healing).
 	CloneAreaDepth int
+	// CloneAreaJitter, if > 0, adds a uniform-random offset in
+	// [-CloneAreaJitter, +CloneAreaJitter] to CloneAreaFrom's own X and Z
+	// independently, drawn fresh every Reset from the same per-Environment
+	// RNG Config.Jitter already uses (seeded from JitterSeed) - not a
+	// separate source, so a run's existing reproducibility story covers
+	// this too. 0 (the default) disables it, leaving CloneAreaFrom's X/Z
+	// exactly as configured - unchanged existing behavior.
+	//
+	// Added 2026-11-07 (docs/plans/21-buried-mining-success.md):
+	// Config.Jitter already exists because a fixed ResetOrigin/
+	// TargetOffset pair, once a policy converges, replays the exact same
+	// trajectory every episode (see Jitter's own doc comment) - but Jitter
+	// only moves *where* the destination working area is placed, never
+	// *which part* of the template gets cloned there. A clone preserves
+	// relative block positions exactly, so the seeded ore's position
+	// relative to the destination - and therefore relative to the bot's
+	// own spawn - stays identical every single episode regardless of
+	// Jitter, even though the absolute world coordinates move around.
+	// Found live: an agent spectated mid-training mined the exact same
+	// pattern in the exact same relative spot every single episode, a
+	// strong sign of a memorized trajectory rather than genuinely
+	// perception-driven search. CloneAreaJitter closes that gap by varying
+	// which window of a larger, uniformly-seeded source template gets
+	// cloned, not just where the clone lands.
+	//
+	// The caller is responsible for seeding ore densely enough across
+	// CloneAreaRadius+CloneAreaJitter (not just CloneAreaRadius) that any
+	// jittered window still has a solvable layout - this field only picks
+	// where to clone *from*, it doesn't seed anything itself.
+	CloneAreaJitter int
 
 	// TimePenalty is the reward subtracted every step, independent of outcome
 	// (see reward.go's timePenalty for what it's for). 0 means the built-in

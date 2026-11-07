@@ -3091,6 +3091,16 @@ func (e *Environment) cloneArea(ctx context.Context) {
 
 	src := *e.cfg.CloneAreaFrom
 	sx, sy, sz := int(math.Floor(src[0])), int(math.Floor(src[1])), int(math.Floor(src[2]))
+	// Jittering sx/sz (not sy - CloneAreaFrom's own doc comment requires
+	// every destination to share its exact ground height) picks a
+	// different window of the source template each Reset - see
+	// Config.CloneAreaJitter's own doc comment for why this, not just
+	// Config.Jitter, is what actually varies the seeded layout a bot sees.
+	if e.cfg.CloneAreaJitter > 0 {
+		j := e.cfg.CloneAreaJitter
+		sx += e.rng.Intn(2*j+1) - j
+		sz += e.rng.Intn(2*j+1) - j
+	}
 	// dy is CloneAreaFrom's own Y, not ResetOrigin's - the entire point of
 	// cloning over clearing (see CloneAreaFrom's doc comment): no boundary
 	// is ever computed from the bot's own, possibly-imprecise position.

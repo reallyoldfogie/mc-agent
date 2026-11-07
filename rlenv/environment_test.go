@@ -498,6 +498,100 @@ func TestResetClonesInZBandsWhenTheFullBoxExceedsVanillasCloneLimit(t *testing.T
 	}
 }
 
+// TestCloneAreaJitterDisabledKeepsTheExactFixedSource confirms
+// Config.CloneAreaJitter's own zero-value contract: unset, every Reset
+// clones from exactly CloneAreaFrom's own X/Z, matching
+// TestResetClonesTheTemplateInsteadOfClearingWhenBothAreSet's own fixed
+// expectation bit-for-bit across repeated Resets, not just the first one.
+func TestCloneAreaJitterDisabledKeepsTheExactFixedSource(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10, -60, 5}
+	template := [3]float64{0, -60, 5000}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.CloneAreaFrom = &template
+	cfg.CloneAreaRadius = 3
+	cfg.CloneAreaDepth = 3
+	env := newTestEnvironment(t, agent, cfg)
+
+	for i := 0; i < 5; i++ {
+		if _, err := env.Reset(context.Background()); err != nil {
+			t.Fatalf("Reset %d: %v", i, err)
+		}
+	}
+	if len(agent.clonedAreas) != 5 {
+		t.Fatalf("clonedAreas = %v, want exactly 5 calls", agent.clonedAreas)
+	}
+	want := clonedArea{-3, -63, 4997, 3, -56, 5003, 7, -63, 2}
+	for i, c := range agent.clonedAreas {
+		if c != want {
+			t.Fatalf("Reset %d cloned = %v, want exactly %v (CloneAreaJitter unset must never vary the source)", i, c, want)
+		}
+	}
+}
+
+// TestCloneAreaJitterVariesTheSourceWindowAcrossResets confirms
+// Config.CloneAreaJitter's actual effect: a positive jitter must vary
+// which window of the source template gets cloned across repeated Resets
+// (not just the destination, which Config.Jitter already varies - see
+// CloneAreaJitter's own doc comment for why that distinction matters), and
+// every draw must land within [-CloneAreaJitter, +CloneAreaJitter] of the
+// base X/Z, never touching Y at all.
+func TestCloneAreaJitterVariesTheSourceWindowAcrossResets(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	origin := [3]float64{10, -60, 5}
+	template := [3]float64{0, -60, 5000}
+	cfg := testConfig()
+	cfg.ResetOrigin = &origin
+	cfg.CloneAreaFrom = &template
+	cfg.CloneAreaRadius = 3
+	cfg.CloneAreaDepth = 3
+	cfg.CloneAreaJitter = 20
+	cfg.JitterSeed = 1
+	env := newTestEnvironment(t, agent, cfg)
+
+	const resets = 20
+	for i := 0; i < resets; i++ {
+		if _, err := env.Reset(context.Background()); err != nil {
+			t.Fatalf("Reset %d: %v", i, err)
+		}
+	}
+	if len(agent.clonedAreas) != resets {
+		t.Fatalf("clonedAreas = %v, want exactly %d calls", agent.clonedAreas, resets)
+	}
+
+	varied := false
+	for i, c := range agent.clonedAreas {
+		// Source Y must never move - CloneAreaFrom's own doc comment
+		// requires every destination to share its exact ground height.
+		if c.srcY1 != -63 || c.srcY2 != -56 {
+			t.Fatalf("Reset %d: src Y span = [%d,%d], want [-63,-56] unchanged - CloneAreaJitter must never touch Y", i, c.srcY1, c.srcY2)
+		}
+		srcX, srcZ := c.srcX1+3, c.srcZ1+3 // undo the radius offset to recover the jittered center
+		if srcX < 0-20 || srcX > 0+20 {
+			t.Fatalf("Reset %d: jittered source X = %d, want within [-20,20] of 0", i, srcX)
+		}
+		if srcZ < 5000-20 || srcZ > 5000+20 {
+			t.Fatalf("Reset %d: jittered source Z = %d, want within [4980,5020] of 5000", i, srcZ)
+		}
+		// The destination depends only on ResetOrigin, never on the
+		// source's own jitter - the whole template-window moves under
+		// the bot, not the other way around.
+		if c.dstX1 != 7 {
+			t.Fatalf("Reset %d: dstX1 = %d, want 7 unchanged by jitter (destination depends only on ResetOrigin)", i, c.dstX1)
+		}
+		if c.dstZ1 != 2 {
+			t.Fatalf("Reset %d: dstZ1 = %d, want 2 unchanged by jitter (destination depends only on ResetOrigin)", i, c.dstZ1)
+		}
+		if srcX != 0 || srcZ != 5000 {
+			varied = true
+		}
+	}
+	if !varied {
+		t.Fatalf("clonedAreas = %v, want at least one Reset's source to differ from the unjittered base (vanishingly unlikely with jitter=20 over %d draws otherwise)", agent.clonedAreas, resets)
+	}
+}
+
 func TestResetDoesNotClearWhenTheFeatureIsOff(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	origin := [3]float64{10, -60, 5}
