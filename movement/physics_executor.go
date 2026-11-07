@@ -787,8 +787,23 @@ func (pe *PhysicsMovementExecutor) MoveTowards(targetX, targetY, targetZ float64
 }
 
 // LookAt rotates the bot to look at target coordinates.
+// Computes yaw/pitch itself and sends them via pe.SendRotation (rather than
+// delegating to movementPacketSender.LookAt) so the result is written into
+// pe.physicsState/manualInputs before the packet goes out. Otherwise the
+// tick loop's next iteration re-sends whatever rotation was cached before
+// this call and silently overwrites the look-at within one tick (~50ms).
 func (pe *PhysicsMovementExecutor) LookAt(targetX, targetY, targetZ float64, onGround bool) error {
-	return pe.movementPacketSender.LookAt(targetX, targetY, targetZ, onGround)
+	botPos, _, _, _ := pe.physicsState.GetPosition()
+
+	var eyeHeight float64
+	if pe.IsSneaking() {
+		eyeHeight = models.PlayerEyeHeightSneaking
+	} else {
+		eyeHeight = models.PlayerEyeHeight
+	}
+	yaw, pitch := calculateLookAngles(botPos.X, botPos.Y+eyeHeight, botPos.Z, targetX, targetY+eyeHeight, targetZ)
+
+	return pe.SendRotation(yaw, pitch, onGround)
 }
 
 // StartSprinting sends a command to start sprinting.
