@@ -138,6 +138,86 @@ func TestMinedViaNonMineDispatchStillCollects(t *testing.T) {
 	}
 }
 
+// TestMineSucceedsViaBreakPositionFallbackWhenBotHasMovedOn reproduces the
+// mechanism confirmed live, 2026-11-07, behind collector_truncation's
+// smaller remaining bucket (docs/plans/21-buried-mining-success.md): a
+// single step's own clamped goto hop can mine through several blocks
+// before the agent settles (an 8-block dig in one step, confirmed live),
+// leaving the break - and its drop - several blocks behind where the
+// bot-anchored search (CollectNearbyItems) then centers, finding nothing
+// even though the drop is genuinely sitting right where the block broke.
+// collectDrops' own break-position fallback (models.ItemCollectorAt) must
+// search from there instead once the bot-anchored search comes up empty.
+func TestMineSucceedsViaBreakPositionFallbackWhenBotHasMovedOn(t *testing.T) {
+	inner := newFakeAgent(10, 0, 0) // far from the break, as if the hop already moved on
+	inner.setMineBlockHidden(true)
+	inner.collectNearbyItemsFail = true // the bot-anchored search finds nothing
+	breakPos := models.V3{X: 5, Y: 0, Z: 0}
+	inner.collectAtWantAnchor = &breakPos
+	inner.collectAtResult = 1 // the break-anchored fallback finds the drop
+	agent := &fakeBrokenBlocksAgent{fakeAgent: inner}
+	cfg := buriedTestConfig()
+	cfg.CollectDrops = true
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.pending = []models.BrokenBlock{{X: 5, Y: 0, Z: 0, BlockName: "minecraft:coal_ore"}}
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false even though the break-position fallback found the drop, want true")
+	}
+	if agent.collectDropsCalls != 1 {
+		t.Fatalf("collectDropsCalls = %d, want 1 - the bot-anchored search must still run first", agent.collectDropsCalls)
+	}
+	if agent.collectAtCalls != 1 {
+		t.Fatalf("collectAtCalls = %d, want 1 - the break-position fallback must run once the bot-anchored search finds nothing", agent.collectAtCalls)
+	}
+}
+
+// TestMineWithholdsSuccessWhenBreakPositionFallbackAlsoFindsNothing is
+// BreakPositionFallbackWhenBotHasMovedOn's opposite: when neither the
+// bot-anchored search nor the break-position fallback finds anything (the
+// drop is genuinely gone, not just behind), success must still be
+// withheld exactly as it was before the fallback existed.
+func TestMineWithholdsSuccessWhenBreakPositionFallbackAlsoFindsNothing(t *testing.T) {
+	inner := newFakeAgent(10, 0, 0)
+	inner.setMineBlockHidden(true)
+	inner.collectNearbyItemsFail = true
+	// collectAtWantAnchor left nil: the fallback is available but finds
+	// nothing either, mirroring collectNearbyItemsFail's own "found
+	// nothing, not an error" contract.
+	agent := &fakeBrokenBlocksAgent{fakeAgent: inner}
+	cfg := buriedTestConfig()
+	cfg.CollectDrops = true
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	agent.pending = []models.BrokenBlock{{X: 5, Y: 0, Z: 0, BlockName: "minecraft:coal_ore"}}
+	result, err := env.Step(context.Background(), rlenv.ActionWait)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true even though neither search found the drop, want false")
+	}
+	if agent.collectAtCalls != 1 {
+		t.Fatalf("collectAtCalls = %d, want 1 - the fallback must still be attempted", agent.collectAtCalls)
+	}
+}
+
 // TestBrokenBlocksDrainRestoresNonTargetBlocksToo reproduces a gap found
 // live, 2026-11-07, while investigating collector_truncation's smaller
 // remaining bucket (docs/plans/21-buried-mining-success.md): the

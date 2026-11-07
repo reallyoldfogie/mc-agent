@@ -124,6 +124,23 @@ type fakeAgent struct {
 	silentPickupCount int
 	silentPickupHeld  int // bumped by silentPickupCount, once, on first CollectNearbyItems call
 
+	// collectAtWantAnchor/collectAtResult, when collectAtWantAnchor is
+	// non-nil, make fakeAgent satisfy models.ItemCollectorAt:
+	// CollectNearbyItemsAt records each call (collectAtCalls) and returns
+	// collectAtResult only when the given anchor exactly matches
+	// collectAtWantAnchor, 0 otherwise - simulates
+	// rlenv.Environment.collectDrops' own break-position fallback finding
+	// a drop the bot-anchored search (CollectNearbyItems, which
+	// collectNearbyItemsFail governs) could not, because the bot moved on
+	// past the break by the time Step checks (see collectDrops' own doc
+	// comment). Left nil, fakeAgent still satisfies the interface (the
+	// method is always defined below) but always reports nothing, so
+	// every existing test not expecting this fallback still sees no
+	// behavior change from its introduction.
+	collectAtWantAnchor *models.V3
+	collectAtResult     int
+	collectAtCalls      int
+
 	// Chain simulation (chain_test's env tests): when chainInv is non-nil the
 	// fake models a tiny world of blocks and an inventory with the real
 	// recipes, instead of the single mine block / craft target above.
@@ -1392,6 +1409,22 @@ func (f *fakeAgent) CollectNearbyItems(context.Context, float64) (int, error) {
 		return n, nil
 	}
 	return 1, nil
+}
+
+// CollectNearbyItemsAt makes fakeAgent a models.ItemCollectorAt - see
+// collectAtWantAnchor's own doc comment for what it simulates.
+func (f *fakeAgent) CollectNearbyItemsAt(_ context.Context, anchor models.V3, _ float64) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.collectAtCalls++
+	if f.collectAtWantAnchor == nil {
+		return 0, nil
+	}
+	want := *f.collectAtWantAnchor
+	if anchor.X == want.X && anchor.Y == want.Y && anchor.Z == want.Z {
+		return f.collectAtResult, nil
+	}
+	return 0, nil
 }
 
 // craftChainLocked applies the real recipes the chain uses; the caller holds mu.

@@ -143,6 +143,24 @@ type ItemCollector interface {
 	CollectNearbyItems(ctx context.Context, maxDistance float64) (int, error)
 }
 
+// ItemCollectorAt is ItemCollector's positional variant: the same
+// walk-and-wait collection (agent.CollectNearbyItems), but filtering drops
+// by distance from anchor instead of the agent's own current position.
+// Added 2026-11-07 (docs/plans/21-buried-mining-success.md) once live data
+// showed why ItemCollector's own bot-anchored search can miss a real,
+// reachable drop: a single step's own clamped goto hop can mine through
+// several blocks before the agent settles (confirmed live: an 8-block dig
+// in one step), leaving a break - and its drop - several blocks behind
+// where the search then centers. Callers that know a step's own break
+// position (rlenv.Environment's minedBreakX/Y/Z) type-assert for this and
+// use it as a fallback once ItemCollector's own current-position search
+// finds nothing, searching from where the block broke instead of from
+// wherever the agent ended up. The agent still walks there from its own
+// actual position; only which drops count as "nearby" changes.
+type ItemCollectorAt interface {
+	CollectNearbyItemsAt(ctx context.Context, anchor V3, maxDistance float64) (int, error)
+}
+
 // ItemSighting is one tracked item entity found by
 // ItemVisibilityDiagnostic.NearbyItemPositions.
 type ItemSighting struct {

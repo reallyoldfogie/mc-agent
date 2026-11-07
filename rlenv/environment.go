@@ -2209,7 +2209,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// comment for how this now gates success).
 	collected := 0
 	if mined && e.cfg.CollectDrops {
-		collected = e.collectDrops(ctx)
+		collected = e.collectDrops(ctx, minedBreakKnown, minedBreakX, minedBreakY, minedBreakZ)
 		// newDropItemCount, when prevDropItemName != "", is read once here
 		// (not once for the fallback below and again for the log) so both
 		// agree on the exact same snapshot.
@@ -3119,18 +3119,43 @@ const collectDropsTimeout = 6 * time.Second
 // drop that cannot be collected (unreachable, or the attempt times out)
 // otherwise leaves no trace: CollectNearbyItems logs the failure itself but
 // returns 0, not an error, when nothing at all could be collected.
-func (e *Environment) collectDrops(ctx context.Context) int {
+//
+// breakKnown/breakX/breakY/breakZ (minedBreakX/Y/Z at the call site) back a
+// fallback search anchored at the step's own break position, tried only if
+// the normal bot-anchored search above finds nothing. Added 2026-11-07
+// (docs/plans/21-buried-mining-success.md): confirmed live that a single
+// step's own clamped goto hop (dispatchGoToTarget's
+// blindExploreStepDistance) can mine through several blocks before the
+// agent settles - an 8-block dig in one step, in one case - leaving the
+// break, and its drop, several blocks behind where a bot-anchored search
+// then centers. Searching from the break position too catches exactly
+// that: the agent still walks there from its own real position via
+// models.ItemCollectorAt; only which drops count as "nearby" changes.
+func (e *Environment) collectDrops(ctx context.Context, breakKnown bool, breakX, breakY, breakZ float64) int {
 	collector, ok := e.agent.(models.ItemCollector)
 	if !ok {
 		return 0
 	}
 	cctx, cancel := context.WithTimeout(ctx, collectDropsTimeout)
-	defer cancel()
 	n, err := collector.CollectNearbyItems(cctx, collectDropsRadius)
+	cancel()
 	if err != nil && ctx.Err() == nil {
 		log.Printf("rlenv: collecting drops after a mine step: %v", err)
 	}
-	return n
+	if n > 0 || !breakKnown {
+		return n
+	}
+	collectorAt, ok := e.agent.(models.ItemCollectorAt)
+	if !ok {
+		return n
+	}
+	bctx, bcancel := context.WithTimeout(ctx, collectDropsTimeout)
+	defer bcancel()
+	n2, err2 := collectorAt.CollectNearbyItemsAt(bctx, models.V3{X: breakX, Y: breakY, Z: breakZ}, collectDropsRadius)
+	if err2 != nil && ctx.Err() == nil {
+		log.Printf("rlenv: collecting drops near the break position after a mine step: %v", err2)
+	}
+	return n2
 }
 
 // collectDropsRadius is how far around the bot collectDrops looks for drops:

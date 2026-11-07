@@ -47,16 +47,34 @@ const (
 // from. This tries every standable cell within pickup range instead - see
 // models.TryPickupPositions.
 func (a *agent) CollectNearbyItems(ctx context.Context, maxDistance float64) (int, error) {
+	pos, _, _, ok := a.GetPosition()
+	if !ok {
+		return 0, fmt.Errorf("position not initialized")
+	}
+	return a.collectNearbyItemsNear(ctx, pos, maxDistance)
+}
+
+// CollectNearbyItemsAt is models.ItemCollectorAt's implementation - see
+// that interface's own doc comment for why this exists alongside
+// CollectNearbyItems: identical walk-and-wait collection, but filtering
+// drops by distance from anchor instead of the agent's own current
+// position. The agent still walks there from wherever it actually is;
+// only which drops count as "nearby" changes.
+func (a *agent) CollectNearbyItemsAt(ctx context.Context, anchor models.V3, maxDistance float64) (int, error) {
+	return a.collectNearbyItemsNear(ctx, anchor, maxDistance)
+}
+
+func (a *agent) collectNearbyItemsNear(ctx context.Context, anchor models.V3, maxDistance float64) (int, error) {
 	skipped := map[int32]bool{}
 	collected := 0
 	var lastErr error
 	for i := 0; i < collectItemsMax; i++ {
-		id, item, ok, err := a.nearestVisibleItem(ctx, maxDistance, skipped)
+		id, item, ok, err := a.nearestVisibleItem(ctx, anchor, maxDistance, skipped)
 		if err != nil {
 			return collected, err
 		}
 		if !ok && i == 0 {
-			id, item, ok, err = a.awaitVisibleItem(ctx, maxDistance, skipped)
+			id, item, ok, err = a.awaitVisibleItem(ctx, anchor, maxDistance, skipped)
 			if err != nil {
 				return collected, err
 			}
@@ -77,15 +95,17 @@ func (a *agent) CollectNearbyItems(ctx context.Context, maxDistance float64) (in
 	return collected, nil
 }
 
-// nearestVisibleItem is FindNearestVisibleItem minus the entities in skip.
-func (a *agent) nearestVisibleItem(ctx context.Context, maxDistance float64, skip map[int32]bool) (int32, models.V3, bool, error) {
+// nearestVisibleItem is FindNearestVisibleItem minus the entities in skip,
+// filtered by distance from anchor rather than always the agent's own
+// current position - see CollectNearbyItemsAt's own doc comment for why
+// that distinction exists. The agent's own position still backs the
+// HasLineOfSight check below (that one can only ever be "can the agent, at
+// its own actual position, currently see this" - not from some other
+// point).
+func (a *agent) nearestVisibleItem(ctx context.Context, anchor models.V3, maxDistance float64, skip map[int32]bool) (int32, models.V3, bool, error) {
 	itemTypeID, ok := a.GetEntityTypeID("minecraft:item")
 	if !ok {
 		return 0, models.V3{}, false, fmt.Errorf("minecraft:item entity type not found in registry")
-	}
-	pos, _, _, ok := a.GetPosition()
-	if !ok {
-		return 0, models.V3{}, false, fmt.Errorf("position not initialized")
 	}
 	bestDist := math.MaxFloat64
 	var bestID int32
@@ -95,7 +115,7 @@ func (a *agent) nearestVisibleItem(ctx context.Context, maxDistance float64, ski
 			continue
 		}
 		at := models.V3{X: ent.X, Y: ent.Y, Z: ent.Z}
-		d := pos.DistanceTo(at)
+		d := anchor.DistanceTo(at)
 		if maxDistance > 0 && d > maxDistance {
 			continue
 		}
@@ -154,7 +174,7 @@ func (a *agent) NearbyItemPositions(ctx context.Context, maxDistance float64) ([
 }
 
 // awaitVisibleItem polls nearestVisibleItem for up to collectItemAppearWait.
-func (a *agent) awaitVisibleItem(ctx context.Context, maxDistance float64, skip map[int32]bool) (int32, models.V3, bool, error) {
+func (a *agent) awaitVisibleItem(ctx context.Context, anchor models.V3, maxDistance float64, skip map[int32]bool) (int32, models.V3, bool, error) {
 	deadline := time.Now().Add(collectItemAppearWait)
 	for time.Now().Before(deadline) {
 		select {
@@ -162,7 +182,7 @@ func (a *agent) awaitVisibleItem(ctx context.Context, maxDistance float64, skip 
 			return 0, models.V3{}, false, ctx.Err()
 		case <-time.After(collectItemPoll):
 		}
-		id, item, ok, err := a.nearestVisibleItem(ctx, maxDistance, skip)
+		id, item, ok, err := a.nearestVisibleItem(ctx, anchor, maxDistance, skip)
 		if err != nil || ok {
 			return id, item, ok, err
 		}
