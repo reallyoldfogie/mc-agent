@@ -2036,8 +2036,29 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 	leftDistToTarget := math.Sqrt((step.Position.X-leftPosX)*(step.Position.X-leftPosX) +
 		(step.Position.Z-leftPosZ)*(step.Position.Z-leftPosZ))
 
-	// Choose the direction that gets us closer to the target
-	// Prefer direction with ground; if both or neither have ground, use distance
+	// Choose the direction that gets us closer to the target.
+	// Prefer whichever side still has ground (don't walk off the edge of a
+	// narrow path); if both or neither do, commit to pe.sidewaysDirection -
+	// the direction already chosen once for this whole recovery attempt
+	// (see the stuck-detection switch's own "Alternate sideways direction
+	// each time we get stuck" comment) - rather than recomputing a
+	// distance-based preference on every tick this function is called.
+	//
+	// Found live, 2026-11-07 (docs/plans/21-buried-mining-success.md):
+	// rightDistToTarget and leftDistToTarget are symmetric by construction
+	// whenever the bot sits near the direct line to the target - the
+	// common case for a bot stuck going straight at an obstacle - so
+	// re-comparing them every tick just chases sub-centimeter
+	// floating-point noise in the bot's own current position. That made
+	// the bot flip-flop between RIGHT and LEFT almost every single tick
+	// (both distances printed identically to 2 decimal places, the chosen
+	// side alternating anyway), never committing to either side long
+	// enough to actually clear whatever was blocking the direct path -
+	// seen live as an otherwise-ordinary 2-step jump+descend move stuck
+	// retrying forever, identically, across every parallel environment at
+	// once (not a world-content issue - a generic locomotion one).
+	// rightDistToTarget/leftDistToTarget are still computed above and
+	// logged below for diagnosis; they just no longer drive the decision.
 	var sidewaysX, sidewaysZ float64
 	var chooseRight bool
 	var useSneak bool
@@ -2050,8 +2071,9 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 	} else if leftHasGround && !rightHasGround {
 		chooseRight = false
 	} else {
-		// Both have ground or both don't - use distance comparison
-		chooseRight = rightDistToTarget < leftDistToTarget
+		// Both have ground or both don't - stick with this attempt's
+		// already-committed direction.
+		chooseRight = pe.sidewaysDirection > 0
 	}
 
 	if chooseRight {
