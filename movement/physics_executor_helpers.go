@@ -226,6 +226,7 @@ func (pe *PhysicsMovementExecutor) SetPath(path *pathfinding.Path) error {
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	pe.stepStartTime = time.Now()
 	pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+	pe.pathStartPos = pe.stepStartPos
 	pe.lastProgressPos = pe.stepStartPos
 	pe.lastProgressTime = time.Now()
 	pe.isRecovering = false

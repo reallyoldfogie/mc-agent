@@ -107,6 +107,7 @@ type PhysicsMovementExecutor struct {
 	// Stuck detection and recovery
 	stepStartTime     time.Time       // When current step started
 	stepStartPos      models.V3       // Position when current step started
+	pathStartPos      models.V3       // Position when the current path began executing - see generateSidewaysRecoveryInputs' own doc comment for why sideways recovery is biased away from retreating toward this
 	lastProgressPos   models.V3       // Last position where meaningful progress was made
 	lastProgressTime  time.Time       // Time of last progress
 	stuckThreshold    time.Duration   // How long without progress before considered stuck
@@ -2071,9 +2072,41 @@ func (pe *PhysicsMovementExecutor) generateSidewaysRecoveryInputs(step pathfindi
 	} else if leftHasGround && !rightHasGround {
 		chooseRight = false
 	} else {
-		// Both have ground or both don't - stick with this attempt's
-		// already-committed direction.
-		chooseRight = pe.sidewaysDirection > 0
+		// Both have ground or both don't, so ground safety doesn't decide
+		// it either. Prefer whichever side doesn't retreat toward
+		// pe.pathStartPos - the position where this path attempt began -
+		// over the old plain alternation (pe.sidewaysDirection flipping
+		// every new recovery attempt, irrespective of which world
+		// direction that sign actually points to right now).
+		//
+		// Found live, 2026-11-07/08 (docs/plans/21-buried-mining-success.md):
+		// right after a direction change in the path (e.g. finishing an
+		// X-ward traverse and starting a Z-ward one at a corner),
+		// rightDistToTarget/leftDistToTarget above are symmetric by
+		// construction - "sideways" relative to the new, now-almost-pure-Z
+		// target vector is almost pure ±X, the exact axis just walked - so
+		// this tie happens on essentially every corner. The alternation
+		// then has even odds of picking the direction that retraces the
+		// corridor just dug, and because the chosen direction is sticky
+		// for the whole sidewaysTimeout (2s) rather than a single tick, a
+		// bad pick walked the bot several blocks back the way it came,
+		// erasing real progress and forcing a near-complete re-path from
+		// almost where this attempt started - repeatably, since nothing
+		// about the alternation is informed by which direction is
+		// actually safe to retreat into.
+		rightDistFromPathStart := (models.V3{X: rightPosX, Y: pos.Y, Z: rightPosZ}).DistanceTo(pe.pathStartPos)
+		leftDistFromPathStart := (models.V3{X: leftPosX, Y: pos.Y, Z: leftPosZ}).DistanceTo(pe.pathStartPos)
+		switch {
+		case rightDistFromPathStart > leftDistFromPathStart:
+			chooseRight = true
+		case leftDistFromPathStart > rightDistFromPathStart:
+			chooseRight = false
+		default:
+			// Truly symmetric even against pathStartPos (e.g. right at
+			// the start of a fresh path attempt with no progress yet) -
+			// fall back to the existing alternation.
+			chooseRight = pe.sidewaysDirection > 0
+		}
 	}
 
 	if chooseRight {
@@ -2195,6 +2228,7 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	pe.stepStartTime = time.Now()
 	pos, _, _, _ := pe.physicsState.GetPosition()
 	pe.stepStartPos = models.V3{X: pos.X, Y: pos.Y, Z: pos.Z}
+	pe.pathStartPos = pe.stepStartPos
 	pe.lastProgressPos = pe.stepStartPos
 	pe.lastProgressTime = time.Now()
 	pe.recoveryAttempt = 0 // Reset recovery state after successful re-path

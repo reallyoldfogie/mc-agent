@@ -54,3 +54,38 @@ func TestGenerateSidewaysRecoveryInputs_SticksToCommittedDirectionOnATie(t *test
 		t.Fatalf("flipping sidewaysDirection to -1 did not flip the chosen side: got ThrottleX=%.4f, want opposite sign of the RIGHT case's %.4f", leftInputs.ThrottleX, *want)
 	}
 }
+
+// TestGenerateSidewaysRecoveryInputs_AvoidsRetreatingTowardPathStart
+// reproduces the corner-turn bug found live, 2026-11-07/08
+// (docs/plans/21-buried-mining-success.md): a bot that just traversed
+// several blocks along X to line up with a corner, then got stuck
+// turning onto a new, almost-pure-Z leg, had its sideways recovery
+// alternate blindly between left/right on the resulting tie - with even
+// odds of picking the direction that retraces the X corridor just
+// walked, undoing all of that progress and forcing a near-complete
+// re-path. The fixed code must prefer whichever side does not move
+// toward pe.pathStartPos (where this path attempt began), regardless of
+// which way pe.sidewaysDirection's alternation happens to be pointing.
+func TestGenerateSidewaysRecoveryInputs_AvoidsRetreatingTowardPathStart(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	// Bot sits at (0,64,10), having walked here from (-5,64,10) along +X
+	// (pathStartPos), and must now go straight ahead along +Z - a
+	// perfect right/left tie, same as the committed-direction test above,
+	// but this time pathStartPos sits behind along the sideways (X) axis
+	// instead of being irrelevant (the default test's pathStartPos at the
+	// zero value differs from pos only in Y, which swamps the tiny X
+	// offset and keeps that tie exact - deliberately not the case here).
+	exec.pathStartPos = models.V3{X: -5, Y: 64, Z: 10}
+	step := pathfinding.PathStep{
+		Position: models.V3{X: 0, Y: 64, Z: 20},
+		Movement: pathfinding.Traverse,
+	}
+
+	for _, sidewaysDirection := range []int{1, -1} {
+		exec.sidewaysDirection = sidewaysDirection
+		inputs := exec.generateSidewaysRecoveryInputs(step)
+		if inputs.ThrottleX <= 0 {
+			t.Fatalf("sidewaysDirection=%d: ThrottleX = %.4f, want > 0 (away from pathStartPos at x=-5, not back toward it)", sidewaysDirection, inputs.ThrottleX)
+		}
+	}
+}
