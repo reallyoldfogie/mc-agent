@@ -213,13 +213,29 @@ func (a *agent) CloneArea(ctx context.Context, srcX1, srcY1, srcZ1, srcX2, srcY2
 	if err != nil {
 		return fmt.Errorf("clone via RCON: %w", err)
 	}
+	// Diagnostic only, 2026-11-07 (docs/plans/21-buried-mining-success.md):
+	// the response was previously only ever checked for "Successfully
+	// cloned" to decide whether to wait for block updates below - any
+	// other response (the command's own real failure modes: a source or
+	// destination chunk not loaded, this doc comment's own documented
+	// "harmless no-op"; "0 blocks" trivially matching that same substring
+	// despite copying nothing; vanilla's own too-large-volume error) was
+	// silently treated exactly like success, with the actual response text
+	// never logged anywhere. Found live: a bot spectated directly was
+	// standing in a hole it had dug in an earlier episode, left exactly as
+	// it was by what should have been a full clone-template reset. Logging
+	// the response - both the failure text and the reported block count on
+	// a genuine success - lets that be confirmed or ruled out with real
+	// data before anything here changes; this doesn't yet.
+	if !strings.Contains(resp, "Successfully cloned") {
+		a.logf("[CloneArea] non-success response for (%d,%d,%d)-(%d,%d,%d)->(%d,%d,%d): %q", srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1, resp)
+		return nil
+	}
+	a.logf("[CloneArea] %s for (%d,%d,%d)-(%d,%d,%d)->(%d,%d,%d)", strings.TrimSpace(resp), srcX1, srcY1, srcZ1, srcX2, srcY2, srcZ2, dstX1, dstY1, dstZ1)
 	// Same reasoning as ClearAir's own wait: give this bot's own world view
 	// time to receive the resulting block updates before the next thing
 	// Reset does (seeding a crafting table) runs against stale client state.
-	if strings.Contains(resp, "Successfully cloned") {
-		return sleepWithContext(ctx, clearAirSyncDelay)
-	}
-	return nil
+	return sleepWithContext(ctx, clearAirSyncDelay)
 }
 
 // clearAirSyncDelay is how long ClearAir waits after a fill that removed
