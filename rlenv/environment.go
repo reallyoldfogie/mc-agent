@@ -61,14 +61,18 @@ type Environment struct {
 	// incremented not only when the dispatched action's own Completion
 	// doesn't resolve within Config.StepTimeout, but also (fixed
 	// 2026-11-07) when it resolves quickly with its own failure (a
-	// pathfinding error, say). Found live: a goto dispatched to a
-	// genuinely unreachable target (seen with Config.CloneAreaJitter
-	// widening which window of a seeded template gets cloned) resolved
-	// instantly, failing every single time, forever - the old "only a
-	// real timeout counts" rule gave that no way to ever trip this
-	// budget, so nothing could end an episode stuck doing it. A fast,
-	// repeated failure is just as much "not making progress" as a slow
-	// one and needs the same give-up budget, not a separate one.
+	// pathfinding error, say), and also (fixed 2026-11-08) on a Step that
+	// doesn't dispatch anything while an earlier timed-out action is still
+	// sitting unsupervised in e.inflight - see Step's own comment at its
+	// resolveDispatch call for why that third case needs covering too.
+	// Found live: a goto dispatched to a genuinely unreachable target
+	// (seen with Config.CloneAreaJitter widening which window of a seeded
+	// template gets cloned) resolved instantly, failing every single
+	// time, forever - the old "only a real timeout counts" rule gave that
+	// no way to ever trip this budget, so nothing could end an episode
+	// stuck doing it. A fast, repeated failure is just as much "not
+	// making progress" as a slow one and needs the same give-up budget,
+	// not a separate one.
 	consecutiveStepTimeouts int
 
 	// arrived is whether this episode's goto target has been reached yet;
@@ -1965,6 +1969,30 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	dispatch, shouldDispatch, err := e.resolveDispatch(action)
 	if err != nil {
 		return rl.StepResult{}, err
+	}
+
+	// An action that timed out stays in e.inflight, running unsupervised,
+	// until shouldDispatch is true again on some later Step (cancelInflight
+	// is only ever called from inside that branch below). If the policy
+	// reacts to the timeout by choosing ActionWait, or anything
+	// actionLegal currently forbids, rather than re-choosing the same
+	// action, shouldDispatch is false here and the whole dispatch block
+	// below is skipped - so without this, e.consecutiveStepTimeouts never
+	// advances past the single increment the original timeout already
+	// produced, and the stuck action keeps running, invisible to
+	// MaxConsecutiveStepTimeouts, for the rest of the episode.
+	// StuckTimeout's own bit-exact observation check doesn't catch this
+	// either - a wedged bot's physics still jitters by float noise even
+	// with nothing new dispatched.
+	//
+	// Found live, 2026-11-07/08 (docs/plans/21-buried-mining-success.md):
+	// a bot wedged trying to Descend one block kept this exact shape for
+	// roughly two hours across several episodes, re-pathfinding to the
+	// same unreachable step every few seconds the whole time -
+	// consecutiveStepTimeouts stuck at 1 throughout, since the policy had
+	// moved on to ActionWait after the first timeout.
+	if !shouldDispatch && e.inflight != nil {
+		e.consecutiveStepTimeouts++
 	}
 
 	// e.mineX/Y/Z/mineVisible still hold whatever the previous Step (or

@@ -379,6 +379,53 @@ func TestMaxConsecutiveStepTimeoutsCountsFastFailuresTooNotJustRealTimeouts(t *t
 	}
 }
 
+// TestMaxConsecutiveStepTimeoutsCountsOrphanedInflightStepsToo reproduces
+// the gap found live, 2026-11-07/08 (docs/plans/21-buried-mining-
+// success.md): once a dispatched action times out, it keeps running
+// unsupervised in e.inflight until some later Step re-dispatches it -
+// cancelInflight is only ever called from inside the shouldDispatch
+// branch. A policy that reacts to the timeout by choosing ActionWait
+// instead of re-choosing the same action leaves shouldDispatch false
+// from then on, so the dispatch block (and this budget's own increment)
+// never runs again - the stuck action kept running, completely invisible
+// to MaxConsecutiveStepTimeouts, for the rest of the episode; the count
+// stayed at 1 forever. A Step that dispatches nothing while an earlier
+// action is still inflight must count toward the budget too, the same as
+// an actual re-dispatched timeout would.
+func TestMaxConsecutiveStepTimeoutsCountsOrphanedInflightStepsToo(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.moveToWithChatDelay = time.Hour // never resolves within StepTimeout
+	cfg := testConfig()
+	cfg.StepTimeout = 10 * time.Millisecond
+	cfg.MaxConsecutiveStepTimeouts = 3
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// Step 1: dispatches, times out -> count = 1, leaves the action
+	// inflight (nothing below ever re-dispatches it to cancel it).
+	if result, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step 1: %v", err)
+	} else if result.Done {
+		t.Fatal("Step 1: one timeout must not end the episode yet")
+	}
+
+	// Steps 2-3: the policy gives up on re-dispatching and just waits -
+	// the orphaned action from Step 1 is still sitting in e.inflight.
+	// Each of these must still count toward the budget.
+	for step := 2; step <= 3; step++ {
+		result, err := env.Step(ctx, rlenv.ActionWait)
+		if err != nil {
+			t.Fatalf("Step %d: %v", step, err)
+		}
+		if want := step == 3; result.Done != want {
+			t.Fatalf("Step %d (ActionWait, orphaned action still inflight): Done = %v, want %v", step, result.Done, want)
+		}
+	}
+}
+
 // TestResetClearsTheSpaceAboveTheGroundAroundTheOrigin: leftover seeded
 // blocks and tables above the ground must be wiped each episode, from the
 // origin's own Y up, leaving the ground alone.
