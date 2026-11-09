@@ -1993,6 +1993,9 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// moved on to ActionWait after the first timeout.
 	if !shouldDispatch && e.inflight != nil {
 		e.consecutiveStepTimeouts++
+		if pos, _, _, ok := e.agent.GetPosition(); ok {
+			log.Printf("rlenv: step dispatched nothing while an earlier action is still inflight at (%.2f,%.2f,%.2f) - consecutiveStepTimeouts now %d", pos.X, pos.Y, pos.Z, e.consecutiveStepTimeouts)
+		}
 	}
 
 	// e.mineX/Y/Z/mineVisible still hold whatever the previous Step (or
@@ -2110,12 +2113,23 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 				// fast, repeated failure needs the same give-up budget a
 				// slow one already had.
 				e.consecutiveStepTimeouts++
+				if pos, _, _, ok := e.agent.GetPosition(); ok {
+					log.Printf("rlenv: dispatched %s resolved with error at (%.2f,%.2f,%.2f): %v - consecutiveStepTimeouts now %d", dispatch.name, pos.X, pos.Y, pos.Z, actionErr, e.consecutiveStepTimeouts)
+				}
 			} else {
+				if e.consecutiveStepTimeouts > 0 {
+					if pos, _, _, ok := e.agent.GetPosition(); ok {
+						log.Printf("rlenv: dispatched %s resolved cleanly at (%.2f,%.2f,%.2f), resetting consecutiveStepTimeouts from %d to 0", dispatch.name, pos.X, pos.Y, pos.Z, e.consecutiveStepTimeouts)
+					}
+				}
 				e.consecutiveStepTimeouts = 0
 			}
 		} else {
 			e.inflight = &inflightAction{cancel: cancelAction, completion: completion}
 			e.consecutiveStepTimeouts++
+			if pos, _, _, ok := e.agent.GetPosition(); ok {
+				log.Printf("rlenv: dispatched %s did not resolve within StepTimeout at (%.2f,%.2f,%.2f) - consecutiveStepTimeouts now %d", dispatch.name, pos.X, pos.Y, pos.Z, e.consecutiveStepTimeouts)
+			}
 		}
 	}
 	if shouldDispatch && dispatch.name == placeActionName {
