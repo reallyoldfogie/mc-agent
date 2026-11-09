@@ -482,6 +482,41 @@ func TestPhysicsExecutor_ExecutePath_NotFound(t *testing.T) {
 	}
 }
 
+// TestExecutePathWithContext_TimeoutIsNotTreatedAsSuccess reproduces the
+// bug found live, 2026-11-08/09 (docs/plans/21-buried-mining-success.md):
+// a bot wedged trying to Descend one block kept "succeeding" every ~30s,
+// forever, because ExecutePathWithContext's own internal per-step timeout
+// (len(path.Steps)*30s) used to return nil instead of an error once it
+// elapsed - every safety net downstream of this (rlenv's StuckTimeout and
+// MaxConsecutiveStepTimeouts, both already fixed for every OTHER way a
+// step can fail to make real progress) kept seeing a clean, error-free
+// resolution and resetting back to 0, so none of them ever had a chance
+// to end the episode. The tick loop is deliberately never started here -
+// the path can never complete regardless of physics, isolating this
+// ctx-deadline-exceeded branch from needing any particular simulated
+// outcome.
+func TestExecutePathWithContext_TimeoutIsNotTreatedAsSuccess(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	path := &pathfinding.Path{
+		Steps: []pathfinding.PathStep{
+			{Position: models.V3{X: 1, Y: 64, Z: 0}, Movement: pathfinding.Traverse, Cost: 1.0},
+		},
+		TotalCost: 1.0,
+		StartPos:  models.V3{X: 0, Y: 64, Z: 0},
+		GoalPos:   models.V3{X: 1, Y: 64, Z: 0},
+		Found:     true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	err := exec.ExecutePathWithContext(ctx, path)
+	if err == nil {
+		t.Fatal("ExecutePathWithContext timed out without the path ever completing, want a non-nil error - a timeout must not be reported as success")
+	}
+}
+
 // TestPhysicsExecutor_Sprint tests sprint state management
 func TestPhysicsExecutor_Sprint(t *testing.T) {
 	exec := createTestPhysicsExecutor()

@@ -1194,8 +1194,27 @@ func (pe *PhysicsMovementExecutor) ExecutePathWithContext(ctx context.Context, p
 
 	completed, err := pe.WaitForPathCompletion(execCtx, 0)
 	if !completed && err == nil {
-		// Timeout occurred but no error - treat as success for backward compatibility
-		return nil
+		// Found live, 2026-11-08/09 (docs/plans/21-buried-mining-success.md):
+		// this used to return nil here ("treat as success for backward
+		// compatibility"), silently reporting success for a path that
+		// never actually completed - WaitForPathCompletion only takes this
+		// branch when its own context.DeadlineExceeded fired (a real
+		// cancellation returns the ctx error instead, see its own doc
+		// comment), i.e. exactly timeout's own duration
+		// (len(path.Steps)*30s - 30s for the single-step Descend/MineDown
+		// retries a repath produces) elapsed with the bot never reaching
+		// its target. A bot wedged on one unreachable step kept
+		// "succeeding" this way every ~30s, forever: nothing downstream
+		// of this (not rlenv's StuckTimeout, not its
+		// MaxConsecutiveStepTimeouts budget - both already fixed for
+		// every OTHER way a step can fail to make real progress) ever
+		// saw an error to count against either safety net, because this
+		// one kept resetting them back to a clean success. A timeout is
+		// not a success; every caller up the stack (MoveTo,
+		// pathfindAndFollow, movetoquiet's own dispatch) already
+		// propagates a real error correctly - this was the one
+		// remaining place in the chain still swallowing one.
+		return fmt.Errorf("path execution timed out after %v (%d step(s))", timeout, len(path.Steps))
 	}
 	return err
 }
