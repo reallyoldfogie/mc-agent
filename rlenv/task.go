@@ -110,6 +110,29 @@ type Config struct {
 	// <= 0 keeps the legacy MineSearchRadius/2 behavior for back-compat.
 	MineBuriedExploreDepth int
 
+	// MineBuriedExploreRadius is how far from the mine-search anchor
+	// (Environment.mineSearchAnchorX/Z) buried-search exploration's
+	// quadrant corners sit (half this value in each horizontal direction,
+	// same shape MineSearchRadius itself already had) —
+	// observationUnknownDirection / markExploredQuadrant / currentGoToTarget
+	// while buriedTargetUnresolved(). Decouples the blind-exploration
+	// patrol's horizontal footprint from MineSearchRadius, which also
+	// bounds FindVisibleBlock's literal "can the bot see an already-exposed
+	// instance" detection distance — found live, 2026-11-09
+	// (mc-rsi-trainer): at MineSearchRadius 16, the quadrant corners sat
+	// only ±8 blocks from the anchor, a 16x16 total patrol box far smaller
+	// than the area ore was actually seeded across (65x65 at
+	// -clone-area-radius 32), so the bot's blind search routinely never
+	// covered any of the ore the run seeded elsewhere in its own working
+	// area — a bot spectated live would patrol what looked like a single
+	// chunk and give up without the ore ever being in reach. Raising
+	// MineSearchRadius itself to compensate would also widen
+	// FindVisibleBlock's detection distance, making "can see an exposed
+	// block" easier than intended; this field lets the patrol box scale
+	// independently. <= 0 keeps the legacy MineSearchRadius/2 behavior for
+	// back-compat, same convention as MineBuriedExploreDepth above.
+	MineBuriedExploreRadius int
+
 	// SleepSearchRadius, if > 0, enables ActionSleep: FindNearestBed
 	// searches this many blocks for a bed to sleep in. Unlike
 	// MineTargetBlock/CraftTargetItem, there is no companion "target
@@ -770,7 +793,9 @@ type TaskOverride struct {
 	MineRequiredToolEnchantments map[string]int
 	MineTargetBuried             bool
 	// MineBuriedExploreDepth is Config.MineBuriedExploreDepth for this episode.
-	MineBuriedExploreDepth  int
+	MineBuriedExploreDepth int
+	// MineBuriedExploreRadius is Config.MineBuriedExploreRadius for this episode.
+	MineBuriedExploreRadius int
 	SleepSearchRadius       int
 	PortalSearchRadius      int
 	LightPortalSearchRadius int

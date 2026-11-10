@@ -641,6 +641,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineRequiredToolEnchantments = override.MineRequiredToolEnchantments
 		e.cfg.MineTargetBuried = override.MineTargetBuried
 		e.cfg.MineBuriedExploreDepth = override.MineBuriedExploreDepth
+		e.cfg.MineBuriedExploreRadius = override.MineBuriedExploreRadius
 		e.cfg.SleepSearchRadius = override.SleepSearchRadius
 		e.cfg.PortalSearchRadius = override.PortalSearchRadius
 		e.cfg.LightPortalSearchRadius = override.LightPortalSearchRadius
@@ -1689,6 +1690,21 @@ func (e *Environment) buriedExploreDepth() float64 {
 	return float64(e.cfg.MineSearchRadius) / 2
 }
 
+// buriedExploreRadius returns half of MineBuriedExploreRadius (the
+// quadrant corners' horizontal distance from the mine-search anchor) —
+// see that field's own doc comment for why it's decoupled from
+// MineSearchRadius, which this falls back to for back-compat.
+func (e *Environment) buriedExploreRadius() float64 {
+	radius := e.cfg.MineBuriedExploreRadius
+	if radius <= 0 {
+		radius = e.cfg.MineSearchRadius
+	}
+	if radius <= 0 {
+		return 0
+	}
+	return float64(radius) / 2
+}
+
 // Returns how many quadrants this call newly marked (almost always 0 or 1,
 // never negative) — Step's reward logic pays arrivalBonus per newly-marked
 // quadrant with it (see that constant's own doc comment); Reset's own call,
@@ -1697,7 +1713,7 @@ func (e *Environment) markExploredQuadrant(x, y, z float64) (newlyExplored int) 
 	if !e.mineTargetMemoryEnabled() || e.cfg.MineSearchRadius <= 0 {
 		return 0
 	}
-	half := float64(e.cfg.MineSearchRadius) / 2
+	half := e.buriedExploreRadius()
 	exploreDepth := e.buriedExploreDepth()
 	targetY := e.mineSearchAnchorY - exploreDepth
 	for idx := 0; idx < 4; idx++ {
@@ -1734,7 +1750,7 @@ func (e *Environment) observationUnknownDirection(x, y, z float64) (dx, dy, dz f
 	if !e.mineTargetMemoryEnabled() || e.mineEverSeen || e.cfg.MineSearchRadius <= 0 {
 		return 0, 0, 0, false
 	}
-	half := float64(e.cfg.MineSearchRadius) / 2
+	half := e.buriedExploreRadius()
 	exploreDepth := e.buriedExploreDepth()
 	targetY := e.mineSearchAnchorY - exploreDepth
 	bestDistSq := math.MaxFloat64

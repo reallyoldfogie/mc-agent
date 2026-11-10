@@ -2,6 +2,7 @@ package rlenv_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/reallyoldfogie/cRL-go/pkg/rl"
@@ -170,5 +171,53 @@ func TestUnknownDirectionUsesConfiguredExploreDepth(t *testing.T) {
 	dy = obs.Values[22]
 	if dy > -9.5 || dy < -10.5 {
 		t.Fatalf("unknownDy = %v, want about -10 with MineBuriedExploreDepth=10", dy)
+	}
+}
+
+// TestUnknownDirectionUsesConfiguredExploreRadius confirms
+// MineBuriedExploreRadius decouples the quadrant waypoints' horizontal
+// footprint from MineSearchRadius/2 - see MineBuriedExploreRadius's own
+// doc comment (found live 2026-11-09: a 12x12 patrol box at
+// MineSearchRadius 12 routinely missed ore seeded across a much larger
+// 65x65 working area).
+func TestUnknownDirectionUsesConfiguredExploreRadius(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true)
+	cfg := buriedTestConfig()
+	cfg.MineSearchRadius = 12
+	cfg.MineBuriedExploreRadius = 64
+
+	env := newTestEnvironment(t, agent, cfg)
+	obs, err := env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if valid := obs.Values[24]; valid != 1 {
+		t.Fatalf("unknownValid = %v, want 1", valid)
+	}
+	// From anchor (0,0,0), MineBuriedExploreRadius 64 => half=32, so the
+	// nearest quadrant point's horizontal delta should be ~32 on each
+	// axis, not 6 (MineSearchRadius 12's own legacy radius/2).
+	dx, dz := math.Abs(float64(obs.Values[21])), math.Abs(float64(obs.Values[23]))
+	if dx < 31.5 || dx > 32.5 {
+		t.Fatalf("|unknownDx| = %v, want about 32 with MineBuriedExploreRadius=64 (not 6 from MineSearchRadius/2)", dx)
+	}
+	if dz < 31.5 || dz > 32.5 {
+		t.Fatalf("|unknownDz| = %v, want about 32 with MineBuriedExploreRadius=64 (not 6 from MineSearchRadius/2)", dz)
+	}
+
+	// Unset (0) falls back to the legacy MineSearchRadius/2 behavior.
+	cfg.MineBuriedExploreRadius = 0
+	env = newTestEnvironment(t, agent, cfg)
+	obs, err = env.Reset(context.Background())
+	if err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	dx, dz = math.Abs(float64(obs.Values[21])), math.Abs(float64(obs.Values[23]))
+	if dx < 5.5 || dx > 6.5 {
+		t.Fatalf("|unknownDx| = %v, want about 6 with MineBuriedExploreRadius unset (MineSearchRadius 12 / 2)", dx)
+	}
+	if dz < 5.5 || dz > 6.5 {
+		t.Fatalf("|unknownDz| = %v, want about 6 with MineBuriedExploreRadius unset (MineSearchRadius 12 / 2)", dz)
 	}
 }
