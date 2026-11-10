@@ -585,6 +585,26 @@ func TestIsComplete(t *testing.T) {
 			description: "0.4 blocks away horizontally > widened threshold",
 		},
 		{
+			name:       "Traverse complete at a corner despite hitbox offset on both axes",
+			currentPos: models.V3{X: 1.3, Y: 64, Z: 0.3},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: Traverse,
+			},
+			expected:    true,
+			description: "A 90-degree turn bottoms the hitbox out on X and Z simultaneously (0.3 each) - found live 2026-11-09, this was the dominant stuck-detect trigger (53/71 sampled events) because a single combined-distance radius couldn't accept this without also accepting the single-axis 0.4 overshoot above",
+		},
+		{
+			name:       "Traverse not complete - one axis still genuinely short despite the other being near target",
+			currentPos: models.V3{X: 1.4, Y: 64, Z: 0.05},
+			targetStep: PathStep{
+				Position: models.V3{X: 1, Y: 64, Z: 0},
+				Movement: Traverse,
+			},
+			expected:    false,
+			description: "X is 0.4 away (still approaching, not hitbox-blocked) even though Z is nearly arrived - per-axis check must still reject this",
+		},
+		{
 			name:       "WadeWater complete despite collision-hitbox offset",
 			currentPos: models.V3{X: 1.3, Y: 64, Z: 0},
 			targetStep: PathStep{

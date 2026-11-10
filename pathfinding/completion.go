@@ -208,15 +208,26 @@ func IsComplete(currentPos models.V3, targetStep PathStep) bool {
 		// GenerateInputs. With a solid wall on one side, the bot's own
 		// collision hitbox (~0.3 blocks radius) physically can't press its
 		// center all the way to that corner - it bottoms out ~0.3 blocks
-		// short. The default case's 0.18 tolerance is tighter than that
-		// unavoidable offset, so the step never completes and
-		// stuck-recovery fires every few seconds (confirmed live for
-		// Traverse/MineThrough digging a tunnel row; WadeWater/Swim/
-		// EnterClimb share the exact same geometry so get the same fix
-		// pre-emptively). Use the same wider radius already proven for
-		// Descend/MineDown's identical corner-vs-hitbox issue.
-		horizontalDist2 := deltaPos.X*deltaPos.X + deltaPos.Z*deltaPos.Z
-		return horizontalDist2 < (2*0.2*0.25) &&
+		// short on that one axis.
+		//
+		// A 90-degree turn (wall on both X and Z) bottoms out on BOTH axes
+		// at once - confirmed live 2026-11-09 (train.log, agents
+		// RSIRecurrentCo-*): 53 of 71 sampled STUCK DETECTED events were
+		// this exact dx=dz=-0.30 pattern, by far the dominant trigger, each
+		// one costing a full stuckThreshold+repath cycle before the bot
+		// could round the corner. A single Euclidean radius can't fix this
+		// without also mis-accepting a genuine single-axis overshoot: the
+		// combined two-axis distance (dx=dz=0.3, dist=0.424) is BIGGER than
+		// a single-axis 0.4 overshoot the "not complete" test case below
+		// requires rejecting, so any one circular threshold either still
+		// rejects the corner or wrongly accepts the overshoot. Checking
+		// each axis independently avoids that: a wall can only ever block
+		// one axis per side, so what matters is whether EACH axis
+		// individually is at (or past) its own hitbox-rest limit, not how
+		// far away the combined diagonal distance is.
+		horizontalTolerance := 0.35 // ~0.3 hitbox-rest offset + margin, still below the 0.4 single-axis "still approaching" case
+		return math.Abs(deltaPos.X) < horizontalTolerance &&
+			math.Abs(deltaPos.Z) < horizontalTolerance &&
 			deltaPos.Y >= -0.065 &&
 			deltaPos.Y <= 0.08
 
