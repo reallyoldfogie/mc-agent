@@ -456,6 +456,22 @@ type agent struct {
 	// was never credited, because "does any instance still exist nearby"
 	// stayed true the whole time.
 	brokenBlocks []models.BrokenBlock
+
+	// revealedBlocksMu guards revealedBlocks - same slice-needs-a-mutex
+	// reasoning as brokenBlocksMu above.
+	revealedBlocksMu sync.Mutex
+	// revealedBlocks records every neighbor block newly exposed (and
+	// LOS-confirmed, the same way FindVisibleBlock itself confirms
+	// visibility, not name-matched alone) by a confirmed break, since the
+	// last DrainRevealedBlocks call. See that method's own doc comment,
+	// and rlenv.RevealedBlocksReporter, for why this exists: found live,
+	// 2026-11-10 - breaking through several blocks in one dispatch
+	// (MineThrough/MineDown overburden-clearing, especially once
+	// mineEverSeen lifts rlenv's own hop-distance clamp) can expose and
+	// then leave behind an unrelated target-block instance before rlenv's
+	// once-per-Step FindVisibleBlock scan, which only runs after the
+	// whole dispatch completes, ever gets a look at it.
+	revealedBlocks []models.BrokenBlock
 }
 
 // BlocksMinedCount returns the number of blocks MineBlockAt has confirmed
@@ -488,6 +504,29 @@ func (a *agent) DrainBrokenBlocks() []models.BrokenBlock {
 	defer a.brokenBlocksMu.Unlock()
 	drained := a.brokenBlocks
 	a.brokenBlocks = nil
+	return drained
+}
+
+// recordRevealedBlock appends one newly-exposed, LOS-confirmed neighbor
+// block to revealedBlocks - called from scanRevealedNeighbors, once per
+// qualifying neighbor of a just-broken block.
+func (a *agent) recordRevealedBlock(x, y, z int, blockName string) {
+	a.revealedBlocksMu.Lock()
+	a.revealedBlocks = append(a.revealedBlocks, models.BrokenBlock{X: x, Y: y, Z: z, BlockName: blockName})
+	a.revealedBlocksMu.Unlock()
+}
+
+// DrainRevealedBlocks returns every neighbor block newly exposed (and
+// LOS-confirmed) since the last call (or since agent creation, for the
+// first) and clears the internal buffer - the caller owns the returned
+// slice. See revealedBlocks' own doc comment. Must be called every Step
+// regardless of task (same convention as DrainBrokenBlocks) or the
+// buffer grows without bound for the agent's whole lifetime.
+func (a *agent) DrainRevealedBlocks() []models.BrokenBlock {
+	a.revealedBlocksMu.Lock()
+	defer a.revealedBlocksMu.Unlock()
+	drained := a.revealedBlocks
+	a.revealedBlocks = nil
 	return drained
 }
 

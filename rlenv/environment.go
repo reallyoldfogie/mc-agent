@@ -1440,22 +1440,23 @@ func (e *Environment) currentGoToTarget() (x, y, z float64) {
 }
 
 // blindExploreStepDistance caps how far a single ActionGoToTarget dispatch
-// travels while buried-search exploration is still blind (!mineEverSeen) -
-// see dispatchGoToTarget's own doc comment for why.
+// travels during any buried-target task - see dispatchGoToTarget's own doc
+// comment for why.
 const blindExploreStepDistance = 4.0
 
 // dispatchGoToTarget is what ActionGoToTarget actually dispatches to -
 // currentGoToTarget()'s own point, clamped to at most
-// blindExploreStepDistance away while buried-search exploration is still
-// blind. Deliberately a separate function from currentGoToTarget(): that
-// one also backs the observation's dx/dy/dz features and reward.go's
-// distance-shaping, both of which must keep measuring against the TRUE
-// quadrant point, not an artificially nearby waypoint - clamping those
-// too would quietly change what the policy has already learned to
-// perceive and how progress gets rewarded.
+// blindExploreStepDistance away for any buried-target task. Deliberately a
+// separate function from currentGoToTarget(): that one also backs the
+// observation's dx/dy/dz features and reward.go's distance-shaping, both
+// of which must keep measuring against the TRUE quadrant/known-target
+// point, not an artificially nearby waypoint - clamping those too would
+// quietly change what the policy has already learned to perceive and how
+// progress gets rewarded.
 //
 // Exists because a single long dispatch can mine through several blocks
-// along its own path (BuriedTargetAgent's exploration digging) before
+// along its own path (BuriedTargetAgent's exploration digging, or - once
+// mineEverSeen - a long trip back to a known target) before
 // refreshMineTarget ever gets a chance to notice something it exposed -
 // found live, 2026-11-04 (docs/plans/21-buried-mining-success.md): a bot
 // would walk straight past ore its own digging had just exposed, because
@@ -1467,19 +1468,27 @@ const blindExploreStepDistance = 4.0
 // reproduced in isolated testing, so abandoned in favor of this: no new
 // goroutines, timers, or cancellation - just dispatching a shorter hop so
 // the EXISTING once-per-Step refreshMineTarget call runs far more often
-// during blind digging, without needing to interrupt anything already in
+// during digging, without needing to interrupt anything already in
 // flight. markExploredQuadrant (quadrant-arrival crediting) is unaffected
 // by this: it checks the bot's actual position against the true quadrant
 // point directly, not against whatever was dispatched.
 //
-// Only active while buriedTargetActive() && !mineEverSeen - once the
-// target is known, heading straight for it is already correct (see
-// currentGoToTarget's own mineEverSeen branch), and an ordinary
-// (non-buried) goto task's single fixed TargetOffset point was never the
-// problem this solves.
+// Originally gated on !mineEverSeen (clamping only while buried-search
+// exploration was still blind) - widened 2026-11-10, found live: once the
+// target has ever been seen once, this clamp used to turn off entirely,
+// so a dispatch heading straight for a far-away known target could tunnel
+// through many blocks in one uninterrupted dispatch, well past
+// RevealedBlocksReporter's own per-block LOS check's practical value for
+// anything but the immediate next Step. Clamping unconditionally during
+// buriedTargetActive() closes that loophole; RevealedBlocksReporter
+// (rlenv/environment.go, agent.DrainRevealedBlocks) independently covers
+// the residual gap of multiple blocks mined within one still-short hop.
+// An ordinary (non-buried) goto task's single fixed TargetOffset point
+// was never the problem this solves, so this stays scoped to
+// buriedTargetActive() only.
 func (e *Environment) dispatchGoToTarget() (x, y, z float64) {
 	x, y, z = e.currentGoToTarget()
-	if !e.buriedTargetActive() || e.mineEverSeen {
+	if !e.buriedTargetActive() {
 		return x, y, z
 	}
 	pos, _, _, ok := e.agent.GetPosition()
@@ -1595,6 +1604,32 @@ type BrokenBlocksReporter interface {
 	// site for why crediting the result is still gated on
 	// buriedTargetActive() separately from draining it.
 	DrainBrokenBlocks() []models.BrokenBlock
+}
+
+// RevealedBlocksReporter is the optional capability Step uses to catch a
+// target block exposed by breaking a neighboring block and then left
+// behind before refreshMineTarget's own once-per-Step scan ever runs -
+// see dispatchGoToTarget's own doc comment on the 2026-11-04 finding this
+// extends: once mineEverSeen is true, that clamp no longer limits hop
+// distance (even with today's generalization, a single hop can still dig
+// through more than one block), so a dispatch tunneling toward an
+// already-known target can expose a different, not-yet-known instance of
+// the target that the end-of-step FindVisibleBlock scan no longer
+// reaches once the bot has moved past it - found live, 2026-11-10,
+// spectating a bot walk past ore newly exposed in its own tunnel wall.
+// Unlike BrokenBlocksReporter (which reports blocks actually destroyed),
+// this reports neighbor blocks newly exposed by each break - LOS-
+// confirmed at the moment of exposure the same way FindVisibleBlock
+// itself confirms visibility, not name-matched alone. Same "an agent that
+// doesn't implement this is left alone, not failed over" convention as
+// BrokenBlocksReporter/BlocksMinedCounter.
+type RevealedBlocksReporter interface {
+	// DrainRevealedBlocks returns every block newly exposed (and
+	// LOS-confirmed) since the last call, and clears the internal buffer
+	// - caller owns the returned slice. Must be called every Step
+	// regardless of task, same as DrainBrokenBlocks, or the agent's own
+	// buffer grows without bound.
+	DrainRevealedBlocks() []models.BrokenBlock
 }
 
 // refreshMineBuriedExistence updates e.mineBuriedExists for the next
@@ -1813,6 +1848,24 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 		e.mineTargetNameInUse = target
 	}
+
+	// Drain revealed-block sightings unconditionally (same convention as
+	// DrainBrokenBlocks - the agent's buffer must be drained every Step
+	// regardless of task or it grows without bound), before the live
+	// FindVisibleBlock scan below so a found result there always wins as
+	// the freshest known-good position. See RevealedBlocksReporter's own
+	// doc comment for why this fallback exists.
+	if reporter, ok := e.agent.(RevealedBlocksReporter); ok {
+		if revealed := reporter.DrainRevealedBlocks(); target != "" {
+			for _, b := range revealed {
+				if !strings.EqualFold(b.BlockName, target) {
+					continue
+				}
+				e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = float64(b.X)+0.5, float64(b.Y)+0.5, float64(b.Z)+0.5, true
+			}
+		}
+	}
+
 	if target == "" {
 		e.mineX, e.mineY, e.mineZ, e.mineVisible = 0, 0, 0, false
 		return nil

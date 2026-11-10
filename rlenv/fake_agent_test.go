@@ -1293,6 +1293,28 @@ func (f *fakeBrokenBlocksAgent) DrainBrokenBlocks() []models.BrokenBlock {
 	return drained
 }
 
+// fakeRevealedBlocksAgent wraps fakeAgent to additionally satisfy
+// rlenv.RevealedBlocksReporter - same reason and shape as
+// fakeBrokenBlocksAgent: pending is appended to directly by the test (not
+// derived from any simulated mining action) to queue up revealed blocks
+// for the next DrainRevealedBlocks call; drainCalls counts how many times
+// Step actually drained, so a test can confirm draining happens every
+// Step regardless of task.
+type fakeRevealedBlocksAgent struct {
+	*fakeAgent
+	pending    []models.BrokenBlock
+	drainCalls int
+}
+
+func (f *fakeRevealedBlocksAgent) DrainRevealedBlocks() []models.BrokenBlock {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.drainCalls++
+	drained := f.pending
+	f.pending = nil
+	return drained
+}
+
 func (f *fakeEnchantedToolAgent) SeedGiveEnchantedItem(_ context.Context, itemName string, enchantments map[string]int, count int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

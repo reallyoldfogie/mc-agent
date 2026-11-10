@@ -1478,6 +1478,7 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 			return err
 		}
 		a.recordBrokenBlock(blockX, blockY, blockZ, blockName)
+		a.scanRevealedNeighbors(ctx, blockX, blockY, blockZ)
 		return nil
 	}
 
@@ -1509,8 +1510,46 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 		return err
 	}
 	a.recordBrokenBlock(blockX, blockY, blockZ, blockName)
+	a.scanRevealedNeighbors(ctx, blockX, blockY, blockZ)
 	a.logf("[MineBlockAt] Finished mining %s at (%d,%d,%d)", blockName, blockX, blockY, blockZ)
 	return nil
+}
+
+// revealedNeighborOffsets are the 6 face-adjacent offsets around a
+// just-broken block - the only neighbors whose exposure this specific
+// break can have caused (a diagonal neighbor's own exposure depends on
+// its own separate faces, not this one).
+var revealedNeighborOffsets = [6][3]int{
+	{1, 0, 0}, {-1, 0, 0},
+	{0, 1, 0}, {0, -1, 0},
+	{0, 0, 1}, {0, 0, -1},
+}
+
+// scanRevealedNeighbors checks each face-adjacent neighbor of a
+// just-broken block for one newly exposed by that break, LOS-confirming
+// each candidate the same way FindVisibleBlock does
+// (hasLineOfSightForAccess) before recording it via recordRevealedBlock -
+// see revealedBlocks' own doc comment for why this exists. Best-effort:
+// a lookup/LOS failure for one neighbor is skipped, not propagated -
+// this is a supplementary signal, not something worth failing the whole
+// mine action over.
+func (a *agent) scanRevealedNeighbors(ctx context.Context, blockX, blockY, blockZ int) {
+	world := a.GetWorld()
+	if world == nil || a.shapeMgr == nil {
+		return
+	}
+	for _, off := range revealedNeighborOffsets {
+		nx, ny, nz := blockX+off[0], blockY+off[1], blockZ+off[2]
+		stateID, loaded := world.GetBlockAt(float64(nx), float64(ny), float64(nz))
+		if !loaded || stateID == 0 {
+			continue
+		}
+		visible, _, _, _, err := a.hasLineOfSightForAccess(ctx, float64(nx), float64(ny), float64(nz))
+		if err != nil || !visible {
+			continue
+		}
+		a.recordRevealedBlock(nx, ny, nz, a.shapeMgr.BlockName(stateID))
+	}
 }
 
 // vanillaTickRate is the tick rate mining.CalcBreakTime's seconds assume.

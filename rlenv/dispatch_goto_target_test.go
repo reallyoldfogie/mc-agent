@@ -76,13 +76,17 @@ func TestOrdinaryGotoNotClamped(t *testing.T) {
 	}
 }
 
-// TestKnownBuriedTargetGotoNotClamped confirms clamping only applies
-// while exploration is still blind: once the target has been seen even
-// once (mineEverSeen), currentGoToTarget already switches to the exact
-// known position, and dispatching there in full (not clamped to a short
-// hop) is correct - there's nothing left to "notice mid-path" once the
-// target is already known.
-func TestKnownBuriedTargetGotoNotClamped(t *testing.T) {
+// TestKnownBuriedTargetGotoIsClamped confirms the clamp now applies even
+// once the target has been seen (mineEverSeen) - widened 2026-11-10 (see
+// dispatchGoToTarget's own doc comment): a long, uninterrupted dispatch
+// straight to a known target can still tunnel through several blocks
+// before refreshMineTarget gets another look, potentially walking past a
+// *different*, not-yet-known instance of the target exposed along the
+// way - found live, spectating a bot do exactly this. Every buried-
+// target hop is now capped at blindExploreStepDistance regardless of
+// mineEverSeen; multiple Steps still converge on the full known-target
+// distance, just over more than one hop.
+func TestKnownBuriedTargetGotoIsClamped(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setMineBlock("minecraft:coal_ore", 8, 0, 0) // 8 blocks away, farther than the clamp
 	cfg := buriedTestConfig()
@@ -100,15 +104,26 @@ func TestKnownBuriedTargetGotoNotClamped(t *testing.T) {
 		t.Fatalf("Step 1 (ActionWait, resolves the target): %v", err)
 	}
 
-	// Second step: mineEverSeen is now true, so this dispatch should go
-	// straight to the known position in full, unclamped.
+	// Second step: mineEverSeen is now true, but the dispatch should
+	// still cover only one clamped hop (~4 blocks), not the full 8.
 	if _, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
 		t.Fatalf("Step 2 (ActionGoToTarget): %v", err)
 	}
-
 	got := distanceFromOrigin(agent.x, agent.y, agent.z)
-	const wantMin = 7.9 // should reach (close to) the known target's distance (8), not stop at the 4-block clamp
+	const wantMax = 4.1
+	if got > wantMax {
+		t.Fatalf("distance traveled = %.2f, want <= %.2f - a known buried target dispatch must still be clamped to one hop, landed at (%.2f,%.2f,%.2f)", got, wantMax, agent.x, agent.y, agent.z)
+	}
+
+	// Third step: a second clamped hop should close the remaining
+	// distance, confirming multiple Steps still converge on the known
+	// target rather than getting stuck short of it.
+	if _, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step 3 (ActionGoToTarget): %v", err)
+	}
+	got = distanceFromOrigin(agent.x, agent.y, agent.z)
+	const wantMin = 7.9 // should reach (close to) the known target's distance (8) after two hops
 	if got < wantMin {
-		t.Fatalf("distance traveled = %.2f, want >= %.2f - a known buried target must not be clamped, landed at (%.2f,%.2f,%.2f)", got, wantMin, agent.x, agent.y, agent.z)
+		t.Fatalf("distance traveled after 2 hops = %.2f, want >= %.2f, landed at (%.2f,%.2f,%.2f)", got, wantMin, agent.x, agent.y, agent.z)
 	}
 }

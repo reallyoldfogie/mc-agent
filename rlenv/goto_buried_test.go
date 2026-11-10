@@ -89,8 +89,12 @@ func TestGoToLegalAndTargetsExplorationPointWhenBuriedTargetUnseen(t *testing.T)
 // TestGoToTargetsExactPositionOnceBuriedTargetSeen confirms
 // currentGoToTarget's second phase: once the buried target has been
 // resolved via FindVisibleBlock even once (mineEverSeen), GoToTarget
-// should walk the bot precisely to it, not just to the right general
-// exploration quadrant.
+// should walk the bot precisely to it over successive Steps, not just to
+// the right general exploration quadrant. Each individual dispatch is
+// still clamped to blindExploreStepDistance (widened 2026-11-10 to apply
+// regardless of mineEverSeen - see dispatchGoToTarget's own doc comment),
+// so reaching the exact position (distance 5, farther than the 4-block
+// clamp) takes two hops here, not one.
 func TestGoToTargetsExactPositionOnceBuriedTargetSeen(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setMineBlock("minecraft:coal_ore", 3, 0, 4) // visible from the start
@@ -111,8 +115,20 @@ func TestGoToTargetsExactPositionOnceBuriedTargetSeen(t *testing.T) {
 	if !ok {
 		t.Fatal("agent position should be known after Step")
 	}
+	if pos.X == 3 && pos.Y == 0 && pos.Z == 4 {
+		t.Fatal("first hop already reached the exact target - expected it clamped short like any other buried-target dispatch")
+	}
+
+	result = step(t, env, rlenv.ActionGoToTarget)
+	if result.Done {
+		t.Fatal("Done = true dispatching GoToTarget toward the resolved ore position")
+	}
+	pos, _, _, ok = agent.GetPosition()
+	if !ok {
+		t.Fatal("agent position should be known after Step")
+	}
 	if pos.X != 3 || pos.Y != 0 || pos.Z != 4 {
-		t.Fatalf("agent ended at (%v,%v,%v), want the exact resolved ore position (3,0,4)", pos.X, pos.Y, pos.Z)
+		t.Fatalf("agent ended at (%v,%v,%v) after a second hop, want the exact resolved ore position (3,0,4)", pos.X, pos.Y, pos.Z)
 	}
 }
 
