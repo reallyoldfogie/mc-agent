@@ -1916,7 +1916,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Sideways recovery timed out after %v - attempting re-pathfind",
 						pe.sidewaysTimeout))
 					pe.recoveryAttempt = 2
-					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos), goalPos)
+					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos, goalPos), goalPos)
 				}
 				// Still in sideways recovery - generate sideways inputs below
 			case 0:
@@ -1953,7 +1953,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2
-					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos), goalPos)
+					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos, goalPos), goalPos)
 				} else {
 					// Start sideways recovery for non-climbing movements
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Starting sideways recovery (attempt 1)"))
@@ -2189,6 +2189,16 @@ func (pe *PhysicsMovementExecutor) hasSolidBlockAt(x, y, z int) bool {
 	return pe.shapeProvider.IsSolid(stateID)
 }
 
+// repathBackupDistance is how far repathRecoveryStart backs away from
+// goalPos, horizontally, on a repeated repath failure - see that
+// function's own doc comment. 2 blocks reliably lands in a different
+// floored block than the stuck position in every direction (a single
+// block isn't quite enough right at a block boundary, where the stuck
+// position itself can be within 0.0x of the edge), while staying short
+// enough that the backed-up position is still plausibly reachable/safe
+// in the immediate vicinity rather than wandering into unrelated terrain.
+const repathBackupDistance = 2.0
+
 // repathRecoveryStart decides which position to repath FROM for the
 // current stuck step - see repeatedRepathTarget/repeatedRepathCount's
 // own doc comment for why this isn't always just the bot's own current
@@ -2202,25 +2212,47 @@ func (pe *PhysicsMovementExecutor) hasSolidBlockAt(x, y, z int) bool {
 // step-timeout budget every single episode it happened in.
 //
 // On the SECOND consecutive repath attempt for the same step, this
-// repaths from pe.lastProgressPos instead - the last position actually
-// confirmed to be making progress toward this step, necessarily short
-// of wherever execution started failing - so the new search either gets
-// a longer, different approach to the same edge (plausibly fixing a
-// timing-sensitive move like Jump2) or finds a genuinely different
-// route from that different starting block. Falls back to the plain
-// current position on the first attempt, matching the exact previous
-// behavior when this isn't yet a repeat.
-func (pe *PhysicsMovementExecutor) repathRecoveryStart(stepTarget, currentPos models.V3) models.V3 {
+// backs away from goalPos by repathBackupDistance, horizontally, from
+// the bot's own current position (same Y - a horizontal move is what a
+// gap-jump's own approach run-up needs, and changing Y risks landing the
+// backed-up position inside solid ground with no validity check between
+// here and A* - see agent.go's stuck-recovery callback, which floors
+// whatever it's given with no solidity check at all). A first version of
+// this fix instead repathed from pe.lastProgressPos (the last position
+// actually confirmed to be making progress toward this step) - found
+// live, 2026-11-11, that this doesn't reliably help: lastProgressPos can
+// floor to the IDENTICAL block as the stuck position whenever the bot
+// stalls within a fraction of a block of wherever it last made progress
+// (confirmed live: a repeat loop continued identically, snapping to the
+// same block, even with that version of this fix deployed). A fixed
+// geometric backup doesn't depend on how close progress happened to
+// stall - it's guaranteed to change the floored start block regardless,
+// which either gives a timing-sensitive move like Jump2 a longer/
+// different approach, or routes A* through a genuinely different edge
+// from that different block. Falls back to the plain current position on
+// the first attempt, matching the exact previous behavior when this
+// isn't yet a repeat.
+func (pe *PhysicsMovementExecutor) repathRecoveryStart(stepTarget, currentPos, goalPos models.V3) models.V3 {
 	if stepTarget == pe.repeatedRepathTarget {
 		pe.repeatedRepathCount++
 	} else {
 		pe.repeatedRepathTarget = stepTarget
 		pe.repeatedRepathCount = 1
 	}
-	if pe.repeatedRepathCount > 1 {
-		return pe.lastProgressPos
+	if pe.repeatedRepathCount <= 1 {
+		return currentPos
 	}
-	return currentPos
+	dx, dz := goalPos.X-currentPos.X, goalPos.Z-currentPos.Z
+	horizDist := math.Sqrt(dx*dx + dz*dz)
+	if horizDist < 0.01 {
+		// goalPos is (horizontally) right where the bot already is -
+		// nothing meaningful to back away from; repathing again from the
+		// same position can't do worse than the current position already
+		// does, so just fall back to it rather than dividing by ~0.
+		return currentPos
+	}
+	scale := repathBackupDistance / horizDist
+	return models.V3{X: currentPos.X - dx*scale, Y: currentPos.Y, Z: currentPos.Z - dz*scale}
 }
 
 // attemptRepathRecovery attempts to recover from a stuck situation by re-pathfinding.

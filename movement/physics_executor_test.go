@@ -2,6 +2,7 @@ package movement
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -630,6 +631,15 @@ func TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound(t *testing
 	}
 }
 
+// horizDistance is a small test-only helper mirroring models.V3's own
+// DistanceTo but horizontal-only (X/Z), for asserting on
+// repathRecoveryStart's geometric backup without hardcoding its exact
+// trigonometry inline in every test.
+func horizDistance(a, b models.V3) float64 {
+	dx, dz := a.X-b.X, a.Z-b.Z
+	return math.Sqrt(dx*dx + dz*dz)
+}
+
 // TestRepathRecoveryStart_FirstAttemptUsesCurrentPosition covers the
 // common case (not yet a repeat): repathRecoveryStart must behave
 // exactly as a plain pass-through of currentPos, matching the behavior
@@ -638,8 +648,9 @@ func TestRepathRecoveryStart_FirstAttemptUsesCurrentPosition(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	target := models.V3{X: 501, Y: -4, Z: -84}
 	currentPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
+	goalPos := models.V3{X: 501, Y: -4, Z: -86}
 
-	got := exec.repathRecoveryStart(target, currentPos)
+	got := exec.repathRecoveryStart(target, currentPos, goalPos)
 
 	if got != currentPos {
 		t.Errorf("repathRecoveryStart = %v on the first attempt, want the plain current position %v", got, currentPos)
@@ -649,54 +660,67 @@ func TestRepathRecoveryStart_FirstAttemptUsesCurrentPosition(t *testing.T) {
 	}
 }
 
-// TestRepathRecoveryStart_SecondConsecutiveAttemptAtSameTargetUsesLastProgressPos
+// TestRepathRecoveryStart_SecondConsecutiveAttemptBacksAwayFromGoal
 // reproduces the live bug this exists to fix (found 2026-11-11): a stuck
 // Jump2 step kept re-pathing to the exact same failing edge forever,
 // since A* is a deterministic function of (start block, goal block,
 // world state) with no memory of a prior attempt's physical execution
 // failure. The second consecutive repath for the same step target must
-// instead repath from lastProgressPos - a position necessarily short of
-// wherever execution started failing - not from the same stuck position
-// that produced the identical path last time.
-func TestRepathRecoveryStart_SecondConsecutiveAttemptAtSameTargetUsesLastProgressPos(t *testing.T) {
+// back away from goalPos by repathBackupDistance instead of repathing
+// from the identical stuck position that produced the identical (also-
+// failing) path last time. An earlier version of this fix instead used
+// lastProgressPos, found live not to reliably differ from the stuck
+// block - this backup is a fixed geometric distance specifically so it
+// can't collapse to the same floored block the way that did.
+func TestRepathRecoveryStart_SecondConsecutiveAttemptBacksAwayFromGoal(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	target := models.V3{X: 501, Y: -4, Z: -84}
 	stuckPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
-	progressPos := models.V3{X: 504.0, Y: -5, Z: -83.0}
-	exec.lastProgressPos = progressPos
+	goalPos := models.V3{X: 501, Y: -4, Z: -86}
 
-	first := exec.repathRecoveryStart(target, stuckPos)
-	second := exec.repathRecoveryStart(target, stuckPos)
+	first := exec.repathRecoveryStart(target, stuckPos, goalPos)
+	second := exec.repathRecoveryStart(target, stuckPos, goalPos)
 
 	if first != stuckPos {
 		t.Errorf("first attempt = %v, want the stuck position %v unchanged", first, stuckPos)
 	}
-	if second != progressPos {
-		t.Errorf("second consecutive attempt at the same target = %v, want lastProgressPos %v, not the same stuck position again", second, progressPos)
+	if second == stuckPos {
+		t.Fatalf("second consecutive attempt at the same target returned the identical stuck position %v - repathing from the same block for the same goal is exactly the bug this fixes", stuckPos)
+	}
+	if second.Y != stuckPos.Y {
+		t.Errorf("second attempt's Y = %v, want it unchanged at %v - only the horizontal position should move, to avoid landing inside solid ground with no validity check before A*", second.Y, stuckPos.Y)
+	}
+	if gotBackupDist := horizDistance(second, stuckPos); math.Abs(gotBackupDist-repathBackupDistance) > 0.001 {
+		t.Errorf("horizontal distance from the stuck position to the second attempt's start = %v, want %v (repathBackupDistance)", gotBackupDist, repathBackupDistance)
+	}
+	if horizDistance(second, goalPos) <= horizDistance(stuckPos, goalPos) {
+		t.Errorf("second attempt's start (%v) is not farther from goalPos (%v) than the stuck position (%v) was - want it to back AWAY from the goal, not toward or sideways of it", second, goalPos, stuckPos)
 	}
 	if exec.repeatedRepathCount != 2 {
 		t.Errorf("repeatedRepathCount = %d after two consecutive attempts at the same target, want 2", exec.repeatedRepathCount)
 	}
 }
 
-// TestRepathRecoveryStart_KeepsUsingLastProgressPosOnFurtherRepeats
-// confirms the escalation isn't a one-shot special case for exactly the
-// second attempt - a third (or later) consecutive failure at the same
-// target must still repath from lastProgressPos, not revert to the
+// TestRepathRecoveryStart_KeepsBackingAwayOnFurtherRepeats confirms the
+// escalation isn't a one-shot special case for exactly the second
+// attempt - a third (or later) consecutive failure at the same target
+// must still back away by the same fixed distance, not revert to the
 // stuck position.
-func TestRepathRecoveryStart_KeepsUsingLastProgressPosOnFurtherRepeats(t *testing.T) {
+func TestRepathRecoveryStart_KeepsBackingAwayOnFurtherRepeats(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	target := models.V3{X: 501, Y: -4, Z: -84}
 	stuckPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
-	progressPos := models.V3{X: 504.0, Y: -5, Z: -83.0}
-	exec.lastProgressPos = progressPos
+	goalPos := models.V3{X: 501, Y: -4, Z: -86}
 
-	exec.repathRecoveryStart(target, stuckPos)
-	exec.repathRecoveryStart(target, stuckPos)
-	third := exec.repathRecoveryStart(target, stuckPos)
+	exec.repathRecoveryStart(target, stuckPos, goalPos)
+	exec.repathRecoveryStart(target, stuckPos, goalPos)
+	third := exec.repathRecoveryStart(target, stuckPos, goalPos)
 
-	if third != progressPos {
-		t.Errorf("third consecutive attempt at the same target = %v, want lastProgressPos %v", third, progressPos)
+	if third == stuckPos {
+		t.Fatalf("third consecutive attempt at the same target = %v, want it still backed away from the stuck position, not reverted to it", third)
+	}
+	if gotBackupDist := horizDistance(third, stuckPos); math.Abs(gotBackupDist-repathBackupDistance) > 0.001 {
+		t.Errorf("horizontal distance from the stuck position to the third attempt's start = %v, want %v", gotBackupDist, repathBackupDistance)
 	}
 	if exec.repeatedRepathCount != 3 {
 		t.Errorf("repeatedRepathCount = %d after three consecutive attempts at the same target, want 3", exec.repeatedRepathCount)
@@ -705,20 +729,20 @@ func TestRepathRecoveryStart_KeepsUsingLastProgressPosOnFurtherRepeats(t *testin
 
 // TestRepathRecoveryStart_DifferentTargetResetsTheRepeatCount confirms
 // the escalation is scoped to repeats of THIS specific step, not a
-// sticky global "always repath from lastProgressPos from now on" state
-// - a stuck episode on a genuinely different step must get the normal,
-// unescalated first attempt.
+// sticky global "always back away from now on" state - a stuck episode
+// on a genuinely different step must get the normal, unescalated first
+// attempt.
 func TestRepathRecoveryStart_DifferentTargetResetsTheRepeatCount(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	targetA := models.V3{X: 501, Y: -4, Z: -84}
 	targetB := models.V3{X: 10, Y: -4, Z: 20}
 	stuckPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
-	exec.lastProgressPos = models.V3{X: 504.0, Y: -5, Z: -83.0}
+	goalPos := models.V3{X: 501, Y: -4, Z: -86}
 
-	exec.repathRecoveryStart(targetA, stuckPos) // count=1 for targetA
-	exec.repathRecoveryStart(targetA, stuckPos) // count=2 for targetA
+	exec.repathRecoveryStart(targetA, stuckPos, goalPos) // count=1 for targetA
+	exec.repathRecoveryStart(targetA, stuckPos, goalPos) // count=2 for targetA
 
-	got := exec.repathRecoveryStart(targetB, stuckPos)
+	got := exec.repathRecoveryStart(targetB, stuckPos, goalPos)
 
 	if got != stuckPos {
 		t.Errorf("first attempt at a new target = %v, want the plain current position %v, not an escalation carried over from the previous target", got, stuckPos)
@@ -728,20 +752,36 @@ func TestRepathRecoveryStart_DifferentTargetResetsTheRepeatCount(t *testing.T) {
 	}
 }
 
-// TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_UsesLastProgressPosOnRepeat
-// exercises attemptRepathRecovery and repathRecoveryStart together the
-// same way the two real call sites in generateNavigationInputs do,
-// confirming the stuck-recovery callback itself actually receives
-// lastProgressPos as its currentPos argument on the second consecutive
-// call for the same step - not just that the helper function returns
-// the right value in isolation.
-func TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_UsesLastProgressPosOnRepeat(t *testing.T) {
+// TestRepathRecoveryStart_DegenerateZeroDistanceGoalFallsBackToCurrentPosition
+// covers the edge case where goalPos is (horizontally) exactly where the
+// bot already is - nothing meaningful to back away from, and dividing
+// by that zero horizontal distance must not produce NaN/Inf.
+func TestRepathRecoveryStart_DegenerateZeroDistanceGoalFallsBackToCurrentPosition(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 	target := models.V3{X: 501, Y: -4, Z: -84}
 	stuckPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
-	progressPos := models.V3{X: 504.0, Y: -5, Z: -83.0}
+	goalPos := models.V3{X: stuckPos.X, Y: -4, Z: stuckPos.Z} // same X/Z, different Y only
+
+	exec.repathRecoveryStart(target, stuckPos, goalPos)
+	second := exec.repathRecoveryStart(target, stuckPos, goalPos)
+
+	if second != stuckPos {
+		t.Errorf("repathRecoveryStart = %v with a zero-horizontal-distance goal, want the plain current position %v (no NaN/Inf from dividing by ~0)", second, stuckPos)
+	}
+}
+
+// TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_BacksAwayOnRepeat
+// exercises attemptRepathRecovery and repathRecoveryStart together the
+// same way the two real call sites in generateNavigationInputs do,
+// confirming the stuck-recovery callback itself actually receives a
+// different currentPos argument on the second consecutive call for the
+// same step - not just that the helper function returns the right value
+// in isolation.
+func TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_BacksAwayOnRepeat(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	target := models.V3{X: 501, Y: -4, Z: -84}
+	stuckPos := models.V3{X: 503.3, Y: -5, Z: -83.7}
 	goalPos := models.V3{X: 501, Y: -4, Z: -86}
-	exec.lastProgressPos = progressPos
 
 	var receivedStarts []models.V3
 	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
@@ -749,8 +789,8 @@ func TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_UsesLastP
 		return &pathfinding.Path{Found: false} // a real failure: A* found the identical path again
 	})
 
-	exec.attemptRepathRecovery(exec.repathRecoveryStart(target, stuckPos), goalPos)
-	exec.attemptRepathRecovery(exec.repathRecoveryStart(target, stuckPos), goalPos)
+	exec.attemptRepathRecovery(exec.repathRecoveryStart(target, stuckPos, goalPos), goalPos)
+	exec.attemptRepathRecovery(exec.repathRecoveryStart(target, stuckPos, goalPos), goalPos)
 
 	if len(receivedStarts) != 2 {
 		t.Fatalf("stuck-recovery callback invoked %d times, want 2", len(receivedStarts))
@@ -758,8 +798,8 @@ func TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_UsesLastP
 	if receivedStarts[0] != stuckPos {
 		t.Errorf("first call's currentPos = %v, want the stuck position %v", receivedStarts[0], stuckPos)
 	}
-	if receivedStarts[1] != progressPos {
-		t.Errorf("second call's currentPos = %v, want lastProgressPos %v - repathing from the same stuck position twice is exactly the bug this fixes", receivedStarts[1], progressPos)
+	if receivedStarts[1] == stuckPos {
+		t.Errorf("second call's currentPos = %v, want it backed away from the stuck position %v - repathing from the same block twice is exactly the bug this fixes", receivedStarts[1], stuckPos)
 	}
 }
 
