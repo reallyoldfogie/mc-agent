@@ -125,6 +125,16 @@ type PhysicsMovementExecutor struct {
 	sidewaysStartTime    time.Time     // When sideways recovery started
 	sidewaysTimeout      time.Duration // How long to try sideways before giving up
 
+	// repeatedRepathTarget/repeatedRepathCount track whether consecutive
+	// repath-recovery calls are retrying the same step - see
+	// repathRecoveryStart's own doc comment for why this matters. Reset
+	// whenever recoveryAttempt itself resets on genuine progress (same
+	// line that resets recoveryAttempt there), so an unrelated later
+	// stuck episode at this same step - long after this one resolved -
+	// starts fresh rather than inheriting a stale count.
+	repeatedRepathTarget models.V3
+	repeatedRepathCount  int
+
 	// Manual input state (thread-safe)
 	manualInputsMu sync.RWMutex  // Protects manual inputs
 	manualInputs   models.Inputs // Current manual inputs for PhysicsModeManual
@@ -1887,6 +1897,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 				utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Progress made during recovery - resuming normal navigation"))
 				pe.recoveryAttempt = 0
 			}
+			pe.repeatedRepathCount = 0
 		}
 
 		// Check for stuck condition
@@ -1905,7 +1916,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Sideways recovery timed out after %v - attempting re-pathfind",
 						pe.sidewaysTimeout))
 					pe.recoveryAttempt = 2
-					pe.attemptRepathRecovery(currentPos, goalPos)
+					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos), goalPos)
 				}
 				// Still in sideways recovery - generate sideways inputs below
 			case 0:
@@ -1942,7 +1953,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					pe.recoveryAttempt = 2
-					pe.attemptRepathRecovery(currentPos, goalPos)
+					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos), goalPos)
 				} else {
 					// Start sideways recovery for non-climbing movements
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Starting sideways recovery (attempt 1)"))
@@ -2176,6 +2187,40 @@ func (pe *PhysicsMovementExecutor) hasSolidBlockAt(x, y, z int) bool {
 		return false // Unknown block treated as no ground
 	}
 	return pe.shapeProvider.IsSolid(stateID)
+}
+
+// repathRecoveryStart decides which position to repath FROM for the
+// current stuck step - see repeatedRepathTarget/repeatedRepathCount's
+// own doc comment for why this isn't always just the bot's own current
+// position. A* (pathfinding/) is a pure, deterministic function of
+// (start block, goal block, static world state) with no memory of a
+// previous attempt's physical execution failure, so repathing from the
+// exact same stuck position, for the exact same step, finds the exact
+// same path every time - found live, 2026-11-11: a Jump2 (2-block
+// sprint-jump) step kept failing its narrow approach-timing window and
+// re-pathing to the identical edge forever, burning the full external
+// step-timeout budget every single episode it happened in.
+//
+// On the SECOND consecutive repath attempt for the same step, this
+// repaths from pe.lastProgressPos instead - the last position actually
+// confirmed to be making progress toward this step, necessarily short
+// of wherever execution started failing - so the new search either gets
+// a longer, different approach to the same edge (plausibly fixing a
+// timing-sensitive move like Jump2) or finds a genuinely different
+// route from that different starting block. Falls back to the plain
+// current position on the first attempt, matching the exact previous
+// behavior when this isn't yet a repeat.
+func (pe *PhysicsMovementExecutor) repathRecoveryStart(stepTarget, currentPos models.V3) models.V3 {
+	if stepTarget == pe.repeatedRepathTarget {
+		pe.repeatedRepathCount++
+	} else {
+		pe.repeatedRepathTarget = stepTarget
+		pe.repeatedRepathCount = 1
+	}
+	if pe.repeatedRepathCount > 1 {
+		return pe.lastProgressPos
+	}
+	return currentPos
 }
 
 // attemptRepathRecovery attempts to recover from a stuck situation by re-pathfinding.
