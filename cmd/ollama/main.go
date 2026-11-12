@@ -342,9 +342,13 @@ func getAgent(ctx context.Context) (models.Agent, context.Context, context.Cance
 		log.Printf("Authenticated as %s (%s)", auth.Name, auth.UUID)
 	}
 
-	// Create skin provider for replay texture embedding
+	// Create skin provider for replay texture embedding. Mojang resources
+	// are only fetched over the network when this session authenticated
+	// against Mojang/Microsoft, not in offline mode - see
+	// models.AgentConfig.Authenticated's doc comment.
+	authenticated := !settings.Connection.Offline
 	skinProvider := agent.NewSkinFetcher(agent.SkinFetcherConfig{
-		AllowNetwork: settings.Skin.AllowNetwork,
+		AllowNetwork: settings.Skin.AllowNetwork && authenticated,
 		CacheRoot:    settings.Skin.CacheDir,
 		HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 	})
@@ -388,6 +392,7 @@ func getAgent(ctx context.Context) (models.Agent, context.Context, context.Cance
 		Address:              settings.Connection.Address,
 		Version:              settings.Connection.Version, // Empty = auto-detect from server
 		Auth:                 auth,
+		Authenticated:        authenticated,
 		MCDataGenPath:        settings.Connection.MCDataGenPath,
 		MCProtocolGoPath:     settings.Connection.MCProtocolGoPath,
 		EnableClutchAssist:   settings.Movement.EnableClutch,

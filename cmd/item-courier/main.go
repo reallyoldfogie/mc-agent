@@ -82,6 +82,10 @@ func main() {
 	} else {
 		log.Printf("Authenticated as shared identity %s (%s)", auth.Name, auth.UUID)
 	}
+	// Mojang resources are only fetched over the network when this session
+	// authenticated against Mojang/Microsoft, not in offline mode - see
+	// models.AgentConfig.Authenticated's doc comment.
+	authenticated := !settings.Connection.Offline
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -116,6 +120,7 @@ func main() {
 			Address:          s.Address,
 			Version:          version,
 			Auth:             auth,
+			Authenticated:    authenticated,
 			MCDataGenPath:    settings.Connection.MCDataGenPath,
 			MCProtocolGoPath: settings.Connection.MCProtocolGoPath,
 			StopFilePath:     ".agentStop",

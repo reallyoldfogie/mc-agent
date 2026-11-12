@@ -29,11 +29,11 @@ type StateRecord struct {
 //
 // Example:
 //
-//	cache := utils.NewMinecraftDataCache("1.21.5")
-//	if err := cache.EnsureDataGenerated(); err != nil {
+//	cache := utils.NewMinecraftDataCache("1.21.5", nil)
+//	if err := cache.EnsureDataGenerated(authenticated); err != nil {
 //	    return err
 //	}
-//	blocksPath, err := cache.GetBlocksJSONPath()
+//	blocksPath, err := cache.GetBlocksJSONPath(authenticated)
 //	if err != nil {
 //	    return err
 //	}

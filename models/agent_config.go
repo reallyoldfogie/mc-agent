@@ -23,6 +23,16 @@ type AgentConfig struct {
 	// Authentication
 	Auth Auth
 
+	// Authenticated reports whether Auth was obtained via a real
+	// Microsoft/Mojang login (true) rather than offline mode (false). Gates
+	// every code path that would otherwise download a Mojang-owned
+	// resource (server/client jars for registries and skin extraction) —
+	// see agent.ResolveAuth, utils.EnsureRegistriesPath and
+	// utils.MinecraftDataCache.EnsureDataGenerated. Files a prior
+	// authenticated run already cached remain usable regardless of this
+	// flag; it only blocks fetching ones that aren't cached yet.
+	Authenticated bool
+
 	// Optional: external managers. If nil, they can be derived from Version.
 	PacketMgr protocol_models.PacketMgr
 	BlockMgr  mc_versions.BlockMgr

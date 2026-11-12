@@ -557,7 +557,7 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 	// If not set, defaults to ~/.agent/cache/mc-agent/registries/{version}/
 	// Downloads and generates registries.json if needed (thread-safe)
 	if cfg.RegistriesPath == "" {
-		resolvedPath, err := agentutils.EnsureRegistriesPath("", cfg.Version)
+		resolvedPath, err := agentutils.EnsureRegistriesPath("", cfg.Version, cfg.Authenticated)
 		if err != nil {
 			// Non-fatal: log warning and continue without registries
 			// They can still be loaded manually or from testing framework paths
@@ -818,8 +818,8 @@ func (a *agent) Init(ctx context.Context) error {
 
 			// Use new unified Minecraft data cache for block properties
 			dataCache := agentutils.NewMinecraftDataCache(a.cfg.Version, a.logger)
-			if err := dataCache.EnsureDataGenerated(); err == nil {
-				blocksJSONPath, err := dataCache.GetBlocksJSONPath()
+			if err := dataCache.EnsureDataGenerated(a.cfg.Authenticated); err == nil {
+				blocksJSONPath, err := dataCache.GetBlocksJSONPath(a.cfg.Authenticated)
 				if err == nil {
 					if spl, err := pathfinding.NewStatePropertyLoader(blocksJSONPath); err == nil {
 						stateProps = spl

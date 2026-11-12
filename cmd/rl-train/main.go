@@ -356,11 +356,17 @@ func connectAgent(ctx context.Context, settings config.Settings) (models.Agent, 
 		return nil, err
 	}
 
+	// Mojang resources are only fetched over the network when this session
+	// authenticated against Mojang/Microsoft, not in offline mode - see
+	// models.AgentConfig.Authenticated's doc comment.
+	authenticated := !conn.Offline
+
 	cfg := models.AgentConfig{
 		Name:             auth.Name,
 		Address:          conn.Address,
 		Version:          version,
 		Auth:             auth,
+		Authenticated:    authenticated,
 		MCDataGenPath:    conn.MCDataGenPath,
 		MCProtocolGoPath: conn.MCProtocolGoPath,
 		StopFilePath:     ".agentStop",
@@ -368,7 +374,7 @@ func connectAgent(ctx context.Context, settings config.Settings) (models.Agent, 
 		LogLevel:         logLevel,
 		RCON:             rcon,
 		SkinProvider: agent.NewSkinFetcher(agent.SkinFetcherConfig{
-			AllowNetwork: settings.Skin.AllowNetwork,
+			AllowNetwork: settings.Skin.AllowNetwork && authenticated,
 			CacheRoot:    settings.Skin.CacheDir,
 			HTTPClient:   &http.Client{Timeout: 3 * time.Second},
 		}),

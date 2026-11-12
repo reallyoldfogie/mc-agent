@@ -18,10 +18,14 @@ func main() {
 
 	// Create skin manager
 	log.Println("Creating skin manager...")
+	// This standalone demo isn't tied to any authenticated bot session, so
+	// it opts into downloading explicitly rather than inheriting
+	// models.AgentConfig.Authenticated from a live connection.
 	skinMgr := agent.NewSkinManager(agent.SkinManagerConfig{
 		MinecraftVersion:  *version,
 		CacheRoot:         "./skins",
 		AllowNetwork:      true,
+		AllowDownload:     true,
 		ClientJarCacheDir: "./data/client-cache",
 	})
 

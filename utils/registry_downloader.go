@@ -23,26 +23,31 @@ var (
 // Downloads and generates registries.json if not already cached.
 // Thread-safe: uses per-version semaphore to prevent concurrent downloads.
 //
+// allowDownload must be true for a cache miss to download the server JAR
+// from Mojang — callers should only pass true when the current session
+// holds a genuine Mojang/Microsoft authentication, not offline mode.
+// Previously-generated/cached registries are always reused regardless.
+//
 // DEPRECATED: Use NewMinecraftDataCache(version).GetRegistriesPath() instead.
 // This function is maintained for backward compatibility only.
 //
 // Returns the resolved registries path.
-func EnsureRegistriesPath(path, version string) (string, error) {
+func EnsureRegistriesPath(path, version string, allowDownload bool) (string, error) {
 	// If path provided, use legacy behavior
 	if path != "" {
-		return ensureRegistriesPathLegacy(path, version)
+		return ensureRegistriesPathLegacy(path, version, allowDownload)
 	}
 
 	// Use new unified cache system
 	cache := NewMinecraftDataCache(version, nil)
-	if err := cache.EnsureDataGenerated(); err != nil {
+	if err := cache.EnsureDataGenerated(allowDownload); err != nil {
 		return "", err
 	}
-	return cache.GetRegistriesPath()
+	return cache.GetRegistriesPath(allowDownload)
 }
 
 // ensureRegistriesPathLegacy is the original implementation, kept for custom path support.
-func ensureRegistriesPathLegacy(path, version string) (string, error) {
+func ensureRegistriesPathLegacy(path, version string, allowDownload bool) (string, error) {
 	// Set default path if not provided
 	if path == "" {
 		cacheDir, err := FindOrCreateCacheDir()
@@ -88,6 +93,10 @@ func ensureRegistriesPathLegacy(path, version string) (string, error) {
 		registryDownloadMu.Unlock()
 		slog.Default().Debug(fmt.Sprintf("[RegistryDownloader] Using cached registries for %s: %s", version, path))
 		return path, nil
+	}
+
+	if !allowDownload {
+		return "", fmt.Errorf("registries for %s are not cached and downloading from Mojang requires an authenticated (online-mode) session", version)
 	}
 
 	// Need to download and generate

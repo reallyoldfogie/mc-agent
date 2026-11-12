@@ -137,7 +137,7 @@ type SkinFlagOverrides struct {
 func RegisterSkinFlags(fs *flag.FlagSet) *SkinFlagOverrides {
 	o := &SkinFlagOverrides{}
 	fs.StringVar(&o.CacheDir, "skin-cache", "", "directory to cache player/default skins (overrides config file/env)")
-	fs.BoolVar(&o.AllowNetwork, "skin-net", false, "allow network skin fetches from Mojang, default off (overrides config file/env)")
+	fs.BoolVar(&o.AllowNetwork, "skin-net", false, "allow network skin fetches from Mojang, default off; also requires online (non-offline) mode (overrides config file/env)")
 	return o
 }
 

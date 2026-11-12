@@ -23,13 +23,22 @@ type JarDownloaderConfig struct {
 	CacheDir   string
 	HTTPClient *http.Client
 	TTLDays    int // how many days before re-downloading
+
+	// AllowDownload must be true for the downloader to actually reach out to
+	// Mojang for a jar that isn't already cached. Callers wire this to
+	// whether the current session is running under genuine Mojang/Microsoft
+	// authentication (see models.AgentConfig.Authenticated) rather than
+	// offline mode, so unauthenticated runs can only ever use files a prior
+	// authenticated run already downloaded.
+	AllowDownload bool
 }
 
 // JarDownloader downloads and extracts Minecraft client jars
 type JarDownloader struct {
-	cacheDir   string
-	httpClient *http.Client
-	ttlDays    int
+	cacheDir      string
+	httpClient    *http.Client
+	ttlDays       int
+	allowDownload bool
 }
 
 // NewJarDownloader creates a new downloader with the given configuration
@@ -47,9 +56,10 @@ func NewJarDownloader(cfg JarDownloaderConfig) *JarDownloader {
 		ttlDays = 30 // default 30 days
 	}
 	return &JarDownloader{
-		cacheDir:   cacheDir,
-		httpClient: client,
-		ttlDays:    ttlDays,
+		cacheDir:      cacheDir,
+		httpClient:    client,
+		ttlDays:       ttlDays,
+		allowDownload: cfg.AllowDownload,
 	}
 }
 
@@ -112,6 +122,10 @@ func (d *JarDownloader) DownloadClientJar(mcVersion string) (string, error) {
 	// Check if already cached and still valid
 	if d.isCacheValid(clientJarPath) {
 		return clientJarPath, nil
+	}
+
+	if !d.allowDownload {
+		return "", fmt.Errorf("client.jar for %s is not cached and downloading from Mojang requires an authenticated (online-mode) session", mcVersion)
 	}
 
 	// Create cache directory

@@ -15,6 +15,7 @@ func TestSkinManager_Initialize(t *testing.T) {
 		CacheRoot:         filepath.Join(tempDir, "skins"),
 		ClientJarCacheDir: filepath.Join(tempDir, "client-cache"),
 		AllowNetwork:      true,
+		AllowDownload:     true,
 	})
 
 	// Initialize should download and extract skins
@@ -64,6 +65,7 @@ func TestSkinManager_ListAvailableSkins(t *testing.T) {
 		CacheRoot:         filepath.Join(tempDir, "skins"),
 		ClientJarCacheDir: filepath.Join(tempDir, "client-cache"),
 		AllowNetwork:      true,
+		AllowDownload:     true,
 	})
 
 	if err := manager.Initialize("1.21.5"); err != nil {
@@ -112,6 +114,7 @@ func TestSkinManager_GetRandomSkin(t *testing.T) {
 		CacheRoot:         filepath.Join(tempDir, "skins"),
 		ClientJarCacheDir: filepath.Join(tempDir, "client-cache"),
 		AllowNetwork:      true,
+		AllowDownload:     true,
 	})
 
 	if err := manager.Initialize("1.21.5"); err != nil {
@@ -150,6 +153,7 @@ func TestSkinManager_GetSkinByName(t *testing.T) {
 		CacheRoot:         filepath.Join(tempDir, "skins"),
 		ClientJarCacheDir: filepath.Join(tempDir, "client-cache"),
 		AllowNetwork:      true,
+		AllowDownload:     true,
 	})
 
 	if err := manager.Initialize("1.21.5"); err != nil {
@@ -184,6 +188,7 @@ func TestSkinManager_CachedDownload(t *testing.T) {
 		CacheRoot:         filepath.Join(tempDir, "skins"),
 		ClientJarCacheDir: filepath.Join(tempDir, "client-cache"),
 		AllowNetwork:      true,
+		AllowDownload:     true,
 	})
 
 	// First initialization - should download

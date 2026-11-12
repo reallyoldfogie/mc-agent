@@ -18,6 +18,10 @@ type SkinManagerConfig struct {
 
 	// ClientJarCacheDir is where downloaded client jars are stored (default: "./data/client-cache")
 	ClientJarCacheDir string
+
+	// AllowDownload gates downloading the client jar from Mojang when skins
+	// aren't already extracted — see JarDownloaderConfig.AllowDownload.
+	AllowDownload bool
 }
 
 // SkinManager handles downloading, extracting, and serving player skins
@@ -38,7 +42,8 @@ func NewSkinManager(cfg SkinManagerConfig) *SkinManager {
 	}
 
 	downloader := NewJarDownloader(JarDownloaderConfig{
-		CacheDir: cfg.ClientJarCacheDir,
+		CacheDir:      cfg.ClientJarCacheDir,
+		AllowDownload: cfg.AllowDownload,
 	})
 
 	fetcher := NewSkinFetcher(SkinFetcherConfig{

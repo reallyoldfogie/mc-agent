@@ -40,7 +40,7 @@ func TestEnsureRegistriesPath_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-startBarrier // Wait for all goroutines to be ready
-			path, err := EnsureRegistriesPath(tmpDir, testVersion)
+			path, err := EnsureRegistriesPath(tmpDir, testVersion, true)
 			if err != nil {
 				results <- err
 				return
@@ -93,7 +93,7 @@ func TestEnsureRegistriesPath_DefaultPath(t *testing.T) {
 	testVersion := "test-1.21.5"
 
 	// This will fail to download (no server.jar), but should return the expected path
-	path, err := EnsureRegistriesPath("", testVersion)
+	path, err := EnsureRegistriesPath("", testVersion, true)
 
 	// We expect an error because we can't actually download the server JAR in tests
 	if err == nil {
@@ -133,7 +133,7 @@ func TestEnsureRegistriesPath_ExistingData(t *testing.T) {
 	}
 
 	// Call EnsureRegistriesPath - should succeed without download
-	path, err := EnsureRegistriesPath(tmpDir, testVersion)
+	path, err := EnsureRegistriesPath(tmpDir, testVersion, true)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -150,5 +150,29 @@ func TestEnsureRegistriesPath_ExistingData(t *testing.T) {
 
 	if string(data) != string(testData) {
 		t.Error("registries.json was modified")
+	}
+}
+
+// TestEnsureRegistriesPath_OfflineBlocksDownload verifies that when
+// allowDownload is false (the caller isn't authenticated against
+// Mojang/Microsoft) and nothing is cached yet, EnsureRegistriesPath refuses
+// to reach out to Mojang for the server JAR rather than attempting it.
+func TestEnsureRegistriesPath_OfflineBlocksDownload(t *testing.T) {
+	ClearRegistryDownloadCache()
+
+	tmpDir := t.TempDir()
+	testVersion := "test-1.21.5-offline"
+
+	path, err := EnsureRegistriesPath(tmpDir, testVersion, false)
+	if err == nil {
+		t.Fatal("Expected error when allowDownload is false and nothing is cached, got nil")
+	}
+	if path != "" {
+		t.Errorf("Expected empty path on refused download, got %s", path)
+	}
+
+	// Must not have reached out and created a server.jar.
+	if _, statErr := os.Stat(filepath.Join(tmpDir, "server.jar")); statErr == nil {
+		t.Error("server.jar was downloaded despite allowDownload=false")
 	}
 }
