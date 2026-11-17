@@ -135,3 +135,25 @@ func (a *agent) RecordReservation(pos models.V3, structureID string) {
 		}
 	}()
 }
+
+// isReservedPosition reports whether (x,y,z) has already been claimed by
+// a build this agent recorded via RecordReservation — see Part 4 of
+// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md ("any ordinary
+// mining/foraging logic should treat a reserved position as off-limits
+// for material-sourcing purposes, even if it technically holds a matching
+// block"). Fails open (false) if there's no world-memory store or the
+// lookup errors — a transient store problem should never block ordinary
+// mining, the same tolerance every other worldMemory path in this file
+// gives a failed write.
+func (a *agent) isReservedPosition(x, y, z float64) bool {
+	if a.worldMemory == nil {
+		return false
+	}
+	pos := memorystore.Position{X: int(math.Round(x)), Y: int(math.Round(y)), Z: int(math.Round(z))}
+	reserved, err := a.worldMemory.IsReserved(pos)
+	if err != nil {
+		a.logf("[Agent %s] [WorldMemory] IsReserved(%v) failed, assuming not reserved: %v", a.cfg.Name, pos, err)
+		return false
+	}
+	return reserved
+}

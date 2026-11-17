@@ -1169,6 +1169,15 @@ func (a *agent) FindVisibleBlock(ctx context.Context, blockName string, maxDista
 			if !matches {
 				continue
 			}
+			if a.isReservedPosition(cx, cy, cz) {
+				// Skip a block this agent has already claimed by building
+				// something there — see Part 4 of
+				// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md. Treated the
+				// same as "not a match" so the search keeps looking
+				// outward for a non-reserved candidate instead of ever
+				// picking a structure's own block as material to mine.
+				continue
+			}
 
 			ddx := (cx + 0.5) - pos.X
 			ddy := (cy + 0.5) - pos.Y
