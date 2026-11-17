@@ -41,16 +41,26 @@ type ContainerHelper struct {
 	entityIDProvider   EntityIDProvider   // Optional: for entity containers that need player's entity ID
 	entityTypeProvider EntityTypeProvider // Optional: for choosing how to interact with entity containers
 	mountStateProvider MountStateProvider // Optional: confirms mount completed before OPEN_INVENTORY is sent
+	sightingRecorder   ContainerSightingRecorder // Optional: reports container-slot contents opportunistically, see SetSightingRecorder
+
+	// openPositions remembers which block position OpenContainer opened
+	// each live windowID at — the one piece recordChestSightings needs
+	// that a *mcscreen.Chest itself doesn't carry. Entity containers
+	// never get an entry (OpenEntityContainer has no block position), so
+	// recordChestSightings is a no-op for those, which is fine: nothing
+	// downstream currently needs entity-container sightings.
+	openPositions map[byte]models.V3
 }
 
 // NewContainerHelper creates a new ContainerHelper
 func NewContainerHelper(itemUsage *ItemUsage, invMgr models.InventoryManager, screenMgr mcscreen.Manager, client bot.Client, packetMgr protocol_models.PacketMgr) *ContainerHelper {
 	return &ContainerHelper{
-		itemUsage: itemUsage,
-		invMgr:    invMgr,
-		screenMgr: screenMgr,
-		client:    client,
-		packetMgr: packetMgr,
+		itemUsage:     itemUsage,
+		invMgr:        invMgr,
+		screenMgr:     screenMgr,
+		client:        client,
+		packetMgr:     packetMgr,
+		openPositions: make(map[byte]models.V3),
 	}
 }
 
@@ -78,6 +88,16 @@ func (ch *ContainerHelper) SetEntityTypeProvider(provider EntityTypeProvider) {
 // matters.
 func (ch *ContainerHelper) SetMountStateProvider(provider MountStateProvider) {
 	ch.mountStateProvider = provider
+}
+
+// SetSightingRecorder sets the optional recorder TakeItemFromChest and
+// PutItemInChest report a chest's full slot contents to, opportunistically,
+// whenever they already have those contents in hand for their own
+// unrelated reason — see docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md Part 3.
+// Must be called before use; the default (nil) disables recording and
+// changes no other behavior.
+func (ch *ContainerHelper) SetSightingRecorder(recorder ContainerSightingRecorder) {
+	ch.sightingRecorder = recorder
 }
 
 // isDirectOpenContainerEntity reports whether interacting with an entity opens
@@ -125,6 +145,7 @@ func (ch *ContainerHelper) OpenContainer(pos models.V3, face models.BlockFace, t
 		windowID, ok := waitForOpenScreen(ch.screenMgr, screensBefore, screenIDsBefore, perAttempt)
 		if ok {
 			ch.currentWindowID = windowID
+			ch.openPositions[windowID] = pos
 			return windowID, nil
 		}
 	}
@@ -391,6 +412,7 @@ func (ch *ContainerHelper) CloseContainer() error {
 
 	// Set window back to player inventory
 	ch.invMgr.SetWindow(0)
+	delete(ch.openPositions, ch.currentWindowID)
 	ch.currentWindowID = 0
 
 	fmt.Printf("[CloseContainer] ✓ Cleanup complete, back to player inventory\n")
@@ -439,6 +461,32 @@ func (ch *ContainerHelper) GetContainerType(windowID byte) ContainerType {
 	}
 }
 
+// recordChestSightings reports every non-empty slot in chest to
+// ch.sightingRecorder, anchored at whatever block position OpenContainer
+// recorded for windowID — the passive listening point Part 3 of
+// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md describes. A no-op if no
+// recorder is set, or if windowID has no known position (entity
+// containers, e.g. a chest boat, never get one — see openPositions).
+func (ch *ContainerHelper) recordChestSightings(windowID byte, chest *mcscreen.Chest) {
+	if ch.sightingRecorder == nil {
+		return
+	}
+	pos, ok := ch.openPositions[windowID]
+	if !ok {
+		return
+	}
+	for slotIndex, slot := range chest.Slots {
+		if slot.Count == 0 {
+			continue
+		}
+		ch.sightingRecorder.RecordContainerSighting(ContainerSighting{
+			ContainerPos: pos,
+			SlotIndex:    slotIndex,
+			ItemID:       int32(slot.ID),
+		})
+	}
+}
+
 // TakeItemFromChest takes an item from a chest slot and places it in the player's inventory.
 // chestSlot is the slot index within the chest (0-26 for single chest, 0-53 for double chest).
 // Returns error if operation fails.
@@ -452,6 +500,7 @@ func (ch *ContainerHelper) TakeItemFromChest(windowID byte, chestSlot int16) err
 	if !ok {
 		return errors.New("window is not a chest")
 	}
+	ch.recordChestSightings(windowID, chest)
 
 	// Validate chest slot index
 	containerSlots := chest.Rows * 9
@@ -527,6 +576,7 @@ func (ch *ContainerHelper) PutItemInChest(windowID byte, playerInventorySlot int
 	if !ok {
 		return errors.New("window is not a chest")
 	}
+	ch.recordChestSightings(windowID, chest)
 
 	// Set the window to the chest
 	ch.invMgr.SetWindow(windowID)

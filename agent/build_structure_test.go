@@ -38,6 +38,28 @@ func (f *fakeStructurePlacer) PlaceBlockAt(_ context.Context, pos models.V3, ite
 	return nil
 }
 
+// reservation is one recorded models.ReservationRecorder.RecordReservation
+// call, captured by fakeReservingPlacer for TestBuildStructureWith_
+// RecordsReservationsForPlacedBlocksOnly to assert against.
+type reservation struct {
+	pos         models.V3
+	structureID string
+}
+
+// fakeReservingPlacer embeds fakeStructurePlacer and additionally
+// implements models.ReservationRecorder, so buildStructureWith's type
+// assertion for it succeeds - unlike plain fakeStructurePlacer, which
+// deliberately doesn't implement it (see buildStructureWith's own doc
+// comment on why that's fine: the assertion just yields nil there).
+type fakeReservingPlacer struct {
+	fakeStructurePlacer
+	reservations []reservation
+}
+
+func (f *fakeReservingPlacer) RecordReservation(pos models.V3, structureID string) {
+	f.reservations = append(f.reservations, reservation{pos: pos, structureID: structureID})
+}
+
 // twoBlockStructure is a minimal fixture: a stone block at the structure's
 // own (0,0,0) and another directly above it at (0,1,0) - just enough to
 // exercise bottom-up ordering and origin offsetting.
@@ -162,6 +184,49 @@ func TestBuildStructureWith_ContinuesPastIndividualFailure(t *testing.T) {
 	}
 	if len(placer.calls) != 3 {
 		t.Errorf("len(calls) = %d, want 3 (all blocks attempted despite the middle failure)", len(placer.calls))
+	}
+}
+
+func TestBuildStructureWith_RecordsReservationsForPlacedBlocksOnly(t *testing.T) {
+	s := &structure.Structure{
+		Palette: []structure.PaletteEntry{
+			{Name: "minecraft:stone"},
+			{Name: "minecraft:glass"},
+		},
+		Blocks: []structure.BlockEntry{
+			{Pos: structure.Pos{X: 0, Y: 0, Z: 0}, PaletteIndex: 0},
+			{Pos: structure.Pos{X: 1, Y: 0, Z: 0}, PaletteIndex: 1}, // this one will fail
+			{Pos: structure.Pos{X: 2, Y: 0, Z: 0}, PaletteIndex: 0},
+		},
+	}
+	placer := &fakeReservingPlacer{fakeStructurePlacer: fakeStructurePlacer{
+		inventory: map[string]int{"minecraft:stone": 2, "minecraft:glass": 1},
+		failItem:  map[string]bool{"minecraft:glass": true},
+	}}
+
+	origin := models.V3{X: 10, Y: 20, Z: 30}
+	result, err := buildStructureWith(context.Background(), placer, s, origin, nil)
+	if err != nil {
+		t.Fatalf("unexpected top-level error: %v", err)
+	}
+	if result.Placed != 2 {
+		t.Fatalf("result.Placed = %d, want 2", result.Placed)
+	}
+	if len(placer.reservations) != 2 {
+		t.Fatalf("len(reservations) = %d, want 2 (only the two successful placements)", len(placer.reservations))
+	}
+
+	wantPositions := map[models.V3]bool{
+		{X: 10, Y: 20, Z: 30}: true, // origin + (0,0,0)
+		{X: 12, Y: 20, Z: 30}: true, // origin + (2,0,0)
+	}
+	for _, r := range placer.reservations {
+		if !wantPositions[r.pos] {
+			t.Errorf("unexpected reservation position %v", r.pos)
+		}
+		if r.structureID == "" {
+			t.Error("reservation.structureID is empty, want a non-empty identifier derived from origin")
+		}
 	}
 }
 

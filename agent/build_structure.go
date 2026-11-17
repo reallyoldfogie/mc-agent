@@ -62,6 +62,18 @@ func buildStructureWith(ctx context.Context, placer structurePlacer, s *structur
 		return models.BuildStructureResult{}, fmt.Errorf("build structure: missing materials: %s", formatMissingMaterials(missing))
 	}
 
+	// reservations is nil for a fake structurePlacer that doesn't
+	// implement models.ReservationRecorder (every existing test's fake,
+	// and any structurePlacer besides *agent) - recordPlacedReservation
+	// is then a no-op, so this is purely additive. structureID is derived
+	// from origin, not from a build-wide identifier BuildStructure doesn't
+	// have reason to invent beyond "where this particular build started" -
+	// good enough to tell two different builds' reservations apart (see
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md Part 4), not meant to be
+	// a stable cross-run build ID.
+	reservations, _ := placer.(models.ReservationRecorder)
+	structureID := fmt.Sprintf("origin(%.0f,%.0f,%.0f)", origin.X, origin.Y, origin.Z)
+
 	var result models.BuildStructureResult
 	total := len(order)
 	for _, b := range order {
@@ -81,6 +93,14 @@ func buildStructureWith(ctx context.Context, placer structurePlacer, s *structur
 			result.Failed = append(result.Failed, models.BuildStructureFailure{Pos: target, Item: entry.Name, Reason: err.Error()})
 		} else {
 			result.Placed++
+			// Recorded one block at a time, right after each successful
+			// placement - not batched until the loop finishes - so a crash
+			// partway through a build never loses the reservation for
+			// whatever was already placed. See Part 4's "Reset/session
+			// lifetime" requirement.
+			if reservations != nil {
+				reservations.RecordReservation(target, structureID)
+			}
 		}
 		if onProgress != nil {
 			onProgress(result.Placed, total)

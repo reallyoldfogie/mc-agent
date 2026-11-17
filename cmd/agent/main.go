@@ -165,6 +165,8 @@ func main() {
 		LogWriter:          packetLogWriter,
 		LogLevel:           logLevel,
 		RCON:               camRCON,
+		MemoryStoreBackend: settings.Memory.Backend,
+		MemoryStoreDir:     settings.Memory.Dir,
 	}
 
 	a, err := agent.New(cfg)

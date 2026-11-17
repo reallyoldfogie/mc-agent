@@ -308,5 +308,7 @@ func (a *agent) findAllVisibleSurfaceBlocks(ctx context.Context, originBlockCoor
 		return results[i].Distance < results[j].Distance
 	})
 
+	a.recordVisibleBlockSightings(results)
+
 	return results, nil
 }

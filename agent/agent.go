@@ -22,6 +22,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/following"
 	"github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/items"
+	"github.com/reallyoldfogie/mc-agent/memorystore"
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/movement"
 	"github.com/reallyoldfogie/mc-agent/pathfinding"
@@ -325,6 +326,14 @@ type agent struct {
 	containerHelper ContainerHelper
 	invMgr          models.InventoryManager
 
+	// worldMemory is this agent's persistent world-memory store
+	// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) — opened once in New
+	// (see openWorldMemory) and never reassigned afterward, so, like
+	// logger/logWriter above, it's safe to read from any goroutine without
+	// a lock; every backend implementation guards its own internal state.
+	// nil if the store couldn't be opened (non-fatal — see New).
+	worldMemory memorystore.Store
+
 	// position heartbeat (continuous position packets at 20 TPS)
 	posHeartbeatMu     sync.Mutex
 	posHeartbeatActive bool
@@ -584,6 +593,19 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 		pendingEntityContainerID: -1, // -1 indicates no container open in flight
 	}
 	a.planRunner = plan.NewRunner(a)
+
+	// Opened once here, for this *agent's whole lifetime — see
+	// openWorldMemory's own doc comment and
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Reset/session
+	// lifetime." Non-fatal if it fails (e.g. an unwritable directory or an
+	// unregistered backend name): the agent still starts, just without
+	// persistent world memory, the same "log warning and continue"
+	// tolerance RegistriesPath gets above.
+	if store, err := openWorldMemory(cfg, name); err != nil {
+		logger.Warn("failed to open persistent world-memory store; continuing without it", "error", err)
+	} else {
+		a.worldMemory = store
+	}
 
 	return a, nil
 }
@@ -1610,6 +1632,16 @@ func (a *agent) Close(ctx context.Context) error {
 			a.rec = nil
 		}
 	}
+
+	// Safe here, not earlier: a.wg.Wait() above already waited out every
+	// in-flight recordVisibleBlockSightings/RecordContainerSighting
+	// goroutine, so nothing is still writing through a.worldMemory.
+	if a.worldMemory != nil {
+		if err := a.worldMemory.Close(); err != nil {
+			a.logf("[Agent %s] [WorldMemory] error closing store: %v", a.cfg.Name, err)
+		}
+	}
+
 	return nil
 }
 
@@ -2018,6 +2050,7 @@ func (a *agent) initializeContainerHelper() {
 		containerHelper.SetEntityIDProvider(a)
 		containerHelper.SetEntityTypeProvider(a.entityRegistry)
 		containerHelper.SetMountStateProvider(a)
+		containerHelper.SetSightingRecorder(a)
 
 		// Set movement handler (for SendPlayerCommand packets)
 		if a.versionHandler != nil {

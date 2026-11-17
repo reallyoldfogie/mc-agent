@@ -58,6 +58,9 @@ type Settings struct {
 	// relevant to cmd/item-courier; Connection/Auth still supply the single
 	// shared player identity used to log into every one of them.
 	Courier CourierSettings `json:"courier"`
+	// Memory configures the persistent world-memory store — see
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md.
+	Memory MemorySettings `json:"memory"`
 }
 
 // AuthSettings configures Microsoft authentication — see
@@ -164,6 +167,20 @@ type CourierServerSettings struct {
 	// Version, if empty, is auto-detected — same convention as
 	// ConnectionSettings.Version.
 	Version string `json:"version"`
+}
+
+// MemorySettings configures the per-agent persistent world-memory store
+// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md): remembered sightings of
+// items/blocks (including container contents) and build-footprint
+// reservations, keyed by Connection.Name and surviving process restarts.
+type MemorySettings struct {
+	// Backend names the registered memorystore backend to use: "json"
+	// (default, no new dependency) or "bbolt" (config-selected opt-in —
+	// see the plan's "Data store options"). Empty uses the default.
+	Backend string `json:"backend"`
+	// Dir is the directory holding per-agent store files, one per
+	// Connection.Name. Empty defaults to "memory".
+	Dir string `json:"dir"`
 }
 
 // EnvSettings is a JSON-friendly mirror of rlenv.Config — StepTimeout

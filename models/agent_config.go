@@ -88,6 +88,13 @@ type AgentConfig struct {
 	// Optional: HPA* debug visualization styling (path steps only)
 	HPADebugPathBlock string // Explicit block name to use (expects <color>_stained_glass)
 	HPADebugPathColor string // Color name to use when block is not specified
+
+	// Persistent world memory (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md):
+	// remembered sightings of items/blocks (including container contents)
+	// and build-footprint reservations, keyed by Name and surviving process
+	// restarts. Both default if left empty — see agent.openWorldMemory.
+	MemoryStoreBackend string // Registered memorystore backend name: "json" (default) or "bbolt"
+	MemoryStoreDir     string // Directory holding per-agent store files, one per Name; defaults to "memory"
 }
 
 // Validate performs basic configuration checks.

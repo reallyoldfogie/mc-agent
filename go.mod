@@ -31,6 +31,7 @@ require (
 	github.com/reallyoldfogie/mc-protocol-go v0.1.0
 	github.com/reallyoldfogie/mc-replay-go v0.0.5
 	github.com/stretchr/testify v1.12.1
+	go.etcd.io/bbolt v1.5.0
 	golang.org/x/tools v0.47.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
