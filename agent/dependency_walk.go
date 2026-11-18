@@ -130,6 +130,17 @@ func firstMemoryLocation(node models.DependencyNode) (models.V3, bool) {
 // the only one found is reserved — mirrors InventoryCount's
 // never-errors-just-reports-the-empty-case contract.
 func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, found bool) {
+	return a.nearestUnreservedSighting(item, memorystore.SightingQuery{})
+}
+
+// nearestUnreservedSighting is locateUnreserved's shared core, factored
+// out so NearestRememberedBlock (mining) can reuse the same
+// position/reservation plumbing with a different SightingQuery
+// (ExcludeContainer: true — a block can't be mined out of a chest) rather
+// than duplicating it. found=false (never an error) on any failure —
+// mirrors InventoryCount's never-errors-just-reports-the-empty-case
+// contract.
+func (a *agent) nearestUnreservedSighting(item string, query memorystore.SightingQuery) (pos models.V3, inContainer bool, found bool) {
 	if a.worldMemory == nil {
 		return models.V3{}, false, false
 	}
@@ -139,7 +150,7 @@ func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, 
 		from = memorystore.Position{X: int(p.X), Y: int(p.Y), Z: int(p.Z)}
 	}
 
-	sighting, ok, err := a.worldMemory.NearestSighting(item, from, memorystore.SightingQuery{})
+	sighting, ok, err := a.worldMemory.NearestSighting(item, from, query)
 	if err != nil || !ok {
 		return models.V3{}, false, false
 	}
@@ -149,6 +160,21 @@ func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, 
 
 	loc := models.V3{X: float64(sighting.Position.X), Y: float64(sighting.Position.Y), Z: float64(sighting.Position.Z)}
 	return loc, sighting.Container != nil, true
+}
+
+// NearestRememberedBlock looks up the nearest remembered, unreserved,
+// *loose* (non-container — see ExcludeContainer) sighting of blockName —
+// "where did I see this, that I could actually go mine," as opposed to
+// NearestIngredientLocation's crafting-dependency-tree semantics (which
+// would wrongly report found=false the moment the bot already holds
+// enough of blockName in inventory, since that's a different question:
+// "do I have enough," not "is there one to mine"). Used both by
+// rlenv.MineTargetMemoryAgent (the mine task's own LOS-loss fallback,
+// Environment.rememberedMineTarget) and by any future "go mine a
+// remembered block" retrieval action.
+func (a *agent) NearestRememberedBlock(blockName string) (pos models.V3, found bool, err error) {
+	pos, _, found = a.nearestUnreservedSighting(normalizeItemName(blockName), memorystore.SightingQuery{ExcludeContainer: true})
+	return pos, found, nil
 }
 
 // resolveDependencies is ResolveDependencies' testable core, taking every

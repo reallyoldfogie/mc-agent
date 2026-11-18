@@ -1261,6 +1261,26 @@ func (f *fakeIngredientMemoryAgent) NearestIngredientLocation(itemName string) (
 	return f.pos, f.found, f.err
 }
 
+// fakeMineTargetMemoryAgent wraps fakeAgent to additionally satisfy
+// rlenv.MineTargetMemoryAgent — same reason as fakeIngredientMemoryAgent:
+// existing tests using plain fakeAgent keep exercising
+// rememberedMineTarget's own "agent doesn't support this capability"
+// no-op path. pos/found/err are mutable directly by the test.
+type fakeMineTargetMemoryAgent struct {
+	*fakeAgent
+	pos                         models.V3
+	found                       bool
+	err                         error
+	nearestRememberedBlockCalls []string
+}
+
+func (f *fakeMineTargetMemoryAgent) NearestRememberedBlock(blockName string) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nearestRememberedBlockCalls = append(f.nearestRememberedBlockCalls, blockName)
+	return f.pos, f.found, f.err
+}
+
 type blockExistsInRadiusCall struct {
 	x, y, z   float64
 	blockName string

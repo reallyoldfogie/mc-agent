@@ -44,8 +44,26 @@ type Config struct {
 	// nearest visible MineTargetBlock instance, in blocks. Ignored if
 	// MineTargetBlock is empty. <= 0 defers to FindVisibleBlock's own
 	// built-in default (8 blocks, see agent/actions.go) rather than being
-	// validated here.
+	// validated here. Also bounds UseMineTargetMemory's fallback, below.
 	MineSearchRadius int
+
+	// UseMineTargetMemory, if true, fills the gap live FindVisibleBlock
+	// leaves the instant line-of-sight on MineTargetBlock is lost:
+	// mineDx/Dy/Dz/mineVisible (indices 9-12) go straight to zero today
+	// even if the persistent world-memory store
+	// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) remembers exactly
+	// where that block type was last seen. With this set, losing live
+	// LOS falls back to the nearest remembered, unreserved, non-container
+	// sighting of MineTargetBlock (via rlenv.MineTargetMemoryAgent),
+	// still bounded by MineSearchRadius so memory can't send the policy
+	// arbitrarily far outside this task's working area. Reuses the
+	// existing mineDx/Dy/Dz/mineVisible fields as-is — unlike
+	// UseCraftIngredientMemory/UsePlaceIngredientMemory, this needed no
+	// new observation dims, since mine already had a position signal to
+	// begin with (operator direction, 2026-11-17: "fill the gap with
+	// mining LOS loss"). false (the default) means zero behavior change,
+	// same "defaults off, explicit opt-in" shape as the other two.
+	UseMineTargetMemory bool
 
 	// MineRequiredTool, if set, is an item name (e.g.
 	// "minecraft:wooden_pickaxe") DefaultEpisodeSeeder ensures is in the

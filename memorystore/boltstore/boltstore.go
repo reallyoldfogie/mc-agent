@@ -29,8 +29,20 @@ func init() {
 }
 
 var (
-	sightingsBucket    = []byte("sightings")
-	reservationsBucket = []byte("reservations")
+	sightingsBucket = []byte("sightings")
+	// containerSightingsBucket holds only container-slot sightings,
+	// keyed purely by (ContainerPos, SlotIndex) rather than by item name
+	// — a container slot's identity is the slot itself, not whichever
+	// item currently occupies it, so this bucket can cleanly overwrite
+	// (RecordSighting, a different item at the same slot) or clear
+	// (ForgetContainerSlot, the slot became empty) a stale record
+	// without needing a reverse index from slot to whatever key an
+	// item-name-prefixed scheme would have used. Expected to stay small
+	// (bounded by containers actually opened × their slot counts), so
+	// NearestSighting's full scan over it is cheap even without the
+	// item-name-prefix optimization sightingsBucket gets.
+	containerSightingsBucket = []byte("container_sightings")
+	reservationsBucket       = []byte("reservations")
 )
 
 // Store is boltstore's memorystore.Store implementation: a thin wrapper
@@ -63,6 +75,23 @@ func New(cfg memorystore.Config) (memorystore.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("boltstore: open %s: %w", path, err)
 	}
+
+	// Idempotent: ensures every bucket this backend expects exists,
+	// including on a file created before containerSightingsBucket
+	// existed — createEmptyBoltFile only runs for a brand-new file, so a
+	// store that predates a bucket addition needs this to pick it up.
+	if err := db.Update(func(tx *bolt.Tx) error {
+		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, reservationsBucket} {
+			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("boltstore: ensure buckets in %s: %w", path, err)
+	}
+
 	return &Store{db: db}, nil
 }
 
@@ -100,11 +129,10 @@ func createEmptyBoltFile(dir, path string) error {
 		return fmt.Errorf("boltstore: init %s: %w", tmpPath, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(sightingsBucket); err != nil {
-			return err
-		}
-		if _, err := tx.CreateBucketIfNotExists(reservationsBucket); err != nil {
-			return err
+		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, reservationsBucket} {
+			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -128,20 +156,17 @@ func createEmptyBoltFile(dir, path string) error {
 }
 
 // sightingKey is itemOrBlockName + a NUL separator + the sighting's
-// encoded position (and, if set, its container ref) — the item-name
+// encoded position — only ever used for loose (non-container) sightings
+// now (see containerSightingsBucket's own doc comment for why container
+// sightings live in a separate bucket, keyed differently). The item-name
 // prefix is what lets NearestSighting narrow its scan to exactly one
 // item's records via bbolt's ordered b-tree Cursor.Seek, rather than
-// walking every sighting this store has ever recorded.
+// walking every loose sighting this store has ever recorded.
 func sightingKey(s memorystore.Sighting) []byte {
 	var buf bytes.Buffer
 	buf.WriteString(s.ItemOrBlockName)
 	buf.WriteByte(0)
 	writePosition(&buf, s.Position)
-	if s.Container != nil {
-		buf.WriteByte(1)
-		writePosition(&buf, s.Container.ContainerPos)
-		writeInt64(&buf, int64(s.Container.SlotIndex))
-	}
 	return buf.Bytes()
 }
 
@@ -149,6 +174,17 @@ func sightingKeyPrefix(itemOrBlockName string) []byte {
 	var buf bytes.Buffer
 	buf.WriteString(itemOrBlockName)
 	buf.WriteByte(0)
+	return buf.Bytes()
+}
+
+// containerSlotKey identifies one container slot — a container
+// sighting's whole identity (see containerSightingsBucket's own doc
+// comment), independent of whatever item name ends up stored as the
+// value at this key.
+func containerSlotKey(containerPos memorystore.Position, slotIndex int) []byte {
+	var buf bytes.Buffer
+	writePosition(&buf, containerPos)
+	writeInt64(&buf, int64(slotIndex))
 	return buf.Bytes()
 }
 
@@ -176,11 +212,20 @@ func writeInt64(buf *bytes.Buffer, v int64) {
 	buf.Write(b[:])
 }
 
-// RecordSighting implements memorystore.Store.
+// RecordSighting implements memorystore.Store. Routes to
+// containerSightingsBucket, keyed by slot, for a container sighting —
+// see that bucket's own doc comment for why — or to sightingsBucket,
+// keyed by item name, for a loose one.
 func (s *Store) RecordSighting(sighting memorystore.Sighting) error {
 	data, err := json.Marshal(sighting)
 	if err != nil {
 		return fmt.Errorf("boltstore: encode sighting: %w", err)
+	}
+	if sighting.Container != nil {
+		key := containerSlotKey(sighting.Container.ContainerPos, sighting.Container.SlotIndex)
+		return s.db.Update(func(tx *bolt.Tx) error {
+			return tx.Bucket(containerSightingsBucket).Put(key, data)
+		})
 	}
 	key := sightingKey(sighting)
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -189,10 +234,13 @@ func (s *Store) RecordSighting(sighting memorystore.Sighting) error {
 }
 
 // NearestSighting implements memorystore.Store. Scans every key under
-// itemOrBlockName's prefix (so cost scales with how many times this one
-// item has been seen, not with the whole store) and picks the closest
-// match in Go — true spatial range queries are left to a future backend,
-// per the plan's "Why not also stand up sqlite now."
+// itemOrBlockName's prefix in sightingsBucket (so cost scales with how
+// many times this one item has been seen loose, not with the whole
+// store) plus every entry in containerSightingsBucket (bounded by
+// containers actually opened — see that bucket's own doc comment),
+// filtering the latter by item name in Go since it isn't keyed by name.
+// True spatial range queries are left to a future backend, per the
+// plan's "Why not also stand up sqlite now."
 func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Position, query memorystore.SightingQuery) (memorystore.Sighting, bool, error) {
 	var (
 		best     memorystore.Sighting
@@ -200,24 +248,40 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 		found    bool
 	)
 	now := time.Now()
-	prefix := sightingKeyPrefix(itemOrBlockName)
+
+	consider := func(sighting memorystore.Sighting) {
+		if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
+			return
+		}
+		dist := from.Distance2(sighting.Position)
+		if !found || dist < bestDist {
+			best, bestDist, found = sighting, dist, true
+		}
+	}
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		c := tx.Bucket(sightingsBucket).Cursor()
-		for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
-			var sighting memorystore.Sighting
-			if err := json.Unmarshal(v, &sighting); err != nil {
-				return fmt.Errorf("boltstore: decode sighting: %w", err)
+		if !query.ContainerOnly {
+			prefix := sightingKeyPrefix(itemOrBlockName)
+			c := tx.Bucket(sightingsBucket).Cursor()
+			for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, v = c.Next() {
+				var sighting memorystore.Sighting
+				if err := json.Unmarshal(v, &sighting); err != nil {
+					return fmt.Errorf("boltstore: decode sighting: %w", err)
+				}
+				consider(sighting)
 			}
-			if query.ContainerOnly && sighting.Container == nil {
-				continue
-			}
-			if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
-				continue
-			}
-			dist := from.Distance2(sighting.Position)
-			if !found || dist < bestDist {
-				best, bestDist, found = sighting, dist, true
+		}
+		if !query.ExcludeContainer {
+			c := tx.Bucket(containerSightingsBucket).Cursor()
+			for k, v := c.First(); k != nil; k, v = c.Next() {
+				var sighting memorystore.Sighting
+				if err := json.Unmarshal(v, &sighting); err != nil {
+					return fmt.Errorf("boltstore: decode container sighting: %w", err)
+				}
+				if sighting.ItemOrBlockName != itemOrBlockName {
+					continue
+				}
+				consider(sighting)
 			}
 		}
 		return nil
@@ -226,6 +290,14 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 		return memorystore.Sighting{}, false, err
 	}
 	return best, found, nil
+}
+
+// ForgetContainerSlot implements memorystore.Store.
+func (s *Store) ForgetContainerSlot(containerPos memorystore.Position, slotIndex int) error {
+	key := containerSlotKey(containerPos, slotIndex)
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(containerSightingsBucket).Delete(key)
+	})
 }
 
 // RecordReservation implements memorystore.Store.

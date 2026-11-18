@@ -461,12 +461,21 @@ func (ch *ContainerHelper) GetContainerType(windowID byte) ContainerType {
 	}
 }
 
-// recordChestSightings reports every non-empty slot in chest to
-// ch.sightingRecorder, anchored at whatever block position OpenContainer
-// recorded for windowID — the passive listening point Part 3 of
+// recordChestSightings reports every slot in chest to ch.sightingRecorder,
+// anchored at whatever block position OpenContainer recorded for
+// windowID — the passive listening point Part 3 of
 // docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md describes. A no-op if no
 // recorder is set, or if windowID has no known position (entity
 // containers, e.g. a chest boat, never get one — see openPositions).
+//
+// Every slot is reported, not just non-empty ones: an empty slot is
+// reported with ItemID 0, which ContainerSightingRecorder's contract
+// defines as "forget whatever was recorded here" (see that type's own
+// doc comment). Skipping empty slots entirely — the original
+// implementation — left a stale "item present" record behind forever
+// once the bot itself took the last item out of a slot, since nothing
+// else would ever overwrite it; found live tracing through exactly that
+// scenario (operator question, 2026-11-17).
 func (ch *ContainerHelper) recordChestSightings(windowID byte, chest *mcscreen.Chest) {
 	if ch.sightingRecorder == nil {
 		return
@@ -476,13 +485,14 @@ func (ch *ContainerHelper) recordChestSightings(windowID byte, chest *mcscreen.C
 		return
 	}
 	for slotIndex, slot := range chest.Slots {
+		itemID := int32(slot.ID)
 		if slot.Count == 0 {
-			continue
+			itemID = 0
 		}
 		ch.sightingRecorder.RecordContainerSighting(ContainerSighting{
 			ContainerPos: pos,
 			SlotIndex:    slotIndex,
-			ItemID:       int32(slot.ID),
+			ItemID:       itemID,
 		})
 	}
 }

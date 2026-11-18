@@ -65,6 +65,12 @@ type SightingQuery struct {
 	// ContainerOnly, if true, only considers sightings with a non-nil
 	// Container (i.e. remembered container-slot contents).
 	ContainerOnly bool
+	// ExcludeContainer, if true, only considers loose (non-container)
+	// sightings — the opposite restriction from ContainerOnly, for a
+	// caller that means to go mine a block and so can't use a result
+	// sitting inside a container. Mutually exclusive with ContainerOnly
+	// in practice; setting both just returns no results.
+	ExcludeContainer bool
 	// MaxAge, if non-zero, excludes sightings older than this relative to
 	// time.Now() — the simplest staleness policy the plan recommends for
 	// v1 (age-based expiry, not active invalidation).
@@ -96,6 +102,17 @@ type Store interface {
 	// IsReserved reports whether pos has already been claimed by a prior
 	// (or in-progress) build.
 	IsReserved(pos Position) (bool, error)
+
+	// ForgetContainerSlot removes whatever sighting is currently recorded
+	// for the exact slot (containerPos, slotIndex), regardless of which
+	// item it names. A container slot's identity is the slot itself, not
+	// whichever item currently occupies it — recording a *different* item
+	// at the same slot already overwrites cleanly (RecordSighting), but
+	// the slot becoming *empty* has no item name to record a replacement
+	// under, so this is the only way to clear a now-stale "item present"
+	// record. Must be durable before this returns, same as every other
+	// write. A no-op, not an error, if nothing was recorded at that slot.
+	ForgetContainerSlot(containerPos Position, slotIndex int) error
 
 	// Close releases any resources (open file handles, bbolt's file
 	// lock, ...) the backend holds. Safe to call once a Store is no

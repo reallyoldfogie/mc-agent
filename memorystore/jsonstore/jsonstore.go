@@ -99,22 +99,25 @@ func (s *Store) RecordSighting(sighting memorystore.Sighting) error {
 	return s.flushLocked()
 }
 
-// sameSighting reports whether a and b refer to the same remembered slot
-// — same item/block, same position, and (if either has one) the same
-// container+slot — so a fresh observation refreshes the existing record
-// (per Part 1's "becomes (or refreshes) a record") instead of piling up
-// duplicates for the same spot.
+// sameSighting reports whether a and b refer to the same remembered slot,
+// so a fresh observation refreshes the existing record (per Part 1's
+// "becomes (or refreshes) a record") instead of piling up duplicates for
+// the same spot. A loose (non-container) sighting's identity is its
+// item/block name plus position. A container sighting's identity is the
+// slot itself (ContainerPos+SlotIndex) only — not which item currently
+// occupies it: a different item placed in the same slot must overwrite
+// the old record, not sit alongside it, since nothing else could ever
+// make the stale one go away (see jsonstore.Store.ForgetContainerSlot for
+// the complementary "slot became empty" case, which has no replacement
+// item to record under and so can't go through this path at all).
 func sameSighting(a, b memorystore.Sighting) bool {
-	if a.ItemOrBlockName != b.ItemOrBlockName || a.Position != b.Position {
-		return false
-	}
 	if (a.Container == nil) != (b.Container == nil) {
 		return false
 	}
-	if a.Container != nil && *a.Container != *b.Container {
-		return false
+	if a.Container != nil {
+		return *a.Container == *b.Container
 	}
-	return true
+	return a.ItemOrBlockName == b.ItemOrBlockName && a.Position == b.Position
 }
 
 // NearestSighting implements memorystore.Store. A full scan — jsonstore's
@@ -136,6 +139,9 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 			continue
 		}
 		if query.ContainerOnly && sighting.Container == nil {
+			continue
+		}
+		if query.ExcludeContainer && sighting.Container != nil {
 			continue
 		}
 		if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
@@ -167,6 +173,31 @@ func (s *Store) IsReserved(pos memorystore.Position) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.reserved[pos], nil
+}
+
+// ForgetContainerSlot implements memorystore.Store. Filters in place
+// (the standard Go "keep what passes" idiom: reslicing to length 0 of the
+// same backing array and appending only kept elements as we scan forward
+// is safe here since the kept index never runs ahead of the read index).
+func (s *Store) ForgetContainerSlot(containerPos memorystore.Position, slotIndex int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	target := memorystore.ContainerRef{ContainerPos: containerPos, SlotIndex: slotIndex}
+	kept := s.contents.Sightings[:0]
+	removed := false
+	for _, sighting := range s.contents.Sightings {
+		if sighting.Container != nil && *sighting.Container == target {
+			removed = true
+			continue
+		}
+		kept = append(kept, sighting)
+	}
+	s.contents.Sightings = kept
+	if !removed {
+		return nil
+	}
+	return s.flushLocked()
 }
 
 // Close implements memorystore.Store. No open handle to release — every

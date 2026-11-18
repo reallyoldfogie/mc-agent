@@ -23,6 +23,9 @@ func Run(t *testing.T, factory memorystore.Factory) {
 	t.Run("RefreshesExistingSighting", func(t *testing.T) { testRefreshesExistingSighting(t, factory) })
 	t.Run("NearestPicksClosest", func(t *testing.T) { testNearestPicksClosest(t, factory) })
 	t.Run("ContainerOnlyFilter", func(t *testing.T) { testContainerOnlyFilter(t, factory) })
+	t.Run("ExcludeContainerFilter", func(t *testing.T) { testExcludeContainerFilter(t, factory) })
+	t.Run("DifferentItemAtSameSlotSupersedes", func(t *testing.T) { testDifferentItemAtSameSlotSupersedes(t, factory) })
+	t.Run("ForgetContainerSlotRemovesSighting", func(t *testing.T) { testForgetContainerSlotRemovesSighting(t, factory) })
 	t.Run("MaxAgeFilter", func(t *testing.T) { testMaxAgeFilter(t, factory) })
 	t.Run("ReservationIsAddOnly", func(t *testing.T) { testReservationIsAddOnly(t, factory) })
 	t.Run("PersistsAcrossReopen", func(t *testing.T) { testPersistsAcrossReopen(t, factory) })
@@ -103,6 +106,83 @@ func testContainerOnlyFilter(t *testing.T, factory memorystore.Factory) {
 	require.True(t, found)
 	require.Equal(t, inChest, got.Position)
 	require.NotNil(t, got.Container)
+}
+
+func testExcludeContainerFilter(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+
+	loose := memorystore.Position{X: 1, Y: 0, Z: 0}
+	inChest := memorystore.Position{X: 2, Y: 0, Z: 0}
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:iron_ore", Position: loose, ObservedAt: time.Now()}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:iron_ore",
+		Position:        inChest,
+		ObservedAt:      time.Now(),
+		Container:       &memorystore.ContainerRef{ContainerPos: inChest, SlotIndex: 0},
+	}))
+
+	// A caller meaning to go mine a block (e.g. refreshMineTarget's
+	// memory fallback) can't act on a result sitting inside a container.
+	got, found, err := store.NearestSighting("minecraft:iron_ore", memorystore.Position{}, memorystore.SightingQuery{ExcludeContainer: true})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, loose, got.Position)
+	require.Nil(t, got.Container)
+}
+
+// testDifferentItemAtSameSlotSupersedes guards the exact bug this plan's
+// operator flagged live: a chest slot's identity is the slot, not
+// whichever item currently occupies it. Recording a second, different
+// item at the same (ContainerPos, SlotIndex) must replace the first
+// record, never leave both findable at once.
+func testDifferentItemAtSameSlotSupersedes(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+	containerPos := memorystore.Position{X: 5, Y: 5, Z: 5}
+	ref := &memorystore.ContainerRef{ContainerPos: containerPos, SlotIndex: 2}
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:iron_ingot", Position: containerPos, ObservedAt: time.Now(), Container: ref,
+	}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:gold_ingot", Position: containerPos, ObservedAt: time.Now(), Container: ref,
+	}))
+
+	_, found, err := store.NearestSighting("minecraft:iron_ingot", memorystore.Position{}, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.False(t, found, "the stale iron_ingot record must not still be findable once gold_ingot replaced it at the same slot")
+
+	got, found, err := store.NearestSighting("minecraft:gold_ingot", memorystore.Position{}, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, containerPos, got.Position)
+}
+
+// testForgetContainerSlotRemovesSighting covers the complementary case:
+// a slot that became empty (no replacement item to record under) must
+// be explicitly forgettable, or the old "item present" record would
+// never go away.
+func testForgetContainerSlotRemovesSighting(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+	containerPos := memorystore.Position{X: 9, Y: 9, Z: 9}
+	ref := &memorystore.ContainerRef{ContainerPos: containerPos, SlotIndex: 1}
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:bread", Position: containerPos, ObservedAt: time.Now(), Container: ref,
+	}))
+	_, found, err := store.NearestSighting("minecraft:bread", memorystore.Position{}, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.True(t, found)
+
+	require.NoError(t, store.ForgetContainerSlot(containerPos, 1))
+
+	_, found, err = store.NearestSighting("minecraft:bread", memorystore.Position{}, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.False(t, found, "a forgotten slot must not still be findable")
+
+	// Forgetting an already-empty/never-recorded slot is a no-op, not an
+	// error.
+	require.NoError(t, store.ForgetContainerSlot(containerPos, 1))
+	require.NoError(t, store.ForgetContainerSlot(memorystore.Position{X: 1, Y: 2, Z: 3}, 99))
 }
 
 func testMaxAgeFilter(t *testing.T, factory memorystore.Factory) {

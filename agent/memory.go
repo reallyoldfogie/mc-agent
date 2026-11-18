@@ -76,8 +76,24 @@ func (a *agent) recordVisibleBlockSightings(blocks []models.VisibleBlockInfo) {
 // so items.ContainerHelper doesn't need its own ItemManager dependency on
 // top of its existing optional providers just to report what it already
 // read.
+//
+// s.ItemID == 0 means the slot is now empty (see that field's own doc
+// comment) — forgets whatever was recorded for this exact slot instead of
+// trying to record a sighting with no item name, so a slot the bot itself
+// emptied doesn't leave a stale "item present" record behind forever.
 func (a *agent) RecordContainerSighting(s models.ContainerSighting) {
-	if a.worldMemory == nil || s.ItemID == 0 {
+	if a.worldMemory == nil {
+		return
+	}
+	if s.ItemID == 0 {
+		pos := memorystore.Position{X: int(s.ContainerPos.X), Y: int(s.ContainerPos.Y), Z: int(s.ContainerPos.Z)}
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			if err := a.worldMemory.ForgetContainerSlot(pos, s.SlotIndex); err != nil {
+				a.logf("[Agent %s] [WorldMemory] failed to forget container slot %v[%d]: %v", a.cfg.Name, pos, s.SlotIndex, err)
+			}
+		}()
 		return
 	}
 	itemMgr := a.GetItemManager()

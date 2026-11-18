@@ -1640,6 +1640,24 @@ type IngredientMemoryAgent interface {
 	NearestIngredientLocation(itemName string) (pos models.V3, found bool, err error)
 }
 
+// MineTargetMemoryAgent is the optional capability
+// Environment.rememberedMineTarget uses to fall back to the persistent
+// world-memory store when live line-of-sight on Config.MineTargetBlock
+// is lost — see Config.UseMineTargetMemory's own doc comment (task.go).
+// Deliberately a different method from IngredientMemoryAgent's
+// NearestIngredientLocation, not a reuse of it: that one's crafting-
+// dependency-tree semantics would report found=false the instant the
+// bot already holds enough of the target in inventory (a different
+// question — "do I have enough" vs. "is there one to mine"), and it
+// doesn't exclude container sightings (a block can't be mined out of a
+// chest). Same "an agent that doesn't implement this is left alone, not
+// failed over" convention as BuriedTargetAgent/TimeOfDayAgent above.
+type MineTargetMemoryAgent interface {
+	// NearestRememberedBlock returns the nearest remembered, unreserved,
+	// non-container sighting of blockName, or found=false if none exists.
+	NearestRememberedBlock(blockName string) (pos models.V3, found bool, err error)
+}
+
 // TimeOfDayAgent is an optional capability (same pattern as
 // BuriedTargetAgent above - not every CommandAgent implementation knows
 // the world's own clock) that refreshTimeOfDay uses to drive
@@ -1978,11 +1996,59 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("rlenv: resolving mine target: %w", err)
 	}
+	if !found {
+		if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
+			x, y, z, found = memX, memY, memZ, true
+		}
+	}
 	e.mineX, e.mineY, e.mineZ, e.mineVisible = x, y, z, found
 	if found {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = x, y, z, true
 	}
 	return nil
+}
+
+// rememberedMineTarget falls back to the persistent world-memory store
+// for target when live LOS (FindVisibleBlock) can't currently see it —
+// see Config.UseMineTargetMemory's own doc comment (task.go). Reuses
+// mineDx/Dy/Dz/mineVisible as-is rather than a separate gated
+// observation block like craft/place got (Config.UseCraftIngredientMemory/
+// UsePlaceIngredientMemory), since mine already had a position signal to
+// begin with — a cheaper fix than those two needed.
+//
+// A stale memory accepted here is harmless: MineBlockAt already re-reads
+// the live block state once the bot arrives and is a safe no-op if it's
+// already air (see that function's own "already air" early return), so
+// this only ever has to be approximately right, not verified in advance.
+// Bounded by MineSearchRadius (the same radius the live search above
+// already uses) so memory can't send the policy arbitrarily far outside
+// this task's working area just because that happens to be the
+// nearest-ever-recorded sighting.
+func (e *Environment) rememberedMineTarget(target string) (x, y, z float64, found bool) {
+	if !e.cfg.UseMineTargetMemory {
+		return 0, 0, 0, false
+	}
+	locator, ok := e.agent.(MineTargetMemoryAgent)
+	if !ok {
+		return 0, 0, 0, false
+	}
+	pos, memFound, err := locator.NearestRememberedBlock(target)
+	if err != nil || !memFound {
+		return 0, 0, 0, false
+	}
+	botPos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return 0, 0, 0, false
+	}
+	radius := e.cfg.MineSearchRadius
+	if radius <= 0 {
+		radius = DefaultConfig().MineSearchRadius
+	}
+	dx, dy, dz := pos.X-botPos.X, pos.Y-botPos.Y, pos.Z-botPos.Z
+	if dx*dx+dy*dy+dz*dz > float64(radius)*float64(radius) {
+		return 0, 0, 0, false
+	}
+	return pos.X, pos.Y, pos.Z, true
 }
 
 // refreshSleepTarget mirrors refreshMineTarget exactly, searching for a bed
