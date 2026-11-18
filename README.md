@@ -152,6 +152,7 @@ own dispatch and are omitted here — see [RL Action Space](#rl-action-space-rle
 | `place <itemName>` | Place a block from inventory on a standable cell beside the bot |
 | `buildStructure <path> <x> <y> <z>` | Load a vanilla Structure Block `.nbt` template and build it via real block placement, origin at `<x> <y> <z>` (see [docs/STRUCTURE_LOADER.md](docs/STRUCTURE_LOADER.md)) |
 | `materialList <structurePath> [exportPath]` | Report (and, with `exportPath`, persist to JSON) the materials a structure needs |
+| `craftPlan <itemName> [count]` | Report the full crafting-dependency tree for an item - inventory/remembered-location (with confidence)/craft-recurse/unknown per ingredient - without acting on it |
 | `equip <item>` | Find an item in inventory and wear/wield it |
 | `useItem [offhand]` | Use/right-click the currently held item |
 
