@@ -851,7 +851,7 @@ func (a *agent) Init(ctx context.Context) error {
 			if err := dataCache.EnsureDataGenerated(a.cfg.Authenticated); err == nil {
 				blocksJSONPath, err := dataCache.GetBlocksJSONPath(a.cfg.Authenticated)
 				if err == nil {
-					if spl, err := pathfinding.NewStatePropertyLoader(blocksJSONPath); err == nil {
+					if spl, err := pathfinding.NewSharedStatePropertyLoader(blocksJSONPath); err == nil {
 						stateProps = spl
 						a.logf("[Agent %s] Loaded block state properties from cache", a.cfg.Name)
 					} else {
@@ -863,7 +863,7 @@ func (a *agent) Init(ctx context.Context) error {
 			} else {
 				a.logf("[Agent %s] Warning: failed to generate Minecraft data cache: %v", a.cfg.Name, err)
 			}
-			shapeMgr, err = pathfinding.NewBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps, a.logger)
+			shapeMgr, err = pathfinding.NewSharedBlockShapeManager(a.cfg.Version, dataBasePath, a.blockMgr, stateProps, a.logger)
 			if err != nil {
 				a.logf("[Agent %s] Warning: failed to create block shape manager: %v", a.cfg.Name, err)
 			} else {
