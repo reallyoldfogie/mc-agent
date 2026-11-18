@@ -38,9 +38,9 @@ type ContainerHelper struct {
 	packetMgr          protocol_models.PacketMgr
 	movementHandler    models.MovementHandler // Version-specific movement handler
 	currentWindowID    byte
-	entityIDProvider   EntityIDProvider   // Optional: for entity containers that need player's entity ID
-	entityTypeProvider EntityTypeProvider // Optional: for choosing how to interact with entity containers
-	mountStateProvider MountStateProvider // Optional: confirms mount completed before OPEN_INVENTORY is sent
+	entityIDProvider   EntityIDProvider          // Optional: for entity containers that need player's entity ID
+	entityTypeProvider EntityTypeProvider        // Optional: for choosing how to interact with entity containers
+	mountStateProvider MountStateProvider        // Optional: confirms mount completed before OPEN_INVENTORY is sent
 	sightingRecorder   ContainerSightingRecorder // Optional: reports container-slot contents opportunistically, see SetSightingRecorder
 
 	// openPositions remembers which block position OpenContainer opened

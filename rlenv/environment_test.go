@@ -67,13 +67,15 @@ func TestObservationSizeAndActionSpace(t *testing.T) {
 	// branch's own 21-65 numbering when it merged; 76-80 are
 	// portalDx/Dy/Dz/portalVisible/goalPortalActive, added by
 	// docs/plans/NETHER_END_PORTAL_TRANSFER_PLAN.md (local/untracked)
-	// Phase 7's rlenv follow-up — see observation.go's own doc comment on
-	// observationSize for the full layout. This exact value is also what
-	// makes cmd/rl-train's EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d")
-	// automatically reject an old checkpoint trained against a shorter
-	// observation.
-	if got := env.ObservationSize(); got != 86 {
-		t.Fatalf("ObservationSize() = %d, want 86", got)
+	// Phase 7's rlenv follow-up; 86-89 are
+	// craftIngredientDx/Dy/Dz/craftIngredientValid, added by
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md (local/untracked) —
+	// see observation.go's own doc comment on observationSize for the
+	// full layout. This exact value is also what makes cmd/rl-train's
+	// EnvironmentID ("mc-agent-rlenv:actions=%d:obs=%d") automatically
+	// reject an old checkpoint trained against a shorter observation.
+	if got := env.ObservationSize(); got != 90 {
+		t.Fatalf("ObservationSize() = %d, want 90", got)
 	}
 	if got := env.ActionSpace(); got != rlenv.NumActions {
 		t.Fatalf("ActionSpace() = %d, want %d", got, rlenv.NumActions)
@@ -88,8 +90,8 @@ func TestResetCapturesOriginAndPosesTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reset: %v", err)
 	}
-	if len(obs.Values) != 86 {
-		t.Fatalf("len(obs.Values) = %d, want 86 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
+	if len(obs.Values) != 90 {
+		t.Fatalf("len(obs.Values) = %d, want 90 (see TestObservationSizeAndActionSpace's own comment)", len(obs.Values))
 	}
 	if dx := obs.Values[0]; dx != 5 {
 		t.Fatalf("dx = %v, want 5 (target offset)", dx)

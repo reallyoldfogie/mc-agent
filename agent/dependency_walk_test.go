@@ -110,6 +110,44 @@ func TestResolveDependencies_PrefersMemoryOverCraftingWhenAvailable(t *testing.T
 	}
 }
 
+func TestFirstMemoryLocation_FindsDeepestRememberedNode(t *testing.T) {
+	rememberedPos := models.V3{X: 1, Y: 2, Z: 3}
+	tree := models.DependencyNode{
+		Item:   "minecraft:stick",
+		Source: models.SourceCraft,
+		Children: []models.DependencyNode{
+			{
+				Item:   "minecraft:oak_planks",
+				Source: models.SourceCraft,
+				Children: []models.DependencyNode{
+					{Item: "minecraft:oak_log", Source: models.SourceMemory, LocationPos: rememberedPos},
+				},
+			},
+		},
+	}
+
+	pos, found := firstMemoryLocation(tree)
+	if !found {
+		t.Fatalf("firstMemoryLocation: found = false, want true")
+	}
+	if pos != rememberedPos {
+		t.Errorf("pos = %v, want %v", pos, rememberedPos)
+	}
+}
+
+func TestFirstMemoryLocation_NotFoundWhenNoMemoryNodeExists(t *testing.T) {
+	tree := models.DependencyNode{
+		Item:   "minecraft:stick",
+		Source: models.SourceCraft,
+		Children: []models.DependencyNode{
+			{Item: "minecraft:oak_planks", Source: models.SourceUnknown},
+		},
+	}
+	if _, found := firstMemoryLocation(tree); found {
+		t.Fatalf("firstMemoryLocation: found = true, want false (no SourceMemory node anywhere in the tree)")
+	}
+}
+
 func TestResolveDependencies_UnknownSourceWhenNoRecipe(t *testing.T) {
 	node := resolveDependencies(map[string]craftingRecipe{}, noHave, noLocate, 1, "minecraft:diamond", 0)
 	if node.Source != models.SourceUnknown {

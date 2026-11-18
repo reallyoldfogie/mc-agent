@@ -91,6 +91,38 @@ func (a *agent) ResolveDependencies(itemName string, needed int) (models.Depende
 	return resolveDependencies(recipes, a.InventoryCount, a.locateUnreserved, needed, normalizeItemName(itemName), 0), nil
 }
 
+// NearestCraftIngredientLocation resolves itemName's full dependency tree
+// (ResolveDependencies) and returns the first remembered-and-unreserved
+// ingredient location found anywhere in it — a single representative
+// "go here" point, for callers (rlenv's observation builder, via
+// rlenv.CraftIngredientMemoryAgent) that want one position rather than
+// the whole tree. found=false if itemName already looks satisfied, has no
+// known recipe, or no ingredient anywhere in its tree has a remembered
+// location.
+func (a *agent) NearestCraftIngredientLocation(itemName string) (pos models.V3, found bool, err error) {
+	node, err := a.ResolveDependencies(itemName, 1)
+	if err != nil {
+		return models.V3{}, false, err
+	}
+	pos, found = firstMemoryLocation(node)
+	return pos, found, nil
+}
+
+// firstMemoryLocation walks node's tree, in the same order
+// resolveDependencies/resolveRequirement built it, and returns the first
+// SourceMemory node's location it finds.
+func firstMemoryLocation(node models.DependencyNode) (models.V3, bool) {
+	if node.Source == models.SourceMemory {
+		return node.LocationPos, true
+	}
+	for _, child := range node.Children {
+		if pos, ok := firstMemoryLocation(child); ok {
+			return pos, true
+		}
+	}
+	return models.V3{}, false
+}
+
 // locateUnreserved looks up item's nearest remembered sighting and
 // excludes it if that position has already been claimed by a build — see
 // Part 4's "treat a reserved position as off-limits." found=false (never

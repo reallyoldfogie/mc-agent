@@ -207,6 +207,21 @@ type Config struct {
 	// applies no table condition. Ignored if CraftTargetItem is empty.
 	CraftSearchRadius int
 
+	// UseCraftIngredientMemory, if true, makes the craft task consult the
+	// agent's persistent world-memory store (see
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) for a remembered, not-
+	// yet-reserved location of CraftTargetItem's own missing-ingredient
+	// chain whenever craftReady is false — see the observation's own
+	// craftIngredientDx/Dy/Dz/Valid doc comment (observation.go). false
+	// (the default) means these features are always zero, exactly as if
+	// the agent had never seen anything: per the plan's "new vector items
+	// default to 0/nil until explicitly turned on" requirement, this is a
+	// deliberate opt-in a training run takes, not something that changes
+	// an existing run's observation values just by upgrading. Ignored if
+	// CraftTargetItem is empty, or if the live agent doesn't implement
+	// CraftIngredientMemoryAgent.
+	UseCraftIngredientMemory bool
+
 	// PickupTargetItem, if set, is the item name (e.g. "minecraft:stick")
 	// this episode's item-pickup task targets — enables ActionPickUpItem,
 	// following MineTargetBlock's exact "environment poses the task"

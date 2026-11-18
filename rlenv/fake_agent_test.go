@@ -1239,6 +1239,28 @@ type fakeBuriedTargetAgent struct {
 	blockExistsInRadiusCalls []blockExistsInRadiusCall
 }
 
+// fakeCraftIngredientMemoryAgent wraps fakeAgent to additionally satisfy
+// rlenv.CraftIngredientMemoryAgent — same reason as fakeBuriedTargetAgent:
+// existing tests using plain fakeAgent keep exercising
+// refreshCraftIngredientMemory's own "agent doesn't support this
+// capability" no-op path. pos/found/err are mutable directly by the test
+// (not computed from any simulated world state) so a test can control
+// exactly what NearestCraftIngredientLocation reports.
+type fakeCraftIngredientMemoryAgent struct {
+	*fakeAgent
+	pos                                 models.V3
+	found                               bool
+	err                                 error
+	nearestCraftIngredientLocationCalls []string
+}
+
+func (f *fakeCraftIngredientMemoryAgent) NearestCraftIngredientLocation(itemName string) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nearestCraftIngredientLocationCalls = append(f.nearestCraftIngredientLocationCalls, itemName)
+	return f.pos, f.found, f.err
+}
+
 type blockExistsInRadiusCall struct {
 	x, y, z   float64
 	blockName string
