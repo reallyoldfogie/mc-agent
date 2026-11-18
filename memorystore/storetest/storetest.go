@@ -27,6 +27,8 @@ func Run(t *testing.T, factory memorystore.Factory) {
 	t.Run("DifferentItemAtSameSlotSupersedes", func(t *testing.T) { testDifferentItemAtSameSlotSupersedes(t, factory) })
 	t.Run("ForgetContainerSlotRemovesSighting", func(t *testing.T) { testForgetContainerSlotRemovesSighting(t, factory) })
 	t.Run("ForgetSightingRemovesLooseSighting", func(t *testing.T) { testForgetSightingRemovesLooseSighting(t, factory) })
+	t.Run("SightingAtPositionFindsLooseSighting", func(t *testing.T) { testSightingAtPositionFindsLooseSighting(t, factory) })
+	t.Run("SightingAtPositionIgnoresContainerSightings", func(t *testing.T) { testSightingAtPositionIgnoresContainerSightings(t, factory) })
 	t.Run("MaxAgeFilter", func(t *testing.T) { testMaxAgeFilter(t, factory) })
 	t.Run("ReservationIsAddOnly", func(t *testing.T) { testReservationIsAddOnly(t, factory) })
 	t.Run("PersistsAcrossReopen", func(t *testing.T) { testPersistsAcrossReopen(t, factory) })
@@ -215,6 +217,52 @@ func testForgetSightingRemovesLooseSighting(t *testing.T, factory memorystore.Fa
 	// an error.
 	require.NoError(t, store.ForgetSighting("minecraft:iron_ore", minedPos))
 	require.NoError(t, store.ForgetSighting("minecraft:nonexistent", memorystore.Position{X: 1, Y: 2, Z: 3}))
+}
+
+// testSightingAtPositionFindsLooseSighting covers the position-keyed
+// lookup agent.observeBlockChange needs: given only a position (no item
+// name), find whatever loose sighting is there, or report nothing is.
+func testSightingAtPositionFindsLooseSighting(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+	pos := memorystore.Position{X: 7, Y: 8, Z: 9}
+
+	_, found, err := store.SightingAtPosition(pos)
+	require.NoError(t, err)
+	require.False(t, found, "nothing recorded yet")
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:diamond_ore", Position: pos, ObservedAt: time.Now(),
+	}))
+
+	got, found, err := store.SightingAtPosition(pos)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "minecraft:diamond_ore", got.ItemOrBlockName)
+
+	require.NoError(t, store.ForgetSighting("minecraft:diamond_ore", pos))
+	_, found, err = store.SightingAtPosition(pos)
+	require.NoError(t, err)
+	require.False(t, found, "forgotten sighting must not still be findable by position")
+}
+
+// testSightingAtPositionIgnoresContainerSightings: a container's own
+// sighting at ContainerPos must not be mistaken for a loose sighting at
+// that same position — SightingAtPosition is the loose-sighting query
+// only (see ForgetSighting's own "two different items can't occupy the
+// same world position" reasoning: a container's contents are a distinct
+// kind of fact about that position, tracked separately).
+func testSightingAtPositionIgnoresContainerSightings(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+	pos := memorystore.Position{X: 1, Y: 1, Z: 1}
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:bread", Position: pos, ObservedAt: time.Now(),
+		Container: &memorystore.ContainerRef{ContainerPos: pos, SlotIndex: 0},
+	}))
+
+	_, found, err := store.SightingAtPosition(pos)
+	require.NoError(t, err)
+	require.False(t, found, "a container sighting must not answer a loose-sighting position query")
 }
 
 func testMaxAgeFilter(t *testing.T, factory memorystore.Factory) {

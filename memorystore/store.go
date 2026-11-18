@@ -17,6 +17,7 @@ package memorystore
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -48,6 +49,38 @@ type Sighting struct {
 	// Container is non-nil when this sighting came from reading a
 	// container's slot contents rather than a loose block/entity.
 	Container *ContainerRef
+}
+
+// sightingConfidenceHalfLife is Confidence's decay rate: how long until a
+// sighting's confidence drops to half of its starting value. One uniform
+// rate for every sighting is a deliberate v1 simplification (operator
+// direction, 2026-11-18: "memory entries should... have a confidence
+// rating based on the age of the memory, since other players/agents
+// could modify the location of the memory") — a loose block sighting and
+// a container sighting arguably ought to decay at different rates (a
+// chest's contents can change the moment the bot's back is turned; an
+// unmined ore vein usually doesn't), but this plan doesn't have evidence
+// yet for what those rates should actually be, so one tunable constant
+// is the simplest thing that isn't wrong, not a finished model.
+const sightingConfidenceHalfLife = 2 * time.Hour
+
+// Confidence returns a 0-1 score for how much to trust this sighting is
+// still accurate right now, decaying with age since ObservedAt —
+// computed fresh against now every call, never stored, since a stored
+// confidence number would itself go stale the instant it was written.
+// Exponential half-life decay (see sightingConfidenceHalfLife): 1.0 at
+// age 0, 0.5 at one half-life, 0.25 at two, and so on, asymptoting
+// toward (never reaching) 0. now before ObservedAt (clock skew, or a
+// sighting recorded "in the future" relative to the caller) is treated
+// as age 0 — full confidence — rather than producing a confidence above
+// 1 or a negative age.
+func (s Sighting) Confidence(now time.Time) float64 {
+	age := now.Sub(s.ObservedAt)
+	if age <= 0 {
+		return 1
+	}
+	halfLives := age.Hours() / sightingConfidenceHalfLife.Hours()
+	return math.Exp2(-halfLives)
 }
 
 // Reservation is one position an agent has claimed as part of something
@@ -92,6 +125,17 @@ type Store interface {
 	// itemOrBlockName to from, honoring query, or found=false if none
 	// match.
 	NearestSighting(itemOrBlockName string, from Position, query SightingQuery) (sighting Sighting, found bool, err error)
+
+	// SightingAtPosition returns whatever *loose* (non-container)
+	// sighting is currently recorded at exactly pos, regardless of item
+	// name, or found=false if none is. The position-keyed counterpart to
+	// NearestSighting's name-keyed lookup — exists so a caller reacting
+	// to "something changed at this exact position" (any observed block
+	// update, not just this agent's own actions — see
+	// agent.observeBlockChange) can check in O(1)/cheap-lookup time
+	// whether that position is even one this store has an opinion about,
+	// without a full scan over every sighting it's ever recorded.
+	SightingAtPosition(pos Position) (sighting Sighting, found bool, err error)
 
 	// RecordReservation records a reserved position. Must be durable
 	// before this returns, for the same reason as RecordSighting — a

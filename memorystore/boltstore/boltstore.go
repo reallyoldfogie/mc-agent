@@ -42,7 +42,19 @@ var (
 	// NearestSighting's full scan over it is cheap even without the
 	// item-name-prefix optimization sightingsBucket gets.
 	containerSightingsBucket = []byte("container_sightings")
-	reservationsBucket       = []byte("reservations")
+	// positionIndexBucket maps a loose sighting's Position to its
+	// ItemOrBlockName (plain string bytes, no JSON) — sightingsBucket
+	// itself is keyed by name-then-position (for NearestSighting's
+	// prefix scan), so there's no way to ask "what's recorded at this
+	// position" without this reverse index. Exists for
+	// SightingAtPosition, which agent.observeBlockChange calls on every
+	// observed block update this agent's own connection receives — that
+	// can fire often enough (ordinary chunk loading) that a full scan
+	// per call would be a real cost; this keeps that check to one b-tree
+	// point lookup. Kept in lockstep with sightingsBucket by
+	// RecordSighting/ForgetSighting — never written anywhere else.
+	positionIndexBucket = []byte("loose_position_index")
+	reservationsBucket  = []byte("reservations")
 )
 
 // Store is boltstore's memorystore.Store implementation: a thin wrapper
@@ -81,7 +93,7 @@ func New(cfg memorystore.Config) (memorystore.Store, error) {
 	// existed — createEmptyBoltFile only runs for a brand-new file, so a
 	// store that predates a bucket addition needs this to pick it up.
 	if err := db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, reservationsBucket} {
+		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, positionIndexBucket, reservationsBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -129,7 +141,7 @@ func createEmptyBoltFile(dir, path string) error {
 		return fmt.Errorf("boltstore: init %s: %w", tmpPath, err)
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, reservationsBucket} {
+		for _, bucket := range [][]byte{sightingsBucket, containerSightingsBucket, positionIndexBucket, reservationsBucket} {
 			if _, err := tx.CreateBucketIfNotExists(bucket); err != nil {
 				return err
 			}
@@ -194,6 +206,15 @@ func reservationKey(pos memorystore.Position) []byte {
 	return buf.Bytes()
 }
 
+// positionKey is positionIndexBucket's key — identical encoding to
+// reservationKey (both are plain Position keys), named separately since
+// the two buckets hold semantically different things.
+func positionKey(pos memorystore.Position) []byte {
+	var buf bytes.Buffer
+	writePosition(&buf, pos)
+	return buf.Bytes()
+}
+
 func writePosition(buf *bytes.Buffer, p memorystore.Position) {
 	writeInt64(buf, int64(p.X))
 	writeInt64(buf, int64(p.Y))
@@ -228,9 +249,44 @@ func (s *Store) RecordSighting(sighting memorystore.Sighting) error {
 		})
 	}
 	key := sightingKey(sighting)
+	posKey := positionKey(sighting.Position)
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(sightingsBucket).Put(key, data)
+		if err := tx.Bucket(sightingsBucket).Put(key, data); err != nil {
+			return err
+		}
+		return tx.Bucket(positionIndexBucket).Put(posKey, []byte(sighting.ItemOrBlockName))
 	})
+}
+
+// SightingAtPosition implements memorystore.Store. One point lookup in
+// positionIndexBucket to find out which item (if any) is remembered at
+// pos, then one more in sightingsBucket to decode the full Sighting —
+// see positionIndexBucket's own doc comment for why this exists instead
+// of a full scan.
+func (s *Store) SightingAtPosition(pos memorystore.Position) (memorystore.Sighting, bool, error) {
+	var (
+		sighting memorystore.Sighting
+		found    bool
+	)
+	err := s.db.View(func(tx *bolt.Tx) error {
+		itemName := tx.Bucket(positionIndexBucket).Get(positionKey(pos))
+		if itemName == nil {
+			return nil
+		}
+		data := tx.Bucket(sightingsBucket).Get(sightingKey(memorystore.Sighting{ItemOrBlockName: string(itemName), Position: pos}))
+		if data == nil {
+			return nil
+		}
+		if err := json.Unmarshal(data, &sighting); err != nil {
+			return fmt.Errorf("boltstore: decode sighting: %w", err)
+		}
+		found = true
+		return nil
+	})
+	if err != nil {
+		return memorystore.Sighting{}, false, err
+	}
+	return sighting, found, nil
 }
 
 // NearestSighting implements memorystore.Store. Scans every key under
@@ -306,8 +362,21 @@ func (s *Store) ForgetContainerSlot(containerPos memorystore.Position, slotIndex
 // index needed, unlike containerSightingsBucket's own scheme.
 func (s *Store) ForgetSighting(itemOrBlockName string, pos memorystore.Position) error {
 	key := sightingKey(memorystore.Sighting{ItemOrBlockName: itemOrBlockName, Position: pos})
+	posKey := positionKey(pos)
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(sightingsBucket).Delete(key)
+		if err := tx.Bucket(sightingsBucket).Delete(key); err != nil {
+			return err
+		}
+		// Only clear the position index if it still points at
+		// itemOrBlockName — a different sighting may have already
+		// overwritten both this position's sightingsBucket entry *and*
+		// its index entry (RecordSighting keeps them in lockstep) since
+		// whatever stale lookup produced itemOrBlockName for this call.
+		idx := tx.Bucket(positionIndexBucket)
+		if current := idx.Get(posKey); current != nil && string(current) == itemOrBlockName {
+			return idx.Delete(posKey)
+		}
+		return nil
 	})
 }
 

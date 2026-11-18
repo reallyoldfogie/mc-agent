@@ -155,6 +155,20 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 	return best, found, nil
 }
 
+// SightingAtPosition implements memorystore.Store. A linear scan, same
+// accepted tradeoff as NearestSighting above.
+func (s *Store) SightingAtPosition(pos memorystore.Position) (memorystore.Sighting, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, sighting := range s.contents.Sightings {
+		if sighting.Container == nil && sighting.Position == pos {
+			return sighting, true, nil
+		}
+	}
+	return memorystore.Sighting{}, false, nil
+}
+
 // RecordReservation implements memorystore.Store.
 func (s *Store) RecordReservation(r memorystore.Reservation) error {
 	s.mu.Lock()

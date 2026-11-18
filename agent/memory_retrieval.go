@@ -59,7 +59,7 @@ func (a *agent) MineRememberedBlock(ctx context.Context, blockName string) (foun
 // something the caller specifically asked for is worth surfacing.
 func (a *agent) FetchRememberedItem(ctx context.Context, itemName string) (found bool, err error) {
 	normalized := normalizeItemName(itemName)
-	pos, _, found := a.nearestUnreservedSighting(normalized, memorystore.SightingQuery{ContainerOnly: true})
+	pos, _, _, found := a.nearestUnreservedSighting(normalized, memorystore.SightingQuery{ContainerOnly: true})
 	if !found {
 		return false, nil
 	}

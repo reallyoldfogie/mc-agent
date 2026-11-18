@@ -93,6 +93,78 @@ func (a *agent) forgetBlockSighting(x, y, z int, blockName string) {
 	}()
 }
 
+// observeBlockChange keeps a remembered loose sighting accurate against
+// *any* block change this agent's own connection observes at that exact
+// position — not just ones this agent itself caused (forgetBlockSighting,
+// above, already covers this agent's own confirmed mining). Called from
+// the ClientboundBlockUpdate/ClientboundSectionBlocksUpdate packet
+// handlers (agent/handlers.go), which fire for every block change the
+// server tells this client about, regardless of cause.
+//
+// Operator direction, 2026-11-18: "If the agent saw a block and recorded
+// its location, and witnessed its removal, even if the agent wasn't the
+// one to remove it, the memory needs to be updated. If the memory store
+// isn't accurate, it is almost worthless." Deliberately still scoped to
+// this agent's own direct perception, not communication from other
+// agents (confirmed boundary, same date, see the plan doc's own "Scope
+// note") — a server-sent block-update packet received by this agent's
+// own connection is this agent's own perception, same as any other
+// packet-driven world state update, not hearsay.
+//
+// The cheap SightingAtPosition lookup (one indexed point lookup, not a
+// full scan — see memorystore.Store.SightingAtPosition's own doc
+// comment) is what makes this safe to call on every observed block
+// change, including the bulk ones ClientboundSectionBlocksUpdate
+// delivers: almost every change is at a position this store has never
+// recorded anything for, and the lookup reports that cheaply instead of
+// scanning every sighting to find out.
+//
+// If the position has no sighting at all, this is an immediate no-op —
+// nothing to verify or invalidate. If the remembered item still matches
+// the new block, the sighting is refreshed (bumping ObservedAt, and so
+// its Confidence) rather than left alone, since this is itself a fresh,
+// real confirmation it's still there. If it no longer matches (including
+// becoming air), the stale sighting is forgotten.
+func (a *agent) observeBlockChange(x, y, z int, stateID uint32) {
+	if a.worldMemory == nil {
+		return
+	}
+	newName := a.BlockName(stateID)
+	pos := memorystore.Position{X: x, Y: y, Z: z}
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		a.reconcileBlockSighting(pos, newName)
+	}()
+}
+
+// reconcileBlockSighting is observeBlockChange's testable core, split out
+// so a test can drive it directly with a plain string block name instead
+// of needing a live models.BlockShapeManager just to resolve one.
+func (a *agent) reconcileBlockSighting(pos memorystore.Position, newName string) {
+	existing, found, err := a.worldMemory.SightingAtPosition(pos)
+	if err != nil {
+		a.logf("[Agent %s] [WorldMemory] SightingAtPosition(%v) failed: %v", a.cfg.Name, pos, err)
+		return
+	}
+	if !found {
+		return
+	}
+	if newName != "" && newName == existing.ItemOrBlockName {
+		if err := a.worldMemory.RecordSighting(memorystore.Sighting{
+			ItemOrBlockName: newName,
+			Position:        pos,
+			ObservedAt:      time.Now(),
+		}); err != nil {
+			a.logf("[Agent %s] [WorldMemory] failed to refresh %s at %v: %v", a.cfg.Name, newName, pos, err)
+		}
+		return
+	}
+	if err := a.worldMemory.ForgetSighting(existing.ItemOrBlockName, pos); err != nil {
+		a.logf("[Agent %s] [WorldMemory] failed to forget changed %s at %v: %v", a.cfg.Name, existing.ItemOrBlockName, pos, err)
+	}
+}
+
 // RecordContainerSighting implements models.ContainerSightingRecorder,
 // letting items.ContainerHelper report container-slot contents it has
 // already read for an unrelated reason — see Part 3 of

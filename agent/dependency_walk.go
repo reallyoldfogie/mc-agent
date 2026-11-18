@@ -2,6 +2,7 @@ package agent
 
 import (
 	"strings"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/memorystore"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -63,8 +64,10 @@ type dependencyHaveFunc func(item string) int
 // positions before returning found=true — see Part 4 of
 // docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md ("any ordinary
 // mining/foraging logic should treat a reserved position as off-limits for
-// material-sourcing purposes").
-type dependencyLocateFunc func(item string) (pos models.V3, inContainer bool, found bool)
+// material-sourcing purposes"). confidence is the sighting's
+// memorystore.Sighting.Confidence at lookup time (0-1, decaying with
+// age) — meaningless when found is false.
+type dependencyLocateFunc func(item string) (pos models.V3, inContainer bool, confidence float64, found bool)
 
 // ResolveDependencies walks itemName's full crafting-ingredient tree, per
 // Part 2 of docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md: "I need to craft
@@ -129,7 +132,7 @@ func firstMemoryLocation(node models.DependencyNode) (models.V3, bool) {
 // an error) if there's no world-memory store, no remembered sighting, or
 // the only one found is reserved — mirrors InventoryCount's
 // never-errors-just-reports-the-empty-case contract.
-func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, found bool) {
+func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, confidence float64, found bool) {
 	return a.nearestUnreservedSighting(item, memorystore.SightingQuery{})
 }
 
@@ -139,10 +142,11 @@ func (a *agent) locateUnreserved(item string) (pos models.V3, inContainer bool, 
 // (ExcludeContainer: true — a block can't be mined out of a chest) rather
 // than duplicating it. found=false (never an error) on any failure —
 // mirrors InventoryCount's never-errors-just-reports-the-empty-case
-// contract.
-func (a *agent) nearestUnreservedSighting(item string, query memorystore.SightingQuery) (pos models.V3, inContainer bool, found bool) {
+// contract. confidence is computed against time.Now() at lookup time —
+// see memorystore.Sighting.Confidence.
+func (a *agent) nearestUnreservedSighting(item string, query memorystore.SightingQuery) (pos models.V3, inContainer bool, confidence float64, found bool) {
 	if a.worldMemory == nil {
-		return models.V3{}, false, false
+		return models.V3{}, false, 0, false
 	}
 
 	from := memorystore.Position{}
@@ -152,14 +156,14 @@ func (a *agent) nearestUnreservedSighting(item string, query memorystore.Sightin
 
 	sighting, ok, err := a.worldMemory.NearestSighting(item, from, query)
 	if err != nil || !ok {
-		return models.V3{}, false, false
+		return models.V3{}, false, 0, false
 	}
 	if reserved, err := a.worldMemory.IsReserved(sighting.Position); err != nil || reserved {
-		return models.V3{}, false, false
+		return models.V3{}, false, 0, false
 	}
 
 	loc := models.V3{X: float64(sighting.Position.X), Y: float64(sighting.Position.Y), Z: float64(sighting.Position.Z)}
-	return loc, sighting.Container != nil, true
+	return loc, sighting.Container != nil, sighting.Confidence(time.Now()), true
 }
 
 // NearestRememberedBlock looks up the nearest remembered, unreserved,
@@ -173,7 +177,7 @@ func (a *agent) nearestUnreservedSighting(item string, query memorystore.Sightin
 // Environment.rememberedMineTarget) and by any future "go mine a
 // remembered block" retrieval action.
 func (a *agent) NearestRememberedBlock(blockName string) (pos models.V3, found bool, err error) {
-	pos, _, found = a.nearestUnreservedSighting(normalizeItemName(blockName), memorystore.SightingQuery{ExcludeContainer: true})
+	pos, _, _, found = a.nearestUnreservedSighting(normalizeItemName(blockName), memorystore.SightingQuery{ExcludeContainer: true})
 	return pos, found, nil
 }
 
@@ -191,10 +195,11 @@ func resolveDependencies(recipes map[string]craftingRecipe, have dependencyHaveF
 		return node
 	}
 
-	if pos, inContainer, ok := locate(itemName); ok {
+	if pos, inContainer, confidence, ok := locate(itemName); ok {
 		node.Source = models.SourceMemory
 		node.LocationPos = pos
 		node.InContainer = inContainer
+		node.Confidence = confidence
 		return node
 	}
 
@@ -227,8 +232,8 @@ func resolveRequirement(recipes map[string]craftingRecipe, have dependencyHaveFu
 		}
 	}
 	for _, candidate := range req.Candidates {
-		if pos, inContainer, ok := locate(candidate); ok {
-			return models.DependencyNode{Item: candidate, Needed: req.Count, Source: models.SourceMemory, LocationPos: pos, InContainer: inContainer}
+		if pos, inContainer, confidence, ok := locate(candidate); ok {
+			return models.DependencyNode{Item: candidate, Needed: req.Count, Source: models.SourceMemory, LocationPos: pos, InContainer: inContainer, Confidence: confidence}
 		}
 	}
 	for _, candidate := range req.Candidates {

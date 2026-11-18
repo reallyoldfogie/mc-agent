@@ -44,11 +44,19 @@ type DependencyNode struct {
 	Needed int
 	Source DependencySource
 
-	// LocationPos/InContainer are set iff Source == SourceMemory.
-	// InContainer reports whether LocationPos names a container to open
-	// (true) or a loose block/entity to walk up to (false).
+	// LocationPos/InContainer/Confidence are set iff Source ==
+	// SourceMemory. InContainer reports whether LocationPos names a
+	// container to open (true) or a loose block/entity to walk up to
+	// (false). Confidence is the remembered sighting's
+	// memorystore.Sighting.Confidence at the moment this tree was
+	// resolved (0-1, decaying with age since it was last observed — see
+	// that method's own doc comment) — a plan built from a stale memory
+	// is worth less than one built from a fresh sighting, and this is
+	// where that shows up for a caller (e.g. a chat command) deciding
+	// whether to trust it.
 	LocationPos V3
 	InContainer bool
+	Confidence  float64
 
 	// Children is set iff Source == SourceCraft: one node per distinct
 	// ingredient requirement in Item's own recipe.

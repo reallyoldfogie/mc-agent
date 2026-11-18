@@ -2748,6 +2748,11 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 				}
 				a.logf("[Agent %s] Block update at (%d, %d, %d) -> state %d", a.cfg.Name, x, y, z, blockStateID)
 				a.mcAgentWorld.HandleBlockUpdate(x, y, z, blockStateID)
+				// A real-time, post-load block change this agent's own
+				// connection just observed — keeps world memory accurate
+				// regardless of what caused the change (see
+				// observeBlockChange's own doc comment).
+				a.observeBlockChange(int(x), int(y), int(z), uint32(blockStateID))
 				return nil
 			},
 		},
@@ -2761,6 +2766,9 @@ func (a *agent) worldPacketHandlers() []bot.PacketHandler {
 					return nil // Ignore parse errors
 				}
 				a.mcAgentWorld.HandleSectionBlocksUpdate(blocks)
+				for _, b := range blocks {
+					a.observeBlockChange(int(b.X), int(b.Y), int(b.Z), uint32(b.BlockStateID))
+				}
 				return nil
 			},
 		},

@@ -25,7 +25,7 @@ func plankRecipe() craftingRecipe {
 
 func noHave(string) int { return 0 }
 
-func noLocate(string) (models.V3, bool, bool) { return models.V3{}, false, false }
+func noLocate(string) (models.V3, bool, float64, bool) { return models.V3{}, false, 0, false }
 
 func TestRecipeIngredientRequirements_AggregatesSharedCells(t *testing.T) {
 	reqs := recipeIngredientRequirements(stickRecipe())
@@ -90,11 +90,11 @@ func TestResolveDependencies_PrefersMemoryOverCraftingWhenAvailable(t *testing.T
 		"minecraft:oak_planks": plankRecipe(),
 	}
 	rememberedPos := models.V3{X: 7, Y: 8, Z: 9}
-	locate := func(item string) (models.V3, bool, bool) {
+	locate := func(item string) (models.V3, bool, float64, bool) {
 		if item == "minecraft:oak_planks" {
-			return rememberedPos, false, true
+			return rememberedPos, false, 0.9, true
 		}
-		return models.V3{}, false, false
+		return models.V3{}, false, 0, false
 	}
 
 	node := resolveDependencies(recipes, noHave, locate, 1, "minecraft:stick", 0)
@@ -107,6 +107,9 @@ func TestResolveDependencies_PrefersMemoryOverCraftingWhenAvailable(t *testing.T
 	}
 	if plankNode.LocationPos != rememberedPos {
 		t.Errorf("plankNode.LocationPos = %v, want %v", plankNode.LocationPos, rememberedPos)
+	}
+	if plankNode.Confidence != 0.9 {
+		t.Errorf("plankNode.Confidence = %v, want 0.9 (threaded through from locate)", plankNode.Confidence)
 	}
 }
 

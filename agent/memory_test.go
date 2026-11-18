@@ -2,6 +2,7 @@ package agent
 
 import (
 	"testing"
+	"time"
 
 	"github.com/reallyoldfogie/mc-agent/memorystore"
 	"github.com/reallyoldfogie/mc-agent/memorystore/jsonstore"
@@ -81,4 +82,73 @@ func TestRecordBrokenBlock_NilStoreIsNoOp(t *testing.T) {
 	a := &agent{}
 	a.recordBrokenBlock(3, 4, 5, "minecraft:iron_ore") // must not panic with no worldMemory
 	a.wg.Wait()
+}
+
+// TestReconcileBlockSighting_ForgetsWhenChanged exercises the operator's
+// direct ask, 2026-11-18: a block change this agent merely *observes* (not
+// one it caused) must still invalidate a stale sighting at that position.
+func TestReconcileBlockSighting_ForgetsWhenChanged(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+	pos := memorystore.Position{X: 1, Y: 2, Z: 3}
+
+	if err := store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:iron_ore", Position: pos}); err != nil {
+		t.Fatalf("RecordSighting: %v", err)
+	}
+
+	a.reconcileBlockSighting(pos, "minecraft:air") // someone/something else changed it
+
+	_, found, err := store.SightingAtPosition(pos)
+	if err != nil {
+		t.Fatalf("SightingAtPosition: %v", err)
+	}
+	if found {
+		t.Fatalf("SightingAtPosition found = true after an observed change to something else, want false")
+	}
+}
+
+// TestReconcileBlockSighting_RefreshesWhenUnchanged confirms a block that
+// still matches what's remembered gets its confidence refreshed (a newer
+// ObservedAt), not left to decay just because it happened to be
+// re-observed via a packet rather than direct vision.
+func TestReconcileBlockSighting_RefreshesWhenUnchanged(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+	pos := memorystore.Position{X: 1, Y: 2, Z: 3}
+	old := time.Now().Add(-time.Hour)
+
+	if err := store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:iron_ore", Position: pos, ObservedAt: old}); err != nil {
+		t.Fatalf("RecordSighting: %v", err)
+	}
+
+	a.reconcileBlockSighting(pos, "minecraft:iron_ore") // still the same block
+
+	got, found, err := store.SightingAtPosition(pos)
+	if err != nil {
+		t.Fatalf("SightingAtPosition: %v", err)
+	}
+	if !found {
+		t.Fatalf("SightingAtPosition found = false, want true (still there, just refreshed)")
+	}
+	if !got.ObservedAt.After(old) {
+		t.Fatalf("ObservedAt = %v, want refreshed to after %v", got.ObservedAt, old)
+	}
+}
+
+// TestReconcileBlockSighting_NoOpWhenNothingRemembered confirms the
+// common case (almost every observed block change is at a position this
+// store has no opinion about) does nothing, not even a write attempt.
+func TestReconcileBlockSighting_NoOpWhenNothingRemembered(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+
+	a.reconcileBlockSighting(memorystore.Position{X: 9, Y: 9, Z: 9}, "minecraft:dirt")
+
+	_, found, err := store.SightingAtPosition(memorystore.Position{X: 9, Y: 9, Z: 9})
+	if err != nil {
+		t.Fatalf("SightingAtPosition: %v", err)
+	}
+	if found {
+		t.Fatalf("SightingAtPosition found = true, want false (nothing was ever recorded here)")
+	}
 }
