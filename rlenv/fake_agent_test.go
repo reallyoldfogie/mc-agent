@@ -494,6 +494,16 @@ func (f *fakeAgent) FetchRememberedItem(_ context.Context, itemName string) (boo
 	return true, nil
 }
 
+// ResolveDependencies is a minimal stub for models.CommandAgent's fan-out
+// requirement (docs/ADDING_NEW_ACTION.md step 1): no rlenv test currently
+// exercises the real crafting-dependency walk through fakeAgent (that's
+// agent-package-only logic, tested there directly against real recipe
+// data — see agent/dependency_walk_test.go), so this only needs to exist
+// and return something well-formed, not simulate anything.
+func (f *fakeAgent) ResolveDependencies(itemName string, needed int) (models.DependencyNode, error) {
+	return models.DependencyNode{Item: itemName, Needed: needed, Source: models.SourceUnknown}, nil
+}
+
 type runCombatCall struct {
 	radius         float64
 	includePlayers bool

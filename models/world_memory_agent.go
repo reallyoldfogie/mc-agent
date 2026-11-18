@@ -20,4 +20,13 @@ type WorldMemoryAgent interface {
 	// container, takes the item into inventory, and closes it again.
 	// found=false if nothing is remembered.
 	FetchRememberedItem(ctx context.Context, itemName string) (found bool, err error)
+
+	// ResolveDependencies walks itemName's full crafting-ingredient tree
+	// (live inventory, then remembered-and-unreserved locations, then
+	// recursing into known sub-recipes) — the read-only "where is
+	// everything I need for this" query the chat-facing craftPlan
+	// command (actions/commands.go) prints, as opposed to
+	// MineRememberedBlock/FetchRememberedItem, which each act on a
+	// single resolved location rather than reporting the whole tree.
+	ResolveDependencies(itemName string, needed int) (DependencyNode, error)
 }

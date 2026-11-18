@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], mineRemembered <blockName>, fetchRemembered <itemName>, sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], mineRemembered <blockName>, fetchRemembered <itemName>, sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], craftPlan <itemName> [count], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1872,6 +1872,92 @@ func materialListSummary(ml structure.MaterialList, exported bool) string {
 		msg += " - full list written to file"
 	}
 	return msg
+}
+
+// craftPlanChatLimit bounds how many DependencyNode entries CraftPlan's
+// chat summary renders — mirrors lookAroundChatLimit/
+// materialListSummaryMaxItems's own role: a deep/wide dependency tree
+// could otherwise produce a chat line long enough to risk the server's
+// own length/spam limits (see Mine's own usernameMaxLength-adjacent
+// history of exactly this class of problem). Shared across the whole
+// recursive render (formatDependencyNode decrements it per node, not per
+// top-level call), so a wide tree truncates as eagerly as a deep one.
+const craftPlanChatLimit = 12
+
+// CraftPlan reports agent.ResolveDependencies' full tree for itemName to
+// chat — docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's own Purpose section
+// example made real: "I need to craft A... I remember seeing B... C in a
+// chest... D I don't know, so go find some." Read-only: this never
+// navigates, mines, or fetches anything itself — see MineRemembered/
+// FetchRemembered for the actions that act on a single resolved location
+// instead of reporting the whole tree.
+type CraftPlan struct{}
+
+func (CraftPlan) Name() string  { return "craftplan" }
+func (CraftPlan) Usage() string { return "craftPlan <itemName> [count]" }
+func (CraftPlan) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 && len(args) != 2 {
+		_ = agent.SendChat("Usage: craftPlan <itemName> [count]")
+		return models.Done(nil), nil
+	}
+	itemName := args[0]
+	count := 1
+	if len(args) == 2 {
+		c, ok := parsePositiveIntArg(args[1])
+		if !ok {
+			_ = agent.SendChat("Usage: craftPlan <itemName> [count] - count must be a positive integer")
+			return models.Done(nil), nil
+		}
+		count = c
+	}
+
+	node, err := agent.ResolveDependencies(itemName, count)
+	if err != nil {
+		_ = agent.SendChat("craftPlan error: " + err.Error())
+		return models.Done(nil), nil
+	}
+
+	remaining := craftPlanChatLimit
+	_ = agent.SendChat("Plan: " + formatDependencyNode(node, &remaining))
+	return models.Done(nil), nil
+}
+
+// formatDependencyNode renders node (and, for models.SourceCraft, its
+// children) as a single compact line — "<item> x<needed>: <detail>",
+// children nested in parens — stopping once remaining (shared across the
+// whole call via pointer, decremented once per node actually rendered)
+// reaches 0, so a deep/wide tree can't produce an unbounded chat line.
+func formatDependencyNode(node models.DependencyNode, remaining *int) string {
+	if *remaining <= 0 {
+		return "..."
+	}
+	*remaining--
+
+	switch node.Source {
+	case models.SourceInventory:
+		return fmt.Sprintf("%s x%d: have", node.Item, node.Needed)
+	case models.SourceMemory:
+		where := "loose"
+		if node.InContainer {
+			where = "in a container"
+		}
+		return fmt.Sprintf("%s x%d: remembered %s @(%.0f,%.0f,%.0f), %.0f%% confidence",
+			node.Item, node.Needed, where, node.LocationPos.X, node.LocationPos.Y, node.LocationPos.Z, node.Confidence*100)
+	case models.SourceUnknown:
+		return fmt.Sprintf("%s x%d: unknown source, go find more", node.Item, node.Needed)
+	case models.SourceCraft:
+		parts := make([]string, 0, len(node.Children))
+		for _, child := range node.Children {
+			if *remaining <= 0 {
+				parts = append(parts, "...")
+				break
+			}
+			parts = append(parts, formatDependencyNode(child, remaining))
+		}
+		return fmt.Sprintf("%s x%d: craft(%s)", node.Item, node.Needed, strings.Join(parts, "; "))
+	default:
+		return fmt.Sprintf("%s x%d: ?", node.Item, node.Needed)
+	}
 }
 
 type Equip struct{}

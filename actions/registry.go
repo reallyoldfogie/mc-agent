@@ -66,6 +66,7 @@ func RegisterDefaults(reg models.ActionRegistry[models.CommandAgent]) {
 	reg.Register(Place{})
 	reg.Register(BuildStructure{})
 	reg.Register(MaterialList{})
+	reg.Register(CraftPlan{})
 	reg.Register(Equip{})
 	reg.Register(UseItem{})
 	reg.Register(FlyTo{})
