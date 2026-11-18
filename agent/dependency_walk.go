@@ -91,15 +91,15 @@ func (a *agent) ResolveDependencies(itemName string, needed int) (models.Depende
 	return resolveDependencies(recipes, a.InventoryCount, a.locateUnreserved, needed, normalizeItemName(itemName), 0), nil
 }
 
-// NearestCraftIngredientLocation resolves itemName's full dependency tree
+// NearestIngredientLocation resolves itemName's full dependency tree
 // (ResolveDependencies) and returns the first remembered-and-unreserved
 // ingredient location found anywhere in it — a single representative
 // "go here" point, for callers (rlenv's observation builder, via
-// rlenv.CraftIngredientMemoryAgent) that want one position rather than
+// rlenv.IngredientMemoryAgent) that want one position rather than
 // the whole tree. found=false if itemName already looks satisfied, has no
 // known recipe, or no ingredient anywhere in its tree has a remembered
 // location.
-func (a *agent) NearestCraftIngredientLocation(itemName string) (pos models.V3, found bool, err error) {
+func (a *agent) NearestIngredientLocation(itemName string) (pos models.V3, found bool, err error) {
 	node, err := a.ResolveDependencies(itemName, 1)
 	if err != nil {
 		return models.V3{}, false, err

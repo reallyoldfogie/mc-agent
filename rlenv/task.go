@@ -219,7 +219,7 @@ type Config struct {
 	// deliberate opt-in a training run takes, not something that changes
 	// an existing run's observation values just by upgrading. Ignored if
 	// CraftTargetItem is empty, or if the live agent doesn't implement
-	// CraftIngredientMemoryAgent.
+	// IngredientMemoryAgent.
 	UseCraftIngredientMemory bool
 
 	// PickupTargetItem, if set, is the item name (e.g. "minecraft:stick")
@@ -265,6 +265,18 @@ type Config struct {
 	// 2). Empty (the default, and the only option outside a chain episode
 	// before this field existed) means no standalone placement task.
 	PlaceTargetItem string
+
+	// UsePlaceIngredientMemory, if true, makes the standalone-placement
+	// task consult the agent's persistent world-memory store (see
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) for a remembered,
+	// not-yet-reserved location of PlaceTargetItem itself whenever
+	// placeStandaloneReady() is false — see the observation's own
+	// placeIngredientDx/Dy/Dz/Valid doc comment (observation.go). Same
+	// "defaults off, explicit opt-in" shape as UseCraftIngredientMemory,
+	// for the same reason — see that field's own doc comment. Ignored
+	// while ChainStage > 0 or PlaceTargetItem is empty, or if the live
+	// agent doesn't implement IngredientMemoryAgent.
+	UsePlaceIngredientMemory bool
 
 	// FlyTargetOffset is added to the bot's position at Reset to produce
 	// this episode's elytra-flight target (Environment.flyTargetX/Y/Z) —

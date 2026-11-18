@@ -384,8 +384,8 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          not-yet-reserved sighting the persistent world-memory store
 //	          (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) holds for some
 //	          ingredient in Config.CraftTargetItem's own dependency chain
-//	          (LiveAgent.NearestCraftIngredientLocation, via
-//	          rlenv.CraftIngredientMemoryAgent), refreshed by
+//	          (LiveAgent.NearestIngredientLocation, via
+//	          rlenv.IngredientMemoryAgent), refreshed by
 //	          Environment.refreshCraftIngredientMemory. Always 0 unless
 //	          Config.UseCraftIngredientMemory is explicitly set — see that
 //	          field's own doc comment (task.go) for why this defaults off
@@ -401,13 +401,33 @@ import "github.com/reallyoldfogie/cRL-go/pkg/rl"
 //	          mineDx/Dy/Dz — "nothing remembered (or not looking)" must not
 //	          be misread as "it's exactly here."
 //
-// Indices 86-89 are new relative to the 86-length observation every
+//	index 90: placeIngredientDx — Environment.placeIngredientX minus
+//	          current X (blocks); 0 if not valid (see placeIngredientValid
+//	          below). craftIngredientDx's exact counterpart for the
+//	          standalone-placement task: a remembered, not-yet-reserved
+//	          sighting of Config.PlaceTargetItem itself (it has no
+//	          ingredient chain of its own in the common case — see
+//	          IngredientMemoryAgent's own doc comment), refreshed by
+//	          Environment.refreshPlaceIngredientMemory. Always 0 unless
+//	          Config.UsePlaceIngredientMemory is explicitly set, same
+//	          "defaults off" reasoning as craftIngredientDx.
+//	index 91: placeIngredientDy — same, Y.
+//	index 92: placeIngredientDz — same, Z.
+//	index 93: placeIngredientValid — 1.0 if Config.UsePlaceIngredientMemory
+//	          is true, ChainStage == 0, PlaceTargetItem is set, placeReady
+//	          (index 56) is currently false, and a remembered-and-
+//	          unreserved location was actually found this step; 0.0
+//	          otherwise. Gates placeIngredientDx/Dy/Dz the same way
+//	          craftIngredientValid gates craftIngredientDx/Dy/Dz.
+//
+// Indices 86-93 are new relative to the 86-length observation every
 // currently-checkpointed policy was trained against — no exception from
-// this length's own rule, and (per the note above) they're additionally
+// this length's own rule, and (per the notes above) they're additionally
 // zero for every existing config even after upgrading, since
-// Config.UseCraftIngredientMemory itself defaults to false. See
-// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Observation integration."
-const observationSize = 90
+// Config.UseCraftIngredientMemory/UsePlaceIngredientMemory both default to
+// false. See docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Observation
+// integration."
+const observationSize = 94
 
 // NormalizedObservation's scales (Config.NormalizeObservation): every feature
 // divided by the largest magnitude it normally takes, so they all land near
@@ -429,7 +449,7 @@ const (
 // 14-16). yaw/pitch are float64 to match models.Position.GetPosition's
 // return type; every feature in Values is float32 regardless
 // (rl.Observation's contract).
-func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool, portalX, portalY, portalZ float64, portalVisible, portalActive bool, frameX, frameY, frameZ float64, frameVisible, frameActive bool, craftIngredientX, craftIngredientY, craftIngredientZ float64, craftIngredientValidIn bool) rl.Observation {
+func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, targetZ float64, health float32, food int32, saturation float32, healthKnown bool, mineX, mineY, mineZ float64, mineVisible bool, unknownDxIn, unknownDyIn, unknownDzIn float64, unknownValidIn bool, craftReady bool, goToActive, mineActive, craftActive, normalize bool, chain chainObs, isNight bool, timeUntilDawnIn int64, timeOfDayKnown bool, bedX, bedY, bedZ float64, bedVisible bool, equipReady, equipActive bool, pickupX, pickupY, pickupZ float64, pickupVisible, pickupActive bool, flyTargetX, flyTargetY, flyTargetZ float64, flyActive, isFlying, hasElytra bool, rideX, rideY, rideZ float64, rideVisible, isMounted, rideActive bool, combatX, combatY, combatZ float64, combatHealth float32, combatVisible, combatActive bool, placeReady, placeActive bool, followTargetVisible, isFollowing, followActive bool, creeperX, creeperY, creeperZ float64, creeperVisible, creeperActive bool, spearX, spearY, spearZ float64, spearVisible, spearActive bool, maceX, maceY, maceZ float64, maceVisible, maceActive bool, portalX, portalY, portalZ float64, portalVisible, portalActive bool, frameX, frameY, frameZ float64, frameVisible, frameActive bool, craftIngredientX, craftIngredientY, craftIngredientZ float64, craftIngredientValidIn bool, placeIngredientX, placeIngredientY, placeIngredientZ float64, placeIngredientValidIn bool) rl.Observation {
 	known := float32(0)
 	if healthKnown {
 		known = 1
@@ -494,6 +514,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 	craftIngredientDx, craftIngredientDy, craftIngredientDz, craftIngredientValid := float32(0), float32(0), float32(0), float32(0)
 	if craftIngredientValidIn {
 		craftIngredientDx, craftIngredientDy, craftIngredientDz, craftIngredientValid = float32(craftIngredientX-x), float32(craftIngredientY-y), float32(craftIngredientZ-z), 1
+	}
+	placeIngredientDx, placeIngredientDy, placeIngredientDz, placeIngredientValid := float32(0), float32(0), float32(0), float32(0)
+	if placeIngredientValidIn {
+		placeIngredientDx, placeIngredientDy, placeIngredientDz, placeIngredientValid = float32(placeIngredientX-x), float32(placeIngredientY-y), float32(placeIngredientZ-z), 1
 	}
 	if normalize {
 		return rl.Observation{
@@ -588,6 +612,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 				craftIngredientDy / obsDistanceScale,
 				craftIngredientDz / obsDistanceScale,
 				craftIngredientValid,
+				placeIngredientDx / obsDistanceScale,
+				placeIngredientDy / obsDistanceScale,
+				placeIngredientDz / obsDistanceScale,
+				placeIngredientValid,
 			},
 		}
 	}
@@ -683,6 +711,10 @@ func buildObservation(x, y, z float64, yaw, pitch float64, targetX, targetY, tar
 			craftIngredientDy,
 			craftIngredientDz,
 			craftIngredientValid,
+			placeIngredientDx,
+			placeIngredientDy,
+			placeIngredientDz,
+			placeIngredientValid,
 		},
 	}
 }

@@ -271,7 +271,7 @@ type Environment struct {
 	// craftIngredientX/Y/Z/craftIngredientValid cache the last-resolved
 	// remembered-ingredient location refreshCraftIngredientMemory found
 	// for Config.CraftTargetItem (see that method and
-	// CraftIngredientMemoryAgent) — same caching shape as mineX/Y/Z/
+	// IngredientMemoryAgent) — same caching shape as mineX/Y/Z/
 	// mineVisible, read as "before this step" state for the observation
 	// returned to the caller. Only ever populated when
 	// Config.UseCraftIngredientMemory is true; otherwise left at their
@@ -279,6 +279,14 @@ type Environment struct {
 	// report" value.
 	craftIngredientX, craftIngredientY, craftIngredientZ float64
 	craftIngredientValid                                 bool
+
+	// placeIngredientX/Y/Z/placeIngredientValid are craftIngredientX/Y/Z/
+	// Valid's exact counterpart for the standalone-placement task (see
+	// refreshPlaceIngredientMemory): a remembered-and-unreserved location
+	// for Config.PlaceTargetItem itself, only ever populated when
+	// Config.UsePlaceIngredientMemory is true.
+	placeIngredientX, placeIngredientY, placeIngredientZ float64
+	placeIngredientValid                                 bool
 
 	// equipReady caches the last-computed LiveAgent.IsEquipped(Config.
 	// EquipTargetItem) result — the equip-task analogue of craftReady,
@@ -875,12 +883,13 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.refreshChain()
 	e.craftReady = e.craftReadyNow(ctx)
 	e.refreshCraftIngredientMemory(ctx)
+	e.refreshPlaceIngredientMemory(ctx)
 	e.markExploredQuadrant(x, y, z)
 	e.equipReady = e.equipReadyNow()
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0, e.craftIngredientX, e.craftIngredientY, e.craftIngredientZ, e.craftIngredientValid)
+	obs := buildObservation(x, y, z, yaw, pitch, resetGoalX, resetGoalY, resetGoalZ, health, food, saturation, healthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, e.goToTargetActive(), e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0, e.craftIngredientX, e.craftIngredientY, e.craftIngredientZ, e.craftIngredientValid, e.placeIngredientX, e.placeIngredientY, e.placeIngredientZ, e.placeIngredientValid)
 	// Seed Config.StuckTimeout's baseline with this episode's starting
 	// observation, not nil — a bot that's already idle from the very first
 	// Step (nothing moved it since Reset) should count toward the timeout
@@ -938,7 +947,7 @@ const craftingTableBlock = "minecraft:crafting_table"
 // Config.UseCraftIngredientMemory is true, CraftTargetItem is set,
 // craftReady is already false (no point pointing at an ingredient when
 // the craft is already assembleable), and the live agent implements
-// CraftIngredientMemoryAgent — matches this project's existing "an agent
+// IngredientMemoryAgent — matches this project's existing "an agent
 // that doesn't support an optional capability is left alone, not failed
 // over" convention (BuriedTargetAgent/TimeOfDayAgent above). Call this
 // after e.craftReady is set (craftReadyNow), both at Reset and at Step,
@@ -949,15 +958,44 @@ func (e *Environment) refreshCraftIngredientMemory(_ context.Context) {
 	if !e.cfg.UseCraftIngredientMemory || e.cfg.CraftTargetItem == "" || e.craftReady {
 		return
 	}
-	locator, ok := e.agent.(CraftIngredientMemoryAgent)
+	locator, ok := e.agent.(IngredientMemoryAgent)
 	if !ok {
 		return
 	}
-	pos, found, err := locator.NearestCraftIngredientLocation(e.cfg.CraftTargetItem)
+	pos, found, err := locator.NearestIngredientLocation(e.cfg.CraftTargetItem)
 	if err != nil || !found {
 		return
 	}
 	e.craftIngredientX, e.craftIngredientY, e.craftIngredientZ, e.craftIngredientValid = pos.X, pos.Y, pos.Z, true
+}
+
+// refreshPlaceIngredientMemory is refreshCraftIngredientMemory's exact
+// counterpart for the standalone-placement task, per
+// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md Parts 1-3 and the
+// observation's own placeIngredientDx/Dy/Dz/Valid doc comment
+// (observation.go). No-op (leaves the cached fields at zero/false) unless
+// Config.UsePlaceIngredientMemory is true, Config.ChainStage == 0,
+// PlaceTargetItem is set, placeStandaloneReady() is already false (no
+// point pointing at an item the bot already holds), and the live agent
+// implements IngredientMemoryAgent. PlaceTargetItem itself has no recipe
+// in the common case, so NearestIngredientLocation effectively just looks
+// up a remembered-and-unreserved sighting of the item directly — see
+// IngredientMemoryAgent's own doc comment.
+func (e *Environment) refreshPlaceIngredientMemory(_ context.Context) {
+	e.placeIngredientX, e.placeIngredientY, e.placeIngredientZ, e.placeIngredientValid = 0, 0, 0, false
+
+	if !e.cfg.UsePlaceIngredientMemory || e.cfg.ChainStage != 0 || e.cfg.PlaceTargetItem == "" || e.placeStandaloneReady() {
+		return
+	}
+	locator, ok := e.agent.(IngredientMemoryAgent)
+	if !ok {
+		return
+	}
+	pos, found, err := locator.NearestIngredientLocation(e.cfg.PlaceTargetItem)
+	if err != nil || !found {
+		return
+	}
+	e.placeIngredientX, e.placeIngredientY, e.placeIngredientZ, e.placeIngredientValid = pos.X, pos.Y, pos.Z, true
 }
 
 // gunpowderCountNow returns the bot's current held count of
@@ -1579,20 +1617,27 @@ type BuriedTargetAgent interface {
 	BlockExistsInRadius(ctx context.Context, x, y, z float64, blockName string, radius int) (bool, error)
 }
 
-// CraftIngredientMemoryAgent is the optional capability
-// refreshCraftIngredientMemory uses to find a remembered, not-yet-reserved
-// location for Config.CraftTargetItem's own missing-ingredient chain —
-// see docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md Parts 1-3 and the
-// observation's own craftIngredientDx/Dy/Dz/Valid doc comment
-// (observation.go). Same "an agent that doesn't implement this is left
-// alone, not failed over" convention as BuriedTargetAgent/TimeOfDayAgent
-// above.
-type CraftIngredientMemoryAgent interface {
-	// NearestCraftIngredientLocation resolves itemName's full crafting-
+// IngredientMemoryAgent is the optional capability
+// refreshCraftIngredientMemory/refreshPlaceIngredientMemory use to find a
+// remembered, not-yet-reserved location for whatever single item name
+// they're each asked about (Config.CraftTargetItem's own missing-
+// ingredient chain, or Config.PlaceTargetItem itself when not currently
+// held) — see docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md Parts 1-3 and
+// the observation's own craftIngredientDx/Dy/Dz/Valid and
+// placeIngredientDx/Dy/Dz/Valid doc comments (observation.go). One
+// capability, two call sites: NearestIngredientLocation itself has no
+// notion of "craft" vs "place," it just resolves whatever item name it's
+// given. Same "an agent that doesn't implement this is left alone, not
+// failed over" convention as BuriedTargetAgent/TimeOfDayAgent above.
+type IngredientMemoryAgent interface {
+	// NearestIngredientLocation resolves itemName's full crafting-
 	// dependency tree and returns the first remembered-and-unreserved
 	// ingredient location found anywhere in it, or found=false if none
-	// exists.
-	NearestCraftIngredientLocation(itemName string) (pos models.V3, found bool, err error)
+	// exists. For an item with no recipe at all (the common case for a
+	// standalone placement target — see refreshPlaceIngredientMemory),
+	// the "tree" is just itemName itself: found is true iff itemName's
+	// own location is remembered and unreserved.
+	NearestIngredientLocation(itemName string) (pos models.V3, found bool, err error)
 }
 
 // TimeOfDayAgent is an optional capability (same pattern as
@@ -2864,6 +2909,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	e.craftCount = newCraftCount
 	e.craftReady = e.craftReadyNow(ctx)
 	e.refreshCraftIngredientMemory(ctx)
+	e.refreshPlaceIngredientMemory(ctx)
 	if newlyExplored := e.markExploredQuadrant(x, y, z); newlyExplored > 0 {
 		reward += arrivalBonus * float32(newlyExplored)
 	}
@@ -2906,7 +2952,7 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	obsMineX, obsMineY, obsMineZ, obsMineVisible := e.observationMineTarget()
 	unknownDx, unknownDy, unknownDz, unknownValid := e.observationUnknownDirection(x, y, z)
 	obsCombatHealth, _ := e.combatTargetHealthNow()
-	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0, e.craftIngredientX, e.craftIngredientY, e.craftIngredientZ, e.craftIngredientValid)
+	obs := buildObservation(x, y, z, yaw, pitch, goalX, goalY, goalZ, newHealth, food, saturation, newHealthKnown, obsMineX, obsMineY, obsMineZ, obsMineVisible, unknownDx, unknownDy, unknownDz, unknownValid, e.craftReady, gotoActive, e.cfg.MineTargetBlock != "", e.cfg.CraftTargetItem != "", e.cfg.NormalizeObservation, e.chainObs(), e.sleepWindowActive, e.timeOfDayTicks, e.timeOfDayKnown, e.sleepX, e.sleepY, e.sleepZ, e.sleepVisible, e.equipReady, e.cfg.EquipTargetItem != "", e.pickupX, e.pickupY, e.pickupZ, e.pickupVisible, e.pickupTaskActive(), e.flyTargetX, e.flyTargetY, e.flyTargetZ, e.cfg.FlyTargetActive, e.agent.IsGliding(), e.agent.IsEquipped(elytraItemName), e.rideX, e.rideY, e.rideZ, e.rideVisible, e.mounted, e.cfg.RideVehicleType != "", e.combatX, e.combatY, e.combatZ, obsCombatHealth, e.combatVisible, e.cfg.CombatTargetMobType != "", e.placeStandaloneReady(), e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "", e.followTargetVisible, e.followed, e.cfg.FollowTargetPlayerName != "", e.creeperX, e.creeperY, e.creeperZ, e.creeperVisible, e.cfg.CreeperGunpowderActive, e.spearX, e.spearY, e.spearZ, e.spearVisible, e.cfg.SpearChargeTargetMobType != "", e.maceX, e.maceY, e.maceZ, e.maceVisible, e.cfg.MaceSmashTargetMobType != "", e.portalX, e.portalY, e.portalZ, e.portalVisible, e.cfg.PortalSearchRadius > 0, e.portalFrame.IgnitionBlock.X, e.portalFrame.IgnitionBlock.Y, e.portalFrame.IgnitionBlock.Z, e.portalFrameVisible, e.cfg.LightPortalSearchRadius > 0, e.craftIngredientX, e.craftIngredientY, e.craftIngredientZ, e.craftIngredientValid, e.placeIngredientX, e.placeIngredientY, e.placeIngredientZ, e.placeIngredientValid)
 
 	// Config.StuckTimeout: force the episode done once too many consecutive
 	// Steps have reproduced the exact same observation — see its doc
