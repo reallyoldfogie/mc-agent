@@ -114,6 +114,17 @@ type Store interface {
 	// write. A no-op, not an error, if nothing was recorded at that slot.
 	ForgetContainerSlot(containerPos Position, slotIndex int) error
 
+	// ForgetSighting removes the loose (non-container) sighting of
+	// itemOrBlockName at pos, if one is recorded — for a caller that has
+	// just confirmed, via a real perception event, that it's no longer
+	// there (e.g. the bot mined it: see agent.recordBrokenBlock). Unlike
+	// a container slot, a loose sighting's identity already includes the
+	// item name (two different items can't occupy the same world
+	// position), so this takes both rather than position alone. A
+	// no-op, not an error, if nothing was recorded there. Must be
+	// durable before this returns, same as every other write.
+	ForgetSighting(itemOrBlockName string, pos Position) error
+
 	// Close releases any resources (open file handles, bbolt's file
 	// lock, ...) the backend holds. Safe to call once a Store is no
 	// longer needed; not required before process exit, since every write

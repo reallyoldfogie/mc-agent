@@ -200,6 +200,28 @@ func (s *Store) ForgetContainerSlot(containerPos memorystore.Position, slotIndex
 	return s.flushLocked()
 }
 
+// ForgetSighting implements memorystore.Store. Same in-place filter idiom
+// as ForgetContainerSlot above.
+func (s *Store) ForgetSighting(itemOrBlockName string, pos memorystore.Position) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	kept := s.contents.Sightings[:0]
+	removed := false
+	for _, sighting := range s.contents.Sightings {
+		if sighting.Container == nil && sighting.ItemOrBlockName == itemOrBlockName && sighting.Position == pos {
+			removed = true
+			continue
+		}
+		kept = append(kept, sighting)
+	}
+	s.contents.Sightings = kept
+	if !removed {
+		return nil
+	}
+	return s.flushLocked()
+}
+
 // Close implements memorystore.Store. No open handle to release — every
 // write already fsyncs and closes its own temp file — so this is a no-op
 // kept only to satisfy the interface.

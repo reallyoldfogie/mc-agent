@@ -2284,6 +2284,17 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	// e.gunpowderCount mirrors prevPlaceCount's own reasoning above, for
 	// the creeper-gunpowder task.
 	prevGunpowderCount := e.gunpowderCount
+	// prevMineTargetItemCount backs ActionMineRemembered's own reward
+	// (minedRememberedThisStep below) — an independent InventoryCount
+	// delta on Config.MineTargetBlock, not the position-based "mined"
+	// signal ActionMine's own reward already uses (ActionMineRemembered
+	// does its own internal memory lookup rather than acting on
+	// Environment's e.mineX/Y/Z, so there's no single pre-dispatch
+	// position to diff against here).
+	var prevMineTargetItemCount int
+	if e.cfg.MineTargetBlock != "" {
+		prevMineTargetItemCount = e.agent.InventoryCount(e.cfg.MineTargetBlock)
+	}
 	// prevPickupEntityID/prevPickupVisible back Config.PickupAnyItem's own
 	// reward check (see pickedUpThisStep below) — captured before dispatch
 	// for the same reason prevCombatEntityID is.
@@ -2646,6 +2657,36 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 	newPlaceCount := e.placeCountNow()
 	placedStandaloneThisStep := e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && newPlaceCount < prevPlaceCount
 
+	// fetchedRememberedThisStep reuses placedStandaloneThisStep's own
+	// prevPlaceCount/newPlaceCount pair, checking the opposite direction
+	// (an increase, not a decrease): ActionFetchRemembered's whole job is
+	// taking Config.PlaceTargetItem out of a remembered container and
+	// into inventory, which is exactly what that count already tracks —
+	// see docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md and
+	// IngredientMemoryAgent's own doc comment on why PlaceTargetItem
+	// specifically (not CraftTargetItem's own sub-ingredient case, which
+	// this doesn't cover for v1) has no ambiguity here: placeIngredientValid
+	// (the observation gate this also uses) already means "PlaceTargetItem
+	// itself, not some other item, is remembered in a container."
+	fetchedRememberedThisStep := e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && newPlaceCount > prevPlaceCount
+
+	// minedRememberedThisStep is judged the same inventory-count-delta way
+	// as craftedThisStep/pickedUpThisStep, not from the position-based
+	// "mined" signal above — see prevMineTargetItemCount's own doc comment
+	// for why ActionMineRemembered needs its own independent check.
+	// Excluded during a chain episode (ChainStage > 0), the same way the
+	// position-based mined check above excludes chain episodes from its
+	// own mineRewardBonus (!e.chainActive()): mineTargetBlockInUse() falls
+	// back to Config.MineTargetBlock during a chain's early stages too
+	// (see that function's own doc comment), so without this gate an
+	// unrelated chain-gather inventory increase could spuriously look
+	// like ActionMineRemembered's own outcome.
+	var newMineTargetItemCount int
+	if e.cfg.MineTargetBlock != "" {
+		newMineTargetItemCount = e.agent.InventoryCount(e.cfg.MineTargetBlock)
+	}
+	minedRememberedThisStep := !e.chainActive() && e.cfg.MineTargetBlock != "" && newMineTargetItemCount > prevMineTargetItemCount
+
 	// gunpowderCollectedThisStep is judged from an actual InventoryCount
 	// increase, not from whether ActionKillCreeperForGunpowder was the
 	// dispatched action — mirrors craftedThisStep's own reasoning above.
@@ -2826,6 +2867,16 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 		reward += placeRewardBonus
 		done = true
 		doneReason = "place"
+	}
+	if fetchedRememberedThisStep {
+		reward += fetchRememberedRewardBonus
+		done = true
+		doneReason = "fetchremembered"
+	}
+	if minedRememberedThisStep {
+		reward += mineRememberedRewardBonus
+		done = true
+		doneReason = "mineremembered"
 	}
 	if gunpowderCollectedThisStep {
 		reward += creeperGunpowderRewardBonus

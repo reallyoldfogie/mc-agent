@@ -13,6 +13,12 @@ type ContainerAccess interface {
 	FindEmptyChestSlot(windowID byte) int16
 	GetChestRows(windowID byte) int
 	GetContainerSlotCount(windowID byte) int
+
+	// ChestSlots returns windowID's chest-section slots (excluding the
+	// player's own inventory section), or nil if windowID isn't a
+	// currently-open chest — see the real implementation's own doc
+	// comment (items/container_helper.go) for why this exists.
+	ChestSlots(windowID byte) []ItemStack
 }
 
 // EntityInventoryAccess exposes cached entity container contents.

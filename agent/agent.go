@@ -499,6 +499,14 @@ func (a *agent) recordBrokenBlock(x, y, z int, blockName string) {
 	a.brokenBlocksMu.Lock()
 	a.brokenBlocks = append(a.brokenBlocks, models.BrokenBlock{X: x, Y: y, Z: z, BlockName: blockName})
 	a.brokenBlocksMu.Unlock()
+	// A confirmed break is a real perception event (awaitBlockChanged
+	// already verified it server-side) that blockName is no longer at
+	// (x,y,z) — the loose-sighting counterpart to
+	// items.ContainerHelper's own "slot became empty" fix. Without this,
+	// a block this agent itself mined would stay findable in its own
+	// world-memory store forever (see forgetBlockSighting's own doc
+	// comment).
+	a.forgetBlockSighting(x, y, z, blockName)
 }
 
 // DrainBrokenBlocks returns every confirmed block break since the last

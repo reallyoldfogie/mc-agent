@@ -26,6 +26,7 @@ func Run(t *testing.T, factory memorystore.Factory) {
 	t.Run("ExcludeContainerFilter", func(t *testing.T) { testExcludeContainerFilter(t, factory) })
 	t.Run("DifferentItemAtSameSlotSupersedes", func(t *testing.T) { testDifferentItemAtSameSlotSupersedes(t, factory) })
 	t.Run("ForgetContainerSlotRemovesSighting", func(t *testing.T) { testForgetContainerSlotRemovesSighting(t, factory) })
+	t.Run("ForgetSightingRemovesLooseSighting", func(t *testing.T) { testForgetSightingRemovesLooseSighting(t, factory) })
 	t.Run("MaxAgeFilter", func(t *testing.T) { testMaxAgeFilter(t, factory) })
 	t.Run("ReservationIsAddOnly", func(t *testing.T) { testReservationIsAddOnly(t, factory) })
 	t.Run("PersistsAcrossReopen", func(t *testing.T) { testPersistsAcrossReopen(t, factory) })
@@ -183,6 +184,37 @@ func testForgetContainerSlotRemovesSighting(t *testing.T, factory memorystore.Fa
 	// error.
 	require.NoError(t, store.ForgetContainerSlot(containerPos, 1))
 	require.NoError(t, store.ForgetContainerSlot(memorystore.Position{X: 1, Y: 2, Z: 3}, 99))
+}
+
+// testForgetSightingRemovesLooseSighting covers the loose-block
+// counterpart to testForgetContainerSlotRemovesSighting: the memory this
+// plan's operator asked about directly — a block the bot mines must stop
+// being findable at that position (agent.recordBrokenBlock's own hook),
+// and a different sighting of the same item elsewhere must be
+// unaffected.
+func testForgetSightingRemovesLooseSighting(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+	minedPos := memorystore.Position{X: 3, Y: 4, Z: 5}
+	elsewherePos := memorystore.Position{X: 30, Y: 40, Z: 50}
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:iron_ore", Position: minedPos, ObservedAt: time.Now(),
+	}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:iron_ore", Position: elsewherePos, ObservedAt: time.Now(),
+	}))
+
+	require.NoError(t, store.ForgetSighting("minecraft:iron_ore", minedPos))
+
+	got, found, err := store.NearestSighting("minecraft:iron_ore", minedPos, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.True(t, found, "the other sighting must still be findable")
+	require.Equal(t, elsewherePos, got.Position)
+
+	// Forgetting an already-gone/never-recorded sighting is a no-op, not
+	// an error.
+	require.NoError(t, store.ForgetSighting("minecraft:iron_ore", minedPos))
+	require.NoError(t, store.ForgetSighting("minecraft:nonexistent", memorystore.Position{X: 1, Y: 2, Z: 3}))
 }
 
 func testMaxAgeFilter(t *testing.T, factory memorystore.Factory) {

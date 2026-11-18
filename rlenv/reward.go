@@ -212,6 +212,22 @@ const (
 	// Environment is actually tracking one (see
 	// Config.LightPortalSearchRadius's own doc comment).
 	lightPortalRewardBonus float32 = 10.0
+
+	// fetchRememberedRewardBonus is added once, the step an actual
+	// InventoryCount increase on Config.PlaceTargetItem is observed while
+	// ChainStage == 0 — judged from real world state (see
+	// fetchedRememberedThisStep's own doc comment), not from whether
+	// ActionFetchRemembered specifically was dispatched, same philosophy
+	// as every other one-shot task-accomplished bonus in this file. See
+	// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md.
+	fetchRememberedRewardBonus float32 = 10.0
+	// mineRememberedRewardBonus is added once, the step an actual
+	// InventoryCount increase on Config.MineTargetBlock is observed —
+	// judged independently from mineRewardBonus's own position-based
+	// "mined" signal (see minedRememberedThisStep's own doc comment),
+	// since ActionMineRemembered acts on its own internal memory lookup
+	// rather than Environment's e.mineX/Y/Z.
+	mineRememberedRewardBonus float32 = 10.0
 )
 
 // stepOutcome bundles what computeReward needs from a Step call: the

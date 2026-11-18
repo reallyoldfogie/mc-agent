@@ -283,6 +283,27 @@ type fakeAgent struct {
 	placeTargetName string
 	placeHeldCount  int
 
+	// World-memory retrieval simulation
+	// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md): mineRememberedBlockName/
+	// mineRememberedFound control MineRememberedBlock's result; a
+	// successful call increments mineTargetHeldCount, read back through
+	// InventoryCount the same way a real mine+auto-pickup would increase
+	// it — this is what minedRememberedThisStep's own InventoryCount-delta
+	// reward check needs to see move. fetchRememberedFound controls
+	// FetchRememberedItem's result; a successful call increments
+	// placeHeldCount directly (ActionFetchRemembered is scoped to
+	// Config.PlaceTargetItem specifically — see IngredientMemoryAgent's
+	// own doc comment), the same count placedStandaloneThisStep already
+	// decrements, so the two reward checks share one piece of state the
+	// way the real implementation's InventoryCount(Config.PlaceTargetItem)
+	// does.
+	mineRememberedBlockName string
+	mineRememberedFound     bool
+	mineTargetHeldCount     int
+	mineRememberedCalls     []string
+	fetchRememberedFound    bool
+	fetchRememberedCalls    []string
+
 	// Sneak-on-arrival simulation (docs/plans/RL_ACTION_SPACE_EXPANSION_III.md
 	// item 3): sneaking backs StopSneaking's own no-op-when-not-sneaking
 	// contract closely enough for tests; moveToAndSneakCalls/
@@ -423,6 +444,54 @@ func (f *fakeAgent) setPlaceTarget(itemName string, count int) {
 	f.placeTargetName = itemName
 	f.placeHeldCount = count
 	f.mu.Unlock()
+}
+
+// setMineRemembered configures MineRememberedBlock's simulated result —
+// see mineRememberedBlockName's own doc comment.
+func (f *fakeAgent) setMineRemembered(blockName string, found bool) {
+	f.mu.Lock()
+	f.mineRememberedBlockName = blockName
+	f.mineRememberedFound = found
+	f.mu.Unlock()
+}
+
+// setFetchRememberedFound configures FetchRememberedItem's simulated
+// result — see fetchRememberedFound's own doc comment.
+func (f *fakeAgent) setFetchRememberedFound(found bool) {
+	f.mu.Lock()
+	f.fetchRememberedFound = found
+	f.mu.Unlock()
+}
+
+// MineRememberedBlock implements models.WorldMemoryAgent: reports
+// found=true and simulates a successful mine (incrementing
+// mineTargetHeldCount, read back through InventoryCount) iff blockName
+// matches mineRememberedBlockName and mineRememberedFound is set — see
+// that field's own doc comment.
+func (f *fakeAgent) MineRememberedBlock(_ context.Context, blockName string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.mineRememberedCalls = append(f.mineRememberedCalls, blockName)
+	if !f.mineRememberedFound || blockName != f.mineRememberedBlockName {
+		return false, nil
+	}
+	f.mineTargetHeldCount++
+	return true, nil
+}
+
+// FetchRememberedItem implements models.WorldMemoryAgent: reports
+// found=true and simulates a successful fetch (incrementing
+// placeHeldCount, the same count placedStandaloneThisStep decrements)
+// iff fetchRememberedFound is set — see that field's own doc comment.
+func (f *fakeAgent) FetchRememberedItem(_ context.Context, itemName string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fetchRememberedCalls = append(f.fetchRememberedCalls, itemName)
+	if !f.fetchRememberedFound {
+		return false, nil
+	}
+	f.placeHeldCount++
+	return true, nil
 }
 
 type runCombatCall struct {
@@ -1130,6 +1199,9 @@ func (f *fakeAgent) InventoryCount(itemName string) int {
 	}
 	if f.placeTargetName != "" && itemName == f.placeTargetName {
 		return f.placeHeldCount
+	}
+	if f.mineRememberedBlockName != "" && itemName == f.mineRememberedBlockName {
+		return f.mineTargetHeldCount
 	}
 	if itemName == "minecraft:gunpowder" {
 		return f.gunpowderHeldCount

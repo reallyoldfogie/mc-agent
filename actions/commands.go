@@ -13,7 +13,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/structure"
 )
 
-const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
+const helpText = "Commands: help, pos, say <text>, testMove, moveTo <x> <y> <z> (pathfinding), lineTo <x> <y> <z> (straight-line), moveForward <distance>, moveUp <distance>, moveUpAndSneak <distance>, moveToAndSneak <x> <y> <z>, lineToAndSneak <x> <y> <z>, stopSneak, findPath <x> <y> <z>, testPath, follow [<player>], stopFollow, followStatus, startTracking, stopTracking, fireBow, fireBowAt <x> <y> <z> | nearest | <player>, attackEntity <entityID> [sneaking], shield <raise|lower>, fireCrossbowAt <entityID>, throwTridentAt <entityID>, spearJab <entityID> <itemName>, spearCharge <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], spearChargeWithApproach <entityID> <itemName> <holdMs> <engagedMs> <tiredMs> [minSpeed] [minAlignment], maceAttack <entityID> <itemName>, maceSmash <entityID> <itemName>, maceSmashWithApproach <entityID> <itemName>, runCombat [radius] [includeNeutral], runCombatWithPolicy <radius> [includePlayers] [includeNeutral], mount <entityID | entityType>, dismount, vehiclejump [power], mine <x> <y> <z> | <blockName> [radius], mineRemembered <blockName>, fetchRemembered <itemName>, sleep [<x> <y> <z>], wakeUp, lookAround [radius], pickUpNearbyItem [maxDistance], pickUpItem <x> <y> <z> | <itemName> [maxDistance], usePortal [maxDistance] | <x> <y> <z>, lightPortal [maxDistance], killCreeperForGunpowder, craft <itemName>, place <itemName>, buildStructure <path> <x> <y> <z>, materialList <structurePath> [exportPath], equip <item>, useItem [offhand], flyTo <x> <y> <z>, fly, land, followCam <playerName> [maxDistance], stopFollowCam, planStatus, planStop"
 
 func parseFloat(s string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
@@ -1108,6 +1108,66 @@ func mineAt(ctx context.Context, agent models.CommandAgent, x, y, z float64) mod
 		resolve(err)
 	}()
 	return completion
+}
+
+// MineRemembered looks up blockName's nearest remembered, unreserved,
+// loose sighting in the agent's persistent world-memory store
+// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md,
+// models.WorldMemoryAgent.MineRememberedBlock) and attempts to mine it
+// there — the "I remember seeing an unmined block over there" retrieval
+// case the plan's own Purpose section describes, as opposed to "mine"
+// above, which only ever searches what's currently visible.
+type MineRemembered struct{}
+
+func (MineRemembered) Name() string  { return "mineremembered" }
+func (MineRemembered) Usage() string { return "mineRemembered <blockName>" }
+func (MineRemembered) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 {
+		_ = agent.SendChat("Usage: mineRemembered <blockName>")
+		return models.Done(nil), nil
+	}
+	blockName := args[0]
+	completion, resolve := models.NewCompletion()
+	go func() {
+		found, err := agent.MineRememberedBlock(ctx, blockName)
+		switch {
+		case err != nil:
+			_ = agent.SendChat("Mine remembered error: " + err.Error())
+		case !found:
+			_ = agent.SendChat(fmt.Sprintf("I don't remember seeing %s anywhere", blockName))
+		}
+		resolve(err)
+	}()
+	return completion, nil
+}
+
+// FetchRemembered looks up itemName's nearest remembered, unreserved
+// *container* sighting (models.WorldMemoryAgent.FetchRememberedItem)
+// and, if found, navigates there, opens the container, takes the item
+// into inventory, and closes it again — the "I remember seeing it in a
+// chest" retrieval case the plan's own Purpose section describes.
+type FetchRemembered struct{}
+
+func (FetchRemembered) Name() string  { return "fetchremembered" }
+func (FetchRemembered) Usage() string { return "fetchRemembered <itemName>" }
+func (FetchRemembered) Execute(ctx context.Context, agent models.CommandAgent, args []string) (models.Completion, error) {
+	if len(args) != 1 {
+		_ = agent.SendChat("Usage: fetchRemembered <itemName>")
+		return models.Done(nil), nil
+	}
+	itemName := args[0]
+	completion, resolve := models.NewCompletion()
+	go func() {
+		found, err := agent.FetchRememberedItem(ctx, itemName)
+		switch {
+		case err != nil:
+			_ = agent.SendChat("Fetch remembered error: " + err.Error())
+		case !found:
+			_ = agent.SendChat(fmt.Sprintf("I don't remember seeing %s in any chest", itemName))
+		}
+		resolve(err)
+	}()
+	return completion, nil
 }
 
 // sleepSearchRadius is "sleep"'s own default bed-search radius when no

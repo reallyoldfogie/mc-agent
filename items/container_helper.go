@@ -677,6 +677,38 @@ func (ch *ContainerHelper) FindEmptyChestSlot(windowID byte) int16 {
 	return -1
 }
 
+// ChestSlots returns windowID's chest-section slots only — excluding the
+// player's own inventory section the same open window also exposes
+// (FindItemInPlayerInventory's own territory) — as models.ItemStack (ID
+// + Count only; Components are irrelevant to the name-matching this
+// exists for), or nil if windowID isn't a currently-open chest. Lets a
+// caller search by item *name*: there's no name-to-ID lookup anywhere in
+// this codebase, so the established pattern (see agent.findIngredientSlot)
+// is to scan slots, resolve each one's ID to a name via ItemManager, and
+// compare names — this is the chest-side equivalent of the slot data
+// that pattern needs, kept as a plain models.ItemStack rather than
+// mcscreen.Slot so ContainerManager's interface (and anything that mocks
+// it) doesn't have to depend on the sibling mc-bot-go screen package.
+func (ch *ContainerHelper) ChestSlots(windowID byte) []models.ItemStack {
+	screen, ok := ch.screenMgr.Screens()[int(windowID)]
+	if !ok || screen == nil {
+		return nil
+	}
+	chest, ok := screen.(*mcscreen.Chest)
+	if !ok {
+		return nil
+	}
+	containerSlots := chest.Rows * 9
+	if containerSlots > len(chest.Slots) {
+		containerSlots = len(chest.Slots)
+	}
+	slots := make([]models.ItemStack, containerSlots)
+	for i := 0; i < containerSlots; i++ {
+		slots[i] = models.ItemStack{ItemID: int32(chest.Slots[i].ID), Count: int8(chest.Slots[i].Count)}
+	}
+	return slots
+}
+
 // GetChestRows returns the number of rows in a chest window.
 // Returns -1 if the window is not a chest.
 func (ch *ContainerHelper) GetChestRows(windowID byte) int {

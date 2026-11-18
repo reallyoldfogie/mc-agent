@@ -281,6 +281,15 @@ func (a *agent) FindEmptyChestSlot(windowID byte) int16 {
 	return a.containerHelper.FindEmptyChestSlot(windowID)
 }
 
+// ChestSlots returns windowID's chest-section slots, or nil if windowID
+// isn't a currently-open chest.
+func (a *agent) ChestSlots(windowID byte) []models.ItemStack {
+	if a.containerHelper == nil {
+		return nil
+	}
+	return a.containerHelper.ChestSlots(windowID)
+}
+
 // GetChestRows returns the number of rows in a chest window.
 func (a *agent) GetChestRows(windowID byte) int {
 	if a.containerHelper == nil {

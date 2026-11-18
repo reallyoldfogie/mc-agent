@@ -1,0 +1,166 @@
+package rlenv_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/reallyoldfogie/mc-agent/actions"
+	"github.com/reallyoldfogie/mc-agent/models"
+	"github.com/reallyoldfogie/mc-agent/rlenv"
+)
+
+func TestActionMineRemembered_LegalOnlyWhenLiveLOSFails(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlock("minecraft:iron_ore", 1, 1, 1) // live-visible
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:iron_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; legal {
+		t.Fatalf("ActionMineRemembered legal = true, want false (live LOS already found it)")
+	}
+}
+
+func TestActionMineRemembered_IllegalWithoutMineTargetBlock(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true)
+	env := newTestEnvironment(t, agent, testConfig())
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; legal {
+		t.Fatalf("ActionMineRemembered legal = true, want false (Config.MineTargetBlock unset)")
+	}
+}
+
+func TestActionMineRemembered_DispatchesAndRewards(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true) // nothing live-visible
+	agent.setMineRemembered("minecraft:iron_ore", true)
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:iron_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; !legal {
+		t.Fatalf("ActionMineRemembered legal = false, want true")
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMineRemembered)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (remembered block was mined)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (mineRememberedRewardBonus)", result.Reward)
+	}
+	if len(agent.mineRememberedCalls) != 1 || agent.mineRememberedCalls[0] != "minecraft:iron_ore" {
+		t.Fatalf("mineRememberedCalls = %v, want exactly one call for minecraft:iron_ore", agent.mineRememberedCalls)
+	}
+}
+
+func TestActionMineRemembered_NothingRememberedDoesNotEndEpisode(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true)
+	agent.setMineRemembered("minecraft:iron_ore", false) // nothing remembered either
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:iron_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMineRemembered)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (nothing remembered, nothing mined)")
+	}
+}
+
+// fetchRememberedTestConfig poses a standalone-placement task with
+// UsePlaceIngredientMemory enabled, matching placeIngredientMemoryTestConfig
+// — ActionFetchRemembered's own legality reuses placeIngredientValid
+// directly.
+func fetchRememberedTestConfig() rlenv.Config {
+	cfg := testConfig()
+	cfg.PlaceTargetItem = "minecraft:dirt"
+	cfg.UsePlaceIngredientMemory = true
+	return cfg
+}
+
+func TestActionFetchRemembered_LegalWhenPlaceIngredientRemembered(t *testing.T) {
+	inner := newFakeAgent(0, 0, 0)
+	inner.setPlaceTarget("minecraft:dirt", 0) // holds none yet, but InventoryCount now tracks it
+	inner.setFetchRememberedFound(true)
+	agent := &fakeIngredientMemoryAgent{fakeAgent: inner, pos: models.V3{X: 1, Y: 2, Z: 3}, found: true}
+
+	env, err := rlenv.New(agent, actions.NewRegistry(), fetchRememberedTestConfig())
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFetchRemembered]; !legal {
+		t.Fatalf("ActionFetchRemembered legal = false, want true")
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionFetchRemembered)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if !result.Done {
+		t.Fatalf("Done = false, want true (remembered item was fetched)")
+	}
+	if result.Reward <= 0 {
+		t.Fatalf("Reward = %v, want positive (fetchRememberedRewardBonus)", result.Reward)
+	}
+	if len(agent.fetchRememberedCalls) != 1 || agent.fetchRememberedCalls[0] != "minecraft:dirt" {
+		t.Fatalf("fetchRememberedCalls = %v, want exactly one call for minecraft:dirt", agent.fetchRememberedCalls)
+	}
+}
+
+func TestActionFetchRemembered_IllegalWithoutUsePlaceIngredientMemory(t *testing.T) {
+	inner := newFakeAgent(0, 0, 0)
+	inner.setFetchRememberedFound(true)
+	agent := &fakeIngredientMemoryAgent{fakeAgent: inner, pos: models.V3{X: 1, Y: 2, Z: 3}, found: true}
+
+	cfg := fetchRememberedTestConfig()
+	cfg.UsePlaceIngredientMemory = false
+
+	env, err := rlenv.New(agent, actions.NewRegistry(), cfg)
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFetchRemembered]; legal {
+		t.Fatalf("ActionFetchRemembered legal = true, want false (UsePlaceIngredientMemory disabled)")
+	}
+}
+
+func TestActionFetchRemembered_IllegalWhenAlreadyHeld(t *testing.T) {
+	inner := newFakeAgent(0, 0, 0)
+	inner.setPlaceTarget("minecraft:dirt", 1) // already holds it
+	inner.setFetchRememberedFound(true)
+	agent := &fakeIngredientMemoryAgent{fakeAgent: inner, pos: models.V3{X: 1, Y: 2, Z: 3}, found: true}
+
+	env, err := rlenv.New(agent, actions.NewRegistry(), fetchRememberedTestConfig())
+	if err != nil {
+		t.Fatalf("rlenv.New: %v", err)
+	}
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionFetchRemembered]; legal {
+		t.Fatalf("ActionFetchRemembered legal = true, want false (already holds the target item)")
+	}
+}

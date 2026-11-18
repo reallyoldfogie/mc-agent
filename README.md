@@ -16,6 +16,7 @@ The agent core is now a reusable Go package (`github.com/reallyoldfogie/mc-agent
 - **Multi-Agent Combat**: Team-aware targeting, match seeding/reset, and a real-player safety gate so several bots can fight each other (or a human) on one shared server - see [Multi-Agent Combat Training & Competition](#multi-agent-combat-training--competition)
 - **RL Action Space**: `rlenv` exposes most chat actions as a fixed-size action space for an RL policy, including multi-step chains and buried-block mining - see [RL Action Space](#rl-action-space-rlenv)
 - **Structure Building**: Loads vanilla Structure Block `.nbt` templates and builds them via real block placement, with a material-list "shopping list" export
+- **Persistent World Memory**: Remembers where it has personally seen blocks/items (including container contents) across sessions, resolves multi-step crafting ingredient chains against that memory, and never raids its own finished builds for materials - see `mineRemembered`/`fetchRemembered` and [docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md](docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) (local/untracked)
 - **Packet Logging**: Comprehensive logging of all received packets for debugging and analysis
 - **Entity Tracking**: Real-time tracking of players and entities with position updates
 - **Player Following**: Intelligent pathfinding-based following (A*/EPEA*/HPA*) with obstacle avoidance
@@ -142,6 +143,8 @@ own dispatch and are omitted here — see [RL Action Space](#rl-action-space-rle
 | Command | Description |
 |---------|-------------|
 | `mine <x> <y> <z> \| mine <blockName> [radius]` | Mine a block at exact coordinates, or the nearest visible block matching a name |
+| `mineRemembered <blockName>` | Mine a block the bot has no live line-of-sight on, but remembers seeing before (persistent world memory) |
+| `fetchRemembered <itemName>` | Walk to a container the bot remembers containing this item, open it, and take it into inventory |
 | `lookAround [radius]` | List every visible entity/item within radius blocks (default 16) and their positions |
 | `pickUpNearbyItem [maxDistance]` | Walk to the nearest visible dropped item within maxDistance blocks (default 8); vanilla auto-collects on arrival |
 | `pickUpItem <x> <y> <z> \| pickUpItem <itemName> [maxDistance]` | Walk to and collect a *specific* item, by position or by matching contents |

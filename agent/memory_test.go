@@ -48,3 +48,37 @@ func TestIsReservedPosition_NilStoreFailsOpen(t *testing.T) {
 		t.Fatalf("isReservedPosition = true with no world-memory store, want false (fail open)")
 	}
 }
+
+// TestRecordBrokenBlock_ForgetsTheMinedSighting exercises the fix for the
+// gap the operator asked about directly, 2026-11-17: a block this agent
+// mines must stop being findable at the old position in its own
+// world-memory store, the loose-sighting counterpart to the container
+// "slot became empty" fix.
+func TestRecordBrokenBlock_ForgetsTheMinedSighting(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+
+	if err := store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:iron_ore",
+		Position:        memorystore.Position{X: 3, Y: 4, Z: 5},
+	}); err != nil {
+		t.Fatalf("RecordSighting: %v", err)
+	}
+
+	a.recordBrokenBlock(3, 4, 5, "minecraft:iron_ore")
+	a.wg.Wait() // forgetBlockSighting writes in its own goroutine
+
+	_, found, err := store.NearestSighting("minecraft:iron_ore", memorystore.Position{}, memorystore.SightingQuery{})
+	if err != nil {
+		t.Fatalf("NearestSighting: %v", err)
+	}
+	if found {
+		t.Fatalf("NearestSighting found = true after recordBrokenBlock, want false (mined, so no longer there)")
+	}
+}
+
+func TestRecordBrokenBlock_NilStoreIsNoOp(t *testing.T) {
+	a := &agent{}
+	a.recordBrokenBlock(3, 4, 5, "minecraft:iron_ore") // must not panic with no worldMemory
+	a.wg.Wait()
+}

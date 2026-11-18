@@ -68,6 +68,31 @@ func (a *agent) recordVisibleBlockSightings(blocks []models.VisibleBlockInfo) {
 	}()
 }
 
+// forgetBlockSighting tells the world-memory store that blockName is
+// confirmed gone from (x,y,z) — called from recordBrokenBlock, the one
+// point that ever confirms a break server-side (awaitBlockChanged), so
+// this is the loose-sighting counterpart to the container "slot became
+// empty" fix (see items.ContainerHelper.recordChestSightings' own doc
+// comment for the bug that fix closed): without it, a block this agent
+// itself mines would stay findable at the old position in its own store
+// forever, since nothing else ever re-observes that exact spot to
+// naturally refresh/correct it. Runs in its own goroutine like every
+// other worldMemory write in this file, so a slow store write never adds
+// latency to MineBlockAt's own already-real-time-bound break sequence.
+func (a *agent) forgetBlockSighting(x, y, z int, blockName string) {
+	if a.worldMemory == nil {
+		return
+	}
+	pos := memorystore.Position{X: x, Y: y, Z: z}
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		if err := a.worldMemory.ForgetSighting(blockName, pos); err != nil {
+			a.logf("[Agent %s] [WorldMemory] failed to forget mined %s at %v: %v", a.cfg.Name, blockName, pos, err)
+		}
+	}()
+}
+
 // RecordContainerSighting implements models.ContainerSightingRecorder,
 // letting items.ContainerHelper report container-slot contents it has
 // already read for an unrelated reason — see Part 3 of

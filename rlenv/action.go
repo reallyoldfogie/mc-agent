@@ -265,8 +265,46 @@ const (
 	// outcome, not covered by any other reward term.
 	ActionLightPortal
 
+	// ActionMineRemembered dispatches "mineremembered
+	// <Config.MineTargetBlock>" — mc-agent's own MineRemembered action
+	// (actions/commands.go) looks up the nearest remembered, unreserved,
+	// loose sighting of that block name via the persistent world-memory
+	// store (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md,
+	// agent.MineRememberedBlock) and attempts to mine it there. Unlike
+	// ActionMine, this does its own independent memory lookup at dispatch
+	// time rather than acting on Environment's own e.mineX/Y/Z — legal
+	// specifically when live LOS has nothing (!e.mineVisible), so a
+	// policy reaches for this only once the cheaper, more precise
+	// ActionMine can't help. A safe no-op (like an unconfigured
+	// ActionMine) when Config.MineTargetBlock is unset. Excluded during a
+	// chain episode (ChainStage > 0) — mineTargetBlockInUse() falls back
+	// to Config.MineTargetBlock during a chain's early stages too, which
+	// isn't this action's business to act on independently of the
+	// chain's own gather/mine sequencing. Rewarded via reward.go's
+	// mineRememberedRewardBonus.
+	ActionMineRemembered
+
+	// ActionFetchRemembered dispatches "fetchremembered
+	// <Config.PlaceTargetItem>" — mc-agent's own FetchRemembered action
+	// (actions/commands.go) looks up the nearest remembered, unreserved
+	// *container* sighting of that item name
+	// (agent.FetchRememberedItem) and, if found, navigates there, opens
+	// the container, takes the item into inventory, and closes it again.
+	// Scoped to Config.PlaceTargetItem specifically, not
+	// Config.CraftTargetItem's own ingredient chain (that chain can
+	// resolve to a *different* item than CraftTargetItem itself — see
+	// IngredientMemoryAgent's own doc comment — so there's no single
+	// unambiguous item name to fetch for it yet; a known, deliberately
+	// deferred follow-up, not silently dropped). Legal when
+	// Config.PlaceTargetItem is set, outside a chain episode, and
+	// e.placeIngredientValid (Config.UsePlaceIngredientMemory's own
+	// observation gate) is currently true — the same "something is
+	// actually remembered right now" condition that feature already
+	// computes. Rewarded via reward.go's fetchRememberedRewardBonus.
+	ActionFetchRemembered
+
 	// NumActions is this environment's ActionSpace().
-	NumActions = int(ActionLightPortal) + 1
+	NumActions = int(ActionFetchRemembered) + 1
 )
 
 // moveToActionName, mineActionName, and craftActionName are the registered
@@ -303,6 +341,8 @@ const (
 	maceSmashWithApproachActionName   = "macesmashwithapproach"
 	usePortalActionName               = "useportal"
 	lightPortalActionName             = "lightportal"
+	mineRememberedActionName          = "mineremembered"
+	fetchRememberedActionName         = "fetchremembered"
 )
 
 // actionDispatch describes what Step should send through the
@@ -485,6 +525,16 @@ func (e *Environment) resolveDispatch(action rl.Action) (dispatch actionDispatch
 			return actionDispatch{}, false, nil
 		}
 		return actionDispatch{name: lightPortalActionName, args: portalFrameArgs(e.portalFrame)}, true, nil
+	case ActionMineRemembered:
+		if !e.actionLegal(ActionMineRemembered) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: mineRememberedActionName, args: []string{e.cfg.MineTargetBlock}}, true, nil
+	case ActionFetchRemembered:
+		if !e.actionLegal(ActionFetchRemembered) {
+			return actionDispatch{}, false, nil
+		}
+		return actionDispatch{name: fetchRememberedActionName, args: []string{e.cfg.PlaceTargetItem}}, true, nil
 	default:
 		return actionDispatch{}, false, fmt.Errorf("rlenv: action %d out of range [0, %d)", action, NumActions)
 	}
@@ -581,6 +631,10 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 		return e.cfg.PortalSearchRadius > 0 && e.portalVisible
 	case ActionLightPortal:
 		return e.cfg.LightPortalSearchRadius > 0 && e.portalFrameVisible
+	case ActionMineRemembered:
+		return e.cfg.ChainStage == 0 && e.cfg.MineTargetBlock != "" && !e.mineVisible
+	case ActionFetchRemembered:
+		return e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && e.placeIngredientValid
 	default:
 		return false
 	}

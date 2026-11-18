@@ -300,6 +300,17 @@ func (s *Store) ForgetContainerSlot(containerPos memorystore.Position, slotIndex
 	})
 }
 
+// ForgetSighting implements memorystore.Store. Reconstructs the exact
+// same key RecordSighting would have written it under (sightingKey only
+// depends on ItemOrBlockName/Position, not on ObservedAt) — no reverse
+// index needed, unlike containerSightingsBucket's own scheme.
+func (s *Store) ForgetSighting(itemOrBlockName string, pos memorystore.Position) error {
+	key := sightingKey(memorystore.Sighting{ItemOrBlockName: itemOrBlockName, Position: pos})
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(sightingsBucket).Delete(key)
+	})
+}
+
 // RecordReservation implements memorystore.Store.
 func (s *Store) RecordReservation(r memorystore.Reservation) error {
 	key := reservationKey(r.Position)

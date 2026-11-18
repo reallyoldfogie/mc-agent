@@ -6,6 +6,7 @@ import "context"
 type CommandAgent interface {
 	MovementAgent
 	ChatOperations
+	WorldMemoryAgent
 
 	// MoveToWithChat is MoveTo(ctx, x, y, z, notifyChat=true) — narrates
 	// progress/arrival/failure to chat, appropriate for a human-issued
