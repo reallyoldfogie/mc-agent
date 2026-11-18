@@ -89,6 +89,12 @@ type Environment struct {
 	chainState       chainState
 	chainInv         chainInventory
 	chainTablePlaced bool
+	// chainTableReachable is whether a crafting table is currently visible
+	// within craftTableReachRadius, refreshed alongside chainTablePlaced
+	// (refreshChain) - see nextChainCraft's own doc comment for why this is
+	// a separate signal from chainTablePlaced (which only means a table
+	// exists somewhere, not that it's currently reachable).
+	chainTableReachable bool
 	// placeAttempted is whether this episode has dispatched a place action.
 	// Only then can a table beside the bot be one it put there: a table the
 	// craft tasks seeded, or another bot placed, is not (found live, in the
@@ -578,7 +584,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	} else {
 		e.clearArea(ctx)
 	}
-	e.chainState, e.chainInv, e.chainTablePlaced, e.placedAt, e.placeAttempted = chainState{}, chainInventory{}, false, nil, false
+	e.chainState, e.chainInv, e.chainTablePlaced, e.chainTableReachable, e.placedAt, e.placeAttempted = chainState{}, chainInventory{}, false, false, nil, false
 
 	pos, yaw, pitch, ok := e.agent.GetPosition()
 	if !ok {
@@ -1419,6 +1425,36 @@ func (e *Environment) mineTargetBlockInUse() string {
 // only a target that is currently visible.
 func (e *Environment) mineTargetMemoryEnabled() bool {
 	return e.cfg.MineTargetBuried || e.cfg.ChainStage == ChainMine
+}
+
+// ChainProgress reports whether this episode is a chain episode
+// (Config.ChainStage > 0) and, if so, the name of the furthest chain
+// milestone chainState has reached so far ("none" if it hasn't gotten a log
+// yet). Used by mc-rsi-trainer metrics to tell apart a chain_mine episode
+// that truncated (ran out of steps before Step ever returned Done=true)
+// early in gathering from one that truncated on the ore search after
+// crafting its own pickaxe — found live, 2026-11-16: rsi_episodes_total's
+// "truncated" outcome had no breakdown by how far the chain got, so a rising
+// chain_mine truncation rate gave no way to tell a step-budget problem from
+// a behavior regression apart from each other.
+func (e *Environment) ChainProgress() (active bool, stage string) {
+	if e.cfg.ChainStage == 0 {
+		return false, ""
+	}
+	switch {
+	case e.chainState.craftedGoal:
+		return true, "goal_crafted"
+	case e.chainState.placed:
+		return true, "table_placed"
+	case e.chainState.gotTable:
+		return true, "got_table"
+	case e.chainState.gotPlanks:
+		return true, "got_planks"
+	case e.chainState.gotLog:
+		return true, "got_log"
+	default:
+		return true, "none"
+	}
 }
 
 // BuriedSearchStats reports whether this episode is in an active buried
@@ -3547,7 +3583,7 @@ func (e *Environment) chainObs() chainObs {
 // chainCraftTarget is what ActionCraft crafts right now in a chain episode
 // ("" if nothing useful can be), from the cached inventory.
 func (e *Environment) chainCraftTarget() string {
-	return nextChainCraft(e.cfg.ChainStage, e.cfg.CraftTargetItem, e.chainInv, e.chainTablePlaced)
+	return nextChainCraft(e.cfg.ChainStage, e.cfg.CraftTargetItem, e.chainInv, e.chainTablePlaced, e.chainTableReachable)
 }
 
 // refreshChain re-reads the inventory counts the chain cares about and
@@ -3575,7 +3611,27 @@ func (e *Environment) refreshChain() {
 			e.chainTablePlaced = true
 		}
 	}
+	// Only stage >= ChainUse ever needs this (nextChainCraft's goal-item
+	// branch is the only consumer), so skip the extra FindVisibleBlock call
+	// for earlier stages, where a table existing is already enough.
+	e.chainTableReachable = e.chainTablePlaced && e.cfg.ChainStage >= ChainUse && e.chainTableWithinReach()
 }
+
+// chainTableWithinReach reports whether a crafting table is currently
+// visible within craftTableReachRadius - mirrors agent.CraftItem's own real
+// requirement for the goal item (too large for the 2x2 inventory grid, so
+// it always goes through agent.openCraftingTable's FindVisibleBlock, same
+// radius). See nextChainCraft's doc comment for why chainTablePlaced alone
+// (a plain "does a table exist somewhere" check) isn't enough.
+func (e *Environment) chainTableWithinReach() bool {
+	_, _, _, found, err := e.agent.FindVisibleBlock(context.Background(), chainTable, craftTableReachRadius)
+	return err == nil && found
+}
+
+// craftTableReachRadius must track agent/craft.go's own craftTableSearchRadius
+// (unexported there, so not reusable directly) - the real radius CraftItem
+// searches within for any recipe too large for the 2x2 inventory grid.
+const craftTableReachRadius = 32
 
 // chainTableSearchRadius is how far refreshChain looks for a placed table
 // that it has no record of.

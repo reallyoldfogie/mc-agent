@@ -1093,6 +1093,29 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.findVisibleBlockCalls++
+	if blockName == "minecraft:crafting_table" {
+		// Handled before the chainBlocks/chainBlocksHidden branch below,
+		// deliberately: chainBlocksHidden only ever simulates the chain's
+		// ORE target becoming unresolved, for blind-exploration tests (see
+		// TestChainMineGoToExploresBeforeOreSeenThenHomesInOnceSeen, which
+		// sets it true right before the pickaxe-craft loop that this
+		// FindVisibleBlock call is now also part of - added alongside
+		// rlenv.Environment's own chainTableReachable, 2026-11-17). A
+		// solid, already-placed table has nothing to do with the ore
+		// becoming hidden, so it stays findable in chainBlocks (written by
+		// PlaceBlockAt) regardless of that flag; chainBlocks==nil falls
+		// back to the plain tableVisible toggle other tests already use.
+		f.tableSearchRadii = append(f.tableSearchRadii, radius)
+		if f.chainBlocks != nil {
+			for pos, name := range f.chainBlocks {
+				if name == blockName {
+					return float64(pos[0]), float64(pos[1]), float64(pos[2]), true, nil
+				}
+			}
+			return 0, 0, 0, false, nil
+		}
+		return 0, 0, 0, f.tableVisible, nil
+	}
 	if f.chainBlocks != nil {
 		if !f.chainBlocksHidden {
 			for pos, name := range f.chainBlocks {
@@ -1102,10 +1125,6 @@ func (f *fakeAgent) FindVisibleBlock(_ context.Context, blockName string, radius
 			}
 		}
 		return 0, 0, 0, false, nil
-	}
-	if blockName == "minecraft:crafting_table" {
-		f.tableSearchRadii = append(f.tableSearchRadii, radius)
-		return 0, 0, 0, f.tableVisible, nil
 	}
 	if f.mineBlockHidden || f.mineBlockName == "" || f.mineBlockName != blockName {
 		return 0, 0, 0, false, nil

@@ -27,9 +27,9 @@ import (
 //
 // docs/plans/RL_TRAINING_LOOP_PLAN.md Phase 1 wired ActionCraft in,
 // closing the last gap RL_ACTION_SPACE_EXPANSION.md Phase 3 left open.
-// Extend this list (and NumActions, resolveDispatch) if a future
-// capability needs a new action — do not add placeholder actions that
-// don't dispatch to anything real.
+// Extend this list (and NumActions, resolveDispatch, actionNames below)
+// if a future capability needs a new action — do not add placeholder
+// actions that don't dispatch to anything real.
 const (
 	// ActionWait performs no dispatch: the policy chooses to not move this
 	// step. See Environment.Step for why this doesn't block on anything.
@@ -306,6 +306,56 @@ const (
 	// NumActions is this environment's ActionSpace().
 	NumActions = int(ActionFetchRemembered) + 1
 )
+
+// actionNames is ActionName's lookup table, colocated with the const block
+// above on purpose: whoever extends that block (per its own "Extend this
+// list... if a future capability needs a new action" comment) sees this
+// table right below it and is far less likely to forget a name for it than
+// if the name lived in a different package entirely — found live,
+// 2026-11-14: cmd/rsi-train (mc-rsi-trainer) kept its own independent
+// name table for Prometheus metric labels, never updated past the
+// original five actions, so sixteen real actions (everything from
+// ActionSleep on) all silently reported as one "unknown" label. rl.Action
+// is cRL-go's own type, so rlenv can't give it a String() method (Go only
+// lets a type's own package attach methods to it) — this exported
+// function is the closest practical equivalent.
+var actionNames = map[rl.Action]string{
+	ActionWait:                    "wait",
+	ActionGoToTarget:              "goto",
+	ActionMine:                    "mine",
+	ActionCraft:                   "craft",
+	ActionPlace:                   "place",
+	ActionSleep:                   "sleep",
+	ActionEquip:                   "equip",
+	ActionUseItem:                 "use_item",
+	ActionPickUpItem:              "pickup_item",
+	ActionFlyTo:                   "fly_to",
+	ActionMount:                   "mount",
+	ActionDismount:                "dismount",
+	ActionVehicleJump:             "vehicle_jump",
+	ActionCombat:                  "combat",
+	ActionFollow:                  "follow",
+	ActionStopFollow:              "stop_follow",
+	ActionKillCreeperForGunpowder: "kill_creeper_for_gunpowder",
+	ActionSpearChargeWithApproach: "spear_charge_with_approach",
+	ActionMaceSmashWithApproach:   "mace_smash_with_approach",
+	ActionUsePortal:               "use_portal",
+	ActionLightPortal:             "light_portal",
+	ActionMineRemembered:          "mine_remembered",
+	ActionFetchRemembered:         "fetch_remembered",
+}
+
+// ActionName is the stable, short label for action (e.g. for a Prometheus
+// metric or a log line) — "unknown" for anything outside [0, NumActions),
+// which should never happen in practice (ActionMask/resolveDispatch both
+// range over exactly this same action space) but is safer than a panic for
+// a pure labeling helper.
+func ActionName(action rl.Action) string {
+	if name, ok := actionNames[action]; ok {
+		return name
+	}
+	return "unknown"
+}
 
 // moveToActionName, mineActionName, and craftActionName are the registered
 // action names MoveToQuiet/Mine/Craft (actions/commands.go) are keyed

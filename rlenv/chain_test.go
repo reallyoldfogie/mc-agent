@@ -31,33 +31,41 @@ func TestNextChainCraft(t *testing.T) {
 	}
 	const bowl, chest, pick = "minecraft:bowl", "minecraft:chest", "minecraft:wooden_pickaxe"
 	cases := []struct {
-		name   string
-		stage  int
-		goal   string
-		inv    chainInventory
-		placed bool
-		want   string
+		name      string
+		stage     int
+		goal      string
+		inv       chainInventory
+		placed    bool
+		reachable bool
+		want      string
 	}{
-		{"gather crafts nothing", ChainGather, "", inv(2, 0, 0, 0), false, ""},
-		{"nothing held", ChainTable, "", inv(0, 0, 0, 0), false, ""},
-		{"a log becomes planks", ChainTable, "", inv(1, 0, 0, 0), false, chainPlanks},
-		{"planks below four still need a log", ChainTable, "", inv(1, 2, 0, 0), false, chainPlanks},
-		{"four planks become the table", ChainTable, "", inv(0, 4, 0, 0), false, chainTable},
-		{"the table wins over more planks", ChainTable, "", inv(1, 4, 0, 0), false, chainTable},
-		{"stage 2 is done once the table is held", ChainTable, "", inv(0, 0, 0, 1), false, ""},
-		{"stage 3 stops at the table too", ChainPlace, "", inv(1, 0, 0, 1), false, ""},
-		{"bowl: table held but unplaced waits for Place", ChainUse, bowl, inv(1, 0, 0, 1), false, ""},
-		{"bowl: placed, planks short, log held", ChainUse, bowl, inv(1, 0, 0, 0), true, chainPlanks},
-		{"bowl: placed, enough planks", ChainUse, bowl, inv(0, 3, 0, 0), true, bowl},
-		{"bowl: placed, nothing left to craft from", ChainUse, bowl, inv(0, 2, 0, 0), true, ""},
-		{"chest needs eight planks", ChainUse, chest, inv(1, 4, 0, 0), true, chainPlanks},
-		{"chest with eight planks", ChainUse, chest, inv(0, 8, 0, 0), true, chest},
-		{"pickaxe: sticks first", ChainUse, pick, inv(0, 5, 0, 0), true, chainStick},
-		{"pickaxe: then the pickaxe", ChainUse, pick, inv(0, 3, 4, 0), true, pick},
-		{"pickaxe: sticks need planks, so a log first", ChainUse, pick, inv(1, 1, 0, 0), true, chainPlanks},
+		{"gather crafts nothing", ChainGather, "", inv(2, 0, 0, 0), false, true, ""},
+		{"nothing held", ChainTable, "", inv(0, 0, 0, 0), false, true, ""},
+		{"a log becomes planks", ChainTable, "", inv(1, 0, 0, 0), false, true, chainPlanks},
+		{"planks below four still need a log", ChainTable, "", inv(1, 2, 0, 0), false, true, chainPlanks},
+		{"four planks become the table", ChainTable, "", inv(0, 4, 0, 0), false, true, chainTable},
+		{"the table wins over more planks", ChainTable, "", inv(1, 4, 0, 0), false, true, chainTable},
+		{"stage 2 is done once the table is held", ChainTable, "", inv(0, 0, 0, 1), false, true, ""},
+		{"stage 3 stops at the table too", ChainPlace, "", inv(1, 0, 0, 1), false, true, ""},
+		{"bowl: table held but unplaced waits for Place", ChainUse, bowl, inv(1, 0, 0, 1), false, true, ""},
+		{"bowl: placed, planks short, log held", ChainUse, bowl, inv(1, 0, 0, 0), true, true, chainPlanks},
+		{"bowl: placed, enough planks", ChainUse, bowl, inv(0, 3, 0, 0), true, true, bowl},
+		{"bowl: placed, nothing left to craft from", ChainUse, bowl, inv(0, 2, 0, 0), true, true, ""},
+		{"chest needs eight planks", ChainUse, chest, inv(1, 4, 0, 0), true, true, chainPlanks},
+		{"chest with eight planks", ChainUse, chest, inv(0, 8, 0, 0), true, true, chest},
+		{"pickaxe: sticks first", ChainUse, pick, inv(0, 5, 0, 0), true, true, chainStick},
+		{"pickaxe: then the pickaxe", ChainUse, pick, inv(0, 3, 4, 0), true, true, pick},
+		{"pickaxe: sticks need planks, so a log first", ChainUse, pick, inv(1, 1, 0, 0), true, true, chainPlanks},
+		// Table placed but out of reach: the goal item itself is withheld
+		// (it needs the real 3x3 table), but sticks/planks - which fit the
+		// 2x2 inventory grid and need no table at all - are unaffected.
+		{"bowl: placed but unreachable withholds the goal", ChainUse, bowl, inv(0, 3, 0, 0), true, false, ""},
+		{"pickaxe: unreachable still allows sticks", ChainUse, pick, inv(0, 5, 0, 0), true, false, chainStick},
+		{"pickaxe: unreachable still allows planks", ChainUse, pick, inv(1, 1, 0, 0), true, false, chainPlanks},
+		{"pickaxe: unreachable withholds the pickaxe itself", ChainUse, pick, inv(0, 3, 4, 0), true, false, ""},
 	}
 	for _, c := range cases {
-		if got := nextChainCraft(c.stage, c.goal, c.inv, c.placed); got != c.want {
+		if got := nextChainCraft(c.stage, c.goal, c.inv, c.placed, c.reachable); got != c.want {
 			t.Errorf("%s: nextChainCraft = %q, want %q", c.name, got, c.want)
 		}
 	}
@@ -75,7 +83,7 @@ func TestChainResolverCompletesEveryGoalFromItsLogs(t *testing.T) {
 				placed = true
 				continue
 			}
-			next := nextChainCraft(ChainUse, goal, inv, placed)
+			next := nextChainCraft(ChainUse, goal, inv, placed, true) // reachable throughout: this test is about recipe sequencing, not reachability
 			switch next {
 			case "":
 				t.Fatalf("%s: resolver stuck at %+v placed=%v after %d steps", goal, inv, placed, step)

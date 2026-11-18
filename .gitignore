@@ -11,6 +11,7 @@
 CLAUDE.md
 AGENTS.md
 WARP.md
+/.scratch*
 
 # Go build artifacts
 mc-agent

@@ -114,9 +114,25 @@ func ChainTreeHeight(stage int, goal string) int {
 // whether the table is placed. Empty means nothing useful can be crafted
 // yet (mine more logs, or place the table).
 //
-// The policy still has to learn when to gather, craft and place; this only
-// spares it choosing between recipes.
-func nextChainCraft(stage int, goal string, inv chainInventory, tablePlaced bool) string {
+// tableReachable is ignored for every recipe except the stage's own goal
+// item: planks/sticks/the table itself all fit the 2x2 inventory grid (no
+// table needed - agent.CraftItem's own fitsInventoryGrid), but the goal
+// items here (bowl/chest/wooden_pickaxe) don't, so crafting one for real
+// requires the agent to actually find and reach a crafting table
+// (agent.openCraftingTable's FindVisibleBlock+ApproachBlock, within
+// craftTableReachRadius). tablePlaced only means a table exists somewhere
+// in the world at the remembered coordinates - nothing about whether the
+// bot can currently get to it. Found live 2026-11-17 (mc-rsi-trainer
+// rsi_chain_truncation_stage_total): without this, a chain episode that
+// wandered away from (or lost line-of-sight to, e.g. by digging
+// underground) its placed table kept suggesting/legalizing the goal craft
+// forever, so the agent burned the rest of its step budget on repeated
+// silent craft failures instead of doing anything else.
+//
+// The policy still has to learn when to gather, craft and place (and now,
+// implicitly, to get back within reach before trying to craft the goal);
+// this only spares it choosing between recipes.
+func nextChainCraft(stage int, goal string, inv chainInventory, tablePlaced, tableReachable bool) string {
 	if stage < ChainTable {
 		return ""
 	}
@@ -145,6 +161,12 @@ func nextChainCraft(stage int, goal string, inv chainInventory, tablePlaced bool
 		}
 		return ""
 	case inv.planks >= g.planks:
+		if !tableReachable {
+			// Nothing else useful to craft right now - the only thing left
+			// is the goal item itself, and that needs a table the bot can't
+			// currently get to.
+			return ""
+		}
 		return goal
 	case inv.logs > 0:
 		return chainPlanks
