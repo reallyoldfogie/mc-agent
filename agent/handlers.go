@@ -2030,6 +2030,12 @@ func (a *agent) onSetSlot(p pk.Packet) error {
 	// an entity container.
 	if windowID > 0 {
 		a.updateEntityWindowSlot(byte(windowID), slotIndex, item)
+		// A passively-observed chest-slot change this agent's own
+		// actions didn't necessarily cause — a concurrent player's own
+		// edit, or a copper golem — see ReportSlotObserved's own doc
+		// comment. A no-op if this window isn't a currently-open chest
+		// this agent has a recorded position for.
+		a.ReportSlotObserved(byte(windowID), slotIndex, item)
 	}
 
 	// The remainder is replay-mirror bookkeeping only.
@@ -2111,6 +2117,11 @@ func (a *agent) onWindowItems(p pk.Packet) error {
 	// never an entity container.
 	if windowID > 0 {
 		a.storeEntityWindowContents(byte(windowID), slots)
+		// A passively-observed full-window resync — see
+		// ReportWindowObserved's own doc comment. A no-op if this
+		// window isn't a currently-open chest this agent has a
+		// recorded position for.
+		a.ReportWindowObserved(byte(windowID), slots)
 	}
 
 	return nil

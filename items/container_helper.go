@@ -420,8 +420,19 @@ func (ch *ContainerHelper) CloseContainer() error {
 	return nil
 }
 
-// GetContainerSlotCount returns the number of slots in a container window.
-// Returns -1 if window is not found or not a recognized container type.
+// GetContainerSlotCount returns the number of slots in a container
+// window's own section — excluding the player's own inventory, which
+// chest.Slots also mirrors into its trailing slots (see
+// recordChestSightings' own doc comment for why that distinction
+// matters). Returns -1 if window is not found or not a recognized
+// container type.
+//
+// The Chest case used to return len(c.Slots) (the full wire window,
+// chest section + mirrored-in player inventory), which was wrong for
+// exactly the same reason recordChestSightings was: found and fixed in
+// the same pass. The method's only real caller today (a log line right
+// after OpenEntityContainer) never hits this branch, so this has no
+// observable behavior change.
 func (ch *ContainerHelper) GetContainerSlotCount(windowID byte) int {
 	screen, ok := ch.screenMgr.Screens()[int(windowID)]
 	if !ok || screen == nil {
@@ -430,7 +441,7 @@ func (ch *ContainerHelper) GetContainerSlotCount(windowID byte) int {
 
 	switch c := screen.(type) {
 	case *mcscreen.Chest:
-		return len(c.Slots)
+		return c.Rows * 9
 	case mcscreen.Inventory:
 		return len(c.GetSlots())
 	default:
@@ -461,21 +472,32 @@ func (ch *ContainerHelper) GetContainerType(windowID byte) ContainerType {
 	}
 }
 
-// recordChestSightings reports every slot in chest to ch.sightingRecorder,
-// anchored at whatever block position OpenContainer recorded for
-// windowID — the passive listening point Part 3 of
+// recordChestSightings reports every slot in chest's own section to
+// ch.sightingRecorder, anchored at whatever block position OpenContainer
+// recorded for windowID — the passive listening point Part 3 of
 // docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md describes. A no-op if no
 // recorder is set, or if windowID has no known position (entity
 // containers, e.g. a chest boat, never get one — see openPositions).
 //
-// Every slot is reported, not just non-empty ones: an empty slot is
-// reported with ItemID 0, which ContainerSightingRecorder's contract
-// defines as "forget whatever was recorded here" (see that type's own
-// doc comment). Skipping empty slots entirely — the original
-// implementation — left a stale "item present" record behind forever
-// once the bot itself took the last item out of a slot, since nothing
-// else would ever overwrite it; found live tracing through exactly that
-// scenario (operator question, 2026-11-17).
+// Every chest-section slot is reported, not just non-empty ones: an
+// empty slot is reported with ItemID 0, which
+// ContainerSightingRecorder's contract defines as "forget whatever was
+// recorded here" (see that type's own doc comment). Skipping empty slots
+// entirely — the original implementation — left a stale "item present"
+// record behind forever once the bot itself took the last item out of a
+// slot, since nothing else would ever overwrite it; found live tracing
+// through exactly that scenario (operator question, 2026-11-17).
+//
+// chest.Container() (not chest.Slots directly) is what bounds this to
+// the chest's own section: chest.Slots is the full wire window,
+// including the player's own inventory mirrored into its trailing
+// slots (see mc-bot-go's ContainerTypeInfo.TotalSlots) — iterating it
+// directly, as this used to, spuriously recorded whatever the bot
+// happened to be holding at the time as "seen inside the chest," at
+// slot indices that were really describing the player's own inventory.
+// Found and fixed in the same pass that built the passive
+// ReportSlotObserved/ReportWindowObserved below, since both would
+// otherwise have inherited the identical bug.
 func (ch *ContainerHelper) recordChestSightings(windowID byte, chest *mcscreen.Chest) {
 	if ch.sightingRecorder == nil {
 		return
@@ -484,16 +506,114 @@ func (ch *ContainerHelper) recordChestSightings(windowID byte, chest *mcscreen.C
 	if !ok {
 		return
 	}
-	for slotIndex, slot := range chest.Slots {
+	for slotIndex, slot := range chest.Container() {
 		itemID := int32(slot.ID)
 		if slot.Count == 0 {
 			itemID = 0
 		}
-		ch.sightingRecorder.RecordContainerSighting(ContainerSighting{
-			ContainerPos: pos,
-			SlotIndex:    slotIndex,
-			ItemID:       itemID,
-		})
+		ch.reportSightedSlot(pos, slotIndex, itemID)
+	}
+}
+
+// reportSightedSlot is the one write path every container-slot sighting
+// this type reports goes through, whether from this agent's own
+// TakeItemFromChest/PutItemInChest (recordChestSightings, above) or a
+// passively observed change it didn't cause (ReportSlotObserved/
+// ReportWindowObserved, below).
+func (ch *ContainerHelper) reportSightedSlot(pos models.V3, slotIndex int, itemID int32) {
+	ch.sightingRecorder.RecordContainerSighting(ContainerSighting{
+		ContainerPos: pos,
+		SlotIndex:    slotIndex,
+		ItemID:       itemID,
+	})
+}
+
+// chestAt looks up windowID's screen and reports it only if it's a
+// currently-open chest — the same type-check TakeItemFromChest/
+// PutItemInChest already perform inline, factored out since
+// ReportSlotObserved/ReportWindowObserved both need it too.
+func (ch *ContainerHelper) chestAt(windowID byte) (*mcscreen.Chest, bool) {
+	screen, ok := ch.screenMgr.Screens()[int(windowID)]
+	if !ok || screen == nil {
+		return nil, false
+	}
+	chest, ok := screen.(*mcscreen.Chest)
+	return chest, ok
+}
+
+// ReportSlotObserved reports a single passively-observed slot change for
+// windowID to ch.sightingRecorder — the counterpart to
+// recordChestSightings for a change this agent didn't necessarily cause
+// itself: a concurrent player's own edit to a shared chest, or
+// (1.21.9+) a copper golem moving items inside one while this agent
+// also has it open. Reached from agent.onSetSlot (ClientboundSetSlot),
+// which the server sends for any slot change in a window this agent has
+// open, regardless of cause — the container-sighting counterpart to
+// agent.observeBlockChange's loose-sighting fix (see
+// docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "narrower boundary"
+// note).
+//
+// A no-op if there's no recorder, windowID isn't a currently-open chest
+// this agent has a recorded position for (an untracked window, the
+// player's own inventory, or an entity container, which never gets a
+// position — see openPositions), or slotIndex falls in the window's
+// player-inventory section rather than its chest section — the same
+// exclusion recordChestSightings' own doc comment explains, and for the
+// same reason: reporting one of those as "seen in the chest" would be a
+// real bug, not a conservative no-op.
+func (ch *ContainerHelper) ReportSlotObserved(windowID byte, slotIndex int16, item models.InventorySlot) {
+	if ch.sightingRecorder == nil {
+		return
+	}
+	ch.mu.Lock()
+	pos, ok := ch.openPositions[windowID]
+	ch.mu.Unlock()
+	if !ok {
+		return
+	}
+	chest, ok := ch.chestAt(windowID)
+	if !ok || int(slotIndex) < 0 || int(slotIndex) >= chest.Rows*9 {
+		return
+	}
+
+	itemID := item.ItemID
+	if !item.Present {
+		itemID = 0
+	}
+	ch.reportSightedSlot(pos, int(slotIndex), itemID)
+}
+
+// ReportWindowObserved is ReportSlotObserved's bulk counterpart, for a
+// full-window resync (ClientboundContainerSetContent) rather than one
+// slot at a time. slots is the raw wire window (the chest's own section
+// first, then the player's inventory mirrored into the trailing slots —
+// see mc-bot-go's ContainerTypeInfo.TotalSlots); only the chest's own
+// section is ever reported, for the same reason ReportSlotObserved
+// bounds slotIndex.
+func (ch *ContainerHelper) ReportWindowObserved(windowID byte, slots []models.InventorySlot) {
+	if ch.sightingRecorder == nil {
+		return
+	}
+	ch.mu.Lock()
+	pos, ok := ch.openPositions[windowID]
+	ch.mu.Unlock()
+	if !ok {
+		return
+	}
+	chest, ok := ch.chestAt(windowID)
+	if !ok {
+		return
+	}
+	containerSlots := chest.Rows * 9
+	if containerSlots > len(slots) {
+		containerSlots = len(slots)
+	}
+	for slotIndex, item := range slots[:containerSlots] {
+		itemID := item.ItemID
+		if !item.Present {
+			itemID = 0
+		}
+		ch.reportSightedSlot(pos, slotIndex, itemID)
 	}
 }
 

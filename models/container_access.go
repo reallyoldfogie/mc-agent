@@ -19,6 +19,21 @@ type ContainerAccess interface {
 	// currently-open chest — see the real implementation's own doc
 	// comment (items/container_helper.go) for why this exists.
 	ChestSlots(windowID byte) []ItemStack
+
+	// ReportSlotObserved reports a single passively-observed chest-slot
+	// change for windowID — one this agent's own
+	// TakeItemFromChest/PutItemInChest didn't necessarily cause, e.g. a
+	// concurrent player's own edit to a shared chest, or (1.21.9+) a
+	// copper golem moving items inside one while this agent also has it
+	// open. A no-op if windowID isn't a currently-open chest this agent
+	// has a recorded position for, or slotIndex falls in the window's
+	// player-inventory section rather than its chest section — see the
+	// real implementation's own doc comment.
+	ReportSlotObserved(windowID byte, slotIndex int16, item InventorySlot)
+
+	// ReportWindowObserved is ReportSlotObserved's bulk counterpart, for
+	// a full-window resync rather than one slot at a time.
+	ReportWindowObserved(windowID byte, slots []InventorySlot)
 }
 
 // EntityInventoryAccess exposes cached entity container contents.

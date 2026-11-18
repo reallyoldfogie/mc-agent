@@ -290,6 +290,29 @@ func (a *agent) ChestSlots(windowID byte) []models.ItemStack {
 	return a.containerHelper.ChestSlots(windowID)
 }
 
+// ReportSlotObserved forwards a passively-observed single-slot change to
+// the container helper — see
+// items.ContainerHelper.ReportSlotObserved's own doc comment. A no-op
+// (not an error) if the container helper isn't initialized, since
+// nothing is actively waiting on this the way other container actions
+// above are.
+func (a *agent) ReportSlotObserved(windowID byte, slotIndex int16, item models.InventorySlot) {
+	if a.containerHelper == nil {
+		return
+	}
+	a.containerHelper.ReportSlotObserved(windowID, slotIndex, item)
+}
+
+// ReportWindowObserved forwards a passively-observed full-window resync
+// to the container helper — see
+// items.ContainerHelper.ReportWindowObserved's own doc comment.
+func (a *agent) ReportWindowObserved(windowID byte, slots []models.InventorySlot) {
+	if a.containerHelper == nil {
+		return
+	}
+	a.containerHelper.ReportWindowObserved(windowID, slots)
+}
+
 // GetChestRows returns the number of rows in a chest window.
 func (a *agent) GetChestRows(windowID byte) int {
 	if a.containerHelper == nil {
