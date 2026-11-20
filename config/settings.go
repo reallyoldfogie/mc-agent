@@ -184,6 +184,12 @@ type MemorySettings struct {
 	// Connection.Name. Empty defaults to "memory"; unused when Backend is
 	// "none".
 	Dir string `json:"dir"`
+	// ScanRadius/ScanIntervalSeconds configure the ambient memory scan
+	// (agent/memory_scan.go) that keeps the store populated from ordinary
+	// operation. Zero uses the package defaults (16 blocks, every 2s);
+	// unused when Backend is "none".
+	ScanRadius          int `json:"scan_radius"`
+	ScanIntervalSeconds int `json:"scan_interval_seconds"`
 }
 
 // EnvSettings is a JSON-friendly mirror of rlenv.Config — StepTimeout

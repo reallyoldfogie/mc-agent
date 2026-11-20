@@ -95,6 +95,18 @@ type AgentConfig struct {
 	// restarts. Both default if left empty — see agent.openWorldMemory.
 	MemoryStoreBackend string // Registered memorystore backend name: "none" (default, disabled), "json", or "bbolt"
 	MemoryStoreDir     string // Directory holding per-agent store files, one per Name; defaults to "memory"; unused when MemoryStoreBackend is "none"
+
+	// Ambient memory scan (see agent/memory_scan.go): a background loop,
+	// running for this agent's whole lifetime whenever MemoryStoreBackend
+	// isn't "none", that periodically ray-traces this agent's own visible
+	// blocks so the persistent store accumulates sightings from ordinary
+	// unattended operation, not only while something else (e.g.
+	// cmd/rsi-train's spectator worldstream) happens to be ray-tracing for
+	// its own reason. Both default (to memoryScanRadiusDefault/
+	// memoryScanIntervalDefault) when left at their zero value - unused
+	// when MemoryStoreBackend is "none".
+	MemoryScanRadius          int // Ray-trace radius in blocks; defaults to 16
+	MemoryScanIntervalSeconds int // Seconds between scans; defaults to 2
 }
 
 // Validate performs basic configuration checks.

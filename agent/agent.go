@@ -334,6 +334,17 @@ type agent struct {
 	// nil if the store couldn't be opened (non-fatal — see New).
 	worldMemory memorystore.Store
 
+	// memoryScanSightings is recordVisibleBlockSightings' output and
+	// the ambient memory-scan loop's input (see memory_scan.go) — every
+	// visible-block scan, whether triggered by the ambient ticker or by
+	// something else calling findAllVisibleSurfaceBlocks for its own
+	// reason (e.g. cmd/rsi-train's spectator worldstream), feeds this
+	// same channel, so there is exactly one dedup cache and one writer
+	// goroutine per agent regardless of how many things are scanning.
+	// nil whenever worldMemory is nil (see New) — recordVisibleBlockSightings
+	// already guards on worldMemory, so a nil channel here is never sent to.
+	memoryScanSightings chan models.VisibleBlockInfo
+
 	// position heartbeat (continuous position packets at 20 TPS)
 	posHeartbeatMu     sync.Mutex
 	posHeartbeatActive bool
@@ -613,6 +624,14 @@ func New(cfg models.AgentConfig) (models.Agent, error) {
 		logger.Warn("failed to open persistent world-memory store; continuing without it", "error", err)
 	} else {
 		a.worldMemory = store
+		if store != nil {
+			// Sized for one ambient scan's worth of visible blocks at the
+			// default radius (memoryScanRadiusDefault), comfortably more
+			// than typically seen even at the largest configured radius -
+			// see recordVisibleBlockSightings' own doc comment for what
+			// happens on the rare tick that still overflows it.
+			a.memoryScanSightings = make(chan models.VisibleBlockInfo, 4096)
+		}
 	}
 
 	return a, nil
@@ -1394,6 +1413,10 @@ func (a *agent) Start(ctx context.Context) error {
 
 	// Start render loop for projectile position interpolation
 	a.startRenderLoop(baseCtx.Done())
+
+	// Start the ambient world-memory scan loop (no-op if worldMemory is
+	// nil — see startMemoryScanLoop's own doc comment).
+	a.startMemoryScanLoop(baseCtx)
 
 	// Start stop file watcher if configured
 	if a.cfg.StopFilePath != "" {

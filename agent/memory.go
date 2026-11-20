@@ -61,31 +61,35 @@ func openWorldMemory(cfg models.AgentConfig, name string) (memorystore.Store, er
 // findAllVisibleSurfaceBlocks actually saw to the world-memory store, per
 // Part 1 of docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md ("every
 // findAllVisibleSurfaceBlocks result becomes (or refreshes) a record").
-// Runs in its own goroutine, tracked by a.wg like every other background
-// task New starts, so a slow store write (jsonstore rewrites its whole
-// file per call — an accepted tradeoff, see the plan's "Backend 1") never
-// adds latency to the caller's actual perception result.
+//
+// Pushed onto memoryScanSightings rather than written directly: a sphere
+// scan can return thousands of blocks, almost all of which are exactly
+// what the last scan already saw at that position, and writing every one
+// of them unconditionally on every call is the same per-write-amplified
+// churn this plan's "Backend 2" (bbolt) was built to get away from, just
+// scaled down - see memory_scan.go's consumeMemoryScanSightings for the
+// one shared dedup cache + writer this feeds, used by every caller of
+// findAllVisibleSurfaceBlocks (the ambient scan loop started in Start,
+// cmd/rsi-train's own spectator worldstream, ...), not just this one.
+// Send is non-blocking: a momentarily-backed-up consumer must never add
+// latency to the caller's actual perception result, and dropping this
+// scan's remainder on a full channel (sized generously in New for a
+// typical scan's worth of blocks) is harmless - the next scan reports the
+// same positions again.
 func (a *agent) recordVisibleBlockSightings(blocks []models.VisibleBlockInfo) {
 	if a.worldMemory == nil || len(blocks) == 0 {
 		return
 	}
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-		now := time.Now()
-		for _, b := range blocks {
-			if b.BlockName == "" {
-				continue
-			}
-			if err := a.worldMemory.RecordSighting(memorystore.Sighting{
-				ItemOrBlockName: b.BlockName,
-				Position:        memorystore.Position{X: b.X, Y: b.Y, Z: b.Z},
-				ObservedAt:      now,
-			}); err != nil {
-				a.logf("[Agent %s] [WorldMemory] failed to record sighting of %s at (%d,%d,%d): %v", a.cfg.Name, b.BlockName, b.X, b.Y, b.Z, err)
-			}
+	for _, b := range blocks {
+		if b.BlockName == "" {
+			continue
 		}
-	}()
+		select {
+		case a.memoryScanSightings <- b:
+		default:
+			return
+		}
+	}
 }
 
 // forgetBlockSighting tells the world-memory store that blockName is
