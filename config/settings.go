@@ -174,12 +174,15 @@ type CourierServerSettings struct {
 // items/blocks (including container contents) and build-footprint
 // reservations, keyed by Connection.Name and surviving process restarts.
 type MemorySettings struct {
-	// Backend names the registered memorystore backend to use: "json"
-	// (default, no new dependency) or "bbolt" (config-selected opt-in —
-	// see the plan's "Data store options"). Empty uses the default.
+	// Backend names the registered memorystore backend to use: "none"
+	// (default, disables world-memory entirely), "json", or "bbolt" —
+	// see the plan's "Data store options" and its 2026-11-19 default
+	// change for why opting in explicitly, rather than silently getting
+	// "json" and its cost, is the default. Empty uses the default.
 	Backend string `json:"backend"`
 	// Dir is the directory holding per-agent store files, one per
-	// Connection.Name. Empty defaults to "memory".
+	// Connection.Name. Empty defaults to "memory"; unused when Backend is
+	// "none".
 	Dir string `json:"dir"`
 }
 

@@ -10,12 +10,29 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 )
 
+// noneMemoryStoreBackend disables world-memory entirely: openWorldMemory
+// returns a nil Store without ever calling memorystore.Open, and every
+// a.worldMemory call site in this package (and dependency_walk.go,
+// agent.go's own Close) already guards on a.worldMemory == nil - a
+// fresh store with nothing recorded yet behaves identically to this
+// from every caller's perspective (NearestSighting/SightingAtPosition
+// report not-found either way), so "none" is a true no-op, not a
+// stub Store implementation.
+const noneMemoryStoreBackend = "none"
+
 // defaultMemoryStoreBackend/defaultMemoryStoreDir are used when
-// models.AgentConfig leaves MemoryStoreBackend/MemoryStoreDir unset. json
-// is the default backend specifically because it adds no new dependency —
-// see docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Data store options."
+// models.AgentConfig leaves MemoryStoreBackend/MemoryStoreDir unset.
+// defaultMemoryStoreBackend changed from "json" to "none" 2026-11-19
+// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Data store options"):
+// found live that "json" (still available, just no longer the silent
+// default) rewrites each agent's entire accumulated sighting history
+// on every single sighting, cheap to miss until a deployment runs
+// enough parallel agents for long enough that the resulting allocation
+// churn destabilizes the host. A caller that wants persistent memory
+// opts in explicitly ("json" or "bbolt") instead of getting it (and its
+// cost) by default.
 const (
-	defaultMemoryStoreBackend = "json"
+	defaultMemoryStoreBackend = noneMemoryStoreBackend
 	defaultMemoryStoreDir     = "memory"
 )
 
@@ -29,6 +46,9 @@ func openWorldMemory(cfg models.AgentConfig, name string) (memorystore.Store, er
 	backend := cfg.MemoryStoreBackend
 	if backend == "" {
 		backend = defaultMemoryStoreBackend
+	}
+	if backend == noneMemoryStoreBackend {
+		return nil, nil
 	}
 	dir := cfg.MemoryStoreDir
 	if dir == "" {

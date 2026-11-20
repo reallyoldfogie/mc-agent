@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -8,6 +10,63 @@ import (
 	"github.com/reallyoldfogie/mc-agent/memorystore/jsonstore"
 	"github.com/reallyoldfogie/mc-agent/models"
 )
+
+// TestOpenWorldMemoryDefaultsToNone guards the 2026-11-19 default
+// change (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md's "Data store
+// options"): a models.AgentConfig that leaves MemoryStoreBackend unset
+// must get no store at all - not silently "json" - and openWorldMemory
+// must never touch MemoryStoreDir in that case, confirmed here by
+// checking the directory stays empty rather than just asserting the
+// returned Store is nil.
+func TestOpenWorldMemoryDefaultsToNone(t *testing.T) {
+	dir := t.TempDir()
+	store, err := openWorldMemory(models.AgentConfig{MemoryStoreDir: dir}, "test")
+	if err != nil {
+		t.Fatalf("openWorldMemory with unset backend: %v", err)
+	}
+	if store != nil {
+		t.Fatalf("openWorldMemory with unset backend = non-nil Store, want nil")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("openWorldMemory with the default backend created %v in %s, want nothing", entries, dir)
+	}
+}
+
+func TestOpenWorldMemoryExplicitNoneReturnsNilStore(t *testing.T) {
+	store, err := openWorldMemory(models.AgentConfig{MemoryStoreBackend: "none"}, "test")
+	if err != nil {
+		t.Fatalf("openWorldMemory with explicit none: %v", err)
+	}
+	if store != nil {
+		t.Fatalf("openWorldMemory with explicit none = non-nil Store, want nil")
+	}
+}
+
+// TestOpenWorldMemoryJSONBackendStillOptsIn is the regression guard
+// alongside the default change above: explicitly requesting "json"
+// must still work exactly as before, including actually persisting to
+// MemoryStoreDir.
+func TestOpenWorldMemoryJSONBackendStillOptsIn(t *testing.T) {
+	dir := t.TempDir()
+	store, err := openWorldMemory(models.AgentConfig{MemoryStoreBackend: "json", MemoryStoreDir: dir}, "test")
+	if err != nil {
+		t.Fatalf("openWorldMemory with explicit json: %v", err)
+	}
+	if store == nil {
+		t.Fatalf("openWorldMemory with explicit json = nil Store, want a real one")
+	}
+	defer store.Close()
+	if err := store.RecordReservation(memorystore.Reservation{Position: memorystore.Position{X: 1, Y: 2, Z: 3}, StructureID: "t"}); err != nil {
+		t.Fatalf("RecordReservation: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "test.json")); err != nil {
+		t.Fatalf("expected test.json to exist after a write: %v", err)
+	}
+}
 
 func newTestWorldMemory(t *testing.T) memorystore.Store {
 	t.Helper()

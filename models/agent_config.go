@@ -93,8 +93,8 @@ type AgentConfig struct {
 	// remembered sightings of items/blocks (including container contents)
 	// and build-footprint reservations, keyed by Name and surviving process
 	// restarts. Both default if left empty — see agent.openWorldMemory.
-	MemoryStoreBackend string // Registered memorystore backend name: "json" (default) or "bbolt"
-	MemoryStoreDir     string // Directory holding per-agent store files, one per Name; defaults to "memory"
+	MemoryStoreBackend string // Registered memorystore backend name: "none" (default, disabled), "json", or "bbolt"
+	MemoryStoreDir     string // Directory holding per-agent store files, one per Name; defaults to "memory"; unused when MemoryStoreBackend is "none"
 }
 
 // Validate performs basic configuration checks.
