@@ -211,3 +211,50 @@ func TestReconcileBlockSighting_NoOpWhenNothingRemembered(t *testing.T) {
 		t.Fatalf("SightingAtPosition found = true, want false (nothing was ever recorded here)")
 	}
 }
+
+func TestRememberedBlocksNearReturnsNilWithoutWorldMemory(t *testing.T) {
+	a := &agent{}
+	blocks, err := a.RememberedBlocksNear(16)
+	if err != nil {
+		t.Fatalf("RememberedBlocksNear without a store: %v", err)
+	}
+	if blocks != nil {
+		t.Fatalf("RememberedBlocksNear without a store = %v, want nil", blocks)
+	}
+}
+
+func TestRememberedBlocksNearErrorsWithoutAPosition(t *testing.T) {
+	a := &agent{worldMemory: &fakeMemoryStore{}}
+	if _, err := a.RememberedBlocksNear(16); err == nil {
+		t.Fatalf("RememberedBlocksNear with no position yet = nil error, want one")
+	}
+}
+
+func TestRememberedBlocksNearQueriesExcludingContainersAtItsOwnPosition(t *testing.T) {
+	store := &fakeMemoryStore{nearResult: []memorystore.Sighting{
+		{ItemOrBlockName: "minecraft:stone", Position: memorystore.Position{X: 1, Y: 2, Z: 3}},
+	}}
+	a := &agent{worldMemory: store, posX: 10, posY: 20, posZ: 30, posInitialized: true}
+
+	blocks, err := a.RememberedBlocksNear(16)
+	if err != nil {
+		t.Fatalf("RememberedBlocksNear: %v", err)
+	}
+	if len(blocks) != 1 || blocks[0].BlockName != "minecraft:stone" || blocks[0].X != 1 || blocks[0].Y != 2 || blocks[0].Z != 3 {
+		t.Fatalf("RememberedBlocksNear = %+v, want one translated minecraft:stone block", blocks)
+	}
+
+	if len(store.nearCalls) != 1 {
+		t.Fatalf("SightingsNear called %d times, want 1", len(store.nearCalls))
+	}
+	call := store.nearCalls[0]
+	if call.from != (memorystore.Position{X: 10, Y: 20, Z: 30}) {
+		t.Fatalf("SightingsNear queried from %v, want the agent's own current position", call.from)
+	}
+	if call.radius != 16 {
+		t.Fatalf("SightingsNear radius = %d, want 16", call.radius)
+	}
+	if !call.query.ExcludeContainer {
+		t.Fatalf("SightingsNear query = %+v, want ExcludeContainer - a chest's remembered contents aren't a block to render at the chest's position", call.query)
+	}
+}

@@ -126,6 +126,18 @@ type Store interface {
 	// match.
 	NearestSighting(itemOrBlockName string, from Position, query SightingQuery) (sighting Sighting, found bool, err error)
 
+	// SightingsNear returns every sighting of any item/block name within
+	// radius blocks of from on every axis (a box bound, not a sphere -
+	// the simpler, cheaper check, and good enough for a caller like a
+	// render radius that's already an approximation), honoring query,
+	// regardless of Dimension matching from's (callers that care can
+	// filter the result). Order is unspecified. Exists for a caller
+	// that wants "what's remembered around here" rather than "where's
+	// the nearest X" - e.g. cmd/rsi-train's spectator worldstream,
+	// filling in blocks outside the agent's current line of sight with
+	// what it remembers seeing there.
+	SightingsNear(from Position, radius int, query SightingQuery) ([]Sighting, error)
+
 	// SightingAtPosition returns whatever *loose* (non-container)
 	// sighting is currently recorded at exactly pos, regardless of item
 	// name, or found=false if none is. The position-keyed counterpart to

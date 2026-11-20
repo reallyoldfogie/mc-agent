@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"math"
 	"time"
 
@@ -293,4 +294,41 @@ func (a *agent) isReservedPosition(x, y, z float64) bool {
 		return false
 	}
 	return reserved
+}
+
+// RememberedBlocksNear returns every loose (non-container - a chest's
+// remembered contents aren't a block to render at the chest's own
+// position) block sighting within radius blocks of this agent's current
+// position on every axis, per memorystore.Store.SightingsNear. Exists
+// for a caller like cmd/rsi-train's spectator worldstream that wants to
+// fill in what's outside the agent's current line of sight with what it
+// remembers seeing there, rather than rendering nothing.
+//
+// Returns (nil, nil), not an error, when worldMemory is nil - the same
+// "no store configured" tolerance every other worldMemory call site in
+// this file gives, since a caller otherwise has no way to distinguish
+// "no store" from "store has nothing nearby" without this.
+func (a *agent) RememberedBlocksNear(radius int) ([]models.VisibleBlockInfo, error) {
+	if a.worldMemory == nil {
+		return nil, nil
+	}
+	p, ok := a.GetPositionSimple()
+	if !ok {
+		return nil, errors.New("position not initialized")
+	}
+	from := memorystore.Position{X: int(math.Round(p.X)), Y: int(math.Round(p.Y)), Z: int(math.Round(p.Z))}
+	sightings, err := a.worldMemory.SightingsNear(from, radius, memorystore.SightingQuery{ExcludeContainer: true})
+	if err != nil {
+		return nil, err
+	}
+	blocks := make([]models.VisibleBlockInfo, 0, len(sightings))
+	for _, s := range sightings {
+		blocks = append(blocks, models.VisibleBlockInfo{
+			X:         s.Position.X,
+			Y:         s.Position.Y,
+			Z:         s.Position.Z,
+			BlockName: s.ItemOrBlockName,
+		})
+	}
+	return blocks, nil
 }

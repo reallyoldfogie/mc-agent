@@ -30,6 +30,9 @@ func Run(t *testing.T, factory memorystore.Factory) {
 	t.Run("SightingAtPositionFindsLooseSighting", func(t *testing.T) { testSightingAtPositionFindsLooseSighting(t, factory) })
 	t.Run("SightingAtPositionIgnoresContainerSightings", func(t *testing.T) { testSightingAtPositionIgnoresContainerSightings(t, factory) })
 	t.Run("MaxAgeFilter", func(t *testing.T) { testMaxAgeFilter(t, factory) })
+	t.Run("SightingsNearReturnsEverythingInBoxRegardlessOfName", func(t *testing.T) { testSightingsNearReturnsEverythingInBoxRegardlessOfName(t, factory) })
+	t.Run("SightingsNearExcludesOutOfBoxOnEachAxis", func(t *testing.T) { testSightingsNearExcludesOutOfBoxOnEachAxis(t, factory) })
+	t.Run("SightingsNearHonorsContainerFiltersAndMaxAge", func(t *testing.T) { testSightingsNearHonorsContainerFiltersAndMaxAge(t, factory) })
 	t.Run("ReservationIsAddOnly", func(t *testing.T) { testReservationIsAddOnly(t, factory) })
 	t.Run("PersistsAcrossReopen", func(t *testing.T) { testPersistsAcrossReopen(t, factory) })
 }
@@ -282,6 +285,62 @@ func testMaxAgeFilter(t *testing.T, factory memorystore.Factory) {
 	_, found, err = store.NearestSighting("minecraft:wheat", memorystore.Position{}, memorystore.SightingQuery{})
 	require.NoError(t, err)
 	require.True(t, found, "MaxAge of zero must not filter by age at all")
+}
+
+func testSightingsNearReturnsEverythingInBoxRegardlessOfName(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:dirt", Position: memorystore.Position{X: 1, Y: 0, Z: 0}, ObservedAt: time.Now()}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:iron_ore", Position: memorystore.Position{X: -1, Y: 0, Z: 0}, ObservedAt: time.Now()}))
+
+	// Unlike NearestSighting, SightingsNear is not scoped to one item
+	// name - a caller filling in a 3D view's blind spots wants
+	// "everything remembered here," not "the nearest instance of one
+	// specific block."
+	got, err := store.SightingsNear(memorystore.Position{}, 5, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+}
+
+func testSightingsNearExcludesOutOfBoxOnEachAxis(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+
+	inside := memorystore.Position{X: 3, Y: -3, Z: 3}
+	outsideX := memorystore.Position{X: 10, Y: 0, Z: 0}
+	outsideY := memorystore.Position{X: 0, Y: 10, Z: 0}
+	outsideZ := memorystore.Position{X: 0, Y: 0, Z: -10}
+	for _, pos := range []memorystore.Position{inside, outsideX, outsideY, outsideZ} {
+		require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:stone", Position: pos, ObservedAt: time.Now()}))
+	}
+
+	got, err := store.SightingsNear(memorystore.Position{}, 5, memorystore.SightingQuery{})
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a box bound must exclude a sighting too far on any single axis, even with the other two at the origin")
+	require.Equal(t, inside, got[0].Position)
+}
+
+func testSightingsNearHonorsContainerFiltersAndMaxAge(t *testing.T, factory memorystore.Factory) {
+	store := open(t, factory, t.TempDir())
+
+	loose := memorystore.Position{X: 1, Y: 0, Z: 0}
+	inChest := memorystore.Position{X: 2, Y: 0, Z: 0}
+	stale := memorystore.Position{X: -1, Y: 0, Z: 0}
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:bread", Position: loose, ObservedAt: time.Now()}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: "minecraft:bread", Position: inChest, ObservedAt: time.Now(),
+		Container: &memorystore.ContainerRef{ContainerPos: inChest, SlotIndex: 0},
+	}))
+	require.NoError(t, store.RecordSighting(memorystore.Sighting{ItemOrBlockName: "minecraft:wheat", Position: stale, ObservedAt: time.Now().Add(-48 * time.Hour)}))
+
+	got, err := store.SightingsNear(memorystore.Position{}, 5, memorystore.SightingQuery{ExcludeContainer: true, MaxAge: time.Hour})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, loose, got[0].Position)
+
+	got, err = store.SightingsNear(memorystore.Position{}, 5, memorystore.SightingQuery{ContainerOnly: true})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, inChest, got[0].Position)
 }
 
 func testReservationIsAddOnly(t *testing.T, factory memorystore.Factory) {

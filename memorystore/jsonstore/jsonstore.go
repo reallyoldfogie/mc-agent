@@ -155,6 +155,41 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 	return best, found, nil
 }
 
+// SightingsNear implements memorystore.Store. A linear scan over the
+// whole in-memory slice, same accepted tradeoff as NearestSighting above
+// - everything's already resident, so there's no index to build or
+// bother with.
+func (s *Store) SightingsNear(from memorystore.Position, radius int, query memorystore.SightingQuery) ([]memorystore.Sighting, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := time.Now()
+	var results []memorystore.Sighting
+	for _, sighting := range s.contents.Sightings {
+		if query.ContainerOnly && sighting.Container == nil {
+			continue
+		}
+		if query.ExcludeContainer && sighting.Container != nil {
+			continue
+		}
+		if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
+			continue
+		}
+		if abs(sighting.Position.X-from.X) > radius || abs(sighting.Position.Y-from.Y) > radius || abs(sighting.Position.Z-from.Z) > radius {
+			continue
+		}
+		results = append(results, sighting)
+	}
+	return results, nil
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // SightingAtPosition implements memorystore.Store. A linear scan, same
 // accepted tradeoff as NearestSighting above.
 func (s *Store) SightingAtPosition(pos memorystore.Position) (memorystore.Sighting, bool, error) {

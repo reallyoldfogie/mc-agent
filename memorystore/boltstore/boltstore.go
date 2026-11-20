@@ -233,6 +233,48 @@ func writeInt64(buf *bytes.Buffer, v int64) {
 	buf.Write(b[:])
 }
 
+// encodeInt64Seek is writeInt64's standalone form, for building a
+// Cursor.Seek argument (SightingsNear) rather than appending to a key
+// under construction.
+func encodeInt64Seek(v int64) []byte {
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], uint64(v)^(1<<63))
+	return b[:]
+}
+
+// decodeInt64 is writeInt64's inverse.
+func decodeInt64(b []byte) int64 {
+	return int64(binary.BigEndian.Uint64(b) ^ (1 << 63))
+}
+
+// decodePositionPrefix reads the leading X/Y/Z/Dimension fields
+// writePosition encoded at the start of key, ignoring whatever follows
+// (nothing, for positionIndexBucket's own keys; a slotIndex, for
+// containerSlotKey's - see SightingsNear, the only caller that needs to
+// decode a key it didn't construct itself for this exact position
+// rather than compare it byte-for-byte against one it did).
+func decodePositionPrefix(key []byte) (pos memorystore.Position, ok bool) {
+	const minLen = 8 + 8 + 8 + 1 // X + Y + Z + at least the Dimension terminator
+	if len(key) < minLen {
+		return memorystore.Position{}, false
+	}
+	x := decodeInt64(key[0:8])
+	y := decodeInt64(key[8:16])
+	z := decodeInt64(key[16:24])
+	dim := key[24:]
+	if n := bytes.IndexByte(dim, 0); n >= 0 {
+		dim = dim[:n]
+	}
+	return memorystore.Position{X: int(x), Y: int(y), Z: int(z), Dimension: string(dim)}, true
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // RecordSighting implements memorystore.Store. Routes to
 // containerSightingsBucket, keyed by slot, for a container sighting —
 // see that bucket's own doc comment for why — or to sightingsBucket,
@@ -346,6 +388,88 @@ func (s *Store) NearestSighting(itemOrBlockName string, from memorystore.Positio
 		return memorystore.Sighting{}, false, err
 	}
 	return best, found, nil
+}
+
+// SightingsNear implements memorystore.Store. Unlike NearestSighting
+// (which can only narrow by item name, via sightingsBucket's
+// name-then-position key order), this narrows by position instead, via
+// positionIndexBucket/containerSightingsBucket's own position-first key
+// order: Cursor.Seek jumps straight to the first key whose X is >=
+// from.X-radius, and the loop stops the moment X exceeds from.X+radius,
+// so the cost scales with how many sightings fall in that X-slab, not
+// with the whole store - a full scan would mean rescanning potentially
+// every sighting this agent has ever recorded, every call.
+//
+// Still a box bound on Y/Z (checked in Go per candidate, since the key
+// only sorts by X first), not a tight 3D index - see the interface's own
+// doc comment for why that's an accepted tradeoff here rather than a
+// reason to redesign the key scheme.
+func (s *Store) SightingsNear(from memorystore.Position, radius int, query memorystore.SightingQuery) ([]memorystore.Sighting, error) {
+	var results []memorystore.Sighting
+	now := time.Now()
+	minX := encodeInt64Seek(int64(from.X - radius))
+
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if !query.ContainerOnly {
+			c := tx.Bucket(positionIndexBucket).Cursor()
+			for k, v := c.Seek(minX); k != nil; k, v = c.Next() {
+				pos, ok := decodePositionPrefix(k)
+				if !ok {
+					continue
+				}
+				if pos.X > from.X+radius {
+					break
+				}
+				if absInt(pos.Y-from.Y) > radius || absInt(pos.Z-from.Z) > radius {
+					continue
+				}
+				data := tx.Bucket(sightingsBucket).Get(sightingKey(memorystore.Sighting{ItemOrBlockName: string(v), Position: pos}))
+				if data == nil {
+					// positionIndexBucket and sightingsBucket are kept in
+					// lockstep by RecordSighting/ForgetSighting - briefly
+					// missing here means a concurrent write raced this
+					// read, not corruption. Skip rather than error.
+					continue
+				}
+				var sighting memorystore.Sighting
+				if err := json.Unmarshal(data, &sighting); err != nil {
+					return fmt.Errorf("boltstore: decode sighting near %v: %w", pos, err)
+				}
+				if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
+					continue
+				}
+				results = append(results, sighting)
+			}
+		}
+		if !query.ExcludeContainer {
+			c := tx.Bucket(containerSightingsBucket).Cursor()
+			for k, v := c.Seek(minX); k != nil; k, v = c.Next() {
+				pos, ok := decodePositionPrefix(k)
+				if !ok {
+					continue
+				}
+				if pos.X > from.X+radius {
+					break
+				}
+				if absInt(pos.Y-from.Y) > radius || absInt(pos.Z-from.Z) > radius {
+					continue
+				}
+				var sighting memorystore.Sighting
+				if err := json.Unmarshal(v, &sighting); err != nil {
+					return fmt.Errorf("boltstore: decode container sighting near %v: %w", pos, err)
+				}
+				if query.MaxAge > 0 && now.Sub(sighting.ObservedAt) > query.MaxAge {
+					continue
+				}
+				results = append(results, sighting)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return results, nil
 }
 
 // ForgetContainerSlot implements memorystore.Store.

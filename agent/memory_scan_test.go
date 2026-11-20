@@ -14,8 +14,10 @@ import (
 // RecordSighting calls, for asserting consumeMemoryScanSightings' dedup
 // behavior without needing a real backend.
 type fakeMemoryStore struct {
-	mu        sync.Mutex
-	sightings []memorystore.Sighting
+	mu         sync.Mutex
+	sightings  []memorystore.Sighting
+	nearResult []memorystore.Sighting
+	nearCalls  []nearCall
 }
 
 func (f *fakeMemoryStore) RecordSighting(s memorystore.Sighting) error {
@@ -32,6 +34,19 @@ func (f *fakeMemoryStore) recordCount() int {
 func (f *fakeMemoryStore) NearestSighting(string, memorystore.Position, memorystore.SightingQuery) (memorystore.Sighting, bool, error) {
 	return memorystore.Sighting{}, false, nil
 }
+func (f *fakeMemoryStore) SightingsNear(from memorystore.Position, radius int, query memorystore.SightingQuery) ([]memorystore.Sighting, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nearCalls = append(f.nearCalls, nearCall{from: from, radius: radius, query: query})
+	return f.nearResult, nil
+}
+
+type nearCall struct {
+	from   memorystore.Position
+	radius int
+	query  memorystore.SightingQuery
+}
+
 func (f *fakeMemoryStore) SightingAtPosition(memorystore.Position) (memorystore.Sighting, bool, error) {
 	return memorystore.Sighting{}, false, nil
 }
