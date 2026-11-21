@@ -257,3 +257,72 @@ func TestCanWadeWater_AnyDepthRegardlessOfGroundSupport(t *testing.T) {
 	require.True(t, validator.CanDiagonalWadeWater(diagFrom, diagTo),
 		"diagonal wading should be legal in deep open water with no ground support below")
 }
+
+// TestCanJump2_RejectsASolidMidpointColumn is the regression test for the
+// live-confirmed bug (2026-11-21): CanJump2 only ever checked the takeoff
+// and landing columns, never the column directly in the middle of the
+// 2-block gap it's jumping - so it approved jumps straight into solid rock
+// that was never a gap at all, found live in a mine_buried tunnel and
+// RCON-verified against the running server (every block in the midpoint
+// column, floor through headroom, was solid). The bot then got wedged
+// against that wall every time it tried to execute the move.
+func TestCanJump2_RejectsASolidMidpointColumn(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID). // Solid floor under the whole area
+		WallDirect(1, 5, 1, 5, 65, 67, stoneID).     // Solid column at the gap's midpoint (x=1), feet through jump-headroom
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 65, Z: 5}
+	to := models.V3{X: 2, Y: 65, Z: 5}
+	require.False(t, validator.CanJump2(from, to),
+		"a solid block at the gap's own midpoint must reject the jump, even though the takeoff and landing columns are both individually clear")
+}
+
+// TestCanJump2_RejectsMissingLandingHeadroom is the regression test for the
+// other half of the same fix: CanJump2 never checked to.Y+2 (the block
+// above standing height at the landing tile), only from.Y+2 at takeoff -
+// so a low ceiling right where the bot lands was never caught either.
+func TestCanJump2_RejectsMissingLandingHeadroom(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID). // Solid floor under the whole area
+		SetBlockDirect(2, 67, 5, stoneID).           // Low ceiling directly above the landing tile only
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 65, Z: 5}
+	to := models.V3{X: 2, Y: 65, Z: 5}
+	require.False(t, validator.CanJump2(from, to),
+		"a low ceiling at the landing tile must reject the jump even when takeoff headroom and the gap's midpoint are both clear")
+}
+
+// TestCanJump2_AllowsAGenuinelyClearGap is the positive control for the two
+// tests above: with every column actually clear (a real dug-out gap, not
+// solid rock masquerading as one), the jump must still be approved.
+func TestCanJump2_AllowsAGenuinelyClearGap(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		FlatGroundDirect(0, 0, 10, 10, 64, stoneID).
+		Gap(1, 5, 64, 1). // Dig out the floor at the midpoint - a real gap
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 65, Z: 5}
+	to := models.V3{X: 2, Y: 65, Z: 5}
+	require.True(t, validator.CanJump2(from, to),
+		"a genuinely clear 2-block gap must still be jumpable")
+}

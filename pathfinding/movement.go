@@ -638,7 +638,39 @@ func (mv *MovementValidator) CanJump2(from, to models.V3) bool {
 
 	// Check headroom to jump
 	jumpSpace := from.Add(models.V3{X: 0, Y: 2, Z: 0})
-	return mv.isBlockPassable(jumpSpace)
+	if !mv.isBlockPassable(jumpSpace) {
+		return false
+	}
+
+	// The bot's hitbox passes directly over the midpoint of the 2-block
+	// gap mid-arc, still elevated - found live, 2026-11-21: this function
+	// never checked that column at all, so it happily approved "jumps"
+	// straight into solid rock that was never a gap in the first place
+	// (confirmed live against a mine_buried tunnel via RCON: every block
+	// in the midpoint column, floor through headroom, was solid). The bot
+	// then got wedged against that wall every time it tried to execute
+	// the move - onGround staying false while Y stayed pinned for dozens
+	// of consecutive ticks is the exact signature the vanilla flying
+	// anti-cheat watches for (see airborneTraceThreshold in
+	// movement/physics_executor.go), so this is a likely contributor to
+	// live flying-kicks, not just the dominant cause of stuck-on-Jump2
+	// recoveries. Checked at the same three heights as the takeoff/
+	// landing columns (feet, head, +1 jump headroom) since the arc
+	// carries the bot's full standing hitbox over this column regardless
+	// of which end it's closer to.
+	mid := from.Add(models.V3{X: dx / 2, Y: 0, Z: dz / 2})
+	for _, h := range [3]float64{0, 1, 2} {
+		if !mv.isBlockPassable(mid.Add(models.V3{X: 0, Y: h, Z: 0})) {
+			return false
+		}
+	}
+
+	// Landing headroom one block above standing height - also never
+	// checked before, and matters even more for the jump-up variant
+	// (dy==1 above) where the bot is already a block higher at touchdown
+	// than it was at takeoff.
+	landingHeadroom := to.Add(models.V3{X: 0, Y: 2, Z: 0})
+	return mv.isBlockPassable(landingHeadroom)
 }
 
 // CanClimb checks if the bot can climb (ladders, vines, etc.)
