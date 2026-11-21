@@ -77,10 +77,16 @@ func (pm PhysicsMode) String() string {
 const airborneTraceThreshold = 20
 
 // StuckRecoveryFn is a callback function for stuck recovery.
-// It receives the current position and the remaining goal position.
+// It receives the current position, the remaining goal position, and the
+// movement type of the step the agent was stuck on ("<none>" if no path
+// step was active - see attemptRepathRecovery's own stepDesc) purely for
+// the caller's own diagnostics (e.g. a breakdown of which movement types
+// actually trigger recovery most - added 2026-11-20 chasing why
+// mine_buried epochs run so long/variably); it has no effect on recovery
+// behavior itself.
 // It should attempt to re-pathfind from the current position to the goal.
 // Returns the new path if recovery succeeded, nil if recovery failed.
-type StuckRecoveryFn func(currentPos models.V3, goalPos models.V3) *pathfinding.Path
+type StuckRecoveryFn func(currentPos models.V3, goalPos models.V3, movement string) *pathfinding.Path
 
 // PhysicsMovementExecutor implements MovementExecutor using physics simulation.
 // It runs continuously at 20 TPS, always simulating physics (gravity, forces, etc.)
@@ -2380,7 +2386,7 @@ func (pe *PhysicsMovementExecutor) attemptRepathRecovery(currentPos, goalPos mod
 	// generateNavigationInputs's own currentStep >= len(Steps) guard
 	// already handles zero steps correctly (immediate "path complete",
 	// same as a normal arrival).
-	newPath := pe.stuckRecovery(currentPos, goalPos)
+	newPath := pe.stuckRecovery(currentPos, goalPos, stepDesc)
 	if newPath == nil || !newPath.Found {
 		utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] Re-path recovery failed: no valid path found from current position"))
 		// Reset progress tracking to avoid immediate re-trigger

@@ -596,7 +596,7 @@ func TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess(t 
 	exec := createTestPhysicsExecutor()
 
 	emptyFoundPath := &pathfinding.Path{Found: true, Steps: []pathfinding.PathStep{}}
-	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3, _ string) *pathfinding.Path {
 		return emptyFoundPath
 	})
 
@@ -617,7 +617,7 @@ func TestPhysicsExecutor_AttemptRepathRecovery_AcceptsEmptyFoundPathAsSuccess(t 
 func TestPhysicsExecutor_AttemptRepathRecovery_RejectsGenuineNotFound(t *testing.T) {
 	exec := createTestPhysicsExecutor()
 
-	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3, _ string) *pathfinding.Path {
 		return &pathfinding.Path{Found: false}
 	})
 
@@ -784,7 +784,7 @@ func TestPhysicsExecutor_AttemptRepathRecovery_WithRepathRecoveryStart_BacksAway
 	goalPos := models.V3{X: 501, Y: -4, Z: -86}
 
 	var receivedStarts []models.V3
-	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3) *pathfinding.Path {
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3, _ string) *pathfinding.Path {
 		receivedStarts = append(receivedStarts, currentPos)
 		return &pathfinding.Path{Found: false} // a real failure: A* found the identical path again
 	})
@@ -908,5 +908,35 @@ func TestTraceAirborneStreak_CrossesThresholdWithoutPanicking(t *testing.T) {
 	exec.traceAirborneStreak(PhysicsModeNavigating, physics.Inputs{})
 	if exec.airborneStreak != 0 {
 		t.Fatalf("airborneStreak = %d after grounding past the threshold, want 0", exec.airborneStreak)
+	}
+}
+
+// TestPhysicsExecutor_AttemptRepathRecovery_PassesTheStuckStepsMovementType
+// guards StuckRecoveryFn's diagnostic parameter (added 2026-11-20 to break
+// down which movement types actually trigger stuck-recovery, chasing why
+// mine_buried epochs ran so long/variably): the callback must receive the
+// exact movement type of whatever step the agent was stuck on when the
+// path is actively navigating one, not an empty/placeholder value.
+func TestPhysicsExecutor_AttemptRepathRecovery_PassesTheStuckStepsMovementType(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+
+	var gotMovement string
+	exec.SetStuckRecoveryCallback(func(currentPos, goalPos models.V3, movement string) *pathfinding.Path {
+		gotMovement = movement
+		return &pathfinding.Path{Found: false}
+	})
+
+	exec.pathMu.Lock()
+	exec.currentPath = &pathfinding.Path{Steps: []pathfinding.PathStep{
+		{Movement: pathfinding.MineNeighborFloor, Position: models.V3{X: 1, Y: -2, Z: 1}},
+	}}
+	exec.currentStep = 0
+	exec.pathMu.Unlock()
+
+	pos := models.V3{X: 0, Y: -1, Z: 0}
+	exec.attemptRepathRecovery(pos, pos)
+
+	if gotMovement != pathfinding.MineNeighborFloor.String() {
+		t.Fatalf("stuck-recovery callback received movement=%q, want %q", gotMovement, pathfinding.MineNeighborFloor.String())
 	}
 }

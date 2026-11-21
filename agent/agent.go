@@ -1019,7 +1019,7 @@ func (a *agent) Init(ctx context.Context) error {
 			SetStuckRecoveryCallback(movement.StuckRecoveryFn)
 		}); ok {
 			// Create a closure that captures the pathfinder
-			stuckRecoverySetter.SetStuckRecoveryCallback(func(currentPos models.V3, goalPos models.V3) *pathfinding.Path {
+			stuckRecoverySetter.SetStuckRecoveryCallback(func(currentPos models.V3, goalPos models.V3, stuckMovement string) *pathfinding.Path {
 				// CRITICAL: Floor positions to block coordinates for pathfinding.
 				// The physics executor provides fractional positions (e.g., Y=7.50 on stairs),
 				// but A* pathfinder works with integer block coordinates. Without flooring,
@@ -1035,10 +1035,10 @@ func (a *agent) Init(ctx context.Context) error {
 					Z: math.Floor(goalPos.Z),
 				}
 
-				a.logf("[Agent %s] Stuck recovery: re-pathfinding from (%.2f, %.2f, %.2f) -> snapped (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f)",
+				a.logf("[Agent %s] Stuck recovery: re-pathfinding from (%.2f, %.2f, %.2f) -> snapped (%.0f, %.0f, %.0f) to (%.0f, %.0f, %.0f), stuck on %s",
 					a.cfg.Name, currentPos.X, currentPos.Y, currentPos.Z,
 					snappedStart.X, snappedStart.Y, snappedStart.Z,
-					snappedGoal.X, snappedGoal.Y, snappedGoal.Z)
+					snappedGoal.X, snappedGoal.Y, snappedGoal.Z, stuckMovement)
 
 				// Try to pathfind from snapped position to goal
 				distance := snappedStart.DistanceTo(snappedGoal)
