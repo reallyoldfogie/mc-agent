@@ -44,6 +44,38 @@ func (pm PhysicsMode) String() string {
 	}
 }
 
+// airborneTraceThreshold is how many consecutive onGround=false ticks in
+// a row before continuousTickLoop starts logging a per-tick diagnostic
+// trace (traceAirborneStreak) - temporary instrumentation added
+// 2026-11-20 chasing a live, intermittent "Disconnected: Flying is not
+// enabled on this server" kick (three in one run, each immediately
+// preceded by a jump or mine-to-descend step). Static reading of
+// physics_executor.go/input_generator.go ruled out the jump-velocity
+// math and a stale Abilities packet as causes, and confirmed the tick
+// loop never pauses during mining, but couldn't settle whether onGround
+// is ever wrongly reported false during an otherwise-ordinary jump, or
+// whether the preceding idle/mining stretch was already most of the way
+// toward vanilla's own threshold before the jump ever happened - that
+// needs a live per-tick trace to answer, not more code reading.
+//
+// 20 ticks (1s at 20 TPS) is comfortably above how long an ordinary
+// one- or two-block AscendJump keeps a bot airborne (roughly 6-15 ticks
+// observed), but well short of vanilla's own ~80-tick disconnect
+// threshold - giving ~3 seconds of trace before a kick would actually
+// land. Logged at Info (not the usual Debug for per-tick detail - see
+// utils.DebugVerboseEnabled's other call sites in this file) specifically
+// so it's visible in the live run's existing "info" level without
+// needing a restart to raise verbosity - but still bounded, not
+// blanket-logged-every-tick-for-every-agent, which is exactly the
+// training.log-growth mistake found live 2026-11-14 (see mc-rsi-trainer's
+// docs/examples/README.md's own "_comment_logging"): an ordinary jump
+// never crosses this threshold, so this costs nothing in the
+// overwhelmingly common case, and even a real incident is capped at
+// roughly 80 log lines before it resolves (grounded again) or the kick
+// happens. Remove this whole mechanism once the live trace answers the
+// question above.
+const airborneTraceThreshold = 20
+
 // StuckRecoveryFn is a callback function for stuck recovery.
 // It receives the current position and the remaining goal position.
 // It should attempt to re-pathfind from the current position to the goal.
@@ -103,6 +135,13 @@ type PhysicsMovementExecutor struct {
 
 	// Optional telemetry recording for testing
 	telemetryRecorder models.MovementTelemetryRecorder
+
+	// airborneStreak/airborneStreakStartY support the temporary
+	// flying-kick diagnostic trace - see airborneTraceThreshold's own
+	// doc comment. Touched only from tick()'s own goroutine, same as
+	// every other tick-loop-local field in this struct.
+	airborneStreak       int
+	airborneStreakStartY float64
 
 	// Stuck detection and recovery
 	stepStartTime     time.Time       // When current step started
@@ -1655,8 +1694,43 @@ func (pe *PhysicsMovementExecutor) tick() {
 
 		pe.recordTelemetry(inputs)
 		pe.checkClutch()
+		pe.traceAirborneStreak(mode, inputs)
 		pe.sendPositionUpdate()
 	}
+}
+
+// traceAirborneStreak is airborneTraceThreshold's own logging half - see
+// that constant's doc comment for why this exists and why it's safe to
+// leave logging at Info. Reads physicsState fresh (not inputs/mode
+// alone) since onGround/Y are what this is actually trying to pin down,
+// not what was requested.
+func (pe *PhysicsMovementExecutor) traceAirborneStreak(mode PhysicsMode, inputs physics.Inputs) {
+	pos, _, _, onGround := pe.physicsState.GetPosition()
+
+	if onGround {
+		if pe.airborneStreak >= airborneTraceThreshold {
+			utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[FlyKickTrace] grounded again after %d airborne ticks: y %.4f -> %.4f (net %.4f)",
+				pe.airborneStreak, pe.airborneStreakStartY, pos.Y, pos.Y-pe.airborneStreakStartY))
+		}
+		pe.airborneStreak = 0
+		return
+	}
+
+	if pe.airborneStreak == 0 {
+		pe.airborneStreakStartY = pos.Y
+	}
+	pe.airborneStreak++
+
+	if pe.airborneStreak < airborneTraceThreshold {
+		return
+	}
+	if pe.airborneStreak == airborneTraceThreshold {
+		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[FlyKickTrace] %d consecutive ticks airborne without the kick threshold catching it yet - starting per-tick trace: mode=%s jump=%t y=%.4f",
+			pe.airborneStreak, mode, inputs.Jump, pos.Y))
+		return
+	}
+	utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[FlyKickTrace] tick %d airborne: mode=%s jump=%t y=%.4f dY_since_start=%.4f",
+		pe.airborneStreak, mode, inputs.Jump, pos.Y, pos.Y-pe.airborneStreakStartY))
 }
 
 // isVehicleActionStep reports whether m is one of the vehicle-action step

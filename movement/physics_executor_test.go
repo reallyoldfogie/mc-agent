@@ -854,3 +854,59 @@ func BenchmarkPhysicsExecutor_SyncWithServer(b *testing.B) {
 		)
 	}
 }
+
+// TestTraceAirborneStreak_CountsAndResetsOnGrounding guards
+// airborneTraceThreshold's own diagnostic (movement/physics_executor.go)
+// added 2026-11-20 to chase a live, intermittent flying-kick: the streak
+// must count consecutive airborne ticks, remember the Y it started at,
+// and reset cleanly the instant the bot is grounded again - regardless
+// of whether it ever crossed the logging threshold.
+func TestTraceAirborneStreak_CountsAndResetsOnGrounding(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	pos, yaw, pitch, _ := exec.physicsState.GetPosition()
+
+	// Three airborne ticks, well under the threshold - must still count
+	// and remember the starting Y, just without ever logging.
+	exec.physicsState.SetPosition(pos, yaw, pitch, false)
+	exec.traceAirborneStreak(PhysicsModeIdle, physics.Inputs{})
+	exec.traceAirborneStreak(PhysicsModeIdle, physics.Inputs{})
+	exec.traceAirborneStreak(PhysicsModeIdle, physics.Inputs{})
+	if exec.airborneStreak != 3 {
+		t.Fatalf("airborneStreak = %d after 3 airborne ticks, want 3", exec.airborneStreak)
+	}
+	if exec.airborneStreakStartY != pos.Y {
+		t.Fatalf("airborneStreakStartY = %.4f, want the Y when the streak started (%.4f)", exec.airborneStreakStartY, pos.Y)
+	}
+
+	// Grounded again - must reset to 0 regardless of never having
+	// crossed airborneTraceThreshold.
+	exec.physicsState.SetPosition(pos, yaw, pitch, true)
+	exec.traceAirborneStreak(PhysicsModeIdle, physics.Inputs{})
+	if exec.airborneStreak != 0 {
+		t.Fatalf("airborneStreak = %d after grounding, want 0", exec.airborneStreak)
+	}
+}
+
+// TestTraceAirborneStreak_CrossesThresholdWithoutPanicking exercises the
+// path past airborneTraceThreshold itself (the per-tick logging branch)
+// - this run's actual kicks built a streak well past 20 ticks before
+// landing, so that path must run cleanly, not just the under-threshold
+// one above.
+func TestTraceAirborneStreak_CrossesThresholdWithoutPanicking(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	pos, yaw, pitch, _ := exec.physicsState.GetPosition()
+	exec.physicsState.SetPosition(pos, yaw, pitch, false)
+
+	for i := 0; i < airborneTraceThreshold+10; i++ {
+		exec.traceAirborneStreak(PhysicsModeNavigating, physics.Inputs{Jump: true})
+	}
+	if exec.airborneStreak != airborneTraceThreshold+10 {
+		t.Fatalf("airborneStreak = %d after %d airborne ticks, want %d", exec.airborneStreak, airborneTraceThreshold+10, airborneTraceThreshold+10)
+	}
+
+	exec.physicsState.SetPosition(pos, yaw, pitch, true)
+	exec.traceAirborneStreak(PhysicsModeNavigating, physics.Inputs{})
+	if exec.airborneStreak != 0 {
+		t.Fatalf("airborneStreak = %d after grounding past the threshold, want 0", exec.airborneStreak)
+	}
+}
