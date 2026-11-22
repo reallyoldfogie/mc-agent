@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -1790,6 +1791,61 @@ func isMineActionStep(m pathfinding.MovementType) bool {
 	return m == pathfinding.MineThrough || m == pathfinding.MineDown || m == pathfinding.MineDownDiagonal || m == pathfinding.MineNeighborFloor
 }
 
+// mineStallTraceBlockState reports this bot's own CLIENT-SIDE belief
+// (same source mineTargetsCleared itself checks - pe.world/
+// pe.shapeProvider, never the live server directly) about every cell the
+// MineStallTrace diagnostic cares about around pos while throttle
+// pushes it in direction (dx, dz): the two cells immediately ahead along
+// each throttle axis individually, and the diagonal cell ahead of both -
+// added 2026-11-22 chasing a live incident where the trace showed
+// position and velocity frozen bit-for-bit identical for 60+ ticks
+// despite a strong, consistent throttle every tick, which already rules
+// out "the inputs are wrong" and points at either an un-cleared
+// obstruction the client doesn't know about, or a collision/sliding bug
+// that doesn't apply the inputs even when the client's own model says
+// the way is clear. dx/dz are already the sign of ThrottleX/ThrottleZ
+// (both world-absolute, confirmed in physics/state.go's
+// applyMovementInputs - "NOT player-relative WASD controls"), so this
+// needs no yaw rotation to turn into world coordinates.
+func (pe *PhysicsMovementExecutor) mineStallTraceBlockState(pos models.V3, dx, dz int) string {
+	feetY := int(math.Floor(pos.Y))
+	baseX := int(math.Floor(pos.X))
+	baseZ := int(math.Floor(pos.Z))
+
+	describe := func(x, y, z int) string {
+		stateID, loaded := pe.world.GetBlockStatus(x, y, z)
+		switch {
+		case !loaded:
+			return "unloaded"
+		case stateID == 0:
+			return "air"
+		case pe.shapeProvider.IsPassable(stateID):
+			return "passable"
+		default:
+			return fmt.Sprintf("SOLID(state=%d)", stateID)
+		}
+	}
+
+	cell := func(label string, ox, oz int) string {
+		return fmt.Sprintf("%s=[feet:%s head:%s]", label, describe(baseX+ox, feetY, baseZ+oz), describe(baseX+ox, feetY+1, baseZ+oz))
+	}
+
+	parts := make([]string, 0, 3)
+	if dx != 0 {
+		parts = append(parts, cell("aheadX", dx, 0))
+	}
+	if dz != 0 {
+		parts = append(parts, cell("aheadZ", 0, dz))
+	}
+	if dx != 0 && dz != 0 {
+		parts = append(parts, cell("aheadDiag", dx, dz))
+	}
+	if len(parts) == 0 {
+		return "no-throttle-direction"
+	}
+	return strings.Join(parts, " ")
+}
+
 // mineTargetsCleared reports whether every block step.MineTargets names is
 // no longer solid - the real completion signal for a mine step (see
 // onMineRequired's own doc comment), checked directly against current
@@ -2116,9 +2172,21 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	if pe.mineStallTraceTick > 0 {
 		_, _, _, onGround := pe.physicsState.GetPosition()
 		vel := pe.physicsState.GetVelocity()
-		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] tick %d: pos=(%.3f, %.3f, %.3f) onGround=%v vel=(%.3f, %.3f, %.3f) throttle=(%.2f, %.2f) jump=%v sneak=%v sprint=%v",
+		dx, dz := 0, 0
+		if inputs.ThrottleX > 0.1 {
+			dx = 1
+		} else if inputs.ThrottleX < -0.1 {
+			dx = -1
+		}
+		if inputs.ThrottleZ > 0.1 {
+			dz = 1
+		} else if inputs.ThrottleZ < -0.1 {
+			dz = -1
+		}
+		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] tick %d: pos=(%.3f, %.3f, %.3f) onGround=%v vel=(%.3f, %.3f, %.3f) throttle=(%.2f, %.2f) jump=%v sneak=%v sprint=%v %s",
 			pe.mineStallTraceTick, pos.X, pos.Y, pos.Z, onGround, vel.X, vel.Y, vel.Z,
-			inputs.ThrottleX, inputs.ThrottleZ, inputs.Jump, inputs.Sneak, inputs.Sprint))
+			inputs.ThrottleX, inputs.ThrottleZ, inputs.Jump, inputs.Sneak, inputs.Sprint,
+			pe.mineStallTraceBlockState(currentPos, dx, dz)))
 		pe.mineStallTraceTick++
 		if pe.mineStallTraceTick > mineStallTraceMaxTicks {
 			utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] safety cap (%d ticks) hit without completing or escalating - stopping trace", mineStallTraceMaxTicks))
