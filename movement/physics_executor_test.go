@@ -242,9 +242,17 @@ func (msp *MockShapeProvider) GetWaterFlowDirection(x, y, z int, world models.Wo
 	return models.V3{} // No water flow in mock
 }
 
+// undiggableMockStateID is a sentinel (bedrock/obsidian stand-in) used by
+// TestMineThroughCornerTargets_SkipsAnUndiggableCorner - every other solid
+// state ID in these tests (just 1, "Stone") stays diggable.
+const undiggableMockStateID = 2
+
 func (msp *MockShapeProvider) GetMiningInfo(blockStateID uint32) (float64, []string, bool) {
 	if blockStateID == 0 {
 		return 0, nil, false
+	}
+	if blockStateID == undiggableMockStateID {
+		return -1, nil, false
 	}
 	return 1.5, []string{"mineable/pickaxe"}, true
 }
@@ -938,5 +946,89 @@ func TestPhysicsExecutor_AttemptRepathRecovery_PassesTheStuckStepsMovementType(t
 
 	if gotMovement != pathfinding.MineNeighborFloor.String() {
 		t.Fatalf("stuck-recovery callback received movement=%q, want %q", gotMovement, pathfinding.MineNeighborFloor.String())
+	}
+}
+
+// TestMineThroughCornerTargets_NoCornerWhenAlignedOnOneAxis covers the
+// common case: a cardinal approach (aligned with the step's target on at
+// least one axis) never has a corner to clip, so this must do no extra
+// work and return nothing.
+func TestMineThroughCornerTargets_NoCornerWhenAlignedOnOneAxis(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	// Y=64+: above createTestPhysicsExecutor's own prebuilt Y<=63 floor, so
+	// every cell here defaults to air unless a test explicitly sets it.
+	step := pathfinding.PathStep{Movement: pathfinding.MineThrough, Position: models.V3{X: 9, Y: 64, Z: 10}}
+
+	// Same Z as the target (10), only X differs - a straight cardinal walk.
+	got := exec.mineThroughCornerTargets(step, models.V3{X: 10, Y: 64, Z: 10})
+	if len(got) != 0 {
+		t.Fatalf("mineThroughCornerTargets = %v for a cardinal approach, want none", got)
+	}
+}
+
+// TestMineThroughCornerTargets_FindsASolidDiggableCorner is the regression
+// test for the live-confirmed bug (2026-11-22): two consecutive MineThrough
+// steps that were both pure cardinal moves at the same Y still left the bot
+// physically drifted off both axes by the time the second one started
+// (IsComplete's own tolerance let the first finish short) - so the walk
+// toward the second step's target cut diagonally and clipped a corner cell
+// neither step's own MineTargets had ever named. This must find and return
+// that corner.
+func TestMineThroughCornerTargets_FindsASolidDiggableCorner(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	step := pathfinding.PathStep{Movement: pathfinding.MineThrough, Position: models.V3{X: 9, Y: 64, Z: 11}}
+
+	// Drifted off both axes from the target: current (10,*,10) vs target
+	// (9,*,11) - the two candidate corners are (9,*,10) and (10,*,11).
+	// Only the first is solid here.
+	exec.world.(*MockWorld).SetBlock(9, 64, 10, 1)
+	exec.world.(*MockWorld).SetBlock(9, 65, 10, 1)
+
+	got := exec.mineThroughCornerTargets(step, models.V3{X: 10, Y: 64, Z: 10})
+	want := []models.V3{{X: 9, Y: 64, Z: 10}, {X: 9, Y: 65, Z: 10}}
+	if len(got) != len(want) {
+		t.Fatalf("mineThroughCornerTargets = %v, want %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("mineThroughCornerTargets[%d] = %v, want %v (full: %v)", i, got[i], w, got)
+		}
+	}
+}
+
+// TestMineThroughCornerTargets_SkipsAnUndiggableCorner covers the case
+// this was raised for: if the corner happens to be obsidian or bedrock,
+// it must never be added as a mine target (allTargetsCleared would then
+// wait on it forever) - generateSidewaysRecoveryInputs is the intended
+// fallback for an obstruction that can't be mined away, not this.
+func TestMineThroughCornerTargets_SkipsAnUndiggableCorner(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	step := pathfinding.PathStep{Movement: pathfinding.MineThrough, Position: models.V3{X: 9, Y: 64, Z: 11}}
+
+	exec.world.(*MockWorld).SetBlock(9, 64, 10, undiggableMockStateID)
+	exec.world.(*MockWorld).SetBlock(9, 65, 10, undiggableMockStateID)
+
+	got := exec.mineThroughCornerTargets(step, models.V3{X: 10, Y: 64, Z: 10})
+	if len(got) != 0 {
+		t.Fatalf("mineThroughCornerTargets = %v for an undiggable corner, want none (left as a real obstruction)", got)
+	}
+}
+
+// TestMineStepTargets_OnlyExtendsMineThrough guards the scope of this fix:
+// MineDown (and the other mine-action movements) must keep exactly their
+// own validator-time targets, even with the same drift and a solid corner
+// present - this fix is scoped to MineThrough only (see mineStepTargets'
+// own doc comment for why).
+func TestMineStepTargets_OnlyExtendsMineThrough(t *testing.T) {
+	exec := createTestPhysicsExecutor()
+	original := []models.V3{{X: 9, Y: 64, Z: 11}}
+	step := pathfinding.PathStep{Movement: pathfinding.MineDown, Position: models.V3{X: 9, Y: 64, Z: 11}, MineTargets: original}
+
+	exec.world.(*MockWorld).SetBlock(9, 64, 10, 1)
+	exec.world.(*MockWorld).SetBlock(9, 65, 10, 1)
+
+	got := exec.mineStepTargets(step, models.V3{X: 10, Y: 64, Z: 10})
+	if len(got) != len(original) || got[0] != original[0] {
+		t.Fatalf("mineStepTargets = %v for a MineDown step, want its own unchanged MineTargets %v", got, original)
 	}
 }

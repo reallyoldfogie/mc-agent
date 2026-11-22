@@ -1861,12 +1861,90 @@ func (pe *PhysicsMovementExecutor) mineStallTraceBlockState(pos, target models.V
 	return strings.Join(parts, " ")
 }
 
-// mineTargetsCleared reports whether every block step.MineTargets names is
-// no longer solid - the real completion signal for a mine step (see
+// mineThroughCornerTargets returns live-computed corner cell(s) a
+// MineThrough step's own A*-time validator (tryMineThrough,
+// pathfinding/movement.go) could never have known to clear - found live,
+// 2026-11-22, chasing MineStallTrace's own corner-clip incidents (see its
+// own doc comment for the full live trace). tryMineThrough only ever
+// clears the straight-line destination cell (feet+head at step.Position);
+// it has no visibility into execution-time drift, because A* works
+// against clean grid cells while the bot's actual position when a step
+// starts can be off-axis by however much IsComplete's own tolerance let
+// the PREVIOUS step finish short by. When that happens, the walk to THIS
+// step's target cuts diagonally across the grid rather than arriving
+// cardinally, and can clip an un-mined cell at the corner - confirmed
+// live: two steps that were both pure cardinal moves at the same Y, one
+// stalled for 60+ ticks wedged against a corner cell neither step's own
+// MineTargets had ever named.
+//
+// Returns nil whenever the bot is still aligned with the step's target on
+// at least one axis (baseX==targetX or baseZ==targetZ) - a genuinely
+// cardinal approach has no corner to clip, so this only ever does extra
+// work in the diagonal-drift case that actually needs it. When drift
+// exists, checks BOTH candidate corners ((targetX, baseZ) and (baseX,
+// targetZ)) rather than trying to guess which axis the bot will cross
+// first - cheap (at most 2 extra world-state reads per axis-pair, and
+// only in the uncommon drift case), and correct regardless of which axis
+// the previous step's imprecision happened to land on.
+func (pe *PhysicsMovementExecutor) mineThroughCornerTargets(step pathfinding.PathStep, currentPos models.V3) []models.V3 {
+	baseX := math.Floor(currentPos.X)
+	baseZ := math.Floor(currentPos.Z)
+	targetX := math.Floor(step.Position.X)
+	targetZ := math.Floor(step.Position.Z)
+	if baseX == targetX || baseZ == targetZ {
+		return nil
+	}
+
+	feetY := step.Position.Y
+	headY := feetY + 1
+	var corners []models.V3
+	for _, corner := range [][2]float64{{targetX, baseZ}, {baseX, targetZ}} {
+		for _, y := range [2]float64{feetY, headY} {
+			pos := models.V3{X: corner[0], Y: y, Z: corner[1]}
+			stateID, loaded := pe.world.GetBlockStatus(int(pos.X), int(pos.Y), int(pos.Z))
+			if !loaded || stateID == 0 || pe.shapeProvider.IsPassable(stateID) {
+				continue // already clear - nothing to mine here
+			}
+			if _, _, diggable := pe.shapeProvider.GetMiningInfo(stateID); !diggable {
+				// Solid but undiggable (obsidian, bedrock, ...) - never add
+				// this as a mine target, or mineTargetsCleared would wait on
+				// it forever. Leaving it as a real obstruction is correct:
+				// generateSidewaysRecoveryInputs is the fallback for exactly
+				// this case (see skipSideways' own doc comment).
+				continue
+			}
+			corners = append(corners, pos)
+		}
+	}
+	return corners
+}
+
+// mineStepTargets is step.MineTargets, extended with mineThroughCornerTargets
+// for a MineThrough step specifically - see that function's own doc comment.
+// Every other mine-action movement (MineDown/MineDownDiagonal/
+// MineNeighborFloor) keeps its own validator-time targets unchanged: their
+// corner geometry also involves a Y change, which this isn't scoped to
+// handle, and skipSideways's own doc comment already covers them with
+// sideways recovery as a fallback for the same class of small clipping.
+func (pe *PhysicsMovementExecutor) mineStepTargets(step pathfinding.PathStep, currentPos models.V3) []models.V3 {
+	if step.Movement != pathfinding.MineThrough {
+		return step.MineTargets
+	}
+	corners := pe.mineThroughCornerTargets(step, currentPos)
+	if len(corners) == 0 {
+		return step.MineTargets
+	}
+	return append(append([]models.V3{}, step.MineTargets...), corners...)
+}
+
+// allTargetsCleared reports whether every block in targets is no longer
+// solid - the real completion signal for a mine step (see
 // onMineRequired's own doc comment), checked directly against current
-// world state rather than a flag set by the callback.
-func (pe *PhysicsMovementExecutor) mineTargetsCleared(step pathfinding.PathStep) bool {
-	for _, target := range step.MineTargets {
+// world state rather than a flag set by the callback. targets is
+// whatever mineStepTargets resolved it to, not necessarily just
+// step.MineTargets.
+func (pe *PhysicsMovementExecutor) allTargetsCleared(targets []models.V3) bool {
+	for _, target := range targets {
 		stateID, loaded := pe.world.GetBlockStatus(int(target.X), int(target.Y), int(target.Z))
 		if loaded && stateID != 0 && !pe.shapeProvider.IsPassable(stateID) {
 			return false
@@ -1875,10 +1953,10 @@ func (pe *PhysicsMovementExecutor) mineTargetsCleared(step pathfinding.PathStep)
 	return true
 }
 
-// triggerMineRequest starts breaking step's MineTargets if nothing is
-// already in flight for this step - see waitingForMine's own doc comment
-// for why this never gets reset to false by the goroutine it starts.
-func (pe *PhysicsMovementExecutor) triggerMineRequest(step pathfinding.PathStep) {
+// triggerMineRequest starts breaking targets if nothing is already in
+// flight for this step - see waitingForMine's own doc comment for why
+// this never gets reset to false by the goroutine it starts.
+func (pe *PhysicsMovementExecutor) triggerMineRequest(targets []models.V3) {
 	if pe.waitingForMine {
 		return
 	}
@@ -1886,7 +1964,6 @@ func (pe *PhysicsMovementExecutor) triggerMineRequest(step pathfinding.PathStep)
 	if pe.onMineRequired == nil {
 		return
 	}
-	targets := step.MineTargets
 	go func() {
 		for _, target := range targets {
 			if err := pe.onMineRequired(pe.ctx, target); err != nil {
@@ -1975,9 +2052,12 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	// step below. Once cleared, fall through to the ordinary isComplete/
 	// stuck-detection/input-generation pipeline below exactly as if this
 	// had been a plain Traverse/Descend step all along.
-	if isMineActionStep(step.Movement) && !pe.mineTargetsCleared(step) {
-		pe.triggerMineRequest(step)
-		return pe.generateIdleInputs()
+	if isMineActionStep(step.Movement) {
+		targets := pe.mineStepTargets(step, currentPos)
+		if !pe.allTargetsCleared(targets) {
+			pe.triggerMineRequest(targets)
+			return pe.generateIdleInputs()
+		}
 	}
 	if pe.waitingForMine {
 		// Mining just finished this tick. The stuck-detection clock below
@@ -2120,6 +2200,29 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 				// For vertical movements (climbing, swimming up, stairs), skip sideways recovery
 				// Sideways movement on these surfaces causes the agent to fall off
 				// THIS SHOULD BE IMPROVED TO CHECK FOR THE ABILITY TO MOVE SIDEWAYS SAFELY, RATHER THAN JUST SKIPPING IT.
+				//
+				// MineThrough/MineDownDiagonal/MineNeighborFloor were added
+				// here 2026-11-14 on the reasoning that "shuffling sideways
+				// against a solid wall obviously can't make progress, any
+				// more than it can against a solid floor" - but found live,
+				// 2026-11-22, chasing the MineStallTrace diagnostic's own
+				// corner-clip incidents: by construction, the stuck-check
+				// above can only ever run for these three movements AFTER
+				// isMineActionStep's own early-return branch has already
+				// confirmed mineTargetsCleared(step) - there is no solid
+				// wall left to shuffle against by the time this code runs
+				// at all, mining is already done. What was actually
+				// stalling in those incidents was a bot physically clipped
+				// on an un-mined corner cell from residual drift between
+				// steps (see tryMineThrough's own corner-mining fix in
+				// movement.go's caller) - exactly the kind of small
+				// clipping generateSidewaysRecoveryInputs below already
+				// exists to nudge around, and exactly the fallback that
+				// still matters if that corner cell turns out to be
+				// undiggable (obsidian, bedrock) and never gets mined at
+				// all. MineDown itself stays skipped - a straight vertical
+				// drop has no horizontal component for "sideways" to mean
+				// anything for in the first place.
 				skipSideways := step.Movement == pathfinding.Climb ||
 					step.Movement == pathfinding.SwimUp ||
 					step.Movement == pathfinding.AscendStairs ||
@@ -2127,21 +2230,7 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.Descend ||
 					step.Movement == pathfinding.AscendJump ||
 					step.Movement == pathfinding.DiagonalAscend ||
-					step.Movement == pathfinding.MineDown ||
-					step.Movement == pathfinding.MineDownDiagonal ||
-					step.Movement == pathfinding.MineNeighborFloor ||
-					// MineThrough was missing from this list - found live
-					// digging mine_buried's horizontal overburden
-					// (mc-rsi-trainer): shuffling sideways against a solid
-					// wall obviously can't make progress, any more than it
-					// can against a solid floor (MineDown's own reasoning
-					// above), so every MineThrough step paid the full
-					// sidewaysTimeout before escalating to the re-pathfind
-					// that actually breaks the next block - roughly
-					// doubling horizontal dig time relative to vertical
-					// (stuckThreshold+sidewaysTimeout+break vs just
-					// stuckThreshold+break).
-					step.Movement == pathfinding.MineThrough
+					step.Movement == pathfinding.MineDown
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
 					if pe.mineStallTraceTick > 0 {
