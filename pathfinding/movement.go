@@ -387,6 +387,26 @@ func (mv *MovementValidator) CanDescend(from, to models.V3) bool {
 		return false
 	}
 
+	// The bot walks forward into the destination column at its CURRENT
+	// standing height before gravity takes it down to `to` - found live,
+	// 2026-11-21: CanDescend only ever checked the final 2-block landing
+	// spot (to.Y/to.Y+1), never the "doorway" the bot has to walk through
+	// first to get there. An overhang sitting at exactly the bot's
+	// current head height, in the destination column, blocks that
+	// doorway even though the landing spot below it is completely clear
+	// - RCON-verified live against a real stuck Descend: a solid block
+	// at (to.X, from.Y+1, to.Z), with air at both to.Y and to.Y+1 right
+	// below it. Checked from to.Y+2 (just above what isPositionPassable
+	// above already covers) up through from.Y+1 (the bot's current head
+	// height) - for a 1-block drop that's a single extra block (exactly
+	// from.Y+1); for a 2-or-3-block drop it also covers the
+	// intermediate height(s) the body passes through on the way down.
+	for h := to.Y + 2; h <= from.Y+1; h++ {
+		if !mv.isBlockPassable(models.V3{X: to.X, Y: h, Z: to.Z}) {
+			return false
+		}
+	}
+
 	// Check if destination is water (allowed even without ground support below)
 	toStateID, toLoaded := mv.getBlock(to.X, to.Y, to.Z)
 	if toLoaded && toStateID != 0 && mv.shapeMgr.IsWater(toStateID) {

@@ -326,3 +326,74 @@ func TestCanJump2_AllowsAGenuinelyClearGap(t *testing.T) {
 	require.True(t, validator.CanJump2(from, to),
 		"a genuinely clear 2-block gap must still be jumpable")
 }
+
+// TestCanDescend_RejectsAnOverhangAtTheBotsOwnHeadHeight is the regression
+// test for the live-confirmed bug (2026-11-21, found right after the
+// CanJump2 one above): CanDescend only ever checked the final 2-block
+// landing spot (to.Y/to.Y+1), never the "doorway" the bot has to walk
+// forward through, at its CURRENT standing height, before gravity takes it
+// down - so a solid block sitting at exactly from.Y+1 in the destination
+// column blocked that doorway even though the landing spot below it was
+// completely clear, RCON-verified live against a real stuck Descend.
+func TestCanDescend_RejectsAnOverhangAtTheBotsOwnHeadHeight(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(0, 64, 0, stoneID). // floor under 'from' (from stands at y=65)
+		SetBlockDirect(1, 63, 0, stoneID). // floor under 'to', one block lower (to stands at y=64)
+		SetBlockDirect(1, 65, 0, stoneID). // the overhang: from.Y+1 in the destination column
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 65, Z: 0}
+	to := models.V3{X: 1, Y: 64, Z: 0}
+	require.False(t, validator.CanDescend(from, to),
+		"an overhang at the bot's own current head height in the destination column must reject the descend, even though the landing spot itself is clear")
+}
+
+// TestCanDescend_AllowsAGenuinelyClearOneBlockDrop is the positive control:
+// the exact same drop as above, minus the overhang, must still be approved.
+func TestCanDescend_AllowsAGenuinelyClearOneBlockDrop(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(0, 64, 0, stoneID).
+		SetBlockDirect(1, 63, 0, stoneID).
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 65, Z: 0}
+	to := models.V3{X: 1, Y: 64, Z: 0}
+	require.True(t, validator.CanDescend(from, to),
+		"a genuinely clear one-block drop must still be approved")
+}
+
+// TestCanDescend_RejectsAnObstructionAtAnIntermediateHeightOnATwoBlockDrop
+// checks the loop's general case, not just the dy==1 boundary: for a
+// two-block drop, the cell at from.Y (between the final landing headroom
+// and the bot's own head height) also has to be clear, even though it's
+// neither the landing spot nor exactly the bot's current head height.
+func TestCanDescend_RejectsAnObstructionAtAnIntermediateHeightOnATwoBlockDrop(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	stoneID := registry.GetStateID("minecraft:stone", nil)
+
+	world := mctesting.NewWorldBuilder(registry).
+		SetBlockDirect(0, 65, 0, stoneID). // floor under 'from' (from stands at y=66)
+		SetBlockDirect(1, 63, 0, stoneID). // floor under 'to', two blocks lower (to stands at y=64)
+		SetBlockDirect(1, 65, 0, stoneID). // obstruction at from.Y, between the two
+		Build()
+
+	shapeMgr := mctesting.NewMockShapeManager()
+	validator := pathfinding.NewMovementValidator(world, shapeMgr, nil)
+
+	from := models.V3{X: 0, Y: 66, Z: 0}
+	to := models.V3{X: 1, Y: 64, Z: 0}
+	require.False(t, validator.CanDescend(from, to),
+		"an obstruction at an intermediate height on a two-block drop must reject it too, not just one at the bot's exact current head height")
+}
