@@ -76,6 +76,31 @@ func (pm PhysicsMode) String() string {
 // question above.
 const airborneTraceThreshold = 20
 
+// mineStallTraceMaxTicks bounds a second temporary diagnostic trace, added
+// 2026-11-22 chasing a different live pattern than airborneTraceThreshold
+// above: after a MineThrough/MineDown/etc. step's own mine targets are
+// confirmed cleared, the executor is supposed to fall through to ordinary
+// walking (GenerateInputs) toward the step's Position - but live logs
+// showed a bot sit for the full stuckThreshold (3s) with zero movement,
+// immediately after cleanly finishing a run of blocks, before
+// stuck-recovery fired a re-pathfind to resume it. Static reading of
+// tick()/input_generator.go didn't turn up an obvious place GenerateInputs
+// would be skipped or produce a no-op input for this case - this traces
+// exactly what GenerateInputs returns, tick by tick, for the one window
+// that matters (mining just cleared, step not yet complete), to tell
+// "inputs look fine but physics/collision isn't applying them" apart from
+// "the inputs themselves are near-zero or wrong".
+//
+// Bounded past stuckThreshold's own tick count (3s * 20 TPS = 60) with a
+// safety margin, same reasoning as airborneTraceThreshold: an ordinary
+// MineThrough step that walks forward normally never comes close to this
+// many ticks before isComplete fires, so this costs nothing in the common
+// case, and even a real stall is capped well before it could repeat the
+// training.log-growth mistake found live 2026-11-14 (see mc-rsi-trainer's
+// docs/examples/README.md's own "_comment_logging"). Remove this whole
+// mechanism once the live trace answers the question above.
+const mineStallTraceMaxTicks = 80
+
 // StuckRecoveryFn is a callback function for stuck recovery.
 // It receives the current position, the remaining goal position, and the
 // movement type of the step the agent was stuck on ("<none>" if no path
@@ -148,6 +173,14 @@ type PhysicsMovementExecutor struct {
 	// every other tick-loop-local field in this struct.
 	airborneStreak       int
 	airborneStreakStartY float64
+
+	// mineStallTraceTick supports the temporary MineThrough-stall
+	// diagnostic trace - see mineStallTraceMaxTicks's own doc comment.
+	// 0 = not currently tracing; otherwise counts ticks since the
+	// current step's mine targets were confirmed cleared. Touched only
+	// from tick()'s own goroutine, same as every other tick-loop-local
+	// field in this struct.
+	mineStallTraceTick int
 
 	// Stuck detection and recovery
 	stepStartTime     time.Time       // When current step started
@@ -1887,6 +1920,9 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 		pe.lastProgressTime = time.Now()
 		pe.stepStartTime = time.Now()
 		pe.stepStartPos = currentPos
+		pe.mineStallTraceTick = 1
+		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] mine targets cleared for %s step %d, starting walk toward (%.2f, %.2f, %.2f) from (%.2f, %.2f, %.2f)",
+			step.Movement, stepNum+1, step.Position.X, step.Position.Y, step.Position.Z, currentPos.X, currentPos.Y, currentPos.Z))
 	}
 	pe.waitingForMine = false
 
@@ -1902,6 +1938,11 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 			isComplete = false
 			utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] JumpToClimb completion deferred: Y velocity %.3f < -0.1 (falling)", vel.Y))
 		}
+	}
+
+	if isComplete && pe.mineStallTraceTick > 0 {
+		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] step completed normally after %d tick(s) since mine targets cleared", pe.mineStallTraceTick))
+		pe.mineStallTraceTick = 0
 	}
 
 	if isComplete {
@@ -2032,6 +2073,10 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 					step.Movement == pathfinding.MineThrough
 				if skipSideways {
 					utils.SafeLogger(pe.logger).Debug(fmt.Sprintf("[PhysicsExecutor] %s movement - skipping sideways recovery, going straight to re-pathfind", step.Movement))
+					if pe.mineStallTraceTick > 0 {
+						utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] stuck-recovery fired after %d tick(s) since mine targets cleared - step never reached its target", pe.mineStallTraceTick))
+						pe.mineStallTraceTick = 0
+					}
 					pe.recoveryAttempt = 2
 					pe.attemptRepathRecovery(pe.repathRecoveryStart(step.Position, currentPos, goalPos), goalPos)
 				} else {
@@ -2068,6 +2113,18 @@ func (pe *PhysicsMovementExecutor) generateNavigationInputs() physics.Inputs {
 	// sneaking could never be disabled once enabled (e.g., from sideways recovery).
 	// This caused agents to get stuck on ladders since sneaking prevents descent.
 	inputs := pe.inputGen.GenerateInputs(pe.physicsState, step, 0)
+	if pe.mineStallTraceTick > 0 {
+		_, _, _, onGround := pe.physicsState.GetPosition()
+		vel := pe.physicsState.GetVelocity()
+		utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] tick %d: pos=(%.3f, %.3f, %.3f) onGround=%v vel=(%.3f, %.3f, %.3f) throttle=(%.2f, %.2f) jump=%v sneak=%v sprint=%v",
+			pe.mineStallTraceTick, pos.X, pos.Y, pos.Z, onGround, vel.X, vel.Y, vel.Z,
+			inputs.ThrottleX, inputs.ThrottleZ, inputs.Jump, inputs.Sneak, inputs.Sprint))
+		pe.mineStallTraceTick++
+		if pe.mineStallTraceTick > mineStallTraceMaxTicks {
+			utils.SafeLogger(pe.logger).Info(fmt.Sprintf("[MineStallTrace] safety cap (%d ticks) hit without completing or escalating - stopping trace", mineStallTraceMaxTicks))
+			pe.mineStallTraceTick = 0
+		}
+	}
 	if inputs.Jump {
 		_, _, _, onGround := pe.physicsState.GetPosition()
 		if !onGround {
