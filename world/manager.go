@@ -21,9 +21,32 @@ type ChunkPos struct {
 	X, Z int32
 }
 
-// blockPos represents a block position for override storage.
-type blockPos struct {
-	X, Y, Z int64
+// localBlockPos is a block's position relative to its own chunk column -
+// the inner key of Manager.blockOverrides' two-level map (see that
+// field's own doc comment). X/Z are the block's offset within the
+// column's 16x16 footprint (0-15, so int8 is already more than enough);
+// Y is the raw world height as int16, comfortably covering every build
+// height range Minecraft has ever shipped (current versions: -64..320).
+// Packs to 4 bytes with no wasted padding (1+1+2, Y's own 2-byte
+// alignment pulling it to offset 2) - a quarter the size of the flat,
+// whole-world blockPos{X,Y,Z int64} (24 bytes) this replaced.
+type localBlockPos struct {
+	X, Z int8
+	Y    int16
+}
+
+// chunkAndLocalPos splits a world block position into the ChunkPos it
+// belongs to and its localBlockPos within that chunk - see
+// Manager.blockOverrides' own doc comment for why overrides are keyed
+// this way. >>4/&15 is the same chunk-local split GetBlockAt/GetBiomeAt
+// already use elsewhere in this file; arithmetic right shift and
+// bitwise AND both behave correctly on a negative x/z in Go's two's
+// complement representation (e.g. -1 lands in chunk -1 at local offset
+// 15, not chunk 0), so this needs no separate floor-division handling.
+func chunkAndLocalPos(x, y, z int64) (ChunkPos, localBlockPos) {
+	chunkPos := ChunkPos{X: int32(x) >> 4, Z: int32(z) >> 4}
+	local := localBlockPos{X: int8(x & 15), Z: int8(z & 15), Y: int16(y)}
+	return chunkPos, local
 }
 
 // EventsListener contains callbacks for world events.
@@ -54,8 +77,30 @@ type Manager struct {
 	mu      sync.RWMutex
 	Columns map[ChunkPos]*ChunkData
 
+	// overridesMu protects blockOverrides, a two-level map
+	// (chunk -> block-within-chunk -> state ID) of single-block changes
+	// seen via HandleBlockUpdate/HandleSectionBlocksUpdate since that
+	// chunk was last (re)loaded - checked first by GetBlockAt, ahead of
+	// the chunk's own bulk-loaded data, since a block update packet is
+	// always more current than whatever the chunk snapshot said.
+	//
+	// Keyed by chunk rather than a single flat map (ChunkPos ->
+	// localBlockPos -> uint32, not blockPos{X,Y,Z int64} -> uint32)
+	// for two reasons found live, 2026-11-23 (mc-rsi-trainer): first,
+	// clearOverridesForChunk - called on every chunk load and unload -
+	// used to be an O(n) scan of every override this Manager had ever
+	// recorded, for every single call; grown past 9 million entries
+	// (344MB) on a long-lived connection repeatedly digging the same
+	// work area, that scan became a real, scaling CPU cost on every
+	// chunk boundary crossing. Keyed by chunk, clearing one is a single
+	// O(1) map delete. Second, localBlockPos packs a chunk-relative
+	// position into 4 bytes (int8 X/Z, 0-15 within the chunk; int16 Y)
+	// versus blockPos's 24 bytes (whole-world X/Y/Z as int64 each) -
+	// roughly a 3x smaller key, since nothing here ever needed
+	// world-scale range on the per-entry key once it's already bucketed
+	// by chunk.
 	overridesMu    sync.RWMutex
-	blockOverrides map[blockPos]uint32
+	blockOverrides map[ChunkPos]map[localBlockPos]uint32
 
 	// worldTimeMu protects worldAge and timeOfDay
 	worldTimeMu sync.RWMutex
@@ -114,7 +159,7 @@ func NewManager(versionHandler models.VersionHandler, events EventsListener, log
 		hasFluidCount:        hasFluidCount,
 		logger:               utils.SafeLogger(logger),
 		Columns:              make(map[ChunkPos]*ChunkData),
-		blockOverrides:       make(map[blockPos]uint32),
+		blockOverrides:       make(map[ChunkPos]map[localBlockPos]uint32),
 		worldAge:             -1, // Sentinel: not yet initialized
 		timeOfDay:            -1, // Sentinel: not yet initialized
 		minSectionY:          MIN_SECTION_Y,
@@ -619,40 +664,43 @@ func (m *Manager) Reset() {
 // Block override methods
 
 func (m *Manager) getBlockOverride(x, y, z int64) (uint32, bool) {
+	chunkPos, local := chunkAndLocalPos(x, y, z)
 	m.overridesMu.RLock()
 	defer m.overridesMu.RUnlock()
-	stateID, ok := m.blockOverrides[blockPos{x, y, z}]
+	chunkOverrides, ok := m.blockOverrides[chunkPos]
+	if !ok {
+		return 0, false
+	}
+	stateID, ok := chunkOverrides[local]
 	return stateID, ok
 }
 
 func (m *Manager) setBlockOverride(x, y, z int64, state uint32) {
+	chunkPos, local := chunkAndLocalPos(x, y, z)
 	m.overridesMu.Lock()
 	defer m.overridesMu.Unlock()
-	m.blockOverrides[blockPos{x, y, z}] = state
+	chunkOverrides, ok := m.blockOverrides[chunkPos]
+	if !ok {
+		chunkOverrides = make(map[localBlockPos]uint32)
+		m.blockOverrides[chunkPos] = chunkOverrides
+	}
+	chunkOverrides[local] = state
 }
 
+// clearOverridesForChunk discards every override recorded for one chunk
+// column in a single map delete - see Manager.blockOverrides' own doc
+// comment for why this used to be an O(n) scan of every override this
+// Manager had ever recorded, for every call.
 func (m *Manager) clearOverridesForChunk(chunkX, chunkZ int32) {
 	m.overridesMu.Lock()
 	defer m.overridesMu.Unlock()
-
-	// Calculate block coordinate ranges for this chunk
-	minX := int64(chunkX * 16)
-	maxX := int64(minX + 15)
-	minZ := int64(chunkZ * 16)
-	maxZ := int64(minZ + 15)
-
-	// Remove all overrides within this chunk's block range
-	for pos := range m.blockOverrides {
-		if pos.X >= minX && pos.X <= maxX && pos.Z >= minZ && pos.Z <= maxZ {
-			delete(m.blockOverrides, pos)
-		}
-	}
+	delete(m.blockOverrides, ChunkPos{X: chunkX, Z: chunkZ})
 }
 
 func (m *Manager) clearAllOverrides() {
 	m.overridesMu.Lock()
 	defer m.overridesMu.Unlock()
-	m.blockOverrides = make(map[blockPos]uint32)
+	m.blockOverrides = make(map[ChunkPos]map[localBlockPos]uint32)
 }
 
 // Utility functions
