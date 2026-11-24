@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	versions_common "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 	"github.com/reallyoldfogie/mc-agent/models"
@@ -14,6 +15,14 @@ import (
 	"github.com/reallyoldfogie/mc-bot-go/bot"
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
+
+// positionSendBacklogLogInterval bounds how often skipIfBacklogged logs
+// while a backlog is ongoing (every Nth consecutive skip, roughly once a
+// second at the physics tick loop's 20 TPS) - same "bounded, not
+// logged-every-tick" discipline as this package's own
+// FlyKickTrace/MineStallTrace (physics_executor.go), after the
+// training.log growth mistake found live 2026-11-14.
+const positionSendBacklogLogInterval = 20
 
 // movementPacketSender implements a base MovementExecutor
 // It does not implement a full MovementExecutor (some methods are no-ops)
@@ -32,6 +41,15 @@ type movementPacketSender struct {
 	stateMu     sync.Mutex // Protects isSprinting and isSneaking
 	isSprinting bool
 	isSneaking  bool
+
+	// backlog tracks an in-progress run of position/rotation sends
+	// skipped because the connection's own write queue hasn't caught up
+	// yet - see skipIfBacklogged's own doc comment.
+	backlog struct {
+		mu               sync.Mutex
+		consecutiveSkips int
+		streakStartedAt  time.Time
+	}
 
 	// Optional callback for packet interception (e.g., replay mirror)
 	onPacketSent func(pkt any)
@@ -90,8 +108,87 @@ func (me *movementPacketSender) IsSprinting() bool {
 	return me.isSprinting
 }
 
+// skipIfBacklogged reports whether this position/rotation send should
+// be skipped because the connection still has unsent packets queued
+// ahead of it (me.client.Conn().PendingWrites() > 0) - added chasing a
+// live "kicked for floating too long" kick (2026-11-24, docs/bugs).
+//
+// The physics tick loop calls SendPosition/SendPositionAndRotation
+// unconditionally every tick regardless of whether the previous send
+// has actually reached the wire, and mc-bot-go's own send queue is
+// unbounded by design (every other packet type - chat, mining,
+// inventory - needs guaranteed, in-order delivery, so the queue itself
+// can't just start dropping things to cope with a slow writer). Left
+// unchecked, a transient write stall (OS socket backpressure, scheduler
+// contention from many bots' worth of concurrent work) lets position
+// packets queue up without bound, then burst-flush once the writer
+// catches up - delivering what looks to the server like several ticks'
+// worth of falling compressed into a few milliseconds, exactly the kind
+// of physics discrepancy vanilla's own anti-fly heuristic exists to
+// catch, even though nothing was ever physically wrong with the fall
+// itself (confirmed live: physics_executor.go's own MineStallTrace/
+// FlyKickTrace diagnostics showed a completely ordinary, short fall
+// that completed well under either trace's own threshold, with the kick
+// landing roughly a second later after a logged WritePacket failure -
+// not a gravity/onGround-tracking bug).
+//
+// Skipping entirely (rather than sending a now-stale position) is safe
+// here specifically because it's bounded in practice and harmless in
+// principle: local physics simulation (gravity, collision, onGround
+// tracking) is unaffected - only the network send is skipped - and the
+// server doesn't kick for an absence of movement packets on anything
+// resembling this timescale. The only vanilla mechanism in that
+// neighborhood, player-idle-timeout, operates in minutes and is
+// disabled in this deployment's own server.properties; the separate
+// KeepAlive heartbeat (agent/version_handler_adapter.go) is untouched by
+// this skip. The next tick re-checks and, once the backlog clears,
+// sends the bot's then-current position - never a replay of whatever
+// was skipped.
+func (me *movementPacketSender) skipIfBacklogged() bool {
+	if me.client == nil {
+		return false
+	}
+	return me.recordBacklogSample(me.client.Conn().PendingWrites())
+}
+
+// recordBacklogSample is skipIfBacklogged's own skip-streak state
+// machine, split out so it's testable against literal pending-write
+// counts without needing a real network connection (the pendingWrites
+// counter itself is mc-bot-go's own, exercised by that package's own
+// TestConn_PendingWrites_TracksBacklogAndDrainsToZero).
+func (me *movementPacketSender) recordBacklogSample(pending int64) bool {
+	me.backlog.mu.Lock()
+	defer me.backlog.mu.Unlock()
+
+	if pending == 0 {
+		if me.backlog.consecutiveSkips > 0 {
+			me.logger.Info("[PositionSendBacklog] cleared",
+				"consecutiveSkips", me.backlog.consecutiveSkips,
+				"streakDuration", time.Since(me.backlog.streakStartedAt))
+			me.backlog.consecutiveSkips = 0
+		}
+		return false
+	}
+
+	me.backlog.consecutiveSkips++
+	switch {
+	case me.backlog.consecutiveSkips == 1:
+		me.backlog.streakStartedAt = time.Now()
+		me.logger.Info("[PositionSendBacklog] starting - skipping position/rotation sends until it clears", "pendingWrites", pending)
+	case me.backlog.consecutiveSkips%positionSendBacklogLogInterval == 0:
+		me.logger.Info("[PositionSendBacklog] still backlogged",
+			"consecutiveSkips", me.backlog.consecutiveSkips,
+			"pendingWrites", pending,
+			"streakDuration", time.Since(me.backlog.streakStartedAt))
+	}
+	return true
+}
+
 // SendPosition sends a position update packet
 func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) error {
+	if me.skipIfBacklogged() {
+		return nil
+	}
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -120,6 +217,9 @@ func (me *movementPacketSender) SendPosition(x, y, z float64, onGround bool) err
 
 // SendPositionAndRotation sends a combined position and rotation update packet
 func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pitch float64, onGround bool) error {
+	if me.skipIfBacklogged() {
+		return nil
+	}
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
@@ -159,6 +259,9 @@ func (me *movementPacketSender) SendPositionAndRotation(x, y, z float64, yaw, pi
 
 // SendRotation sends a rotation update packet
 func (me *movementPacketSender) SendRotation(yaw, pitch float64, onGround bool) error {
+	if me.skipIfBacklogged() {
+		return nil
+	}
 	// Skip packet sending if client is nil (test mode)
 	var err error
 	if me.client != nil {
