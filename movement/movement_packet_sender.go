@@ -16,6 +16,18 @@ import (
 	protocol_models "github.com/reallyoldfogie/mc-protocol-go/models"
 )
 
+// positionSendBacklogThreshold is the minimum PendingWrites() value that
+// counts as "backlogged" for skipIfBacklogged - found live 2026-11-24
+// chasing this mechanism's own noise: a live trace of ~630,000 streak
+// starts showed 99.9% began at pendingWrites=1, which is just the one
+// packet normally in transit between a tick's enqueue and WriteLoop's
+// own pull (an unavoidable, harmless property of the async send path,
+// not evidence of the writer falling behind) - only a few hundred ever
+// started at 2, and genuinely concerning values (15, 28, 43...) were
+// rarer still. 1 would skip (and log) on essentially every tick for
+// every bot; this is the actual signal/noise boundary.
+const positionSendBacklogThreshold = 2
+
 // positionSendBacklogLogInterval bounds how often skipIfBacklogged logs
 // while a backlog is ongoing (every Nth consecutive skip, roughly once a
 // second at the physics tick loop's 20 TPS) - same "bounded, not
@@ -110,7 +122,8 @@ func (me *movementPacketSender) IsSprinting() bool {
 
 // skipIfBacklogged reports whether this position/rotation send should
 // be skipped because the connection still has unsent packets queued
-// ahead of it (me.client.Conn().PendingWrites() > 0) - added chasing a
+// ahead of it (me.client.Conn().PendingWrites() >= positionSendBacklogThreshold)
+// - added chasing a
 // live "kicked for floating too long" kick (2026-11-24, docs/bugs).
 //
 // The physics tick loop calls SendPosition/SendPositionAndRotation
@@ -160,7 +173,7 @@ func (me *movementPacketSender) recordBacklogSample(pending int64) bool {
 	me.backlog.mu.Lock()
 	defer me.backlog.mu.Unlock()
 
-	if pending == 0 {
+	if pending < positionSendBacklogThreshold {
 		if me.backlog.consecutiveSkips > 0 {
 			me.logger.Info("[PositionSendBacklog] cleared",
 				"consecutiveSkips", me.backlog.consecutiveSkips,
