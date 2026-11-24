@@ -20,6 +20,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/models"
 	"github.com/reallyoldfogie/mc-agent/utils"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 	// _ "github.com/reallyoldfogie/mc-agent/handler_versions/common"
 )
 
@@ -138,7 +139,7 @@ func main() {
 	}
 
 	// Dial RCON if configured - only needed for -follow-cam.
-	camRCON, err := agent.DialRCON(context.Background(), settings.RCON.Address, settings.RCON.Password)
+	camRCON, err := agent.DialRCON(context.Background(), settings.RCON.Address, settings.RCON.Password, testenv.MinecraftVersion(settings.Connection.Version))
 	if err != nil {
 		log.Fatalf("%v", err)
 	}

@@ -59,6 +59,7 @@ import (
 	"github.com/reallyoldfogie/mc-agent/rlenv"
 	"github.com/reallyoldfogie/mc-agent/utils"
 	rof_utils "github.com/reallyoldfogie/mc-bot-go/utils"
+	"github.com/reallyoldfogie/mc-client-test-go/testenv"
 )
 
 // envPrefix is this command's ENV-override prefix (config.ApplyEnv's
@@ -343,7 +344,7 @@ func connectAgent(ctx context.Context, settings config.Settings) (models.Agent, 
 		version = detectedVersion
 	}
 
-	rcon, err := agent.DialRCON(ctx, settings.RCON.Address, settings.RCON.Password)
+	rcon, err := agent.DialRCON(ctx, settings.RCON.Address, settings.RCON.Password, testenv.MinecraftVersion(version))
 	if err != nil {
 		return nil, err
 	}

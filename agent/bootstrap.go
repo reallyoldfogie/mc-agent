@@ -112,7 +112,9 @@ func credCachePath(auth config.AuthSettings) string {
 // Returns a nil RCONHelper and no error if address is empty — matches the
 // original call site's "only dial if an address was actually configured"
 // behavior.
-func DialRCON(ctx context.Context, address, password string) (testenv.RCONHelper, error) {
+// version must be resolved by the caller before dialing; no RCON version
+// detection is performed.
+func DialRCON(ctx context.Context, address, password string, version testenv.MinecraftVersion) (testenv.RCONHelper, error) {
 	if address == "" {
 		return nil, nil
 	}
@@ -126,7 +128,7 @@ func DialRCON(ctx context.Context, address, password string) (testenv.RCONHelper
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	rcon, err := testenv.DialRCON(dialCtx, host, port, password)
+	rcon, err := testenv.DialRCON(dialCtx, host, port, password, version)
 	if err != nil {
 		return nil, fmt.Errorf("dial RCON at %s: %w", address, err)
 	}

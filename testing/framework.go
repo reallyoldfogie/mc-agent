@@ -534,7 +534,7 @@ func (f *Framework) StartServer(ctx context.Context, cfg ServerConfig) (*TestIns
 		return nil, fmt.Errorf("create RCON client: %w", err)
 	}
 
-	helper := testenv.NewRCONHelper(rcon)
+	helper := testenv.NewRCONHelper(rcon, testenv.MinecraftVersion(inst.Version))
 
 	// Initialize world state with sensible defaults for testing
 	_, err = helper.ExecuteMany(startCtx,
