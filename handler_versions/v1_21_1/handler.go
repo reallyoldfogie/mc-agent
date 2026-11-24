@@ -285,13 +285,18 @@ func (p *playHandler) ParseSimulationDistance(pkt pk.Packet) (simulationDistance
 	return int32(sd), nil
 }
 
-// ParseDisconnect parses a ClientboundDisconnect packet.
+// ParseDisconnect parses a play-phase ClientboundKickDisconnect packet.
+// Reason is an AnonymousNBT text component (not a plain string, as of the
+// protocol's 1.20.3+ text-component migration), same as
+// configurationHandler.ParseDisconnect already handles correctly for the
+// configuration-phase Disconnect packet - see extractNBTString (chat.go)
+// for how "text" vs "translate" compounds are resolved.
 func (p *playHandler) ParseDisconnect(pkt pk.Packet) (reason string, err error) {
-	var r pk.String
-	if err = pkt.Scan(&r); err != nil {
-		return "", common.ErrPacketParse{PacketName: "Disconnect", Cause: err}
+	kick := cb.NewKickDisconnect()
+	if err = kick.Scan(pkt); err != nil {
+		return "", common.ErrPacketParse{PacketName: "KickDisconnect", Cause: err}
 	}
-	return string(r), nil
+	return extractNBTString(kick.Reason), nil
 }
 
 // ParseGameEvent parses a ClientboundGameStateChange packet (Game Event in 1.20 and earlier).
