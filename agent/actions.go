@@ -1382,7 +1382,16 @@ func (a *agent) MineBlockAt(ctx context.Context, blockPos models.V3, _ models.Bl
 	// the server just ignores the packets. Walk to a spot within reach
 	// first - but only if actually out of reach: close enough is good
 	// enough, and digging needs reach, not line of sight.
-	if err := models.ApproachBlock(ctx, a, models.V3{X: float64(blockX), Y: float64(blockY), Z: float64(blockZ)}, models.ApproachOptions{}); err != nil {
+	//
+	// SkipUnreachableFallback: the block being mined is by definition a
+	// solid cell the bot can never stand inside, so if no walkable,
+	// in-sight candidate exists nearby at all (still fully buried - no
+	// tunnel dug to it yet), ApproachBlock's own fallback of walking
+	// straight at the block's own coordinates is an unsatisfiable
+	// pathfinder goal, not a real attempt - see ApproachOptions.
+	// SkipUnreachableFallback's own doc comment for the live incident this
+	// fixes (mine-remembered dispatches against a buried, undug memory).
+	if err := models.ApproachBlock(ctx, a, models.V3{X: float64(blockX), Y: float64(blockY), Z: float64(blockZ)}, models.ApproachOptions{SkipUnreachableFallback: true}); err != nil {
 		return fmt.Errorf("approach block to mine: %w", err)
 	}
 

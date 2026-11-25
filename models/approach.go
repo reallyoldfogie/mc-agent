@@ -36,6 +36,26 @@ type ApproachOptions struct {
 	// sight - right for interactions mc-agent itself gates on sight (opening
 	// containers). Digging only needs reach.
 	RequireSight bool
+	// SkipUnreachableFallback, if true, makes ApproachBlock return
+	// ErrNoInteractPosition immediately when no walkable, in-sight
+	// candidate exists near target, instead of falling back to walking
+	// straight at target's own coordinates. Right for a caller whose
+	// target is a known-solid block the bot can never stand inside (e.g.
+	// MineBlockAt) - that fallback's own pathfinder goal is unsatisfiable
+	// by construction for exactly that case (no walkable position is ever
+	// within a pathfinder's goal radius of a cell you can't stand inside -
+	// see docs/bugs/hpa-star-slowness, the same lesson FindInteractPosition
+	// itself exists for), so attempting it anyway only burns a full
+	// pathfind to its step limit, or gets canceled mid-search by the next
+	// dispatch and restarted from scratch, repeatedly, with no chance of
+	// ever succeeding - found live, 2026-11-24/25: a buried ore block with
+	// no tunnel dug to it yet (a stale or freshly-seeded remembered
+	// sighting - mc-rsi-trainer's memory-reset-clear/seed feature) hit
+	// this every single dispatch, at over 1000/hour sustained. Left false
+	// (default, unchanged behavior) for a caller like a container or
+	// crafting table, which usually IS directly standable-adjacent-to even
+	// when the broader candidate scan happens to miss it.
+	SkipUnreachableFallback bool
 }
 
 // WithinInteractReach reports whether a bot standing at pos (feet) with its
@@ -68,7 +88,9 @@ func CanInteractFromHere(ctx context.Context, agent ApproachAgent, target V3, re
 // otherwise walks to the closest walkable, in-reach spot that works,
 // trying each candidate closest-first with its own ApproachAttemptTimeout
 // and failing only once every one has. If no standable spot with line of
-// sight exists at all, it falls back to walking at the target itself.
+// sight exists at all, it falls back to walking at the target itself -
+// unless ApproachOptions.SkipUnreachableFallback says not to (see that
+// field's own doc comment for why).
 func ApproachBlock(ctx context.Context, agent ApproachAgent, target V3, opts ApproachOptions) error {
 	if CanInteractFromHere(ctx, agent, target, opts.RequireSight) {
 		return nil
@@ -82,6 +104,9 @@ func ApproachBlock(ctx context.Context, agent ApproachAgent, target V3, opts App
 		return agent.MoveTo(moveCtx, pos.X, pos.Y, pos.Z, notify)
 	})
 	if errors.Is(err, ErrNoInteractPosition) {
+		if opts.SkipUnreachableFallback {
+			return ErrNoInteractPosition
+		}
 		return agent.MoveTo(ctx, target.X, target.Y, target.Z, announce)
 	}
 	return err

@@ -127,6 +127,68 @@ func TestApproachBlock_MovesOnFromAWedgedCandidate(t *testing.T) {
 	}
 }
 
+// TestApproachBlock_SkipUnreachableFallbackFailsFastWhenFullyEnclosed
+// mirrors TestFindInteractPosition_FullyEnclosed's own world (interact_
+// position_test.go) - solid rock in every direction, no walkable candidate
+// anywhere - but through ApproachBlock itself, asserting the caller gets
+// ErrNoInteractPosition back immediately rather than ApproachBlock trying
+// (and the fake's MoveTo being asked) to walk straight at the solid target.
+func TestApproachBlock_SkipUnreachableFallbackFailsFastWhenFullyEnclosed(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	const margin = 1
+	bound := int(models.InteractReachDistance) + margin
+	wb := mctesting.NewWorldBuilder(registry)
+	for dx := -bound; dx <= bound; dx++ {
+		for dy := -bound; dy <= bound; dy++ {
+			for dz := -bound; dz <= bound; dz++ {
+				wb = wb.SetBlockDirect(float64(dx), float64(dy), float64(dz), grassStateID)
+			}
+		}
+	}
+	world := wb.Build()
+
+	agent := &fakeApproachAgent{
+		fakeInteractAgent: fakeInteractAgent{world: world, shapeMgr: mctesting.NewMockShapeManager()},
+		pos:               models.V3{X: float64(bound + 5), Y: 0, Z: 0},
+	}
+	err := models.ApproachBlock(context.Background(), agent, models.V3{}, models.ApproachOptions{SkipUnreachableFallback: true})
+	if !errors.Is(err, models.ErrNoInteractPosition) {
+		t.Fatalf("expected ErrNoInteractPosition, got %v", err)
+	}
+	if len(agent.moves) != 0 {
+		t.Fatalf("SkipUnreachableFallback must not walk at all when fully enclosed, got moves: %v", agent.moves)
+	}
+}
+
+// TestApproachBlock_WithoutSkipStillFallsBackWhenFullyEnclosed asserts the
+// default (SkipUnreachableFallback left false) keeps today's behavior
+// unchanged for every other caller - still attempts the direct walk.
+func TestApproachBlock_WithoutSkipStillFallsBackWhenFullyEnclosed(t *testing.T) {
+	registry := mctesting.NewSimpleBlockRegistry()
+	const margin = 1
+	bound := int(models.InteractReachDistance) + margin
+	wb := mctesting.NewWorldBuilder(registry)
+	for dx := -bound; dx <= bound; dx++ {
+		for dy := -bound; dy <= bound; dy++ {
+			for dz := -bound; dz <= bound; dz++ {
+				wb = wb.SetBlockDirect(float64(dx), float64(dy), float64(dz), grassStateID)
+			}
+		}
+	}
+	world := wb.Build()
+
+	agent := &fakeApproachAgent{
+		fakeInteractAgent: fakeInteractAgent{world: world, shapeMgr: mctesting.NewMockShapeManager()},
+		pos:               models.V3{X: float64(bound + 5), Y: 0, Z: 0},
+	}
+	if err := models.ApproachBlock(context.Background(), agent, models.V3{}, models.ApproachOptions{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(agent.moves) != 1 || agent.moves[0] != (models.V3{}) {
+		t.Fatalf("expected the unchanged fallback to walk straight at the target, got moves: %v", agent.moves)
+	}
+}
+
 func TestApproachBlock_FailsOnlyAfterEveryCandidateFailed(t *testing.T) {
 	agent := newApproachAgent(t, models.V3{X: 12, Y: 0, Z: 0})
 	sentinel := errors.New("no path")
