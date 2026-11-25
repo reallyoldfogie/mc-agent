@@ -919,6 +919,8 @@ type TaskOverride struct {
 	MineBuriedExploreDepth int
 	// MineBuriedExploreRadius is Config.MineBuriedExploreRadius for this episode.
 	MineBuriedExploreRadius int
+	// UseMineTargetMemory is Config.UseMineTargetMemory for this episode.
+	UseMineTargetMemory     bool
 	SleepSearchRadius       int
 	PortalSearchRadius      int
 	LightPortalSearchRadius int

@@ -702,6 +702,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.MineTargetBuried = override.MineTargetBuried
 		e.cfg.MineBuriedExploreDepth = override.MineBuriedExploreDepth
 		e.cfg.MineBuriedExploreRadius = override.MineBuriedExploreRadius
+		e.cfg.UseMineTargetMemory = override.UseMineTargetMemory
 		e.cfg.SleepSearchRadius = override.SleepSearchRadius
 		e.cfg.PortalSearchRadius = override.PortalSearchRadius
 		e.cfg.LightPortalSearchRadius = override.LightPortalSearchRadius
