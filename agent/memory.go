@@ -118,6 +118,64 @@ func (a *agent) forgetBlockSighting(x, y, z int, blockName string) {
 	}()
 }
 
+// ForgetSightingsNear removes every loose and container sighting this
+// agent's world-memory store has recorded within radius blocks (box
+// bound, per memorystore.Store.SightingsNear) of pos — regardless of
+// item/block name. Unlike forgetBlockSighting/observeBlockChange above,
+// this isn't driven by a specific confirmed perception event: it's for a
+// caller (rlenv.Environment.Reset, via rlenv.MemoryEditAgent) that knows
+// an entire region's remembered contents are about to go stale all at
+// once — e.g. a clone-area reshuffle that reseeds different ore at the
+// same coordinates every episode (see rlenv.Config.MemoryResetClearRadius's
+// own doc comment for why that makes a cross-episode-persistent sighting
+// actively wrong, not just old). Synchronous, unlike every other
+// worldMemory write in this file: Reset needs to know this finished (and
+// whether it failed) before building this episode's observation on top
+// of whatever memory is left. A no-op, not an error, if worldMemory is
+// nil or nothing is recorded nearby.
+func (a *agent) ForgetSightingsNear(pos models.V3, radius int) error {
+	if a.worldMemory == nil {
+		return nil
+	}
+	near, err := a.worldMemory.SightingsNear(memorystore.Position{X: int(pos.X), Y: int(pos.Y), Z: int(pos.Z)}, radius, memorystore.SightingQuery{})
+	if err != nil {
+		return err
+	}
+	for _, s := range near {
+		if s.Container != nil {
+			if err := a.worldMemory.ForgetContainerSlot(s.Container.ContainerPos, s.Container.SlotIndex); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := a.worldMemory.ForgetSighting(s.ItemOrBlockName, s.Position); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RecordManualSighting writes a sighting of blockName at pos directly
+// into this agent's world-memory store, exactly as if the agent had just
+// perceived it there — except it didn't: this is rlenv.MemoryEditAgent's
+// write side, for a caller (rlenv.Environment.Reset, via
+// rlenv.Config.MemorySeedAccurateProb/MemorySeedInaccurateProb) that
+// deliberately seeds a starting memory, accurate or not, so a policy
+// training against a reshuffling clone area gets a chance to learn
+// memory is actually worth using — see those fields' own doc comment.
+// Synchronous, same reasoning as ForgetSightingsNear above. A no-op, not
+// an error, if worldMemory is nil.
+func (a *agent) RecordManualSighting(pos models.V3, blockName string) error {
+	if a.worldMemory == nil {
+		return nil
+	}
+	return a.worldMemory.RecordSighting(memorystore.Sighting{
+		ItemOrBlockName: blockName,
+		Position:        memorystore.Position{X: int(pos.X), Y: int(pos.Y), Z: int(pos.Z)},
+		ObservedAt:      time.Now(),
+	})
+}
+
 // observeBlockChange keeps a remembered loose sighting accurate against
 // *any* block change this agent's own connection observes at that exact
 // position — not just ones this agent itself caused (forgetBlockSighting,

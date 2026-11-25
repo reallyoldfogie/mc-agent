@@ -628,6 +628,68 @@ type Config struct {
 	// where to clone *from*, it doesn't seed anything itself.
 	CloneAreaJitter int
 
+	// MemoryResetClearRadius, if > 0, makes each Reset (for an episode
+	// where mineTargetMemoryEnabled() is true) invalidate every sighting
+	// the agent's persistent world-memory store has recorded within this
+	// many blocks of the episode's own working-area center, before this
+	// episode's clone-area reshuffle. CloneAreaJitter's own doc comment
+	// explains why a clone reshuffles which ore ends up at each
+	// coordinate every episode even though the destination itself doesn't
+	// move — but the world-memory store is explicitly never reset per
+	// episode (memorystore's own package doc), so without this, a
+	// sighting recorded last episode just sits there, now describing
+	// whatever got cloned in THIS episode's completely different window,
+	// not what's actually there. Requires the live agent to implement
+	// MemoryEditAgent (memory_reset.go); silently skipped if it doesn't.
+	// 0 (the default) disables this — unchanged existing behavior.
+	//
+	// Found live, 2026-11-24: mine_buried's success rate collapsed from
+	// 92.8% to 2.0% within hours of widening CloneAreaRadius/the
+	// seed-template's ore count (same episode-to-episode density,
+	// confirmed by simulation) — spectating live agents showed them
+	// standing still, chat flooding with ActionMineRemembered's "I don't
+	// remember seeing X anywhere." A wider jittered reshuffle plausibly
+	// made stale cross-episode memories (previously "close enough" under
+	// the old, narrower reshuffle) actively wrong often enough to matter.
+	MemoryResetClearRadius int
+
+	// MemorySeedAccurateProb and MemorySeedInaccurateProb together drive a
+	// random three-way split, redrawn fresh every Reset (for an episode
+	// where mineTargetMemoryEnabled() is true), for whether this episode
+	// starts with a seeded MineTargetBlock sighting already sitting in the
+	// agent's memory store:
+	//
+	//   - MemorySeedAccurateProb of the time: a real, freshly-verified
+	//     position (found by sampling the clone footprint for an actual
+	//     MineTargetBlock instance — see findRealMineTargetPosition;
+	//     silently skipped if none is found in the sample).
+	//   - MemorySeedInaccurateProb of the time: a *wrong* position near
+	//     that real one, offset by MemorySeedInaccurateOffset blocks along
+	//     one randomly-chosen axis — deliberately plausible-but-false, so
+	//     the policy can't learn to trust every memory blindly either.
+	//   - The remaining probability (1 minus both, clamped at 0): no seed
+	//     at all, leaving the episode exactly as an unseeded Reset already
+	//     is today.
+	//
+	// Exists alongside MemoryResetClearRadius, not instead of it: clearing
+	// alone doesn't help a policy that's never once had a genuinely useful
+	// memory to act on in the first place (see that field's own "found
+	// live" note — the collapse observed live was agents with *nothing*
+	// remembered, not agents acting on stale memories) — there's no
+	// experience to learn "use memory when it's there, don't trust it
+	// blindly otherwise" from unless some episodes actually hand it both
+	// a real hit and a false one to tell apart. Both 0 (the default)
+	// disables this entirely. Requires MemoryEditAgent, same as
+	// MemoryResetClearRadius.
+	MemorySeedAccurateProb   float64
+	MemorySeedInaccurateProb float64
+	// MemorySeedInaccurateOffset is how far, in blocks, the seeded
+	// sighting in MemorySeedInaccurateProb's case is moved from the real
+	// position it was based on, along one randomly-chosen axis in a
+	// randomly-chosen direction. <= 0 while MemorySeedInaccurateProb > 0
+	// falls back to 8.
+	MemorySeedInaccurateOffset int
+
 	// TimePenalty is the reward subtracted every step, independent of outcome
 	// (see reward.go's timePenalty for what it's for). 0 means the built-in
 	// default, 0.01. The default is too small to matter next to a +10 success

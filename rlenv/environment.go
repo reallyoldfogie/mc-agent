@@ -700,6 +700,14 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 		e.cfg.FollowTargetPlayerName = override.FollowTargetPlayerName
 	}
 
+	// Must run after the TaskSelector override above (MineTargetBuried/
+	// MineTargetBlock/ChainStage for this episode aren't final until
+	// then) and after e.mineSearchAnchorX/Y/Z are set above (this
+	// episode's clone-area working-area center) — see
+	// Config.MemoryResetClearRadius/MemorySeedAccurateProb's own doc
+	// comments for what this does and why.
+	e.applyMemoryReset(models.V3{X: e.mineSearchAnchorX, Y: e.mineSearchAnchorY, Z: e.mineSearchAnchorZ})
+
 	targetOffset := e.cfg.TargetOffset
 	for i := range targetOffset {
 		targetOffset[i] = e.jitter(targetOffset[i], i)

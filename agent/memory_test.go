@@ -223,6 +223,82 @@ func TestRememberedBlocksNearReturnsNilWithoutWorldMemory(t *testing.T) {
 	}
 }
 
+// TestRecordManualSighting_IsFindableAfterward confirms the seeding side
+// of rlenv.MemoryEditAgent writes a sighting that subsequent lookups (the
+// same path a genuine perception event would have taken) actually find.
+func TestRecordManualSighting_IsFindableAfterward(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+
+	pos := models.V3{X: 12, Y: -5, Z: 34}
+	if err := a.RecordManualSighting(pos, "minecraft:coal_ore"); err != nil {
+		t.Fatalf("RecordManualSighting: %v", err)
+	}
+
+	got, found, err := store.SightingAtPosition(memorystore.Position{X: 12, Y: -5, Z: 34})
+	if err != nil {
+		t.Fatalf("SightingAtPosition: %v", err)
+	}
+	if !found {
+		t.Fatalf("SightingAtPosition after RecordManualSighting found = false, want true")
+	}
+	if got.ItemOrBlockName != "minecraft:coal_ore" {
+		t.Fatalf("SightingAtPosition ItemOrBlockName = %q, want minecraft:coal_ore", got.ItemOrBlockName)
+	}
+}
+
+func TestRecordManualSighting_NoOpWithoutWorldMemory(t *testing.T) {
+	a := &agent{}
+	if err := a.RecordManualSighting(models.V3{X: 1, Y: 2, Z: 3}, "minecraft:coal_ore"); err != nil {
+		t.Fatalf("RecordManualSighting without a store: %v", err)
+	}
+}
+
+// TestForgetSightingsNear_RemovesLooseAndContainerSightingsInBoxOnly
+// confirms the clearing side of rlenv.MemoryEditAgent: both a loose and a
+// container sighting inside the box are gone afterward, while one just
+// outside it on a single axis survives (SightingsNear's own box-not-
+// sphere shape - see memorystore.Store.SightingsNear's doc comment).
+func TestForgetSightingsNear_RemovesLooseAndContainerSightingsInBoxOnly(t *testing.T) {
+	store := newTestWorldMemory(t)
+	a := &agent{worldMemory: store}
+
+	loose := memorystore.Position{X: 5, Y: 0, Z: 5}
+	containerPos := memorystore.Position{X: -5, Y: 0, Z: -5}
+	outside := memorystore.Position{X: 20, Y: 0, Z: 0}
+
+	for _, s := range []memorystore.Sighting{
+		{ItemOrBlockName: "minecraft:coal_ore", Position: loose, ObservedAt: time.Now()},
+		{ItemOrBlockName: "minecraft:iron_ingot", Position: containerPos, ObservedAt: time.Now(), Container: &memorystore.ContainerRef{ContainerPos: containerPos, SlotIndex: 2}},
+		{ItemOrBlockName: "minecraft:coal_ore", Position: outside, ObservedAt: time.Now()},
+	} {
+		if err := store.RecordSighting(s); err != nil {
+			t.Fatalf("RecordSighting(%v): %v", s, err)
+		}
+	}
+
+	if err := a.ForgetSightingsNear(models.V3{X: 0, Y: 0, Z: 0}, 10); err != nil {
+		t.Fatalf("ForgetSightingsNear: %v", err)
+	}
+
+	if _, found, _ := store.SightingAtPosition(loose); found {
+		t.Fatalf("loose sighting at %v still present after ForgetSightingsNear", loose)
+	}
+	if _, found, _ := store.SightingAtPosition(containerPos); found {
+		t.Fatalf("container sighting at %v still present after ForgetSightingsNear", containerPos)
+	}
+	if _, found, _ := store.SightingAtPosition(outside); !found {
+		t.Fatalf("out-of-box sighting at %v was removed, want it untouched", outside)
+	}
+}
+
+func TestForgetSightingsNear_NoOpWithoutWorldMemory(t *testing.T) {
+	a := &agent{}
+	if err := a.ForgetSightingsNear(models.V3{X: 0, Y: 0, Z: 0}, 10); err != nil {
+		t.Fatalf("ForgetSightingsNear without a store: %v", err)
+	}
+}
+
 func TestRememberedBlocksNearErrorsWithoutAPosition(t *testing.T) {
 	a := &agent{worldMemory: &fakeMemoryStore{}}
 	if _, err := a.RememberedBlocksNear(16); err == nil {
