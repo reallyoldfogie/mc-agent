@@ -180,6 +180,38 @@ type Environment struct {
 	mineKnownX, mineKnownY, mineKnownZ float64
 	mineEverSeen                       bool
 
+	// mineKnownFromMemory is true when the current mineKnownX/Y/Z came
+	// from Config.UseMineTargetMemory's persistent-store fallback
+	// (rememberedMineTarget) rather than a genuine live sighting
+	// (FindVisibleBlock/RevealedBlocksReporter) - see refreshMineTarget's
+	// own doc comment for why only this case needs the "arrived but
+	// still not visible, give up" safeguard (rejectMineKnownMemory): a
+	// live sighting is close to certainly accurate for a buried target
+	// (visibility already implies nearby/reachable - see
+	// BuriedTargetAgent's own doc comment), but a remembered one can be
+	// stale (clone-area-jitter reshuffled what's actually there) or
+	// deliberately wrong (mc-rsi-trainer's own MemorySeedInaccurateProb).
+	// Cleared at Reset and whenever mineKnownX/Y/Z is set from a live
+	// sighting instead, same lifetime as mineKnownX/Y/Z itself.
+	mineKnownFromMemory bool
+
+	// mineKnownMemoryRejected holds memory-sourced mine-target positions
+	// (rounded to whole blocks) this episode has already walked to and
+	// found nothing at - rememberedMineTarget skips these so
+	// refreshMineTarget doesn't immediately re-lock onto the exact same
+	// wrong memory the very next step after giving up on it (nothing else
+	// ever removes a stale/wrong sighting from the persistent store
+	// itself, so without this it would just be offered again as "the
+	// nearest remembered sighting" forever). Deliberately simple rather
+	// than asking the store for a second-nearest alternative: once the
+	// single nearest remembered sighting for this target name is
+	// rejected, memory has nothing further to offer this episode and the
+	// policy falls back to blind exploration instead - a modest,
+	// acceptable loss of opportunity, not a correctness problem. Cleared
+	// at Reset and whenever the effective mine target name changes
+	// mid-episode (same lifetime as mineKnownX/Y/Z).
+	mineKnownMemoryRejected map[[3]int]bool
+
 	// mineSearchAnchorX/Y/Z/exploredOctants are the exploration-signal
 	// companion to mineKnownX/Y/Z/mineEverSeen above (docs/plans/14-buried-
 	// block-mining-and-memory-map.md's option 2, mc-rsi-trainer): while
@@ -638,6 +670,8 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.consecutiveStepTimeouts = 0
 	e.arrived = false
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
+	e.mineKnownFromMemory = false
+	e.mineKnownMemoryRejected = nil
 	e.mineTargetNameInUse = ""
 	// x/y/z here already reflect any ResetOrigin teleport/groundSnap above
 	// (nothing moves the bot again before this episode's first
@@ -1999,6 +2033,33 @@ func quadrantDirection(idx int) (dx, dz float64) {
 // FindVisibleBlock simply finds nothing in range; only a genuine
 // FindVisibleBlock error (e.g. world/block-manager not ready) is returned.
 //
+// For a buried-style task (mineTargetMemoryEnabled() - MineTargetBuried, or
+// a ChainMine stage gathering toward one), e.mineVisible is deliberately
+// never set true by rememberedMineTarget's persistent-memory fallback below
+// — only by a genuine live sighting (FindVisibleBlock or
+// RevealedBlocksReporter). resolveDispatch's ActionMine case dispatches
+// straight at e.mineX/Y/Z (coordArgs), and MineBlockAt's own approach
+// assumes a block it can already stand next to - true for a live sighting
+// of buried ore (visibility already implies the bot's own digging exposed
+// it) but not for a remembered one, which is very often still fully encased
+// in undug stone (found live, 2026-11-24/25: this conflation sent
+// ActionMine/ActionMineRemembered at buried, unreachable memory positions
+// constantly - see ApproachOptions.SkipUnreachableFallback's own doc comment
+// for the immediate fail-fast fix, and Config.UseMineTargetMemory's doc
+// comment for this one). mineKnownX/Y/Z/mineEverSeen, not mineVisible, is
+// what a memory hit feeds instead for that case - the same field
+// ActionGoToTarget's own dispatch (currentGoToTarget) already uses to
+// walk/dig back toward a target glimpsed live earlier and then lost from
+// sight, reused here so a remembered position gets the identical safe,
+// incremental dig-there treatment instead of a single unsupervised
+// long-range walk. Once that digging genuinely exposes the block, the live
+// FindVisibleBlock call below picks it up on some later step exactly as it
+// already does today, and e.mineVisible/ActionMine take over unchanged.
+// Outside a buried-style task, this conflation is harmless (a remembered
+// surface/container sighting is usually already walkable-adjacent), so a
+// memory hit still feeds e.mineVisible directly there, unchanged from
+// UseMineTargetMemory's original (2026-11-17) behavior.
+//
 // Known cost tradeoff, not solved here: this runs FindVisibleBlock once per
 // step whenever a target is configured, regardless of which action
 // was dispatched, plus a second FindVisibleBlock call inside the "mine"
@@ -2012,6 +2073,8 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		// switching from the gathered log to the buried block, or a fresh
 		// episode) — any remembered position belonged to the old target.
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
+		e.mineKnownFromMemory = false
+		e.mineKnownMemoryRejected = nil
 		e.mineTargetNameInUse = target
 	}
 
@@ -2028,6 +2091,7 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 					continue
 				}
 				e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = float64(b.X)+0.5, float64(b.Y)+0.5, float64(b.Z)+0.5, true
+				e.mineKnownFromMemory = false
 			}
 		}
 	}
@@ -2040,34 +2104,112 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("rlenv: resolving mine target: %w", err)
 	}
-	if !found {
-		if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
-			x, y, z, found = memX, memY, memZ, true
-		}
-	}
 	e.mineX, e.mineY, e.mineZ, e.mineVisible = x, y, z, found
 	if found {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = x, y, z, true
+		e.mineKnownFromMemory = false
+		return nil
+	}
+
+	// The dig-there-first treatment below (routing a memory hit through
+	// mineKnownX/mineEverSeen instead of mineVisible directly) is scoped
+	// to mineTargetMemoryEnabled() - the same gate memory_reset.go's own
+	// applyMemoryReset already uses to decide whether this episode poses
+	// buried mining's particular reachability problem at all
+	// (MineTargetBuried, or a ChainMine stage gathering toward one).
+	// Outside that, a remembered position is very likely already
+	// walkable-adjacent (that's usually what made it visible in the
+	// first place for an ordinary surface mine task), so this preserves
+	// UseMineTargetMemory's original (2026-11-17) behavior unchanged:
+	// straight into mineVisible, no dig-there detour, no arrival
+	// safeguard needed because there's nothing buried to dig through.
+	if !e.mineTargetMemoryEnabled() {
+		if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
+			e.mineX, e.mineY, e.mineZ, e.mineVisible = memX, memY, memZ, true
+			e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = memX, memY, memZ, true
+		}
+		return nil
+	}
+
+	if e.mineEverSeen {
+		// Already tracking a known target - either live-sighted earlier
+		// (mineKnownFromMemory false, the pre-existing behavior, left
+		// untouched) or a memory-sourced one not yet arrived at. Either
+		// way, keep heading there rather than letting a fresh memory
+		// lookup below override it mid-approach - the one exception is a
+		// memory-sourced target just arrived at with nothing to show for
+		// it, which gives up on it (rejectMineKnownMemory) before falling
+		// through to look for a fresh one this same step.
+		if !e.mineKnownFromMemory || !e.arrivedAtMineKnown() {
+			return nil
+		}
+		e.rejectMineKnownMemory()
+	}
+
+	if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
+		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = memX, memY, memZ, true
+		e.mineKnownFromMemory = true
 	}
 	return nil
 }
 
+// arrivedAtMineKnown reports whether the bot is within Config.
+// ArrivalThreshold of mineKnownX/Y/Z right now - the same "close enough"
+// semantics markExploredQuadrant's own quadrant-arrival check already uses.
+// false (not arrived) if the bot's position isn't known, so an unknown
+// position never triggers rejectMineKnownMemory's give-up - the safe
+// default is to keep heading there.
+func (e *Environment) arrivedAtMineKnown() bool {
+	pos, _, _, ok := e.agent.GetPosition()
+	if !ok {
+		return false
+	}
+	return distance3(pos.X, pos.Y, pos.Z, e.mineKnownX, e.mineKnownY, e.mineKnownZ) <= e.cfg.ArrivalThreshold
+}
+
+// rejectMineKnownMemory gives up on the current memory-sourced
+// mineKnownX/Y/Z: records it (rounded to whole blocks) in
+// mineKnownMemoryRejected, so rememberedMineTarget's own lookup below skips
+// it rather than immediately re-offering the exact same stale or
+// deliberately-wrong sighting as "the nearest remembered one" again next
+// step, and resets mineEverSeen/mineKnownFromMemory so currentGoToTarget()
+// falls back to blind exploration again starting this same step. Called
+// from refreshMineTarget once the bot has arrived at a memory-sourced known
+// target without it ever turning visible - see mineKnownFromMemory's own
+// doc comment for why this never applies to a live-sighted known target.
+func (e *Environment) rejectMineKnownMemory() {
+	if e.mineKnownMemoryRejected == nil {
+		e.mineKnownMemoryRejected = make(map[[3]int]bool)
+	}
+	e.mineKnownMemoryRejected[roundedBlock(e.mineKnownX, e.mineKnownY, e.mineKnownZ)] = true
+	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.mineKnownFromMemory = 0, 0, 0, false, false
+}
+
+// roundedBlock rounds x/y/z to the nearest whole-block coordinate, as a map
+// key for mineKnownMemoryRejected - sighting positions are block-cell
+// coordinates (optionally +0.5-centered, see RevealedBlocksReporter's own
+// call site) rather than exact floats, so rounding is exact, not lossy,
+// for every value this is ever called with.
+func roundedBlock(x, y, z float64) [3]int {
+	return [3]int{int(math.Round(x)), int(math.Round(y)), int(math.Round(z))}
+}
+
 // rememberedMineTarget falls back to the persistent world-memory store
 // for target when live LOS (FindVisibleBlock) can't currently see it —
-// see Config.UseMineTargetMemory's own doc comment (task.go). Reuses
-// mineDx/Dy/Dz/mineVisible as-is rather than a separate gated
-// observation block like craft/place got (Config.UseCraftIngredientMemory/
-// UsePlaceIngredientMemory), since mine already had a position signal to
-// begin with — a cheaper fix than those two needed.
+// see Config.UseMineTargetMemory's own doc comment (task.go). Feeds
+// mineKnownX/Y/Z/mineEverSeen only, not mineVisible/mineDx/Dy/Dz - see
+// refreshMineTarget's own doc comment for why a remembered position gets
+// routed through the same dig-there-first treatment a live sighting lost
+// from view already uses, rather than treated as directly mineable.
 //
-// A stale memory accepted here is harmless: MineBlockAt already re-reads
-// the live block state once the bot arrives and is a safe no-op if it's
-// already air (see that function's own "already air" early return), so
-// this only ever has to be approximately right, not verified in advance.
-// Bounded by MineSearchRadius (the same radius the live search above
-// already uses) so memory can't send the policy arbitrarily far outside
-// this task's working area just because that happens to be the
-// nearest-ever-recorded sighting.
+// A stale or wrong memory accepted here is not harmless to send the bot
+// walking/digging toward for free, the way it is once actually standing
+// next to it (MineBlockAt re-reads live block state on arrival and is a
+// safe no-op if it's air) - see rejectMineKnownMemory for what happens
+// once the bot arrives at a memory-sourced position and it never panned
+// out. Bounded (see the radius comment below) so memory can't send the
+// policy arbitrarily far outside this task's working area just because
+// that happens to be the nearest-ever-recorded sighting.
 func (e *Environment) rememberedMineTarget(target string) (x, y, z float64, found bool) {
 	if !e.cfg.UseMineTargetMemory {
 		return 0, 0, 0, false
@@ -2080,16 +2222,40 @@ func (e *Environment) rememberedMineTarget(target string) (x, y, z float64, foun
 	if err != nil || !memFound {
 		return 0, 0, 0, false
 	}
+	if e.mineKnownMemoryRejected[roundedBlock(pos.X, pos.Y, pos.Z)] {
+		// Already walked to this exact remembered position once this
+		// episode and found nothing there - see rejectMineKnownMemory's
+		// own doc comment for why this doesn't look for a second-nearest
+		// alternative instead.
+		return 0, 0, 0, false
+	}
 	botPos, _, _, ok := e.agent.GetPosition()
 	if !ok {
 		return 0, 0, 0, false
 	}
-	radius := e.cfg.MineSearchRadius
+	// Bounded by buriedExploreRadius() for a buried-style task, not
+	// MineSearchRadius - that one bounds the live FindVisibleBlock search
+	// (deliberately tight, since anything live-visible is already close
+	// by construction), but the footprint memory-reset.go's own
+	// clear/seed feature actually populates is buriedExploreRadius()'s
+	// (half of Config.MineBuriedExploreRadius, falling back to
+	// MineSearchRadius/2) - found live, 2026-11-25: this run's curriculum
+	// sets MineSearchRadius=16 but MineBuriedExploreRadius=80 (half=40),
+	// so bounding by the former would've silently ignored the majority of
+	// what gets seeded. Outside a buried-style task, MineSearchRadius
+	// remains the right bound - unchanged from UseMineTargetMemory's
+	// original (2026-11-17) behavior.
+	radius := float64(e.cfg.MineSearchRadius)
+	if e.mineTargetMemoryEnabled() {
+		if r := e.buriedExploreRadius(); r > 0 {
+			radius = r
+		}
+	}
 	if radius <= 0 {
-		radius = DefaultConfig().MineSearchRadius
+		radius = float64(DefaultConfig().MineSearchRadius)
 	}
 	dx, dy, dz := pos.X-botPos.X, pos.Y-botPos.Y, pos.Z-botPos.Z
-	if dx*dx+dy*dy+dz*dz > float64(radius)*float64(radius) {
+	if dx*dx+dy*dy+dz*dz > radius*radius {
 		return 0, 0, 0, false
 	}
 	return pos.X, pos.Y, pos.Z, true

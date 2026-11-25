@@ -48,21 +48,37 @@ type Config struct {
 	MineSearchRadius int
 
 	// UseMineTargetMemory, if true, fills the gap live FindVisibleBlock
-	// leaves the instant line-of-sight on MineTargetBlock is lost:
-	// mineDx/Dy/Dz/mineVisible (indices 9-12) go straight to zero today
+	// leaves the instant line-of-sight on MineTargetBlock is lost: the
+	// policy's own "known target" signal (mineKnownX/Y/Z/mineEverSeen,
+	// which backs ActionGoToTarget's dig-there navigation once a target
+	// has been seen even once) goes dark today the moment that happens,
 	// even if the persistent world-memory store
 	// (docs/plans/PERSISTENT_WORLD_MEMORY_PLAN.md) remembers exactly
-	// where that block type was last seen. With this set, losing live
-	// LOS falls back to the nearest remembered, unreserved, non-container
-	// sighting of MineTargetBlock (via rlenv.MineTargetMemoryAgent),
-	// still bounded by MineSearchRadius so memory can't send the policy
-	// arbitrarily far outside this task's working area. Reuses the
-	// existing mineDx/Dy/Dz/mineVisible fields as-is — unlike
-	// UseCraftIngredientMemory/UsePlaceIngredientMemory, this needed no
-	// new observation dims, since mine already had a position signal to
-	// begin with (operator direction, 2026-11-17: "fill the gap with
-	// mining LOS loss"). false (the default) means zero behavior change,
-	// same "defaults off, explicit opt-in" shape as the other two.
+	// where that block type was last seen. With this set, losing live LOS
+	// falls back to the nearest remembered, unreserved, non-container
+	// sighting of MineTargetBlock (via rlenv.MineTargetMemoryAgent), still
+	// bounded by MineSearchRadius so memory can't send the policy
+	// arbitrarily far outside this task's working area.
+	//
+	// Deliberately feeds only mineKnownX/Y/Z/mineEverSeen, never
+	// mineDx/Dy/Dz/mineVisible directly (revised 2026-11-25 - originally
+	// this set both identically, reusing mineDx/Dy/Dz/mineVisible as-is
+	// rather than needing new observation dims the way
+	// UseCraftIngredientMemory/UsePlaceIngredientMemory each did): a live
+	// sighting being visible already implies the bot's own digging exposed
+	// it, so treating it as directly mineable (ActionMine's own dispatch
+	// coordinates) is safe - a remembered one carries no such guarantee,
+	// and for a buried target is very often still fully encased in undug
+	// stone. Routing it through mineKnownX/mineEverSeen instead sends the
+	// bot on the same safe, incremental dig-there approach a live sighting
+	// lost from view already gets, rather than a direct approach-and-mine
+	// attempt against a target it may not be able to reach at all (found
+	// live, 2026-11-24/25: see ApproachOptions.SkipUnreachableFallback's
+	// own doc comment). See rejectMineKnownMemory (environment.go) for the
+	// companion safeguard this requires: a stale or deliberately-wrong
+	// memory (mc-rsi-trainer's own MemorySeedInaccurateProb) must not
+	// leave the bot permanently parked at a dead end once it arrives and
+	// finds nothing. false (the default) means zero behavior change.
 	UseMineTargetMemory bool
 
 	// MineRequiredTool, if set, is an item name (e.g.
