@@ -23,6 +23,31 @@ func TestActionMineRemembered_LegalOnlyWhenLiveLOSFails(t *testing.T) {
 	}
 }
 
+// TestActionMineRemembered_IllegalWhenNothingRemembered is the fix found
+// live, 2026-11-25, spectating: with nothing visible AND nothing ever
+// remembered, ActionMineRemembered used to stay legal anyway -
+// guaranteed to fail every single time it was tried (one agent logged
+// >139,000 consecutive "I don't remember seeing X" lines over 7.5 hours,
+// firing every 14-30ms with zero movement between attempts). It must be
+// masked off instead, so the policy is pushed toward exploring
+// (ActionGoToTarget) rather than offered a free, zero-progress no-op.
+func TestActionMineRemembered_IllegalWhenNothingRemembered(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true) // nothing live-visible
+	// setMineRemembered never called: mineRememberedFound stays false,
+	// so NearestRememberedBlock (backing mineRememberedCandidateExists)
+	// reports nothing either.
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:iron_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; legal {
+		t.Fatalf("ActionMineRemembered legal = true, want false (nothing visible, nothing remembered - guaranteed to fail)")
+	}
+}
+
 func TestActionMineRemembered_IllegalWithoutMineTargetBlock(t *testing.T) {
 	agent := newFakeAgent(0, 0, 0)
 	agent.setMineBlockHidden(true)

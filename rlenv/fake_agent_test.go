@@ -479,6 +479,24 @@ func (f *fakeAgent) MineRememberedBlock(_ context.Context, blockName string) (bo
 	return true, nil
 }
 
+// NearestRememberedBlock implements rlenv.MineTargetMemoryAgent, driven
+// by the exact same mineRememberedBlockName/mineRememberedFound fields
+// MineRememberedBlock above already uses - the real agent backs both
+// methods with the same underlying world-memory store, so the fake keeps
+// them consistent too (actionLegal's ActionMineRemembered case now
+// checks this one, not MineRememberedBlock, to decide legality; letting
+// them drift would make existing setMineRemembered-based tests
+// mask ActionMineRemembered off even when they've configured it to
+// succeed). Position is a fixed placeholder - no test depends on it.
+func (f *fakeAgent) NearestRememberedBlock(blockName string) (models.V3, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.mineRememberedFound || blockName != f.mineRememberedBlockName {
+		return models.V3{}, false, nil
+	}
+	return models.V3{}, true, nil
+}
+
 // FetchRememberedItem implements models.WorldMemoryAgent: reports
 // found=true and simulates a successful fetch (incrementing
 // placeHeldCount, the same count placedStandaloneThisStep decrements)

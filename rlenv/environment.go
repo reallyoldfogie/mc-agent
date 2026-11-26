@@ -212,6 +212,25 @@ type Environment struct {
 	// mid-episode (same lifetime as mineKnownX/Y/Z).
 	mineKnownMemoryRejected map[[3]int]bool
 
+	// mineRememberedCandidateExists caches, once per Step (set inside
+	// refreshMineTarget - see its own doc comment), whether the
+	// persistent world-memory store currently has ANY remembered
+	// sighting of mineTargetBlockInUse() at all - read by actionLegal's
+	// own ActionMineRemembered case, not written there. Deliberately
+	// independent of Config.UseMineTargetMemory and of
+	// mineTargetMemoryEnabled() (unlike mineKnownFromMemory above):
+	// ActionMineRemembered's own dispatch (agent.MineRememberedBlock)
+	// does its own unconditional lookup regardless of either, so masking
+	// it must check the same thing it would actually find, not a
+	// narrower, task-type-gated signal - see actionLegal's own doc
+	// comment for the live incident this fixes (found live, 2026-11-25,
+	// spectating: one agent logged >139,000 "I don't remember seeing
+	// minecraft:coal_ore anywhere" lines over 7.5 hours, firing every
+	// 14-30ms with zero movement between attempts - ActionMineRemembered
+	// was legal and, with nothing ever remembered, guaranteed to fail,
+	// every single time it was legal to try).
+	mineRememberedCandidateExists bool
+
 	// mineSearchAnchorX/Y/Z/exploredOctants are the exploration-signal
 	// companion to mineKnownX/Y/Z/mineEverSeen above (docs/plans/14-buried-
 	// block-mining-and-memory-map.md's option 2, mc-rsi-trainer): while
@@ -672,6 +691,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 	e.mineKnownFromMemory = false
 	e.mineKnownMemoryRejected = nil
+	e.mineRememberedCandidateExists = false
 	e.mineTargetNameInUse = ""
 	// x/y/z here already reflect any ResetOrigin teleport/groundSnap above
 	// (nothing moves the bot again before this episode's first
@@ -2099,8 +2119,19 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 
 	if target == "" {
 		e.mineX, e.mineY, e.mineZ, e.mineVisible = 0, 0, 0, false
+		e.mineRememberedCandidateExists = false
 		return nil
 	}
+	// One unconditional, unbounded lookup per Step - independent of
+	// mineTargetMemoryEnabled()/Config.UseMineTargetMemory (unlike the
+	// dig-there routing below), since it backs mineRememberedCandidateExists
+	// (actionLegal's own gate, which must mirror ActionMineRemembered's own
+	// unconditional dispatch-time lookup exactly) as well as
+	// rememberedMineTarget's routing below - seeing this result once here
+	// and threading it through means Step costs exactly the one store
+	// query it always did before mineRememberedCandidateExists existed.
+	sightingPos, sightingFound := e.mineRememberedSighting(target)
+	e.mineRememberedCandidateExists = sightingFound
 	x, y, z, found, err := e.agent.FindVisibleBlock(ctx, target, e.cfg.MineSearchRadius)
 	if err != nil {
 		return fmt.Errorf("rlenv: resolving mine target: %w", err)
@@ -2125,7 +2156,7 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	// straight into mineVisible, no dig-there detour, no arrival
 	// safeguard needed because there's nothing buried to dig through.
 	if !e.mineTargetMemoryEnabled() {
-		if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
+		if memX, memY, memZ, memFound := e.rememberedMineTarget(target, sightingPos, sightingFound); memFound {
 			e.mineX, e.mineY, e.mineZ, e.mineVisible = memX, memY, memZ, true
 			e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = memX, memY, memZ, true
 		}
@@ -2147,7 +2178,7 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		e.rejectMineKnownMemory()
 	}
 
-	if memX, memY, memZ, memFound := e.rememberedMineTarget(target); memFound {
+	if memX, memY, memZ, memFound := e.rememberedMineTarget(target, sightingPos, sightingFound); memFound {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = memX, memY, memZ, true
 		e.mineKnownFromMemory = true
 	}
@@ -2195,34 +2226,56 @@ func roundedBlock(x, y, z float64) [3]int {
 	return [3]int{int(math.Round(x)), int(math.Round(y)), int(math.Round(z))}
 }
 
+// mineRememberedSighting does the one, unconditional, unbounded lookup
+// per Step that both mineRememberedCandidateExists (actionLegal's own
+// gate) and rememberedMineTarget below are built from - no distance
+// bound, no Config.UseMineTargetMemory/mineTargetMemoryEnabled() gate.
+// Mirrors exactly what ActionMineRemembered's own dispatch
+// (agent.MineRememberedBlock, via models.WorldMemoryAgent) would find,
+// since both are backed by the same underlying store on the real agent -
+// see mineRememberedCandidateExists' own doc comment for why actionLegal
+// needs this unconditional result, not rememberedMineTarget's narrower,
+// routing-specific one. found=false (zero V3) if the live agent doesn't
+// implement MineTargetMemoryAgent, the store has nothing, or the lookup
+// itself errors.
+func (e *Environment) mineRememberedSighting(target string) (pos models.V3, found bool) {
+	locator, ok := e.agent.(MineTargetMemoryAgent)
+	if !ok {
+		return models.V3{}, false
+	}
+	pos, found, err := locator.NearestRememberedBlock(target)
+	if err != nil {
+		return models.V3{}, false
+	}
+	return pos, found
+}
+
 // rememberedMineTarget falls back to the persistent world-memory store
 // for target when live LOS (FindVisibleBlock) can't currently see it —
 // see Config.UseMineTargetMemory's own doc comment (task.go). Feeds
-// mineKnownX/Y/Z/mineEverSeen only, not mineVisible/mineDx/Dy/Dz - see
-// refreshMineTarget's own doc comment for why a remembered position gets
-// routed through the same dig-there-first treatment a live sighting lost
-// from view already uses, rather than treated as directly mineable.
+// mineKnownX/Y/Z/mineEverSeen only, not mineVisible/mineDx/Dy/Dz for a
+// buried-style task - see refreshMineTarget's own doc comment for why a
+// remembered position gets routed through the same dig-there-first
+// treatment a live sighting lost from view already uses, rather than
+// treated as directly mineable.
 //
 // A stale or wrong memory accepted here is not harmless to send the bot
 // walking/digging toward for free, the way it is once actually standing
 // next to it (MineBlockAt re-reads live block state on arrival and is a
 // safe no-op if it's air) - see rejectMineKnownMemory for what happens
 // once the bot arrives at a memory-sourced position and it never panned
-// out. Bounded (see the radius comment below) so memory can't send the
-// policy arbitrarily far outside this task's working area just because
-// that happens to be the nearest-ever-recorded sighting.
-func (e *Environment) rememberedMineTarget(target string) (x, y, z float64, found bool) {
-	if !e.cfg.UseMineTargetMemory {
+// out.
+//
+// Applies Config.UseMineTargetMemory's own gate, the rejection list, and
+// the distance bound on top of sightingPos/sightingFound
+// (mineRememberedSighting's result for this same Step, passed in rather
+// than re-queried, so there's exactly one store lookup per Step
+// regardless of how many of this function's callers need it).
+func (e *Environment) rememberedMineTarget(target string, sightingPos models.V3, sightingFound bool) (x, y, z float64, found bool) {
+	if !e.cfg.UseMineTargetMemory || !sightingFound {
 		return 0, 0, 0, false
 	}
-	locator, ok := e.agent.(MineTargetMemoryAgent)
-	if !ok {
-		return 0, 0, 0, false
-	}
-	pos, memFound, err := locator.NearestRememberedBlock(target)
-	if err != nil || !memFound {
-		return 0, 0, 0, false
-	}
+	pos := sightingPos
 	if e.mineKnownMemoryRejected[roundedBlock(pos.X, pos.Y, pos.Z)] {
 		// Already walked to this exact remembered position once this
 		// episode and found nothing there - see rejectMineKnownMemory's

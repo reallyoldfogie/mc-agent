@@ -71,8 +71,13 @@ func TestMineTargetMemory_LiveSightingTakesPrecedence(t *testing.T) {
 		t.Fatalf("Reset: %v", err)
 	}
 
-	if len(agent.nearestRememberedBlockCalls) != 0 {
-		t.Fatalf("NearestRememberedBlock calls = %d, want 0 (live LOS already found it)", len(agent.nearestRememberedBlockCalls))
+	// Still called exactly once, unconditionally - mineRememberedSighting
+	// (environment.go) backs mineRememberedCandidateExists, which
+	// actionLegal's ActionMineRemembered case now needs regardless of
+	// live LOS - but the routing below must still prefer the live
+	// sighting over it.
+	if len(agent.nearestRememberedBlockCalls) != 1 {
+		t.Fatalf("NearestRememberedBlock calls = %d, want 1", len(agent.nearestRememberedBlockCalls))
 	}
 	if dx := obs.Values[9]; dx != 1 {
 		t.Errorf("mineDx = %v, want 1 (the live sighting, not the memory one)", dx)
@@ -96,11 +101,20 @@ func TestMineTargetMemory_IgnoredWhenDisabled(t *testing.T) {
 		t.Fatalf("Reset: %v", err)
 	}
 
-	if len(agent.nearestRememberedBlockCalls) != 0 {
-		t.Fatalf("NearestRememberedBlock calls = %d, want 0 when UseMineTargetMemory is false", len(agent.nearestRememberedBlockCalls))
+	// Still called exactly once, unconditionally - mineRememberedSighting
+	// backs mineRememberedCandidateExists (actionLegal's own gate for
+	// ActionMineRemembered, independent of UseMineTargetMemory - see that
+	// field's own doc comment), even though UseMineTargetMemory itself
+	// stays correctly honored below (mineVisible/the dig-there routing
+	// both stay off).
+	if len(agent.nearestRememberedBlockCalls) != 1 {
+		t.Fatalf("NearestRememberedBlock calls = %d, want 1", len(agent.nearestRememberedBlockCalls))
 	}
 	if visible := obs.Values[12]; visible != 0 {
 		t.Fatalf("mineVisible = %v, want 0", visible)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; !legal {
+		t.Fatalf("ActionMineRemembered legal = false, want true (a sighting exists, even though UseMineTargetMemory is off - that flag never gated this action)")
 	}
 }
 

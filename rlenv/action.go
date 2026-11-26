@@ -273,9 +273,14 @@ const (
 	// agent.MineRememberedBlock) and attempts to mine it there. Unlike
 	// ActionMine, this does its own independent memory lookup at dispatch
 	// time rather than acting on Environment's own e.mineX/Y/Z — legal
-	// specifically when live LOS has nothing (!e.mineVisible), so a
-	// policy reaches for this only once the cheaper, more precise
-	// ActionMine can't help. A safe no-op (like an unconfigured
+	// specifically when live LOS has nothing (!e.mineVisible) AND the
+	// world-memory store actually has something remembered
+	// (mineRememberedCandidateExists - added 2026-11-25; without it, a
+	// policy could legally spam this with nothing ever remembered,
+	// a free, zero-progress dispatch every single step, found live
+	// spectating), so a policy reaches for this only once the cheaper,
+	// more precise ActionMine can't help AND it has a real chance of
+	// finding something. A safe no-op (like an unconfigured
 	// ActionMine) when Config.MineTargetBlock is unset. Excluded during a
 	// chain episode (ChainStage > 0) — mineTargetBlockInUse() falls back
 	// to Config.MineTargetBlock during a chain's early stages too, which
@@ -682,7 +687,20 @@ func (e *Environment) actionLegal(action rl.Action) bool {
 	case ActionLightPortal:
 		return e.cfg.LightPortalSearchRadius > 0 && e.portalFrameVisible
 	case ActionMineRemembered:
-		return e.cfg.ChainStage == 0 && e.cfg.MineTargetBlock != "" && !e.mineVisible
+		// mineRememberedCandidateExists (environment.go), not just
+		// !mineVisible: found live, 2026-11-25, spectating - with
+		// nothing ever remembered, this was legal and guaranteed to
+		// fail every single time, and the policy kept choosing it
+		// anyway (one agent logged >139,000 consecutive "I don't
+		// remember seeing X" lines over 7.5 hours, firing every
+		// 14-30ms with zero movement between attempts) - a free,
+		// zero-progress action with no real disincentive beyond the
+		// flat per-step time penalty is exactly the kind of
+		// probability-mass sink ActionMask exists to close off (see
+		// this function's own doc comment), the same reasoning
+		// ActionKillCreeperForGunpowder's weapon gate above already
+		// uses for a different deterministic-failure case.
+		return e.cfg.ChainStage == 0 && e.cfg.MineTargetBlock != "" && !e.mineVisible && e.mineRememberedCandidateExists
 	case ActionFetchRemembered:
 		return e.cfg.ChainStage == 0 && e.cfg.PlaceTargetItem != "" && e.placeIngredientValid
 	default:
