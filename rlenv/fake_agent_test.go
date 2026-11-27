@@ -299,6 +299,7 @@ type fakeAgent struct {
 	// does.
 	mineRememberedBlockName string
 	mineRememberedFound     bool
+	mineRememberedErr       error
 	mineTargetHeldCount     int
 	mineRememberedCalls     []string
 	fetchRememberedFound    bool
@@ -455,6 +456,15 @@ func (f *fakeAgent) setMineRemembered(blockName string, found bool) {
 	f.mu.Unlock()
 }
 
+// setMineRememberedErr configures the error MineRememberedBlock returns
+// once it's found something to attempt — see mineRememberedErr's own doc
+// comment. Call after setMineRemembered(blockName, true).
+func (f *fakeAgent) setMineRememberedErr(err error) {
+	f.mu.Lock()
+	f.mineRememberedErr = err
+	f.mu.Unlock()
+}
+
 // setFetchRememberedFound configures FetchRememberedItem's simulated
 // result — see fetchRememberedFound's own doc comment.
 func (f *fakeAgent) setFetchRememberedFound(found bool) {
@@ -474,6 +484,9 @@ func (f *fakeAgent) MineRememberedBlock(_ context.Context, blockName string) (bo
 	f.mineRememberedCalls = append(f.mineRememberedCalls, blockName)
 	if !f.mineRememberedFound || blockName != f.mineRememberedBlockName {
 		return false, nil
+	}
+	if f.mineRememberedErr != nil {
+		return true, f.mineRememberedErr
 	}
 	f.mineTargetHeldCount++
 	return true, nil

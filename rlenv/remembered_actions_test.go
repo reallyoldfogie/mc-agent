@@ -2,6 +2,7 @@ package rlenv_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/reallyoldfogie/mc-agent/actions"
@@ -106,6 +107,46 @@ func TestActionMineRemembered_NothingRememberedDoesNotEndEpisode(t *testing.T) {
 	}
 	if result.Done {
 		t.Fatalf("Done = true, want false (nothing remembered, nothing mined)")
+	}
+}
+
+// TestActionMineRemembered_RejectsPositionAfterUnreachableFailure is the
+// fix found live, 2026-11-27: a remembered position that's still fully
+// encased in undug stone fails with models.ErrNoInteractPosition every
+// time it's tried (see MineBlockAt's own ApproachOptions.
+// SkipUnreachableFallback doc comment), but nothing stopped
+// ActionMineRemembered from being offered as legal again the very next
+// step - and consecutiveStepTimeouts' shared give-up budget wasn't a
+// reliable backstop either, since unrelated, successfully-resolving
+// actions interleaved with the repeated failures kept resetting it before
+// it ever reached its threshold. One such failure must be enough to stop
+// masking ActionMineRemembered legal for that exact position again this
+// episode.
+func TestActionMineRemembered_RejectsPositionAfterUnreachableFailure(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	agent.setMineBlockHidden(true) // nothing live-visible
+	agent.setMineRemembered("minecraft:coal_ore", true)
+	agent.setMineRememberedErr(fmt.Errorf("approach block to mine: %w", models.ErrNoInteractPosition))
+	cfg := testConfig()
+	cfg.MineTargetBlock = "minecraft:coal_ore"
+	env := newTestEnvironment(t, agent, cfg)
+	if _, err := env.Reset(context.Background()); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; !legal {
+		t.Fatalf("ActionMineRemembered legal = false, want true (before the failed attempt)")
+	}
+
+	result, err := env.Step(context.Background(), rlenv.ActionMineRemembered)
+	if err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+	if result.Done {
+		t.Fatalf("Done = true, want false (a failed approach doesn't end the episode)")
+	}
+
+	if legal := env.ActionMask()[rlenv.ActionMineRemembered]; legal {
+		t.Fatalf("ActionMineRemembered legal = true, want false (this exact position already failed with ErrNoInteractPosition - stop offering it)")
 	}
 }
 

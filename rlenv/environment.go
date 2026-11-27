@@ -2,6 +2,7 @@ package rlenv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -211,6 +212,33 @@ type Environment struct {
 	// at Reset and whenever the effective mine target name changes
 	// mid-episode (same lifetime as mineKnownX/Y/Z).
 	mineKnownMemoryRejected map[[3]int]bool
+
+	// mineRememberedDirectUnreachable holds memory-sourced mine-target
+	// positions (rounded to whole blocks) ActionMineRemembered has already
+	// tried and failed to approach this episode because no walkable,
+	// in-sight cell exists near them yet (still fully encased in undug
+	// stone - see ApproachOptions.SkipUnreachableFallback's own doc
+	// comment for why that fails fast instead of pathfinding into solid
+	// rock). Consulted only by mineRememberedCandidateExists (actionLegal's
+	// ActionMineRemembered gate) - deliberately NOT by rememberedMineTarget's
+	// own goto-based dig-there-first routing below, which exists precisely
+	// to slowly tunnel toward a position that isn't walkable-adjacent yet
+	// and must keep doing so for a position this map disqualifies from the
+	// fast, direct-mine shortcut only. Without this, the same unreachable
+	// sighting (nothing else invalidates it) is re-offered as "the nearest
+	// remembered one" every step for the rest of the episode, and a policy
+	// that doesn't reliably switch to the slower goto routing instead just
+	// keeps re-dispatching a deterministically-failing direct-mine attempt
+	// until the step cap - found live, 2026-11-27: the dominant driver of
+	// mine_buried's truncation rate climbing from ~42% to 85-95% over 24h,
+	// because consecutiveStepTimeouts' own give-up budget (environment.go's
+	// Step) was being reset almost every other step by unrelated,
+	// successfully-resolving actions interleaved with the repeated
+	// mineremembered failures (one log segment: 2,139 resets vs only 383
+	// times the budget was actually exhausted). Cleared at Reset and
+	// whenever the effective mine target name changes mid-episode, same
+	// lifetime as mineKnownMemoryRejected.
+	mineRememberedDirectUnreachable map[[3]int]bool
 
 	// mineRememberedCandidateExists caches, once per Step (set inside
 	// refreshMineTarget - see its own doc comment), whether the
@@ -691,6 +719,7 @@ func (e *Environment) resetAttempt(ctx context.Context, episodeIndex int) (rl.Ob
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 	e.mineKnownFromMemory = false
 	e.mineKnownMemoryRejected = nil
+	e.mineRememberedDirectUnreachable = nil
 	e.mineRememberedCandidateExists = false
 	e.mineTargetNameInUse = ""
 	// x/y/z here already reflect any ResetOrigin teleport/groundSnap above
@@ -2096,6 +2125,7 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 		e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen = 0, 0, 0, false
 		e.mineKnownFromMemory = false
 		e.mineKnownMemoryRejected = nil
+		e.mineRememberedDirectUnreachable = nil
 		e.mineTargetNameInUse = target
 	}
 
@@ -2131,7 +2161,7 @@ func (e *Environment) refreshMineTarget(ctx context.Context) error {
 	// and threading it through means Step costs exactly the one store
 	// query it always did before mineRememberedCandidateExists existed.
 	sightingPos, sightingFound := e.mineRememberedSighting(target)
-	e.mineRememberedCandidateExists = sightingFound
+	e.mineRememberedCandidateExists = sightingFound && !e.isMineRememberedDirectUnreachable(sightingPos)
 	x, y, z, found, err := e.agent.FindVisibleBlock(ctx, target, e.cfg.MineSearchRadius)
 	if err != nil {
 		return fmt.Errorf("rlenv: resolving mine target: %w", err)
@@ -2215,6 +2245,27 @@ func (e *Environment) rejectMineKnownMemory() {
 	}
 	e.mineKnownMemoryRejected[roundedBlock(e.mineKnownX, e.mineKnownY, e.mineKnownZ)] = true
 	e.mineKnownX, e.mineKnownY, e.mineKnownZ, e.mineEverSeen, e.mineKnownFromMemory = 0, 0, 0, false, false
+}
+
+// isMineRememberedDirectUnreachable reports whether pos (rounded to a whole
+// block) is in mineRememberedDirectUnreachable - see that field's own doc
+// comment for what populates it and why mineRememberedCandidateExists is its
+// only consumer.
+func (e *Environment) isMineRememberedDirectUnreachable(pos models.V3) bool {
+	return e.mineRememberedDirectUnreachable[roundedBlock(pos.X, pos.Y, pos.Z)]
+}
+
+// rejectMineRememberedDirect records pos (rounded to a whole block) in
+// mineRememberedDirectUnreachable - called from Step once a dispatched
+// mineremembered action fails with models.ErrNoInteractPosition, so
+// actionLegal's ActionMineRemembered gate stops offering this exact
+// position again this episode. See that field's own doc comment for why
+// this leaves rememberedMineTarget's own goto-based routing untouched.
+func (e *Environment) rejectMineRememberedDirect(pos models.V3) {
+	if e.mineRememberedDirectUnreachable == nil {
+		e.mineRememberedDirectUnreachable = make(map[[3]int]bool)
+	}
+	e.mineRememberedDirectUnreachable[roundedBlock(pos.X, pos.Y, pos.Z)] = true
 }
 
 // roundedBlock rounds x/y/z to the nearest whole-block coordinate, as a map
@@ -2629,6 +2680,23 @@ func (e *Environment) Step(ctx context.Context, action rl.Action) (rl.StepResult
 				e.consecutiveStepTimeouts++
 				if pos, _, _, ok := e.agent.GetPosition(); ok {
 					log.Printf("rlenv: dispatched %s resolved with error at (%.2f,%.2f,%.2f): %v - consecutiveStepTimeouts now %d", dispatch.name, pos.X, pos.Y, pos.Z, actionErr, e.consecutiveStepTimeouts)
+				}
+				// mineRememberedDirectUnreachable's own give-up, independent
+				// of (and faster than) consecutiveStepTimeouts' budget above -
+				// see that field's own doc comment for why relying on the
+				// shared timeout budget alone isn't enough: unrelated,
+				// successfully-resolving actions interleaved with repeated
+				// mineremembered failures keep resetting it before it ever
+				// reaches the give-up threshold. models.ErrNoInteractPosition
+				// is a deterministic fact about the remembered position right
+				// now (no walkable, in-sight cell within reach - see
+				// ApproachOptions.SkipUnreachableFallback), not a transient
+				// fluke, so one failure is enough to stop offering this exact
+				// position to the fast direct-mine shortcut again.
+				if dispatch.name == mineRememberedActionName && errors.Is(actionErr, models.ErrNoInteractPosition) {
+					if pos, found := e.mineRememberedSighting(e.cfg.MineTargetBlock); found {
+						e.rejectMineRememberedDirect(pos)
+					}
 				}
 			} else {
 				if e.consecutiveStepTimeouts > 0 {
