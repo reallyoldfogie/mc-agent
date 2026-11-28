@@ -1704,6 +1704,32 @@ func (e *Environment) dispatchGoToTarget() (x, y, z float64) {
 	if !ok {
 		return x, y, z
 	}
+	// While still blind-exploring, currentGoToTarget's own Y is a fixed
+	// depth set once from the episode's anchor (mineSearchAnchorY -
+	// buriedExploreDepth()), not adjusted as digging actually progresses -
+	// see observationUnknownDirection's own doc comment. Once the bot has
+	// already dug past that depth (its own current Y is already below
+	// it), re-dispatching straight at the stale Y walks it back up into
+	// the vertical shaft it already excavated getting here: open air
+	// above, nothing within the pathfinder's own narrow goal-radius check
+	// to stand on, so the dispatch fails immediately with "missing ground
+	// support" every single time - found live, 2026-11-27: 72% of all
+	// movetoquiet failures since the mineRememberedDirectUnreachable fix
+	// (environment.go's own mineRememberedDirectUnreachable, a separate,
+	// already-fixed issue) were exactly this, the same handful of
+	// stale-depth positions repeated 60-75 times each with zero actual
+	// movement in between - the dominant reason mine_buried's truncation
+	// rate climbed back up after that fix's initial improvement faded.
+	// Only touches the DISPATCHED Y, not x/y/z above (currentGoToTarget's
+	// own return value) - the observation's unknownDx/Dy/Dz features and
+	// reward.go's distance shaping both still measure against the true,
+	// unmodified target, per dispatchGoToTarget's own doc comment above;
+	// this just stops asking the bot to walk somewhere it provably already
+	// cleared, in favor of continuing toward the quadrant's X/Z at the
+	// depth it's actually at.
+	if !e.mineEverSeen && pos.Y < y {
+		y = pos.Y
+	}
 	dx, dy, dz := x-pos.X, y-pos.Y, z-pos.Z
 	dist := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	if dist <= blindExploreStepDistance || dist == 0 {

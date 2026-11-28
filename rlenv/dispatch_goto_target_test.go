@@ -127,3 +127,37 @@ func TestKnownBuriedTargetGotoIsClamped(t *testing.T) {
 		t.Fatalf("distance traveled after 2 hops = %.2f, want >= %.2f, landed at (%.2f,%.2f,%.2f)", got, wantMin, agent.x, agent.y, agent.z)
 	}
 }
+
+// TestBlindExplorationDoesNotClimbBackToStaleDepth is the fix found live,
+// 2026-11-27: the quadrant exploration target's Y is fixed once per
+// episode (anchorY - buriedExploreDepth(), 0 - 5 = -5 for buriedTestConfig's
+// MineSearchRadius 10) and never adjusted as digging actually progresses.
+// Once the bot has already dug past that depth, re-dispatching straight at
+// the stale Y asks it to climb back up into the shaft it already
+// excavated - open air above, nothing for the pathfinder to stand on, a
+// guaranteed "missing ground support" failure every time (72% of all
+// movetoquiet failures in one live window). The dispatched Y must instead
+// stay at the bot's own current depth once it's already below the stale
+// target, continuing toward the quadrant's X/Z rather than climbing.
+func TestBlindExplorationDoesNotClimbBackToStaleDepth(t *testing.T) {
+	agent := newFakeAgent(0, 0, 0)
+	cfg := buriedTestConfig()
+	env := newTestEnvironment(t, agent, cfg)
+	ctx := context.Background()
+	if _, err := env.Reset(ctx); err != nil {
+		t.Fatalf("Reset: %v", err)
+	}
+
+	// Simulate having already dug well past the quadrant's fixed
+	// exploration depth (-5) before this dispatch - e.g. chasing a
+	// different lead straight down.
+	agent.y = -10
+
+	if _, err := env.Step(ctx, rlenv.ActionGoToTarget); err != nil {
+		t.Fatalf("Step: %v", err)
+	}
+
+	if agent.y > -9.5 {
+		t.Fatalf("agent.y = %.2f after dispatch, want it to stay near -10 (not climb back toward the stale target depth -5) - a bot that already dug past the exploration depth should keep heading toward the quadrant's X/Z at its own current depth, not be walked back up into the shaft it already excavated", agent.y)
+	}
+}
